@@ -1,0 +1,16 @@
+services:
+  app:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      # Set BETTER_AUTH_SECRET in a .env file next to this compose file.
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET}
+      # Public URL of the app (behind your reverse proxy).
+      BETTER_AUTH_URL: ${BETTER_AUTH_URL:-http://localhost:3000}
+    volumes:
+      - app_data:/data
+    restart: unless-stopped
+
+volumes:
+  app_data:
