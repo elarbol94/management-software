@@ -116,6 +116,7 @@ export function WikiEditor({
   const t = useTranslations("wiki");
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved">("idle");
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const dirty = useRef(false);
 
   let content: object | undefined;
   try {
@@ -141,15 +142,17 @@ export function WikiEditor({
       },
     },
     onUpdate({ editor }) {
+      dirty.current = true;
       setSaveState("saving");
       if (saveTimer.current) clearTimeout(saveTimer.current);
       saveTimer.current = setTimeout(async () => {
         try {
-          await savePageContent({
+          const result = await savePageContent({
             id: pageId,
             contentJson: JSON.stringify(editor.getJSON()),
           });
-          setSaveState("saved");
+          dirty.current = !result.saved;
+          setSaveState(result.saved ? "saved" : "idle");
         } catch {
           setSaveState("idle");
         }
@@ -161,7 +164,7 @@ export function WikiEditor({
   useEffect(() => {
     return () => {
       if (saveTimer.current) clearTimeout(saveTimer.current);
-      if (editor && !editor.isDestroyed) {
+      if (dirty.current && editor && !editor.isDestroyed) {
         void savePageContent({
           id: pageId,
           contentJson: JSON.stringify(editor.getJSON()),
