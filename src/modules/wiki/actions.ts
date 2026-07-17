@@ -93,7 +93,9 @@ export async function savePageContent(input: z.infer<typeof saveSchema>) {
     .from(wikiPages)
     .where(and(eq(wikiPages.id, data.id), isNull(wikiPages.deletedAt)))
     .get();
-  if (!page) throw new Error("Page not found");
+  // Autosaves can arrive after another request deleted the page. Treat that
+  // normal race as a no-op instead of surfacing a server error.
+  if (!page) return { saved: false };
 
   let doc: TiptapNode | null = null;
   try {
@@ -142,6 +144,7 @@ export async function savePageContent(input: z.infer<typeof saveSchema>) {
     syncFts(data.id, page.title, contentText);
   });
   // No revalidatePath here: autosave must not re-render the open editor.
+  return { saved: true };
 }
 
 export async function searchWiki(query: string) {

@@ -90,3 +90,25 @@ test("subpages appear nested in the tree", async ({ page }) => {
     page.getByRole("heading", { name: "Erster Arbeitstag" }),
   ).toBeVisible();
 });
+
+test("rename and delete a page", async ({ page }) => {
+  await login(page);
+  await page.goto("/wiki/erster-arbeitstag");
+
+  page.once("dialog", (dialog) => dialog.accept("Tag Eins"));
+  await page.getByRole("heading", { name: "Erster Arbeitstag" }).click();
+  await expect(page.getByRole("heading", { name: "Tag Eins" })).toBeVisible();
+
+  const treeRow = page
+    .locator("nav div")
+    .filter({ hasText: /^Tag Eins$/ })
+    .first();
+  await treeRow.hover();
+  await treeRow.getByRole("button").last().click();
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.getByRole("menuitem", { name: "Seite löschen" }).click();
+
+  await expect(page).toHaveURL(/\/wiki\/onboarding/);
+  await expect(page.getByRole("heading", { name: "Onboarding" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Tag Eins" })).toHaveCount(0);
+});
