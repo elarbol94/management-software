@@ -49,7 +49,9 @@ export function LedgerClient({
   const router = useRouter();
   const searchParams = useSearchParams();
   const [dialogEntry, setDialogEntry] = useState<EntryRow | null>(null);
-  const [dialogOpen, setDialogOpen] = useState(false);
+  const [dialogOpen, setDialogOpen] = useState(
+    () => searchParams.get("new") === "expense",
+  );
 
   function setParam(key: string, value: string | null | undefined) {
     const params = new URLSearchParams(searchParams);
@@ -154,7 +156,7 @@ export function LedgerClient({
             variant="outline"
             size="sm"
             nativeButton={false}
-            render={<Link href="/accounting/invoices" />}
+            render={<Link href="/documents" />}
           >
             <FileText className="size-4" />
             {tInvoices("title")}

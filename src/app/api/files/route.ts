@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { revalidatePath } from "next/cache";
 import { getSession } from "@/lib/auth";
 import {
   isAttachmentEntityType,
@@ -51,6 +52,7 @@ export async function POST(request: Request) {
       entityId,
       userId: session.user.id,
     });
+    revalidatePath("/documents");
     return NextResponse.json(attachment);
   } catch (error) {
     if (error instanceof UploadError) {

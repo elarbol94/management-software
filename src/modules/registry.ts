@@ -1,6 +1,7 @@
 import {
   BookOpen,
   Calculator,
+  Files,
   KanbanSquare,
   LayoutDashboard,
   type LucideIcon,
@@ -10,7 +11,7 @@ import {
 // add a route group under src/app/(app)/<name>/ and register it here.
 export type ModuleNavItem = {
   /** Translation key under the `nav` namespace */
-  key: "dashboard" | "accounting" | "projects" | "wiki";
+  key: "dashboard" | "accounting" | "documents" | "projects" | "wiki";
   href: string;
   icon: LucideIcon;
 };
@@ -18,6 +19,7 @@ export type ModuleNavItem = {
 export const moduleNav: ModuleNavItem[] = [
   { key: "dashboard", href: "/", icon: LayoutDashboard },
   { key: "accounting", href: "/accounting", icon: Calculator },
+  { key: "documents", href: "/documents", icon: Files },
   { key: "projects", href: "/projects", icon: KanbanSquare },
   { key: "wiki", href: "/wiki", icon: BookOpen },
 ];

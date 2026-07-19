@@ -1,8 +1,7 @@
 import { requireUser } from "@/lib/auth";
 import { DocumentsWorkspace } from "@/modules/accounting/components/documents-workspace";
 
-/** Legacy entry point kept for bookmarks and the existing invoice flow. */
-export default async function InvoicesPage() {
+export default async function DocumentsPage() {
   await requireUser();
 
   return <DocumentsWorkspace />;

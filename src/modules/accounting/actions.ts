@@ -73,6 +73,7 @@ export async function upsertEntry(input: EntryInput): Promise<{ id: string }> {
   }
 
   revalidatePath("/accounting");
+  revalidatePath("/documents");
   return { id };
 }
 
@@ -81,6 +82,7 @@ export async function deleteEntry(id: string) {
   deleteAttachmentsFor("entry", id);
   db.delete(entries).where(eq(entries.id, id)).run();
   revalidatePath("/accounting");
+  revalidatePath("/documents");
 }
 
 // --- Categories (admin only) ---
@@ -113,6 +115,7 @@ export async function upsertCategory(input: CategoryInput) {
   }
   revalidatePath("/settings/categories");
   revalidatePath("/accounting");
+  revalidatePath("/documents");
 }
 
 export async function setCategoryArchived(id: string, archived: boolean) {
@@ -120,6 +123,7 @@ export async function setCategoryArchived(id: string, archived: boolean) {
   db.update(categories).set({ archived }).where(eq(categories.id, id)).run();
   revalidatePath("/settings/categories");
   revalidatePath("/accounting");
+  revalidatePath("/documents");
 }
 
 /** Deletes a category only when no entries reference it; archive otherwise. */
@@ -128,5 +132,6 @@ export async function deleteCategory(id: string): Promise<{ deleted: boolean }> 
   if (categoryUsageCount(id) > 0) return { deleted: false };
   db.delete(categories).where(eq(categories.id, id)).run();
   revalidatePath("/settings/categories");
+  revalidatePath("/documents");
   return { deleted: true };
 }

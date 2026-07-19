@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { revalidatePath } from "next/cache";
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
 import {
@@ -45,5 +46,6 @@ export async function DELETE(_request: Request, { params }: Params) {
 
   const { id } = await params;
   deleteAttachment(id);
+  revalidatePath("/documents");
   return NextResponse.json({ ok: true });
 }

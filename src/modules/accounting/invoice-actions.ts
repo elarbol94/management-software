@@ -32,6 +32,7 @@ export async function upsertCustomer(
     const { id, ...values } = data;
     db.update(customers).set(values).where(eq(customers.id, id)).run();
     revalidatePath("/accounting/customers");
+    revalidatePath("/documents");
     return { id };
   }
 
@@ -41,6 +42,7 @@ export async function upsertCustomer(
     .returning({ id: customers.id })
     .get();
   revalidatePath("/accounting/customers");
+  revalidatePath("/documents");
   return { id: row.id };
 }
 
@@ -54,6 +56,7 @@ export async function deleteCustomer(id: string): Promise<{ deleted: boolean }> 
   if ((used?.value ?? 0) > 0) return { deleted: false };
   db.delete(customers).where(eq(customers.id, id)).run();
   revalidatePath("/accounting/customers");
+  revalidatePath("/documents");
   return { deleted: true };
 }
 
@@ -122,6 +125,7 @@ export async function upsertInvoice(
         .run();
     });
     revalidatePath("/accounting/invoices");
+    revalidatePath("/documents");
     return { id: data.id };
   }
 
@@ -167,6 +171,7 @@ export async function upsertInvoice(
   });
 
   revalidatePath("/accounting/invoices");
+  revalidatePath("/documents");
   return { id };
 }
 
@@ -255,4 +260,5 @@ export async function setInvoiceStatus(
 
   revalidatePath("/accounting/invoices");
   revalidatePath("/accounting");
+  revalidatePath("/documents");
 }
