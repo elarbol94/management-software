@@ -69,6 +69,30 @@ test("create an entry and see it in ledger, report and CSV", async ({ page }) =>
   expect(csv).toContain("100,00;20;20,00;120,00");
 });
 
+test("plan a category and compare it with actual journal entries", async ({ page }) => {
+  await page.goto("/login");
+  await page.locator("#email").fill("admin@example.com");
+  await page.locator("#password").fill("super-secret-1");
+  await page.getByRole("button", { name: "Anmelden" }).click();
+  await expect(page.getByText("Willkommen, E2E Admin!")).toBeVisible();
+
+  await page.goto("/accounting/planning?year=2026");
+  await expect(page.getByRole("heading", { name: "Planung 2026" })).toBeVisible();
+
+  const julyPlan = page.getByLabel(/Software & Hosting.*Jul$/i);
+  await julyPlan.fill("100");
+  await page.getByRole("button", { name: "Planung speichern" }).click();
+  await expect(page.getByText("Gespeichert")).toBeVisible();
+
+  const row = page.getByRole("row", { name: /Software & Hosting/ });
+  await expect(row).toContainText("€ 100,00");
+  await expect(row).toContainText("€ 120,00");
+  await expect(row).toContainText("€ 20,00");
+
+  await page.reload();
+  await expect(page.getByLabel(/Software & Hosting.*Jul$/i)).toHaveValue("100,00");
+});
+
 test("edit and delete the entry", async ({ page }) => {
   await page.goto("/login");
   await page.locator("#email").fill("admin@example.com");

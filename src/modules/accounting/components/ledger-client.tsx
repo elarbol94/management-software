@@ -4,7 +4,14 @@ import { useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useFormatter, useLocale, useTranslations } from "next-intl";
-import { Download, FileText, Paperclip, Plus, BarChart3 } from "lucide-react";
+import {
+  BarChart3,
+  CalendarRange,
+  Download,
+  FileText,
+  Paperclip,
+  Plus,
+} from "lucide-react";
 import { formatCents } from "@/lib/money";
 import type { EntryFilters, EntryRow } from "@/modules/accounting/queries";
 import type { categories as categoriesTable } from "@/modules/accounting/schema";
@@ -158,6 +165,15 @@ export function LedgerClient({
           >
             <FileText className="size-4" />
             {tInvoices("title")}
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            nativeButton={false}
+            render={<Link href="/accounting/planning" />}
+          >
+            <CalendarRange className="size-4" />
+            {t("planning")}
           </Button>
           <Button
             variant="outline"

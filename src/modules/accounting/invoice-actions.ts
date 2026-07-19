@@ -255,4 +255,5 @@ export async function setInvoiceStatus(
 
   revalidatePath("/accounting/invoices");
   revalidatePath("/accounting");
+  revalidatePath("/accounting/planning");
 }
