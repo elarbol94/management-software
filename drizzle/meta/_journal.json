@@ -36,6 +36,13 @@
       "when": 1784225333669,
       "tag": "0004_wiki_fts",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1784491796611,
+      "tag": "0005_funding_projects",
+      "breakpoints": true
     }
   ]
 }
