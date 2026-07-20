@@ -4,9 +4,21 @@ import { z } from "zod";
 import { and, eq, inArray, isNull } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { db, sqlite } from "@/db";
-import { wikiLinks, wikiPages } from "@/db/schema";
+import {
+  wikiCommentThreads,
+  wikiLinks,
+  wikiPageRevisions,
+  wikiPageSources,
+  wikiPages,
+} from "@/db/schema";
 import { requireUserOrThrow } from "@/lib/auth";
-import { extractInternalSlugs, extractText, slugify } from "./lib/tiptap";
+import {
+  extractCitations,
+  extractCommentAnchors,
+  extractInternalSlugs,
+  extractText,
+  slugify,
+} from "./lib/tiptap";
 import type { TiptapNode } from "./lib/tiptap";
 
 function uniqueSlug(title: string): string {
@@ -71,10 +83,13 @@ export async function renamePage(id: string, title: string) {
   const page = db.select().from(wikiPages).where(eq(wikiPages.id, id)).get();
   if (!page) throw new Error("Page not found");
 
-  db.update(wikiPages)
-    .set({ title: cleanTitle, updatedBy: user.id, updatedAt: new Date() })
-    .where(eq(wikiPages.id, id))
-    .run();
+  db.transaction(() => {
+    db.insert(wikiPageRevisions).values({ pageId: page.id, version: page.version, title: page.title, contentJson: page.contentJson, status: page.status, citationLocale: page.citationLocale, kind: "autosave", createdBy: user.id }).run();
+    db.update(wikiPages)
+      .set({ title: cleanTitle, updatedBy: user.id, updatedAt: new Date(), version: page.version + 1 })
+      .where(eq(wikiPages.id, id))
+      .run();
+  });
   syncFts(id, cleanTitle, page.contentText);
   revalidatePath("/wiki", "layout");
 }
@@ -82,6 +97,7 @@ export async function renamePage(id: string, title: string) {
 const saveSchema = z.object({
   id: z.string().min(1),
   contentJson: z.string().max(2_000_000),
+  expectedVersion: z.number().int().positive().optional(),
 });
 
 export async function savePageContent(input: z.infer<typeof saveSchema>) {
@@ -105,7 +121,34 @@ export async function savePageContent(input: z.infer<typeof saveSchema>) {
   }
 
   const contentText = extractText(doc);
+  const inferredTitle = /^(Unbenannte Notiz|Untitled note)$/.test(page.title)
+    ? contentText.split("\n").map((line) => line.trim()).find(Boolean)?.slice(0, 200)
+    : undefined;
+  const effectiveTitle = inferredTitle || page.title;
   const slugs = extractInternalSlugs(doc);
+  const citations = extractCitations(doc);
+  const citationSourceIds = [...new Set(citations.map((item) => item.sourceId))];
+  const commentAnchors = new Set(extractCommentAnchors(doc));
+
+  if (data.expectedVersion !== undefined && data.expectedVersion !== page.version) {
+    const revision = db
+      .insert(wikiPageRevisions)
+      .values({
+        pageId: page.id,
+        version: data.expectedVersion,
+        title: page.title,
+        contentJson: data.contentJson,
+        status: page.status,
+        citationLocale: page.citationLocale,
+        kind: "conflict",
+        createdBy: user.id,
+      })
+      .returning({ id: wikiPageRevisions.id })
+      .get();
+    return { saved: false as const, conflict: true as const, version: page.version, revisionId: revision.id };
+  }
+
+  const nextVersion = page.version + 1;
 
   db.transaction(() => {
     db.update(wikiPages)
@@ -114,6 +157,8 @@ export async function savePageContent(input: z.infer<typeof saveSchema>) {
         contentText,
         updatedBy: user.id,
         updatedAt: new Date(),
+        version: nextVersion,
+        ...(inferredTitle ? { title: inferredTitle } : {}),
       })
       .where(eq(wikiPages.id, data.id))
       .run();
@@ -141,10 +186,50 @@ export async function savePageContent(input: z.infer<typeof saveSchema>) {
       }
     }
 
-    syncFts(data.id, page.title, contentText);
+    db.delete(wikiPageSources)
+      .where(and(eq(wikiPageSources.pageId, data.id), eq(wikiPageSources.relation, "citation")))
+      .run();
+    if (citationSourceIds.length > 0) {
+      db.insert(wikiPageSources)
+        .values(citationSourceIds.map((sourceId) => ({ pageId: data.id, sourceId, relation: "citation" as const })))
+        .onConflictDoNothing()
+        .run();
+    }
+
+    const threads = db
+      .select({ id: wikiCommentThreads.id, anchorQuote: wikiCommentThreads.anchorQuote })
+      .from(wikiCommentThreads)
+      .where(eq(wikiCommentThreads.pageId, data.id))
+      .all();
+    for (const thread of threads) {
+      db.update(wikiCommentThreads)
+        .set({ orphaned: thread.anchorQuote ? !commentAnchors.has(thread.id) && !contentText.includes(thread.anchorQuote) : false })
+        .where(eq(wikiCommentThreads.id, thread.id))
+        .run();
+    }
+
+    const recentRevision = sqlite
+      .prepare("SELECT id FROM wiki_page_revisions WHERE page_id = ? AND created_by = ? AND kind = 'autosave' AND created_at > ? LIMIT 1")
+      .get(data.id, user.id, Date.now() - 5 * 60_000);
+    if (!recentRevision) {
+      db.insert(wikiPageRevisions)
+        .values({
+          pageId: page.id,
+          version: page.version,
+          title: page.title,
+          contentJson: page.contentJson,
+          status: page.status,
+          citationLocale: page.citationLocale,
+          kind: "autosave",
+          createdBy: user.id,
+        })
+        .run();
+    }
+
+    syncFts(data.id, effectiveTitle, contentText);
   });
   // No revalidatePath here: autosave must not re-render the open editor.
-  return { saved: true };
+  return { saved: true as const, conflict: false as const, version: nextVersion };
 }
 
 export async function searchWiki(query: string) {

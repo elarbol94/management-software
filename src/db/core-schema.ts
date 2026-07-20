@@ -94,6 +94,7 @@ export const attachmentEntityTypes = [
   "invoice",
   "task",
   "wikiPage",
+  "wikiSource",
 ] as const;
 
 export const attachments = sqliteTable(

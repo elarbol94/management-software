@@ -3,11 +3,23 @@ import {
   text,
   integer,
   index,
+  uniqueIndex,
   primaryKey,
   type AnySQLiteColumn,
 } from "drizzle-orm/sqlite-core";
 import { createId } from "@paralleldrive/cuid2";
 import { user } from "@/db/core-schema";
+
+export const wikiPageStatuses = ["inbox", "working", "evergreen"] as const;
+export const wikiSourceTypes = [
+  "journalArticle",
+  "book",
+  "bookChapter",
+  "report",
+  "webPage",
+  "document",
+] as const;
+export const wikiReadingStatuses = ["toRead", "reading", "read"] as const;
 
 export const wikiPages = sqliteTable(
   "wiki_pages",
@@ -22,6 +34,9 @@ export const wikiPages = sqliteTable(
     contentJson: text("content_json").notNull().default(""),
     contentText: text("content_text").notNull().default(""),
     icon: text("icon"),
+    status: text("status", { enum: wikiPageStatuses }).notNull().default("inbox"),
+    citationLocale: text("citation_locale").notNull().default("de-DE"),
+    version: integer("version").notNull().default(1),
     createdBy: text("created_by")
       .notNull()
       .references(() => user.id),
@@ -37,6 +52,188 @@ export const wikiPages = sqliteTable(
     deletedAt: integer("deleted_at", { mode: "timestamp_ms" }),
   },
   (table) => [index("wiki_pages_parent_idx").on(table.parentId)],
+);
+
+export const wikiSources = sqliteTable(
+  "wiki_sources",
+  {
+    id: text("id").primaryKey().$defaultFn(() => createId()),
+    type: text("type", { enum: wikiSourceTypes }).notNull().default("document"),
+    title: text("title").notNull(),
+    subtitle: text("subtitle").notNull().default(""),
+    issuedDate: text("issued_date").notNull().default(""),
+    containerTitle: text("container_title").notNull().default(""),
+    publisher: text("publisher").notNull().default(""),
+    institution: text("institution").notNull().default(""),
+    edition: text("edition").notNull().default(""),
+    volume: text("volume").notNull().default(""),
+    issue: text("issue").notNull().default(""),
+    pages: text("pages").notNull().default(""),
+    doi: text("doi").notNull().default(""),
+    isbn: text("isbn").notNull().default(""),
+    url: text("url").notNull().default(""),
+    accessedAt: text("accessed_at").notNull().default(""),
+    language: text("language").notNull().default(""),
+    abstract: text("abstract").notNull().default(""),
+    notes: text("notes").notNull().default(""),
+    readingStatus: text("reading_status", { enum: wikiReadingStatuses })
+      .notNull()
+      .default("toRead"),
+    version: integer("version").notNull().default(1),
+    createdBy: text("created_by").notNull().references(() => user.id),
+    updatedBy: text("updated_by").notNull().references(() => user.id),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+    deletedAt: integer("deleted_at", { mode: "timestamp_ms" }),
+  },
+  (table) => [
+    index("wiki_sources_title_idx").on(table.title),
+    index("wiki_sources_status_idx").on(table.readingStatus),
+    index("wiki_sources_doi_idx").on(table.doi),
+    index("wiki_sources_isbn_idx").on(table.isbn),
+  ],
+);
+
+export const wikiSourceContributors = sqliteTable(
+  "wiki_source_contributors",
+  {
+    id: text("id").primaryKey().$defaultFn(() => createId()),
+    sourceId: text("source_id").notNull().references(() => wikiSources.id, { onDelete: "cascade" }),
+    role: text("role", { enum: ["author", "editor"] }).notNull().default("author"),
+    given: text("given").notNull().default(""),
+    family: text("family").notNull().default(""),
+    literal: text("literal").notNull().default(""),
+    sortOrder: integer("sort_order").notNull().default(0),
+  },
+  (table) => [index("wiki_contributors_source_idx").on(table.sourceId)],
+);
+
+export const wikiTags = sqliteTable(
+  "wiki_tags",
+  {
+    id: text("id").primaryKey().$defaultFn(() => createId()),
+    name: text("name").notNull(),
+    normalizedName: text("normalized_name").notNull(),
+    color: text("color").notNull().default("indigo"),
+    createdBy: text("created_by").notNull().references(() => user.id),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [uniqueIndex("wiki_tags_normalized_unique").on(table.normalizedName)],
+);
+
+export const wikiPageTags = sqliteTable(
+  "wiki_page_tags",
+  {
+    pageId: text("page_id").notNull().references(() => wikiPages.id, { onDelete: "cascade" }),
+    tagId: text("tag_id").notNull().references(() => wikiTags.id, { onDelete: "cascade" }),
+  },
+  (table) => [primaryKey({ columns: [table.pageId, table.tagId] })],
+);
+
+export const wikiSourceTags = sqliteTable(
+  "wiki_source_tags",
+  {
+    sourceId: text("source_id").notNull().references(() => wikiSources.id, { onDelete: "cascade" }),
+    tagId: text("tag_id").notNull().references(() => wikiTags.id, { onDelete: "cascade" }),
+  },
+  (table) => [primaryKey({ columns: [table.sourceId, table.tagId] })],
+);
+
+export const wikiPageSources = sqliteTable(
+  "wiki_page_sources",
+  {
+    pageId: text("page_id").notNull().references(() => wikiPages.id, { onDelete: "cascade" }),
+    sourceId: text("source_id").notNull().references(() => wikiSources.id, { onDelete: "cascade" }),
+    relation: text("relation", { enum: ["supporting", "citation"] }).notNull().default("supporting"),
+  },
+  (table) => [
+    primaryKey({ columns: [table.pageId, table.sourceId, table.relation] }),
+    index("wiki_page_sources_source_idx").on(table.sourceId),
+  ],
+);
+
+export const wikiFavorites = sqliteTable(
+  "wiki_favorites",
+  {
+    userId: text("user_id").notNull().references(() => user.id, { onDelete: "cascade" }),
+    entityType: text("entity_type", { enum: ["page", "source"] }).notNull(),
+    entityId: text("entity_id").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [primaryKey({ columns: [table.userId, table.entityType, table.entityId] })],
+);
+
+export const wikiPageRevisions = sqliteTable(
+  "wiki_page_revisions",
+  {
+    id: text("id").primaryKey().$defaultFn(() => createId()),
+    pageId: text("page_id").notNull().references(() => wikiPages.id, { onDelete: "cascade" }),
+    version: integer("version").notNull(),
+    title: text("title").notNull(),
+    contentJson: text("content_json").notNull(),
+    status: text("status", { enum: wikiPageStatuses }).notNull(),
+    citationLocale: text("citation_locale").notNull(),
+    kind: text("kind", { enum: ["autosave", "conflict", "restore"] }).notNull().default("autosave"),
+    createdBy: text("created_by").notNull().references(() => user.id),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [index("wiki_page_revisions_page_idx").on(table.pageId, table.createdAt)],
+);
+
+export const wikiSourceRevisions = sqliteTable(
+  "wiki_source_revisions",
+  {
+    id: text("id").primaryKey().$defaultFn(() => createId()),
+    sourceId: text("source_id").notNull().references(() => wikiSources.id, { onDelete: "cascade" }),
+    version: integer("version").notNull(),
+    snapshotJson: text("snapshot_json").notNull(),
+    createdBy: text("created_by").notNull().references(() => user.id),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [index("wiki_source_revisions_source_idx").on(table.sourceId, table.createdAt)],
+);
+
+export const wikiCommentThreads = sqliteTable(
+  "wiki_comment_threads",
+  {
+    id: text("id").primaryKey().$defaultFn(() => createId()),
+    pageId: text("page_id").notNull().references(() => wikiPages.id, { onDelete: "cascade" }),
+    anchorQuote: text("anchor_quote").notNull().default(""),
+    orphaned: integer("orphaned", { mode: "boolean" }).notNull().default(false),
+    resolvedAt: integer("resolved_at", { mode: "timestamp_ms" }),
+    resolvedBy: text("resolved_by").references(() => user.id),
+    assigneeId: text("assignee_id").references(() => user.id),
+    createdBy: text("created_by").notNull().references(() => user.id),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [index("wiki_comment_threads_page_idx").on(table.pageId)],
+);
+
+export const wikiComments = sqliteTable(
+  "wiki_comments",
+  {
+    id: text("id").primaryKey().$defaultFn(() => createId()),
+    threadId: text("thread_id").notNull().references(() => wikiCommentThreads.id, { onDelete: "cascade" }),
+    body: text("body").notNull(),
+    createdBy: text("created_by").notNull().references(() => user.id),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [index("wiki_comments_thread_idx").on(table.threadId)],
+);
+
+export const wikiNotifications = sqliteTable(
+  "wiki_notifications",
+  {
+    id: text("id").primaryKey().$defaultFn(() => createId()),
+    userId: text("user_id").notNull().references(() => user.id, { onDelete: "cascade" }),
+    actorId: text("actor_id").notNull().references(() => user.id, { onDelete: "cascade" }),
+    type: text("type", { enum: ["mention", "reply", "assignment", "resolved"] }).notNull(),
+    pageId: text("page_id").references(() => wikiPages.id, { onDelete: "cascade" }),
+    threadId: text("thread_id").references(() => wikiCommentThreads.id, { onDelete: "cascade" }),
+    readAt: integer("read_at", { mode: "timestamp_ms" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [index("wiki_notifications_user_idx").on(table.userId, table.readAt, table.createdAt)],
 );
 
 // Rebuilt on every save by walking the Tiptap document for internal links.

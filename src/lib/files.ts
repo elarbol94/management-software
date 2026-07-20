@@ -8,7 +8,7 @@ import { attachments, attachmentEntityTypes } from "@/db/schema";
 export const UPLOADS_PATH =
   process.env.UPLOADS_PATH ?? path.join(process.cwd(), "data", "uploads");
 
-export const MAX_UPLOAD_BYTES = 20 * 1024 * 1024; // 20 MB
+export const MAX_UPLOAD_BYTES = 50 * 1024 * 1024; // 50 MB
 
 const ALLOWED_MIME: Record<string, string> = {
   "application/pdf": ".pdf",
@@ -16,6 +16,12 @@ const ALLOWED_MIME: Record<string, string> = {
   "image/jpeg": ".jpg",
   "image/webp": ".webp",
   "image/heic": ".heic",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
+  "text/plain": ".txt",
+  "text/markdown": ".md",
+  "text/csv": ".csv",
+  "text/tab-separated-values": ".tsv",
 };
 
 export type AttachmentEntityType = (typeof attachmentEntityTypes)[number];
@@ -39,7 +45,7 @@ export async function saveAttachment(options: {
   const ext = ALLOWED_MIME[file.type];
   if (!ext) throw new UploadError(`File type not allowed: ${file.type}`);
   if (file.size > MAX_UPLOAD_BYTES) {
-    throw new UploadError("File exceeds the 20 MB limit");
+    throw new UploadError("File exceeds the 50 MB limit");
   }
 
   const buffer = Buffer.from(await file.arrayBuffer());

@@ -1,0 +1,8 @@
+"use client";
+import { useState } from "react";
+import { useTranslations } from "next-intl";
+import { Plus } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { SourceForm } from "./source-form";
+export function NewSourceDialog() { const t = useTranslations("wiki"); const [open, setOpen] = useState(false); return <Dialog open={open} onOpenChange={setOpen}><DialogTrigger render={<Button><Plus className="size-4" />{t("newSource")}</Button>} /><DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-3xl"><DialogHeader><DialogTitle>{t("newSource")}</DialogTitle></DialogHeader><SourceForm compact onSaved={() => setOpen(false)} /></DialogContent></Dialog>; }

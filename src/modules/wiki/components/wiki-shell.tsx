@@ -1,298 +1,73 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useFormatter, useTranslations } from "next-intl";
-import {
-  ChevronRight,
-  FileText,
-  Link2,
-  MoreHorizontal,
-  Pencil,
-  Plus,
-  Search,
-  Trash2,
-} from "lucide-react";
-import {
-  createPage,
-  deletePage,
-  renamePage,
-  searchWiki,
-} from "@/modules/wiki/actions";
-import type { WikiTreeNode, WikiSearchResult } from "@/modules/wiki/queries";
+import { BookMarked, Check, Clock3, History, Link2, MessageSquareText, Plus, Star, Trash2, X } from "lucide-react";
+import { createPage, deletePage, renamePage } from "../actions";
+import { addComment, linkSupportingSource, restorePageRevision, setCommentResolved, toggleFavorite, unlinkSupportingSource, updatePageResearchMeta } from "../research-actions";
+import type { CitationSource } from "../lib/citations";
+import { formatBibliographyEntry } from "../lib/citations";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
 import { WikiEditor } from "./wiki-editor";
+import { AttachmentPanel } from "./attachment-panel";
+import { PageExportMenu } from "./page-export-menu";
 
-type PageDto = { id: string; title: string; slug: string; contentJson: string };
 type PageRef = { id: string; title: string; slug: string };
+type SourceRef = { id: string; title: string; issuedDate: string; contributors: string };
+type CommentThread = { id: string; anchorQuote: string; orphaned: boolean; resolvedAt: Date | null; assigneeId: string | null; createdAt: Date; createdByName: string; comments: Array<{ id: string; body: string; createdAt: Date; createdByName: string }> };
 
-function TreeNode({
-  node,
-  activeSlug,
-  depth,
-  onAddChild,
-  onRename,
-  onDelete,
-}: {
-  node: WikiTreeNode;
-  activeSlug: string;
-  depth: number;
-  onAddChild: (parentId: string) => void;
-  onRename: (node: WikiTreeNode) => void;
-  onDelete: (node: WikiTreeNode) => void;
-}) {
-  const t = useTranslations("wiki");
-  const [expanded, setExpanded] = useState(true);
-  const active = node.slug === activeSlug;
-
-  return (
-    <div>
-      <div
-        className={`group flex items-center gap-1 rounded-md py-1 pr-1 text-sm ${
-          active ? "bg-accent text-accent-foreground" : "hover:bg-accent/50"
-        }`}
-        style={{ paddingLeft: `${depth * 12 + 4}px` }}
-      >
-        {node.children.length > 0 ? (
-          <button
-            type="button"
-            onClick={() => setExpanded(!expanded)}
-            className="flex size-4 shrink-0 items-center justify-center text-muted-foreground"
-          >
-            <ChevronRight
-              className={`size-3 transition-transform ${expanded ? "rotate-90" : ""}`}
-            />
-          </button>
-        ) : (
-          <FileText className="size-3.5 shrink-0 text-muted-foreground" />
-        )}
-        <Link href={`/wiki/${node.slug}`} className="min-w-0 flex-1 truncate">
-          {node.icon ? `${node.icon} ` : ""}
-          {node.title}
-        </Link>
-        <DropdownMenu>
-          <DropdownMenuTrigger
-            render={
-              <Button
-                variant="ghost"
-                size="icon-xs"
-                className="opacity-0 group-hover:opacity-100 data-popup-open:opacity-100"
-              />
-            }
-          >
-            <MoreHorizontal className="size-3.5" />
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="start">
-            <DropdownMenuItem onClick={() => onAddChild(node.id)}>
-              <Plus className="mr-2 size-4" />
-              {t("newSubpage")}
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => onRename(node)}>
-              <Pencil className="mr-2 size-4" />
-              {t("rename")}
-            </DropdownMenuItem>
-            <DropdownMenuItem variant="destructive" onClick={() => onDelete(node)}>
-              <Trash2 className="mr-2 size-4" />
-              {t("deletePage")}
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </div>
-      {expanded &&
-        node.children.map((child) => (
-          <TreeNode
-            key={child.id}
-            node={child}
-            activeSlug={activeSlug}
-            depth={depth + 1}
-            onAddChild={onAddChild}
-            onRename={onRename}
-            onDelete={onDelete}
-          />
-        ))}
-    </div>
-  );
-}
-
-export function WikiShell({
-  page,
-  tree,
-  backlinks,
-  allPages,
-  meta,
-}: {
-  page: PageDto;
-  tree: WikiTreeNode[];
-  backlinks: PageRef[];
-  allPages: PageRef[];
+export function WikiShell({ page, backlinks, allPages, sources, citationSources, research, comments, users, attachments, meta }: {
+  page: { id: string; title: string; slug: string; contentJson: string; status: "inbox" | "working" | "evergreen"; citationLocale: string; version: number };
+  backlinks: PageRef[]; allPages: PageRef[]; sources: SourceRef[]; citationSources: CitationSource[];
+  research: { tags: Array<{ id: string; name: string; color: string }>; supportingSources: Array<{ id: string; title: string; issuedDate: string; relation: string }>; favorite: boolean; revisions: Array<{ id: string; version: number; kind: string; createdAt: Date; createdByName: string }> };
+  comments: CommentThread[]; users: Array<{ id: string; name: string }>;
+  attachments: Array<{ id: string; fileName: string; mimeType: string; sizeBytes: number }>;
   meta: { updatedAt: number; updatedByName: string } | null;
 }) {
-  const t = useTranslations("wiki");
-  const tCommon = useTranslations("common");
-  const format = useFormatter();
-  const router = useRouter();
+  const t = useTranslations("wiki"); const common = useTranslations("common"); const format = useFormatter(); const router = useRouter();
+  const [status, setStatus] = useState(page.status); const [citationLocale, setCitationLocale] = useState(page.citationLocale);
+  const [tags, setTags] = useState(research.tags.map((tag) => tag.name).join(", ")); const [metaSaved, setMetaSaved] = useState(false);
+  const [sourceToLink, setSourceToLink] = useState(""); const [commentText, setCommentText] = useState("");
+  const bibliography = useMemo(() => [...citationSources].sort((a, b) => formatBibliographyEntry(a).localeCompare(formatBibliographyEntry(b))), [citationSources]);
 
-  const [query, setQuery] = useState("");
-  const [results, setResults] = useState<WikiSearchResult[] | null>(null);
-  const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  function onQueryChange(value: string) {
-    setQuery(value);
-    if (searchTimer.current) clearTimeout(searchTimer.current);
-    if (!value.trim()) {
-      setResults(null);
-      return;
-    }
-    searchTimer.current = setTimeout(async () => {
-      try {
-        setResults(await searchWiki(value));
-      } catch {
-        setResults([]);
-      }
-    }, 250);
+  async function saveMeta(nextStatus = status, nextLocale = citationLocale) {
+    await updatePageResearchMeta({ pageId: page.id, status: nextStatus, citationLocale: nextLocale as "de-DE" | "en-US", tagNames: tags.split(",").map((tag) => tag.trim()).filter(Boolean) });
+    setMetaSaved(true); setTimeout(() => setMetaSaved(false), 1600); router.refresh();
   }
 
-  async function onAddPage(parentId: string | null) {
-    const title = window.prompt(t("pageTitle"));
-    if (!title?.trim()) return;
-    const { slug } = await createPage({ title: title.trim(), parentId });
-    router.push(`/wiki/${slug}`);
-    router.refresh();
-  }
+  async function rename() { const title = prompt(t("pageTitle"), page.title); if (!title?.trim()) return; await renamePage(page.id, title.trim()); router.refresh(); }
+  async function remove() { if (!confirm(common("confirmDeleteTitle"))) return; await deletePage(page.id); router.push("/wiki/inbox"); router.refresh(); }
 
-  async function onRename(node: PageRef) {
-    const title = window.prompt(t("pageTitle"), node.title);
-    if (!title?.trim()) return;
-    await renamePage(node.id, title.trim());
-    router.refresh();
-  }
-
-  async function onDelete(node: PageRef) {
-    if (!window.confirm(tCommon("confirmDeleteTitle"))) return;
-    await deletePage(node.id);
-    if (node.id === page.id) router.push("/wiki");
-    router.refresh();
-  }
-
-  return (
-    <div className="flex h-full gap-6">
-      <aside className="flex w-64 shrink-0 flex-col gap-3">
-        <div className="relative">
-          <Search className="absolute top-2 left-2.5 size-4 text-muted-foreground" />
-          <Input
-            value={query}
-            onChange={(e) => onQueryChange(e.target.value)}
-            placeholder={t("searchPlaceholder")}
-            className="pl-8"
-          />
-          {results !== null && (
-            <div className="absolute top-full right-0 left-0 z-20 mt-1 flex flex-col overflow-hidden rounded-md border bg-popover shadow-md">
-              {results.length === 0 && (
-                <span className="px-3 py-2 text-sm text-muted-foreground">
-                  {t("noResults")}
-                </span>
-              )}
-              {results.map((result) => (
-                <Link
-                  key={result.pageId}
-                  href={`/wiki/${result.slug}`}
-                  onClick={() => setQuery("")}
-                  className="flex flex-col gap-0.5 px-3 py-2 text-sm hover:bg-accent"
-                >
-                  <span className="font-medium">{result.title}</span>
-                  <span
-                    className="truncate text-xs text-muted-foreground [&_mark]:bg-transparent [&_mark]:font-semibold [&_mark]:text-foreground"
-                    dangerouslySetInnerHTML={{ __html: result.snippet }}
-                  />
-                </Link>
-              ))}
-            </div>
-          )}
-        </div>
-
-        <Button
-          variant="outline"
-          size="sm"
-          className="self-start"
-          onClick={() => onAddPage(null)}
-        >
-          <Plus className="size-4" />
-          {t("newPage")}
-        </Button>
-
-        <nav className="flex flex-col gap-0.5 overflow-y-auto">
-          {tree.map((node) => (
-            <TreeNode
-              key={node.id}
-              node={node}
-              activeSlug={page.slug}
-              depth={0}
-              onAddChild={(parentId) => onAddPage(parentId)}
-              onRename={onRename}
-              onDelete={onDelete}
-            />
-          ))}
-        </nav>
-      </aside>
-
-      <div className="flex min-w-0 flex-1 flex-col gap-4">
-        <div className="flex items-start justify-between gap-4">
-          <h1
-            className="cursor-pointer text-2xl font-semibold tracking-tight"
-            title={t("rename")}
-            onClick={() => onRename(page)}
-          >
-            {page.title}
-          </h1>
-          {meta && (
-            <span className="pt-2 text-xs whitespace-nowrap text-muted-foreground">
-              {t("lastEdited", { name: meta.updatedByName })} ·{" "}
-              {format.dateTime(new Date(meta.updatedAt), {
-                day: "2-digit",
-                month: "2-digit",
-                year: "numeric",
-                hour: "2-digit",
-                minute: "2-digit",
-              })}
-            </span>
-          )}
-        </div>
-
-        <WikiEditor
-          key={page.id}
-          pageId={page.id}
-          initialContent={page.contentJson}
-          allPages={allPages.filter((p) => p.id !== page.id)}
-        />
-
-        {backlinks.length > 0 && (
-          <div className="mt-4 flex flex-col gap-2 border-t pt-4">
-            <h2 className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
-              <Link2 className="size-4" />
-              {t("backlinks")}
-            </h2>
-            <div className="flex flex-wrap gap-2">
-              {backlinks.map((backlink) => (
-                <Link
-                  key={backlink.id}
-                  href={`/wiki/${backlink.slug}`}
-                  className="rounded-md border px-2 py-1 text-sm hover:bg-accent"
-                >
-                  {backlink.title}
-                </Link>
-              ))}
-            </div>
-          </div>
-        )}
+  return <main className="mx-auto max-w-[92rem] p-4 md:p-7">
+    <header className="mb-5 border-b pb-4">
+      <div className="flex flex-wrap items-start justify-between gap-4"><div className="min-w-0"><button onClick={rename} className="max-w-4xl text-left text-3xl font-semibold tracking-tight hover:text-indigo-700 dark:hover:text-indigo-300">{page.title}</button>{meta && <p className="mt-1 flex items-center gap-1 text-xs text-muted-foreground"><Clock3 className="size-3" />{t("lastEdited", { name: meta.updatedByName })} · {format.dateTime(new Date(meta.updatedAt), { dateStyle: "medium", timeStyle: "short" })}</p>}</div>
+        <div className="flex items-center gap-1"><Button variant="ghost" size="icon-sm" title={t("newSubpage")} onClick={async () => { const title = prompt(t("pageTitle")); if (!title?.trim()) return; const child = await createPage({ title: title.trim(), parentId: page.id }); router.push(`/wiki/pages/${child.slug}`); router.refresh(); }}><Plus className="size-4" /></Button><PageExportMenu pageId={page.id} /><Button variant={research.favorite ? "secondary" : "ghost"} size="icon-sm" title={t("favorite")} onClick={async () => { await toggleFavorite("page", page.id); router.refresh(); }}><Star className={research.favorite ? "size-4 fill-indigo-400 text-indigo-500" : "size-4"} /></Button><Button variant="ghost" size="icon-sm" title={t("deletePage")} onClick={remove}><Trash2 className="size-4 text-destructive" /></Button></div></div>
+      <div className="mt-4 flex flex-wrap items-center gap-2"><Select value={status} onValueChange={(value) => { const next = value as typeof status; setStatus(next); void saveMeta(next, citationLocale); }}><SelectTrigger className="h-8 w-36"><SelectValue /></SelectTrigger><SelectContent>{["inbox","working","evergreen"].map((item) => <SelectItem key={item} value={item}>{t(`pageStatuses.${item}`)}</SelectItem>)}</SelectContent></Select>
+        <Select value={citationLocale} onValueChange={(value) => { setCitationLocale(value); void saveMeta(status, value); }}><SelectTrigger className="h-8 w-32"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="de-DE">APA · DE</SelectItem><SelectItem value="en-US">APA · EN</SelectItem></SelectContent></Select>
+        <div className="flex min-w-52 flex-1 items-center gap-1"><Input value={tags} onChange={(event) => setTags(event.target.value)} onBlur={() => void saveMeta()} placeholder={t("tagsHint")} className="h-8 text-xs" />{metaSaved && <Check className="size-4 text-emerald-600" />}</div>
       </div>
+    </header>
+
+    <div className="grid gap-7 xl:grid-cols-[minmax(0,1fr)_19rem]">
+      <section className="min-w-0">
+        <WikiEditor key={page.id} pageId={page.id} pageVersion={page.version} initialContent={page.contentJson} allPages={allPages} sources={sources} users={users} citationLocale={citationLocale} />
+        {bibliography.length > 0 && <section className="mt-10 border-t pt-6"><p className="mb-1 text-xs font-semibold tracking-[0.16em] text-indigo-600 uppercase">APA 7</p><h2 className="mb-4 text-xl font-semibold">{t("references")}</h2><ol className="space-y-3 text-sm leading-relaxed">{bibliography.map((source) => <li key={source.id} className="pl-6 -indent-6">{formatBibliographyEntry(source)}</li>)}</ol></section>}
+        {backlinks.length > 0 && <section className="mt-8 border-t pt-5"><h2 className="mb-3 flex items-center gap-2 text-sm font-medium"><Link2 className="size-4 text-indigo-500" />{t("backlinks")}</h2><div className="flex flex-wrap gap-2">{backlinks.map((item) => <Link key={item.id} href={`/wiki/pages/${item.slug}`} className="rounded-md border px-2 py-1 text-sm hover:bg-accent">{item.title}</Link>)}</div></section>}
+      </section>
+
+      <aside className="space-y-6 xl:border-l xl:pl-6">
+        <AttachmentPanel entityType="wikiPage" entityId={page.id} initial={attachments} />
+        <section><h3 className="mb-2 flex items-center gap-2 text-sm font-medium"><BookMarked className="size-4 text-indigo-500" />{t("supportingSources")}</h3><div className="flex gap-1"><Select value={sourceToLink} onValueChange={setSourceToLink}><SelectTrigger className="min-w-0 flex-1"><SelectValue placeholder={t("chooseSource")} /></SelectTrigger><SelectContent>{sources.filter((source) => !research.supportingSources.some((linked) => linked.id === source.id)).map((source) => <SelectItem key={source.id} value={source.id}>{source.title}</SelectItem>)}</SelectContent></Select><Button size="icon" variant="outline" disabled={!sourceToLink} onClick={async () => { await linkSupportingSource(page.id, sourceToLink); setSourceToLink(""); router.refresh(); }}><Plus className="size-4" /></Button></div><div className="mt-2 space-y-1">{research.supportingSources.map((source) => <div key={source.id} className="group flex items-center gap-1 rounded-md border p-2 text-xs"><Link href={`/wiki/sources/${source.id}`} className="min-w-0 flex-1 truncate font-medium">{source.title}</Link><button onClick={async () => { await unlinkSupportingSource(page.id, source.id); router.refresh(); }} className="opacity-0 group-hover:opacity-100"><X className="size-3" /></button></div>)}</div></section>
+        <section><h3 className="mb-2 flex items-center gap-2 text-sm font-medium"><MessageSquareText className="size-4 text-indigo-500" />{t("comments")}</h3><Textarea value={commentText} onChange={(event) => setCommentText(event.target.value)} rows={3} placeholder={t("pageCommentPlaceholder")} /><Button className="mt-2" size="sm" disabled={!commentText.trim()} onClick={async () => { await addComment({ pageId: page.id, body: commentText, anchorQuote: "" }); setCommentText(""); router.refresh(); }}>{t("addComment")}</Button>
+          <div className="mt-3 space-y-3">{comments.map((thread) => <div key={thread.id} className="rounded-md border p-2 text-xs">{thread.anchorQuote && <p className="mb-2 border-l-2 border-indigo-300 pl-2 italic text-muted-foreground">“{thread.anchorQuote}”{thread.orphaned && <span className="ml-1 text-amber-600">({t("orphaned")})</span>}</p>}{thread.comments.map((comment) => <div key={comment.id} className="mb-2"><p>{comment.body}</p><p className="mt-0.5 text-[10px] text-muted-foreground">{comment.createdByName} · {comment.createdAt.toLocaleDateString()}</p></div>)}<button onClick={async () => { await setCommentResolved(thread.id, !thread.resolvedAt); router.refresh(); }} className="text-indigo-600">{thread.resolvedAt ? t("reopen") : t("resolve")}</button></div>)}</div>
+        </section>
+        <section><h3 className="mb-2 flex items-center gap-2 text-sm font-medium"><History className="size-4 text-indigo-500" />{t("history")}</h3><div className="max-h-52 space-y-2 overflow-y-auto">{research.revisions.map((revision) => <div key={revision.id} className="flex items-start justify-between gap-2 text-xs"><p><span className="font-medium">v{revision.version}</span> · {revision.createdByName}<br /><span className="text-muted-foreground">{revision.createdAt.toLocaleString()}</span></p><Button size="xs" variant="ghost" onClick={async () => { if (!confirm(t("restoreRevisionConfirm"))) return; await restorePageRevision(revision.id); router.refresh(); }}>{t("restore")}</Button></div>)}</div></section>
+      </aside>
     </div>
-  );
+  </main>;
 }
