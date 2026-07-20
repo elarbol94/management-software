@@ -8,6 +8,7 @@ import {
   assets,
   appSettings,
   budgetPlans,
+  businessLocations,
   categories,
   entries,
   entryAuditLog,
@@ -15,12 +16,23 @@ import {
   entryTaxLines,
   employees,
   employmentTypes,
+  payrollMonthContexts,
 } from "@/db/schema";
 import { requireAdmin, requireUserOrThrow } from "@/lib/auth";
 import { deleteAttachmentsFor } from "@/lib/files";
 import { breakdownFromGross, isVatRate } from "./lib/vat";
 import { categoryUsageCount } from "./queries";
 import { syncFundingIncomeLink } from "@/modules/funding/accounting-integration";
+import {
+  calculateFromSpecialFields,
+  normalizeEmploymentType,
+  payrollPaymentLines,
+  payrollResultToSpecialFields,
+  storedAmountCents,
+  validatePayrollMode,
+  type SpecialFields,
+} from "./lib/payroll-special-fields";
+import { allocatePayrollLevyBases } from "./lib/payroll-at-2026";
 
 const specialValueSchema = z.union([
   z.string().max(2000),
@@ -107,8 +119,90 @@ export async function upsertEntry(input: EntryInput): Promise<{ id: string }> {
     throw new Error("Forbidden: personnel data");
   }
 
+  let effectiveSpecialFields: SpecialFields = { ...data.specialFields };
+  let payrollContextUpdate: {
+    payrollMonth: string;
+    internalPayrollCents: number;
+    externalPayrollCents: number;
+    externalMarginalPayrollCents: number;
+    marginalPayrollCents: number;
+  } | null = null;
+
+  if (category.template === "personnel") {
+    const employeeId = typeof effectiveSpecialFields.employeeId === "string" ? effectiveSpecialFields.employeeId : "";
+    const employee = employeeId ? db.select().from(employees).where(eq(employees.id, employeeId)).get() : null;
+    if (employeeId && !employee) throw new Error("Employee not found");
+    if (employee) {
+      effectiveSpecialFields = {
+        ...effectiveSpecialFields,
+        employeeName: employee.name,
+        personnelNumber: employee.personnelNumber,
+        employmentType: normalizeEmploymentType(employee.employmentType) ?? "employee",
+        locationId: employee.locationId,
+      };
+    }
+
+    const calculationMode = validatePayrollMode(effectiveSpecialFields);
+    effectiveSpecialFields.calculationMode = calculationMode;
+    if (calculationMode === "manual") {
+      const overrideReason = String(effectiveSpecialFields.overrideReason ?? "").trim();
+      effectiveSpecialFields.overrideReason = overrideReason;
+    } else {
+      const payrollMonth = String(effectiveSpecialFields.payrollMonth ?? "");
+      const employmentType = normalizeEmploymentType(effectiveSpecialFields.employmentType);
+      if (!employmentType) throw new Error("Invalid employment type");
+      effectiveSpecialFields.employmentType = employmentType;
+
+      const defaultLocation = db.select().from(businessLocations).where(eq(businessLocations.name, "Graz / Steiermark")).get()
+        ?? db.select().from(businessLocations).where(eq(businessLocations.active, true)).get();
+      const locationId = String(effectiveSpecialFields.locationId ?? employee?.locationId ?? defaultLocation?.id ?? "");
+      const location = locationId ? db.select().from(businessLocations).where(eq(businessLocations.id, locationId)).get() : null;
+      if (!location || !location.active) throw new Error("An active business location is required");
+      effectiveSpecialFields.locationId = location.id;
+      effectiveSpecialFields.municipality = location.municipality;
+
+      const previousContext = db.select().from(payrollMonthContexts).where(eq(payrollMonthContexts.payrollMonth, payrollMonth)).get();
+      const externalPayrollCents = effectiveSpecialFields.externalPayroll === null || effectiveSpecialFields.externalPayroll === undefined
+        ? (previousContext?.externalPayrollCents ?? 0)
+        : storedAmountCents(effectiveSpecialFields.externalPayroll);
+      const externalMarginalPayrollCents = effectiveSpecialFields.externalMarginalPayroll === null || effectiveSpecialFields.externalMarginalPayroll === undefined
+        ? (previousContext?.externalMarginalPayrollCents ?? 0)
+        : storedAmountCents(effectiveSpecialFields.externalMarginalPayroll);
+      if (externalPayrollCents < 0 || externalMarginalPayrollCents < 0) throw new Error("Payroll context cannot be negative");
+      effectiveSpecialFields.externalPayroll = (externalPayrollCents / 100).toFixed(2);
+      effectiveSpecialFields.externalMarginalPayroll = (externalMarginalPayrollCents / 100).toFixed(2);
+
+      const otherRows = db
+        .select({ id: entries.id, status: entries.status, specialFields: entries.specialFields })
+        .from(entries)
+        .innerJoin(categories, eq(entries.categoryId, categories.id))
+        .where(eq(categories.template, "personnel"))
+        .all()
+        .filter((row) => row.id !== data.id && row.status === "finalized")
+        .filter((row) => row.specialFields.calculationMode === "auto" && row.specialFields.payrollMonth === payrollMonth);
+      const otherInternalPayrollCents = otherRows.reduce((sum, row) => sum + storedAmountCents(row.specialFields.grossSalary), 0);
+      const otherMarginalPayrollCents = otherRows
+        .filter((row) => normalizeEmploymentType(row.specialFields.employmentType) === "marginal")
+        .reduce((sum, row) => sum + storedAmountCents(row.specialFields.grossSalary), 0);
+      const currentGrossCents = storedAmountCents(effectiveSpecialFields.grossSalary);
+      const currentBookedGrossCents = data.status === "finalized" ? currentGrossCents : 0;
+      const internalPayrollCents = otherInternalPayrollCents + currentBookedGrossCents;
+      const marginalPayrollCents = otherMarginalPayrollCents
+        + (data.status === "finalized" && employmentType === "marginal" ? currentGrossCents : 0)
+        + externalMarginalPayrollCents;
+      const result = calculateFromSpecialFields(effectiveSpecialFields, {
+        employmentType,
+        location: { state: location.state, municipality: location.municipality },
+        monthlyPayrollTotalCents: internalPayrollCents + externalPayrollCents,
+        monthlyMarginalPayrollTotalCents: marginalPayrollCents,
+      });
+      effectiveSpecialFields = payrollResultToSpecialFields(effectiveSpecialFields, result);
+      payrollContextUpdate = { payrollMonth, internalPayrollCents, externalPayrollCents, externalMarginalPayrollCents, marginalPayrollCents };
+    }
+  }
+
   const fallbackBreakdown = breakdownFromGross(data.grossAmountCents, data.vatRate);
-  const lines =
+  let lines =
     data.taxLines && data.taxLines.length > 0
       ? data.taxLines
       : [
@@ -121,6 +215,17 @@ export async function upsertEntry(input: EntryInput): Promise<{ id: string }> {
             inputVatDeductiblePercent: 100,
           },
         ];
+  if (category.template === "personnel" && effectiveSpecialFields.calculationMode === "auto") {
+    const totalCents = storedAmountCents(effectiveSpecialFields.employerTotal);
+    lines = [{
+      description: "Gesamte Arbeitgeberkosten",
+      netAmountCents: totalCents,
+      vatRate: 0,
+      vatAmountCents: 0,
+      grossAmountCents: totalCents,
+      inputVatDeductiblePercent: 0,
+    }];
+  }
 
   for (const line of lines) {
     if (!isVatRate(line.vatRate)) throw new Error("Invalid VAT rate");
@@ -143,7 +248,7 @@ export async function upsertEntry(input: EntryInput): Promise<{ id: string }> {
     }),
     { gross: 0, net: 0, vat: 0 },
   );
-  const paymentLines = data.paymentLines?.length
+  let paymentLines = data.paymentLines?.length
     ? data.paymentLines
     : totals.gross > 0
       ? [{
@@ -154,6 +259,16 @@ export async function upsertEntry(input: EntryInput): Promise<{ id: string }> {
           paymentMethod: data.paymentMethod,
         }]
       : [];
+  if (category.template === "personnel" && effectiveSpecialFields.calculationMode === "auto") {
+    paymentLines = payrollPaymentLines(effectiveSpecialFields, data.date, data.paymentMethod, {
+      net: "Nettoentgelt",
+      social: "Sozialversicherung",
+      taxOffice: "Lohnabgaben",
+      municipality: "Gemeindeabgaben",
+      provision: "Betriebliche Vorsorge",
+      other: "Weitere Personalkosten",
+    });
+  }
   const paymentTotal = paymentLines.reduce((sum, line) => sum + line.amountCents, 0);
   if (data.status === "finalized" && totals.gross <= 0) {
     throw new Error("Finalized entries require a positive amount");
@@ -191,12 +306,21 @@ export async function upsertEntry(input: EntryInput): Promise<{ id: string }> {
     notes: data.notes,
     deductiblePercent: data.deductiblePercent,
     warningOverrideReason: data.warningOverrideReason,
-    specialFields: { ...data.specialFields },
+    specialFields: effectiveSpecialFields,
     updatedAt: new Date(),
   };
 
   let id = data.id;
   db.transaction((tx) => {
+    if (payrollContextUpdate) {
+      tx.insert(payrollMonthContexts)
+        .values({ ...payrollContextUpdate, updatedAt: new Date() })
+        .onConflictDoUpdate({
+          target: payrollMonthContexts.payrollMonth,
+          set: { ...payrollContextUpdate, updatedAt: new Date() },
+        })
+        .run();
+    }
     if (category.template === "personnel") {
       const employeeId = typeof values.specialFields.employeeId === "string"
         ? values.specialFields.employeeId
@@ -214,6 +338,7 @@ export async function upsertEntry(input: EntryInput): Promise<{ id: string }> {
             name: employeeName,
             personnelNumber: String(values.specialFields.personnelNumber ?? ""),
             employmentType,
+            locationId: typeof values.specialFields.locationId === "string" ? values.specialFields.locationId : null,
           }).returning({ id: employees.id }).get();
           values.specialFields.employeeId = employee.id;
         }
@@ -311,6 +436,108 @@ export async function upsertEntry(input: EntryInput): Promise<{ id: string }> {
         reason: data.warningOverrideReason,
         changedBy: user.id,
       }).run();
+    }
+
+    if (payrollContextUpdate) {
+      const context = tx.select().from(payrollMonthContexts)
+        .where(eq(payrollMonthContexts.payrollMonth, payrollContextUpdate.payrollMonth)).get();
+      const automaticRows = tx
+        .select({ entry: entries })
+        .from(entries)
+        .innerJoin(categories, eq(entries.categoryId, categories.id))
+        .where(and(eq(categories.template, "personnel"), eq(entries.status, "finalized")))
+        .all()
+        .map((row) => row.entry)
+        .filter((row) => row.specialFields.calculationMode === "auto" && row.specialFields.payrollMonth === payrollContextUpdate.payrollMonth)
+        .sort((a, b) => a.id.localeCompare(b.id));
+      const internalPayrollCents = automaticRows.reduce((sum, row) => sum + storedAmountCents(row.specialFields.grossSalary), 0);
+      const internalMarginalPayrollCents = automaticRows
+        .filter((row) => normalizeEmploymentType(row.specialFields.employmentType) === "marginal")
+        .reduce((sum, row) => sum + storedAmountCents(row.specialFields.grossSalary), 0);
+      const externalMarginalPayrollCents = context?.externalMarginalPayrollCents ?? storedAmountCents(effectiveSpecialFields.externalMarginalPayroll);
+      const marginalPayrollCents = internalMarginalPayrollCents + externalMarginalPayrollCents;
+      const combinedPayrollCents = internalPayrollCents + (context?.externalPayrollCents ?? 0);
+      const levyBases = allocatePayrollLevyBases(
+        automaticRows.map((row) => ({ id: row.id, grossCents: storedAmountCents(row.specialFields.grossSalary) })),
+        combinedPayrollCents,
+      );
+
+      tx.insert(payrollMonthContexts)
+        .values({
+          payrollMonth: payrollContextUpdate.payrollMonth,
+          internalPayrollCents,
+          externalPayrollCents: context?.externalPayrollCents ?? 0,
+          externalMarginalPayrollCents,
+          marginalPayrollCents,
+          updatedAt: new Date(),
+        })
+        .onConflictDoUpdate({
+          target: payrollMonthContexts.payrollMonth,
+          set: { internalPayrollCents, externalMarginalPayrollCents, marginalPayrollCents, updatedAt: new Date() },
+        })
+        .run();
+
+      for (const row of automaticRows) {
+        const locationId = String(row.specialFields.locationId ?? "");
+        const location = tx.select().from(businessLocations).where(eq(businessLocations.id, locationId)).get();
+        if (!location) throw new Error("Payroll location not found during monthly recalculation");
+        const result = calculateFromSpecialFields(row.specialFields, {
+          location: { state: location.state, municipality: location.municipality },
+          monthlyPayrollTotalCents: combinedPayrollCents,
+          monthlyMarginalPayrollTotalCents: marginalPayrollCents,
+          levyBasisCents: levyBases.get(row.id) ?? 0,
+        });
+        const recalculatedFields = payrollResultToSpecialFields({
+          ...row.specialFields,
+          externalPayroll: ((context?.externalPayrollCents ?? 0) / 100).toFixed(2),
+          externalMarginalPayroll: (externalMarginalPayrollCents / 100).toFixed(2),
+        }, result);
+        const totalCents = result.employerTotalCents;
+        const recalculatedPayments = payrollPaymentLines(recalculatedFields, row.date, row.paymentMethod, {
+          net: "Nettoentgelt",
+          social: "Sozialversicherung",
+          taxOffice: "Lohnabgaben",
+          municipality: "Gemeindeabgaben",
+          provision: "Betriebliche Vorsorge",
+          other: "Weitere Personalkosten",
+        });
+        if (row.id !== id) {
+          tx.insert(entryAuditLog).values({
+            entryId: row.id,
+            action: "monthly_payroll_recalculation",
+            snapshot: { entry: row },
+            reason: `Monatskontext ${payrollContextUpdate.payrollMonth} geändert`,
+            changedBy: user.id,
+          }).run();
+        }
+        tx.update(entries).set({
+          grossAmountCents: totalCents,
+          netAmountCents: totalCents,
+          vatAmountCents: 0,
+          vatRate: 0,
+          specialFields: recalculatedFields,
+          updatedAt: new Date(),
+        }).where(eq(entries.id, row.id)).run();
+        tx.delete(entryTaxLines).where(eq(entryTaxLines.entryId, row.id)).run();
+        tx.insert(entryTaxLines).values({
+          entryId: row.id,
+          description: "Gesamte Arbeitgeberkosten",
+          netAmountCents: totalCents,
+          vatRate: 0,
+          vatAmountCents: 0,
+          grossAmountCents: totalCents,
+          inputVatDeductiblePercent: 0,
+          sortOrder: 0,
+        }).run();
+        tx.delete(entryPaymentLines).where(eq(entryPaymentLines.entryId, row.id)).run();
+        if (recalculatedPayments.length) {
+          tx.insert(entryPaymentLines).values(recalculatedPayments.map((line, index) => ({
+            entryId: row.id,
+            ...line,
+            sortOrder: index * 10,
+          }))).run();
+        }
+      }
     }
   });
 

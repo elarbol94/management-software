@@ -245,7 +245,8 @@ export const employmentTypes = [
   "marginal",
   "apprentice",
   "freelance",
-  "managing_director",
+  "managing_director_asvg",
+  "shareholder_managing_director_gsvg",
 ] as const;
 
 export const employees = sqliteTable("employees", {
@@ -259,6 +260,17 @@ export const employees = sqliteTable("employees", {
   joinedOn: text("joined_on"),
   leftOn: text("left_on"),
   active: integer("active", { mode: "boolean" }).notNull().default(true),
+});
+
+export const payrollMonthContexts = sqliteTable("payroll_month_contexts", {
+  payrollMonth: text("payroll_month").primaryKey(), // YYYY-MM
+  internalPayrollCents: integer("internal_payroll_cents").notNull().default(0),
+  externalPayrollCents: integer("external_payroll_cents").notNull().default(0),
+  externalMarginalPayrollCents: integer("external_marginal_payroll_cents").notNull().default(0),
+  marginalPayrollCents: integer("marginal_payroll_cents").notNull().default(0),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+    .notNull()
+    .$defaultFn(() => new Date()),
 });
 
 export const vehicles = sqliteTable("accounting_vehicles", {

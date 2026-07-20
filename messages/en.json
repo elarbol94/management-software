@@ -177,8 +177,34 @@
       "taxPaymentDate": "Payment to tax office",
       "municipalPaymentDate": "Payment to municipality",
       "provisionPaymentDate": "Payment to provision fund",
-      "noPayrollCalculation": "Values are copied from an existing payroll statement. This form does not calculate payroll.",
-      "types": { "worker": "Worker", "employee": "Salaried employee", "marginal": "Marginal employment", "apprentice": "Apprentice", "freelance": "Freelance service", "managing_director": "Managing director" },
+      "calculationMode": "Calculation mode",
+      "modes": { "auto": "Automatic", "manual": "Manual override" },
+      "location": "Business location",
+      "calculation": "Calculation breakdown",
+      "component": "Component",
+      "basisRate": "Basis and rate",
+      "amount": "Amount",
+      "fixed": "Fixed",
+      "taxableAnnual": "Annual taxable income",
+      "marginalRate": "Marginal tax rate",
+      "externalPayroll": "External payroll total",
+      "externalPayrollHint": "Gross payroll for this month already processed outside this application.",
+      "externalMarginalPayroll": "External marginal payroll",
+      "externalMarginalPayrollHint": "Marginal remuneration outside this application for the company-wide threshold.",
+      "overrideReason": "Reason for manual values",
+      "overrideReasonPlaceholder": "Why is the automatic calculation being overridden?",
+      "incompleteAuto": "Automatic calculation needs a location, employment type, 2026 payroll month, and gross remuneration.",
+      "automationNotice": "Planning and booking aid using rule version AT-2026; not certified payroll. The server recalculates all values when saving.",
+      "manualNotice": "Manual values are stored together with their reason for a clear audit trail.",
+      "warnings": {
+        "allowances_not_included": "Special payments, family bonus, commuter allowances, and benefits in kind are not included.",
+        "freelance_tax_not_calculated": "Payroll tax is not calculated automatically for freelance service contracts.",
+        "gsvg_personal_svs_excluded": "The shareholder managing director's personal SVS remains outside this booking.",
+        "marginal_threshold_exceeded": "Company-wide marginal payroll exceeds €826.65; the higher employer rate applies.",
+        "vienna_levy_assumptions": "The Vienna employer levy assumes a continuous, non-exempt employment relationship.",
+        "unsupported_year": "No automatic rule exists for this payroll month; switch to manual mode."
+      },
+      "types": { "worker": "Worker", "employee": "Salaried employee", "marginal": "Marginal employment", "apprentice": "Apprentice", "freelance": "Freelance service", "managing_director_asvg": "Managing director (ASVG)", "shareholder_managing_director_gsvg": "Shareholder managing director (GSVG)" },
       "help": {
         "grossSalary": "Regular and other gross remuneration from the existing payroll statement.",
         "netSalary": "Net amount actually paid to the employee.",
@@ -596,7 +622,8 @@
     "tabs": {
       "company": "Company",
       "users": "Users",
-      "categories": "Categories"
+      "categories": "Categories",
+      "locations": "Business locations"
     },
     "categories": {
       "title": "Categories",
@@ -623,6 +650,19 @@
         "svs": "SVS",
         "tax_levy": "Taxes and levies"
       }
+    },
+    "locations": {
+      "title": "Business locations",
+      "description": "The location and state determine DZ, the Vienna employer levy, and the housing subsidy contribution.",
+      "add": "Add business location",
+      "edit": "Edit business location",
+      "name": "Name",
+      "state": "State",
+      "municipality": "Municipality",
+      "default": "Default",
+      "inactive": "Inactive",
+      "archive": "Deactivate",
+      "restore": "Activate"
     },
     "company": {
       "title": "Company details",

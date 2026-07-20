@@ -6,11 +6,13 @@ import { useRouter } from "next/navigation";
 import {
   ArrowLeft,
   BriefcaseBusiness,
+  Calculator,
   Car,
   CircleDollarSign,
   HandCoins,
   Info,
   Landmark,
+  LockKeyhole,
   Loader2,
   Paperclip,
   Plane,
@@ -30,6 +32,8 @@ import type { categories as categoriesTable, CategoryTemplate } from "@/modules/
 import { formatCents, parseAmountToCents } from "@/lib/money";
 import { ENTRY_FORM_CONFIG, type EntryBaseField } from "../lib/entry-form-config";
 import { breakdownFromGross, breakdownFromNet, VAT_RATES } from "../lib/vat";
+import { calculatePayrollAt2026, payrollEmploymentTypes } from "../lib/payroll-at-2026";
+import { payrollResultToSpecialFields, storedAmountCents, type SpecialFields } from "../lib/payroll-special-fields";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -163,6 +167,8 @@ export function EntryDialog({
   taxSettings,
   fundingProjects,
   personnelEmployees,
+  personnelLocations,
+  payrollMonthContexts,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -171,7 +177,9 @@ export function EntryDialog({
   canManagePersonnel: boolean;
   taxSettings: { kleinunternehmer: boolean; defaultVatRate: number };
   fundingProjects: Array<{ id: string; name: string }>;
-  personnelEmployees: Array<{ id: string; name: string; personnelNumber: string; employmentType: string }>;
+  personnelEmployees: Array<{ id: string; name: string; personnelNumber: string; employmentType: string; locationId: string | null }>;
+  personnelLocations: Array<{ id: string; name: string; state: string; municipality: string }>;
+  payrollMonthContexts: Array<{ payrollMonth: string; internalPayrollCents: number; externalPayrollCents: number; externalMarginalPayrollCents: number; marginalPayrollCents: number }>;
 }) {
   const t = useTranslations("accounting");
   const tf = useTranslations("accountingEntry");
@@ -224,11 +232,13 @@ export function EntryDialog({
       setNotes(entry?.notes ?? "");
       setDeductiblePercent(entry?.deductiblePercent ?? 100);
       setWarningOverrideReason(entry?.warningOverrideReason ?? "");
-      setSpecial(
-        Object.fromEntries(
+      const restoredSpecial = Object.fromEntries(
           Object.entries(entrySpecial).map(([key, value]) => [key, typeof value === "boolean" ? value : String(value ?? "")]),
-        ),
-      );
+        );
+      const entryTemplate = categories.find((item) => item.id === entry?.categoryId)?.template;
+      if (entryTemplate === "personnel" && !restoredSpecial.calculationMode) restoredSpecial.calculationMode = "manual";
+      if (restoredSpecial.employmentType === "managing_director") restoredSpecial.employmentType = "managing_director_asvg";
+      setSpecial(restoredSpecial);
       setTaxLines(
         entry?.taxLines.length
           ? entry.taxLines.map((line) => ({
@@ -284,7 +294,12 @@ export function EntryDialog({
       : (rateFromName ?? taxSettings.defaultVatRate);
     const inputPercent = next.template === "vehicle" || taxSettings.kleinunternehmer ? 0 : 100;
     setTaxLines([newLine(rate, inputPercent)]);
-    setSpecial(next.template === "svs" ? { authority: "SVS" } : {});
+    const defaultLocation = personnelLocations.find((location) => location.name === "Graz / Steiermark") ?? personnelLocations[0];
+    setSpecial(next.template === "svs"
+      ? { authority: "SVS" }
+      : next.template === "personnel"
+        ? { calculationMode: "auto", employmentType: "employee", payrollMonth: date.slice(0, 7), locationId: defaultLocation?.id ?? "" }
+        : {});
     setDeductiblePercent(next.template === "hospitality" ? 50 : 100);
     setStep("form");
   }
@@ -313,12 +328,52 @@ export function EntryDialog({
     });
   }
 
+  const payrollCalculation = useMemo(() => {
+    if (template !== "personnel" || special.calculationMode === "manual") return null;
+    const payrollMonth = String(special.payrollMonth ?? "");
+    const location = personnelLocations.find((item) => item.id === special.locationId);
+    const employmentTypeValue = special.employmentType === "managing_director"
+      ? "managing_director_asvg"
+      : String(special.employmentType ?? "employee");
+    if (!location || !payrollEmploymentTypes.includes(employmentTypeValue as (typeof payrollEmploymentTypes)[number])) return null;
+    const context = payrollMonthContexts.find((item) => item.payrollMonth === payrollMonth);
+    const grossCents = storedAmountCents(special.grossSalary);
+    const previousEntryGross = entry?.specialFields.calculationMode === "auto" && entry.specialFields.payrollMonth === payrollMonth
+      ? storedAmountCents(entry.specialFields.grossSalary)
+      : 0;
+    const previousEntryMarginal = previousEntryGross > 0 && entry?.specialFields.employmentType === "marginal" ? previousEntryGross : 0;
+    const externalPayrollCents = special.externalPayroll === undefined || special.externalPayroll === ""
+      ? (context?.externalPayrollCents ?? 0)
+      : storedAmountCents(special.externalPayroll);
+    const externalMarginalCents = special.externalMarginalPayroll === undefined || special.externalMarginalPayroll === ""
+      ? (context?.externalMarginalPayrollCents ?? 0)
+      : storedAmountCents(special.externalMarginalPayroll);
+    const internalPayrollCents = Math.max(0, (context?.internalPayrollCents ?? 0) - previousEntryGross + grossCents);
+    const storedInternalMarginalCents = Math.max(0, (context?.marginalPayrollCents ?? 0) - (context?.externalMarginalPayrollCents ?? 0));
+    const marginalPayrollCents = Math.max(0, storedInternalMarginalCents - previousEntryMarginal
+      + (employmentTypeValue === "marginal" ? grossCents : 0) + externalMarginalCents);
+    return calculatePayrollAt2026({
+      grossCents,
+      employmentType: employmentTypeValue as (typeof payrollEmploymentTypes)[number],
+      payrollMonth,
+      location,
+      monthlyPayrollTotalCents: internalPayrollCents + externalPayrollCents,
+      monthlyMarginalPayrollTotalCents: marginalPayrollCents,
+      otherPersonnelCostCents: storedAmountCents(special.otherPersonnelCost),
+    });
+  }, [entry, payrollMonthContexts, personnelLocations, special, template]);
+
+  const effectivePersonnelSpecial = useMemo(() => {
+    if (!payrollCalculation) return special as SpecialFields;
+    return payrollResultToSpecialFields(special as SpecialFields, payrollCalculation);
+  }, [payrollCalculation, special]);
+
   const personnelCostCents = useMemo(() => {
     if (template !== "personnel") return null;
     return ["grossSalary", "employerSv", "db", "dz", "municipalTax", "bvContribution", "viennaLevy", "otherPersonnelCost"]
-      .map((key) => parseAmountToCents(String(special[key] ?? "")) ?? 0)
+      .map((key) => storedAmountCents(effectivePersonnelSpecial[key]))
       .reduce((sum, value) => sum + value, 0);
-  }, [special, template]);
+  }, [effectivePersonnelSpecial, template]);
 
   const computedLines = useMemo(() => {
     if (template === "personnel") {
@@ -369,17 +424,17 @@ export function EntryDialog({
     if (template !== "personnel") {
       return [];
     }
-    const amount = (key: string) => parseAmountToCents(String(special[key] ?? "")) ?? 0;
+    const amount = (key: string) => storedAmountCents(effectivePersonnelSpecial[key]);
     const lines = [
-      { date: String(special.employeePaymentDate || date), description: tf("personnel.payments.net"), recipient: String(special.employeeName ?? ""), amountCents: amount("netSalary"), paymentMethod },
-      { date: String(special.socialPaymentDate || date), description: tf("personnel.payments.social"), recipient: "ÖGK", amountCents: amount("employeeSv") + amount("employerSv"), paymentMethod },
-      { date: String(special.taxPaymentDate || date), description: tf("personnel.payments.taxOffice"), recipient: "Finanzamt", amountCents: amount("wageTax") + amount("db") + amount("dz"), paymentMethod },
-      { date: String(special.municipalPaymentDate || date), description: tf("personnel.payments.municipality"), recipient: String(special.municipality ?? "Gemeinde"), amountCents: amount("municipalTax") + amount("viennaLevy"), paymentMethod },
-      { date: String(special.provisionPaymentDate || date), description: tf("personnel.payments.provision"), recipient: String(special.provisionFund ?? "Vorsorgekasse"), amountCents: amount("bvContribution"), paymentMethod },
+      { date: String(effectivePersonnelSpecial.employeePaymentDate || date), description: tf("personnel.payments.net"), recipient: String(effectivePersonnelSpecial.employeeName ?? ""), amountCents: amount("netSalary"), paymentMethod },
+      { date: String(effectivePersonnelSpecial.socialPaymentDate || date), description: tf("personnel.payments.social"), recipient: "ÖGK", amountCents: amount("employeeSv") + amount("employerSv"), paymentMethod },
+      { date: String(effectivePersonnelSpecial.taxPaymentDate || date), description: tf("personnel.payments.taxOffice"), recipient: "Finanzamt", amountCents: amount("wageTax") + amount("db") + amount("dz"), paymentMethod },
+      { date: String(effectivePersonnelSpecial.municipalPaymentDate || date), description: tf("personnel.payments.municipality"), recipient: String(effectivePersonnelSpecial.municipality ?? "Gemeinde"), amountCents: amount("municipalTax") + amount("viennaLevy"), paymentMethod },
+      { date: String(effectivePersonnelSpecial.provisionPaymentDate || date), description: tf("personnel.payments.provision"), recipient: String(effectivePersonnelSpecial.provisionFund ?? "Vorsorgekasse"), amountCents: amount("bvContribution"), paymentMethod },
       { date, description: tf("personnel.payments.other"), recipient: counterparty, amountCents: amount("otherPersonnelCost"), paymentMethod },
     ];
     return lines.filter((line) => line.amountCents > 0);
-  }, [counterparty, date, paymentMethod, special, template, tf]);
+  }, [counterparty, date, effectivePersonnelSpecial, paymentMethod, template, tf]);
 
   const totals = computedLines.reduce(
     (sum, line) => ({ net: sum.net + line.netAmountCents, vat: sum.vat + line.vatAmountCents, gross: sum.gross + line.grossAmountCents }),
@@ -403,6 +458,10 @@ export function EntryDialog({
     ...(template === "asset" && !special.usefulLifeYears ? [tf("warnings.assetDetails")] : []),
     ...(template === "personnel" && paymentTotal !== totals.gross ? [tf("warnings.personnelReconciliation")] : []),
   ];
+  const payrollSubmissionBlocked = template === "personnel" && (
+    (special.calculationMode !== "manual" && (!payrollCalculation || payrollCalculation.warnings.includes("unsupported_year")))
+    || (special.calculationMode === "manual" && !String(special.overrideReason ?? "").trim())
+  );
 
   async function uploadFiles(entryId: string) {
     for (const file of pendingFiles) {
@@ -418,6 +477,7 @@ export function EntryDialog({
   async function save(status: "draft" | "finalized") {
     if (!categoryId) return;
     if (status === "finalized" && (!description.trim() || totals.gross <= 0)) return;
+    if (payrollSubmissionBlocked) return;
     if (status === "finalized" && warnings.length > 0 && !warningOverrideReason.trim()) return;
     setPending(true);
     try {
@@ -445,7 +505,7 @@ export function EntryDialog({
         deductiblePercent: effectiveDeductiblePercent,
         warningOverrideReason,
         specialFields: Object.fromEntries(
-          Object.entries(special).map(([key, value]) => [key, value === "" ? null : value]),
+          Object.entries(effectivePersonnelSpecial).map(([key, value]) => [key, value === "" ? null : value]),
         ),
         taxLines: computedLines,
         paymentLines,
@@ -526,20 +586,46 @@ export function EntryDialog({
       </FormSection>
     );
     if (template === "personnel") {
-      const fields = ["grossSalary", "netSalary", "employeeSv", "wageTax", "employerSv", "db", "dz", "municipalTax", "bvContribution", "viennaLevy", "otherPersonnelCost"] as const;
+      const mode = special.calculationMode === "manual" ? "manual" : "auto";
+      const calculatedFields = ["employeeSv", "wageTax", "employerSv", "db", "dz", "municipalTax", "bvContribution", "viennaLevy"] as const;
+      const manualFields = ["netSalary", ...calculatedFields] as const;
+      const location = personnelLocations.find((item) => item.id === special.locationId);
       return (
         <FormSection title={tf("categoryDetails")} description={tf(`templates.${template}.description`)}>
-          <div className="sm:col-span-2"><FieldLabel>{tf("personnel.employeeMaster")}</FieldLabel><Select value={special.employeeId ? String(special.employeeId) : "new"} onValueChange={(value) => { const employee = personnelEmployees.find((item) => item.id === value); setSpecial((current) => employee ? { ...current, employeeId: employee.id, employeeName: employee.name, personnelNumber: employee.personnelNumber, employmentType: employee.employmentType } : { ...current, employeeId: "", employeeName: "", personnelNumber: "", employmentType: "employee" }); }}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="new">{tf("personnel.newEmployee")}</SelectItem>{personnelEmployees.map((employee) => <SelectItem key={employee.id} value={employee.id}>{employee.name}{employee.personnelNumber ? ` · ${employee.personnelNumber}` : ""}</SelectItem>)}</SelectContent></Select></div>
+          <div className="sm:col-span-2 flex rounded-lg border border-[#d8e1dd] bg-[#f4f7f5] p-1" aria-label={tf("personnel.calculationMode")}>
+            {(["auto", "manual"] as const).map((item) => <button key={item} type="button" onClick={() => setSpecial((current) => ({ ...current, calculationMode: item, overrideReason: item === "auto" ? "" : current.overrideReason }))} className={`flex flex-1 items-center justify-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition-colors ${mode === item ? "bg-white text-[#173c32] shadow-sm" : "text-[#71807a] hover:text-[#29463e]"}`}>{item === "auto" ? <Calculator className="size-4" /> : <LockKeyhole className="size-4" />}{tf(`personnel.modes.${item}`)}</button>)}
+          </div>
+          <div className="sm:col-span-2"><FieldLabel>{tf("personnel.employeeMaster")}</FieldLabel><Select value={special.employeeId ? String(special.employeeId) : "new"} onValueChange={(value) => { const employee = personnelEmployees.find((item) => item.id === value); setSpecial((current) => employee ? { ...current, employeeId: employee.id, employeeName: employee.name, personnelNumber: employee.personnelNumber, employmentType: employee.employmentType === "managing_director" ? "managing_director_asvg" : employee.employmentType, locationId: employee.locationId ?? current.locationId } : { ...current, employeeId: "", employeeName: "", personnelNumber: "", employmentType: "employee" }); }}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="new">{tf("personnel.newEmployee")}</SelectItem>{personnelEmployees.map((employee) => <SelectItem key={employee.id} value={employee.id}>{employee.name}{employee.personnelNumber ? ` · ${employee.personnelNumber}` : ""}</SelectItem>)}</SelectContent></Select></div>
           <div><FieldLabel htmlFor="employee-name">{tf("personnel.employeeName")}</FieldLabel><Input id="employee-name" value={String(special.employeeName ?? "")} disabled={Boolean(special.employeeId)} onChange={(e) => setSpecialValue("employeeName", e.target.value)} /></div>
           <div><FieldLabel htmlFor="personnel-number">{tf("personnel.personnelNumber")}</FieldLabel><Input id="personnel-number" value={String(special.personnelNumber ?? "")} onChange={(e) => setSpecialValue("personnelNumber", e.target.value)} /></div>
-          <div><FieldLabel htmlFor="employment-type">{tf("personnel.employmentType")}</FieldLabel><Select value={String(special.employmentType ?? "employee")} disabled={Boolean(special.employeeId)} onValueChange={(value) => setSpecialValue("employmentType", value ?? "employee")}><SelectTrigger id="employment-type"><SelectValue /></SelectTrigger><SelectContent>{["worker", "employee", "marginal", "apprentice", "freelance", "managing_director"].map((item) => <SelectItem key={item} value={item}>{tf(`personnel.types.${item}`)}</SelectItem>)}</SelectContent></Select></div>
+          <div><FieldLabel htmlFor="location-id">{tf("personnel.location")}</FieldLabel><Select value={String(special.locationId ?? "")} disabled={Boolean(special.employeeId)} onValueChange={(value) => setSpecialValue("locationId", value ?? "")}><SelectTrigger id="location-id"><SelectValue /></SelectTrigger><SelectContent>{personnelLocations.map((item) => <SelectItem key={item.id} value={item.id}>{item.name}</SelectItem>)}</SelectContent></Select></div>
+          <div><FieldLabel htmlFor="employment-type">{tf("personnel.employmentType")}</FieldLabel><Select value={String(special.employmentType ?? "employee")} disabled={Boolean(special.employeeId)} onValueChange={(value) => setSpecialValue("employmentType", value ?? "employee")}><SelectTrigger id="employment-type"><SelectValue /></SelectTrigger><SelectContent>{payrollEmploymentTypes.map((item) => <SelectItem key={item} value={item}>{tf(`personnel.types.${item}`)}</SelectItem>)}</SelectContent></Select></div>
           <div><FieldLabel htmlFor="payroll-month">{tf("personnel.payrollMonth")}</FieldLabel><Input id="payroll-month" type="month" value={String(special.payrollMonth ?? "")} onChange={(e) => setSpecialValue("payrollMonth", e.target.value)} /></div>
-          {fields.map((field) => <div key={field}><FieldLabel htmlFor={field} help={tf(`personnel.help.${field}`)}>{tf(`personnel.${field}`)}</FieldLabel><Input id={field} inputMode="decimal" placeholder="0,00" value={String(special[field] ?? "")} onChange={(e) => setSpecialValue(field, e.target.value)} /></div>)}
+          <div><FieldLabel htmlFor="grossSalary" help={tf("personnel.help.grossSalary")}>{tf("personnel.grossSalary")}</FieldLabel><Input id="grossSalary" inputMode="decimal" placeholder="0,00" value={String(special.grossSalary ?? "")} onChange={(e) => setSpecialValue("grossSalary", e.target.value)} /></div>
+          {mode === "auto" && <>
+            <div className="sm:col-span-2 grid gap-3 rounded-lg border border-[#d8e1dd] bg-[#f7faf8] p-3 sm:grid-cols-2">
+              <div><FieldLabel htmlFor="external-payroll">{tf("personnel.externalPayroll")}</FieldLabel><Input id="external-payroll" inputMode="decimal" placeholder="0,00" value={String(special.externalPayroll ?? "")} onChange={(e) => setSpecialValue("externalPayroll", e.target.value)} /><p className="mt-1 text-xs text-[#7c8984]">{tf("personnel.externalPayrollHint")}</p></div>
+              <div><FieldLabel htmlFor="external-marginal-payroll">{tf("personnel.externalMarginalPayroll")}</FieldLabel><Input id="external-marginal-payroll" inputMode="decimal" placeholder="0,00" value={String(special.externalMarginalPayroll ?? "")} onChange={(e) => setSpecialValue("externalMarginalPayroll", e.target.value)} /><p className="mt-1 text-xs text-[#7c8984]">{tf("personnel.externalMarginalPayrollHint")}</p></div>
+            </div>
+            {payrollCalculation ? <div className="sm:col-span-2 overflow-hidden rounded-xl border border-[#cbdad4] bg-white">
+              <div className="flex items-start justify-between gap-4 border-b border-[#dce6e1] bg-[#edf4f1] px-4 py-3"><div><h4 className="font-medium text-[#173c32]">{tf("personnel.calculation")}</h4><p className="mt-0.5 text-xs text-[#667871]">{location?.name} · {payrollCalculation.ruleVersion}</p></div><div className="text-right"><span className="text-[10px] font-semibold tracking-[0.12em] text-[#6d7e77] uppercase">{tf("personnel.netSalary")}</span><strong className="block text-lg tabular-nums text-[#173c32]">{formatCents(payrollCalculation.netCents, locale)}</strong></div></div>
+              <div className="grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-x-3 border-b border-[#e8eeeb] px-4 py-2 text-[10px] font-semibold tracking-[0.08em] text-[#7a8983] uppercase"><span>{tf("personnel.component")}</span><span>{tf("personnel.basisRate")}</span><span>{tf("personnel.amount")}</span></div>
+              {calculatedFields.map((field) => { const line = payrollCalculation.components[field]; return <div key={field} className="grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-x-3 border-b border-[#edf1ef] px-4 py-2.5 text-sm last:border-b-0"><span className="min-w-0 text-[#344a43]">{tf(`personnel.${field}`)}</span><span className="whitespace-nowrap text-xs tabular-nums text-[#77857f]">{line.rateBasisPoints === null ? tf("personnel.fixed") : `${formatCents(line.basisCents, locale)} × ${(line.rateBasisPoints / 100).toLocaleString(locale, { minimumFractionDigits: 2 })} %`}</span><strong className="w-24 text-right tabular-nums text-[#243e36]">{formatCents(line.amountCents, locale)}</strong></div>; })}
+              <div className="grid gap-3 bg-[#173c32] px-4 py-3 text-white sm:grid-cols-3"><div><span className="text-[10px] tracking-[0.1em] text-white/60 uppercase">{tf("personnel.taxableAnnual")}</span><strong className="block tabular-nums">{formatCents(payrollCalculation.taxableAnnualIncomeCents, locale)}</strong></div><div><span className="text-[10px] tracking-[0.1em] text-white/60 uppercase">{tf("personnel.marginalRate")}</span><strong className="block tabular-nums">{payrollCalculation.marginalTaxRatePercent} %</strong></div><div><span className="text-[10px] tracking-[0.1em] text-white/60 uppercase">{tf("personnel.total")}</span><strong className="block tabular-nums">{formatCents(payrollCalculation.employerTotalCents, locale)}</strong></div></div>
+            </div> : <div className="sm:col-span-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">{tf("personnel.incompleteAuto")}</div>}
+            <div><FieldLabel htmlFor="otherPersonnelCost" help={tf("personnel.help.otherPersonnelCost")}>{tf("personnel.otherPersonnelCost")}</FieldLabel><Input id="otherPersonnelCost" inputMode="decimal" placeholder="0,00" value={String(special.otherPersonnelCost ?? "")} onChange={(e) => setSpecialValue("otherPersonnelCost", e.target.value)} /></div>
+            {payrollCalculation && <div className="self-end text-xs leading-5 text-[#6e7c77]">{payrollCalculation.warnings.map((warning) => <p key={warning}>• {tf(`personnel.warnings.${warning}`)}</p>)}</div>}
+          </>}
+          {mode === "manual" && <>
+            {manualFields.map((field) => <div key={field}><FieldLabel htmlFor={field} help={tf(`personnel.help.${field}`)}>{tf(`personnel.${field}`)}</FieldLabel><Input id={field} inputMode="decimal" placeholder="0,00" value={String(special[field] ?? "")} onChange={(e) => setSpecialValue(field, e.target.value)} /></div>)}
+            <div><FieldLabel htmlFor="otherPersonnelCost" help={tf("personnel.help.otherPersonnelCost")}>{tf("personnel.otherPersonnelCost")}</FieldLabel><Input id="otherPersonnelCost" inputMode="decimal" placeholder="0,00" value={String(special.otherPersonnelCost ?? "")} onChange={(e) => setSpecialValue("otherPersonnelCost", e.target.value)} /></div>
+            <div className="sm:col-span-2"><FieldLabel htmlFor="payroll-override-reason">{tf("personnel.overrideReason")}</FieldLabel><Textarea id="payroll-override-reason" rows={2} value={String(special.overrideReason ?? "")} onChange={(e) => setSpecialValue("overrideReason", e.target.value)} placeholder={tf("personnel.overrideReasonPlaceholder")} /></div>
+          </>}
           <div className="sm:col-span-2 mt-2 border-t border-[#ded9cc] pt-4"><h4 className="font-medium text-[#4d493e]">{tf("personnel.paymentDates")}</h4><p className="mt-1 text-xs text-[#766f60]">{tf("personnel.paymentDatesHint")}</p></div>
           {(["employeePaymentDate", "socialPaymentDate", "taxPaymentDate", "municipalPaymentDate", "provisionPaymentDate"] as const).map((field) => <div key={field}><FieldLabel htmlFor={field}>{tf(`personnel.${field}`)}</FieldLabel><Input id={field} type="date" value={String(special[field] ?? date)} onChange={(e) => setSpecialValue(field, e.target.value)} /></div>)}
           <div className="sm:col-span-2 flex items-center justify-between rounded-lg bg-[#24483d] px-4 py-3 text-white"><span>{tf("personnel.total")}</span><strong>{formatCents(personnelCostCents ?? 0, locale)}</strong></div>
           <div className="sm:col-span-2 flex items-center justify-between rounded-lg border border-[#d8d2c3] bg-white px-4 py-3 text-[#4d493e]"><span>{tf("personnel.paymentTotal")}</span><strong>{formatCents(paymentTotal, locale)}</strong></div>
-          <p className="sm:col-span-2 text-xs leading-5 text-[#766f60]">{tf("personnel.noPayrollCalculation")}</p>
+          <p className="sm:col-span-2 text-xs leading-5 text-[#766f60]">{mode === "auto" ? tf("personnel.automationNotice") : tf("personnel.manualNotice")}</p>
         </FormSection>
       );
     }
@@ -624,7 +710,7 @@ export function EntryDialog({
               <div className="sticky bottom-0 flex flex-wrap items-center gap-2 border-t border-[#dfe5e1] bg-white/95 px-5 py-4 backdrop-blur sm:px-7">
                 {entry && !isDuplicate && <Button type="button" variant="destructive" size="sm" disabled={pending} onClick={() => void removeEntry()}><Trash2 className="size-4" />{entry.status === "draft" ? tf("deleteDraft") : tf("voidEntry")}</Button>}
                 {entry && template === "personnel" && !isDuplicate && <Button type="button" variant="outline" size="sm" disabled={pending} onClick={duplicatePersonnelMonth}>{tf("duplicatePersonnelMonth")}</Button>}
-                <div className="ml-auto flex gap-2"><Button type="button" variant="outline" disabled={pending} onClick={() => void save("draft")}>{tf("saveDraft")}</Button><Button type="submit" disabled={pending || !description.trim() || totals.gross <= 0 || (warnings.length > 0 && !warningOverrideReason.trim())}>{pending && <Loader2 className="size-4 animate-spin" />}{tf("finalize")}</Button></div>
+                <div className="ml-auto flex gap-2"><Button type="button" variant="outline" disabled={pending || payrollSubmissionBlocked} onClick={() => void save("draft")}>{tf("saveDraft")}</Button><Button type="submit" disabled={pending || payrollSubmissionBlocked || !description.trim() || totals.gross <= 0 || (warnings.length > 0 && !warningOverrideReason.trim())}>{pending && <Loader2 className="size-4 animate-spin" />}{tf("finalize")}</Button></div>
               </div>
             </form>
           )}

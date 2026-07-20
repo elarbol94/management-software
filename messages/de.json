@@ -177,8 +177,34 @@
       "taxPaymentDate": "Zahlung an Finanzamt",
       "municipalPaymentDate": "Zahlung an Gemeinde",
       "provisionPaymentDate": "Zahlung an Vorsorgekasse",
-      "noPayrollCalculation": "Die Beträge werden aus einer bestehenden Lohnabrechnung übernommen. Diese Maske führt keine Lohnverrechnung durch.",
-      "types": { "worker": "Arbeiter/in", "employee": "Angestellte/r", "marginal": "Geringfügig beschäftigt", "apprentice": "Lehrling", "freelance": "Freie/r Dienstnehmer/in", "managing_director": "Geschäftsführer/in" },
+      "calculationMode": "Berechnungsmodus",
+      "modes": { "auto": "Automatisch", "manual": "Manuell überschreiben" },
+      "location": "Betriebsstätte",
+      "calculation": "Berechnungsübersicht",
+      "component": "Komponente",
+      "basisRate": "Basis und Satz",
+      "amount": "Betrag",
+      "fixed": "Pauschal",
+      "taxableAnnual": "Steuerpflichtig p. a.",
+      "marginalRate": "Grenzsteuersatz",
+      "externalPayroll": "Extern ergänzte Lohnsumme",
+      "externalPayrollHint": "Bereits außerhalb dieser Anwendung abgerechnete Bruttolöhne dieses Monats.",
+      "externalMarginalPayroll": "Externe geringfügige Lohnsumme",
+      "externalMarginalPayrollHint": "Geringfügige Bezüge außerhalb dieser Anwendung für die betriebsweite Schwelle.",
+      "overrideReason": "Begründung der manuellen Werte",
+      "overrideReasonPlaceholder": "Warum wird die Automatik überschrieben?",
+      "incompleteAuto": "Für die Automatik werden Betriebsstätte, Beschäftigungsart, Abrechnungsmonat 2026 und Brutto benötigt.",
+      "automationNotice": "Planungs- und Buchungshilfe nach Regelversion AT-2026; keine zertifizierte Lohnverrechnung. Der Server berechnet die Werte beim Speichern erneut.",
+      "manualNotice": "Manuelle Werte bleiben nachvollziehbar mit Begründung gespeichert.",
+      "warnings": {
+        "allowances_not_included": "Sonderzahlungen, Familienbonus, Pendlerpauschale, Pendlereuro und Sachbezüge sind nicht berücksichtigt.",
+        "freelance_tax_not_calculated": "Für freie Dienstverhältnisse wird keine Lohnsteuer automatisch berechnet.",
+        "gsvg_personal_svs_excluded": "Die persönliche SVS der GSVG-Geschäftsführung bleibt außerhalb dieser Buchung.",
+        "marginal_threshold_exceeded": "Die betriebsweite geringfügige Lohnsumme übersteigt 826,65 €; der erhöhte DG-Satz wird angewandt.",
+        "vienna_levy_assumptions": "Die Wiener Dienstgeberabgabe wird für ein durchgehend bestehendes, nicht befreites Dienstverhältnis angesetzt.",
+        "unsupported_year": "Für diesen Abrechnungsmonat existiert keine Automatik; bitte auf manuell umstellen."
+      },
+      "types": { "worker": "Arbeiter/in", "employee": "Angestellte/r", "marginal": "Geringfügig beschäftigt", "apprentice": "Lehrling", "freelance": "Freie/r Dienstnehmer/in", "managing_director_asvg": "Geschäftsführer/in ASVG", "shareholder_managing_director_gsvg": "Gesellschafter-Geschäftsführer/in GSVG" },
       "help": {
         "grossSalary": "Laufende und sonstige Bruttobezüge laut bestehender Lohnabrechnung.",
         "netSalary": "Tatsächlich an die beschäftigte Person ausbezahlter Nettobetrag.",
@@ -710,7 +736,8 @@
     "tabs": {
       "company": "Unternehmen",
       "users": "Benutzer",
-      "categories": "Kategorien"
+      "categories": "Kategorien",
+      "locations": "Betriebsstätten"
     },
     "categories": {
       "title": "Kategorien",
@@ -737,6 +764,19 @@
         "svs": "SVS",
         "tax_levy": "Steuern und Abgaben"
       }
+    },
+    "locations": {
+      "title": "Betriebsstätten",
+      "description": "Betriebsstätte und Bundesland steuern DZ, Wiener Dienstgeberabgabe und den Wohnbauförderungsbeitrag.",
+      "add": "Betriebsstätte hinzufügen",
+      "edit": "Betriebsstätte bearbeiten",
+      "name": "Bezeichnung",
+      "state": "Bundesland",
+      "municipality": "Gemeinde",
+      "default": "Standard",
+      "inactive": "Inaktiv",
+      "archive": "Deaktivieren",
+      "restore": "Aktivieren"
     },
     "company": {
       "title": "Unternehmensdaten",

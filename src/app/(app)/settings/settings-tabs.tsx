@@ -14,6 +14,7 @@ export function SettingsTabs({ isAdmin }: { isAdmin: boolean }) {
     ...(isAdmin
       ? [
           { href: "/settings/categories", label: t("categories") },
+          { href: "/settings/locations", label: t("locations") },
           { href: "/settings/users", label: t("users") },
         ]
       : []),

@@ -212,6 +212,8 @@ export function AccountingOverview({
   taxSettings,
   fundingProjects,
   personnelEmployees,
+  personnelLocations,
+  payrollMonthContexts,
 }: {
   entries: EntryRow[];
   months: MonthlySummary[];
@@ -223,7 +225,9 @@ export function AccountingOverview({
   canManagePersonnel: boolean;
   taxSettings: { kleinunternehmer: boolean; defaultVatRate: number };
   fundingProjects: Array<{ id: string; name: string }>;
-  personnelEmployees: Array<{ id: string; name: string; personnelNumber: string; employmentType: string }>;
+  personnelEmployees: Array<{ id: string; name: string; personnelNumber: string; employmentType: string; locationId: string | null }>;
+  personnelLocations: Array<{ id: string; name: string; state: string; municipality: string }>;
+  payrollMonthContexts: Array<{ payrollMonth: string; internalPayrollCents: number; externalPayrollCents: number; externalMarginalPayrollCents: number; marginalPayrollCents: number }>;
 }) {
   const t = useTranslations("accounting");
   const tOverview = useTranslations("accountingOverview");
@@ -504,6 +508,8 @@ export function AccountingOverview({
         taxSettings={taxSettings}
         fundingProjects={fundingProjects}
         personnelEmployees={personnelEmployees}
+        personnelLocations={personnelLocations}
+        payrollMonthContexts={payrollMonthContexts}
       />
     </div>
   );

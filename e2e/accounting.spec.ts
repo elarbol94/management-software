@@ -125,7 +125,7 @@ test("edit and delete the entry", async ({ page }) => {
   await expect(page.getByText("Noch keine Einträge in diesem Zeitraum.")).toBeVisible();
 });
 
-test("capture personnel costs with reconciled payroll payments", async ({ page }) => {
+test("calculate, save, and duplicate automatic personnel costs", async ({ page }) => {
   await page.goto("/login");
   await page.locator("#email").fill("admin@example.com");
   await page.locator("#password").fill("super-secret-1");
@@ -141,23 +141,25 @@ test("capture personnel costs with reconciled payroll payments", async ({ page }
   await page.locator("#employee-name").fill("Max Muster");
   await page.locator("#personnel-number").fill("P-001");
   await page.locator("#payroll-month").fill("2026-07");
-  await page.locator("#grossSalary").fill("3000");
-  await page.locator("#netSalary").fill("2200");
-  await page.locator("#employeeSv").fill("550");
-  await page.locator("#wageTax").fill("250");
-  await page.locator("#employerSv").fill("650");
-  await page.locator("#db").fill("90");
-  await page.locator("#dz").fill("12");
-  await page.locator("#municipalTax").fill("90");
-  await page.locator("#bvContribution").fill("45");
+  await page.locator("#grossSalary").fill("2700");
+
+  await page.locator("#employment-type").click();
+  await page.getByRole("option", { name: "Lehrling" }).click();
+  await page.locator("#employment-type").click();
+  await page.getByRole("option", { name: "Angestellte/r" }).click();
+  await page.getByRole("button", { name: "Manuell überschreiben" }).click();
+  await expect(page.locator("#payroll-override-reason")).toBeVisible();
+  await page.getByRole("button", { name: "Automatisch" }).click();
+
   await page.locator("#warning-reason").fill("Lohnabrechnung wird nachgereicht.");
 
-  await expect(page.getByText("€ 3.887,00")).toHaveCount(2);
+  await expect(page.getByText("€ 2.002,03")).toBeVisible();
+  await expect(page.getByText("€ 3.497,85")).toHaveCount(2);
   await page.getByRole("button", { name: "Buchung finalisieren" }).click();
 
   const row = page.getByRole("row", { name: /Lohnverrechnung Juli/ });
   await expect(row).toBeVisible();
-  await expect(row).toContainText("-€ 3.887,00");
+  await expect(row).toContainText("-€ 3.497,85");
   await row.getByRole("button", { name: "Buchungsdetails ein- oder ausblenden" }).click();
   await expect(page.getByText("ÖGK")).toBeVisible();
   await expect(page.getByText("Finanzamt")).toBeVisible();

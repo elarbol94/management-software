@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, like, ne, sql, inArray } from "drizzle-orm";
 import { db } from "@/db";
-import { attachments, budgetPlans, categories, employees, entries, entryAuditLog, entryPaymentLines, entryTaxLines, user } from "@/db/schema";
+import { attachments, budgetPlans, businessLocations, categories, employees, entries, entryAuditLog, entryPaymentLines, entryTaxLines, payrollMonthContexts, user } from "@/db/schema";
 import type { EntryKind } from "./schema";
 
 export type EntryFilters = {
@@ -399,5 +399,24 @@ export function listPersonnelEmployees() {
     .from(employees)
     .where(eq(employees.active, true))
     .orderBy(asc(employees.name))
+    .all();
+}
+
+/** Call only after a page has checked the personnel permission. */
+export function listBusinessLocations() {
+  return db
+    .select()
+    .from(businessLocations)
+    .where(eq(businessLocations.active, true))
+    .orderBy(asc(businessLocations.name))
+    .all();
+}
+
+/** Call only after a page has checked the personnel permission. */
+export function listPayrollMonthContexts() {
+  return db
+    .select()
+    .from(payrollMonthContexts)
+    .orderBy(desc(payrollMonthContexts.payrollMonth))
     .all();
 }

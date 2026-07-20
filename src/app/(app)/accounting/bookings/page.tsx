@@ -2,9 +2,11 @@ import { getTranslations } from "next-intl/server";
 import { requireUser } from "@/lib/auth";
 import {
   entryTotals,
+  listBusinessLocations,
   listCategories,
   listEntries,
   listPersonnelEmployees,
+  listPayrollMonthContexts,
   yearsWithEntries,
   type EntryFilters,
 } from "@/modules/accounting/queries";
@@ -59,6 +61,8 @@ export default async function BookingsPage({
   const settings = getAppSettings();
   const fundingProjects = listFundingProjects().map(({ id, name }) => ({ id, name }));
   const personnelEmployees = filters.includePersonnelDetails ? listPersonnelEmployees() : [];
+  const personnelLocations = filters.includePersonnelDetails ? listBusinessLocations() : [];
+  const payrollMonthContexts = filters.includePersonnelDetails ? listPayrollMonthContexts() : [];
   if (!years.includes(currentYear)) years.unshift(currentYear);
   if (!years.includes(filters.year)) years.push(filters.year);
   years.sort((a, b) => b - a);
@@ -86,6 +90,8 @@ export default async function BookingsPage({
         taxSettings={{ kleinunternehmer: settings.kleinunternehmer, defaultVatRate: settings.defaultVatRate }}
         fundingProjects={fundingProjects}
         personnelEmployees={personnelEmployees}
+        personnelLocations={personnelLocations}
+        payrollMonthContexts={payrollMonthContexts}
       />
     </div>
   );

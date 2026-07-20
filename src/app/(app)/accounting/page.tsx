@@ -2,7 +2,9 @@ import { requireUser } from "@/lib/auth";
 import {
   entryTotals,
   listCategories,
+  listBusinessLocations,
   listEntries,
+  listPayrollMonthContexts,
   listPersonnelEmployees,
   monthlySummary,
   vatSummary,
@@ -35,6 +37,8 @@ export default async function AccountingPage({
   const settings = getAppSettings();
   const fundingProjects = listFundingProjects().map(({ id, name }) => ({ id, name }));
   const personnelEmployees = canManagePersonnel ? listPersonnelEmployees() : [];
+  const personnelLocations = canManagePersonnel ? listBusinessLocations() : [];
+  const payrollMonthContexts = canManagePersonnel ? listPayrollMonthContexts() : [];
   const vatCollected = vatRows
     .filter((row) => row.kind === "income")
     .reduce((sum, row) => sum + row.vat, 0);
@@ -61,6 +65,8 @@ export default async function AccountingPage({
       taxSettings={{ kleinunternehmer: settings.kleinunternehmer, defaultVatRate: settings.defaultVatRate }}
       fundingProjects={fundingProjects}
       personnelEmployees={personnelEmployees}
+      personnelLocations={personnelLocations}
+      payrollMonthContexts={payrollMonthContexts}
     />
   );
 }

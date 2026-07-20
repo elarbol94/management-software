@@ -1,5 +1,5 @@
 import { db } from "@/db";
-import { appSettings, user } from "@/db/schema";
+import { appSettings, businessLocations, user } from "@/db/schema";
 
 export type AppSettings = typeof appSettings.$inferSelect;
 
@@ -33,4 +33,8 @@ export function listUsers() {
     .from(user)
     .orderBy(user.createdAt)
     .all();
+}
+
+export function listAllBusinessLocations() {
+  return db.select().from(businessLocations).orderBy(businessLocations.name).all();
 }
