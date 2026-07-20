@@ -19,6 +19,7 @@
   "nav": {
     "dashboard": "Dashboard",
     "accounting": "Accounting",
+    "documents": "Invoices & receipts",
     "projects": "Projects",
     "wiki": "Wiki",
     "settings": "Settings",
@@ -174,6 +175,25 @@
     "invoiceFrom": "Invoice from",
     "invoiceFor": "Invoice to",
     "backToList": "Back to list"
+  },
+  "documents": {
+    "title": "Invoices & receipts",
+    "description": "Outgoing invoices and booked receipts in one place.",
+    "workStatus": "Work status",
+    "drafts": "Drafts",
+    "openInvoices": "Open invoices",
+    "overdue": "Overdue",
+    "receiptCount": "Receipts archived",
+    "outstanding": "{count, plural, =0 {No open invoices} =1 {1 open invoice} other {# open invoices}}",
+    "invoiceSection": "Outgoing invoices",
+    "invoiceSectionDescription": "Draft, sent, and paid invoices at a glance.",
+    "receiptSection": "Receipt archive",
+    "receiptSectionDescription": "Receipts from your ledger entries, filed chronologically.",
+    "captureReceipt": "Capture receipt",
+    "noReceipts": "No receipts archived yet.",
+    "noReceiptsHint": "Record an expense and attach the receipt directly to the entry.",
+    "fileSize": "File size",
+    "receiptFor": "Receipt for {description}"
   },
   "projects": {
     "title": "Projects",

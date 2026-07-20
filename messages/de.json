@@ -19,6 +19,7 @@
   "nav": {
     "dashboard": "Übersicht",
     "accounting": "Buchhaltung",
+    "documents": "Rechnungen & Belege",
     "projects": "Projekte",
     "wiki": "Wiki",
     "settings": "Einstellungen",
@@ -174,6 +175,25 @@
     "invoiceFrom": "Rechnung von",
     "invoiceFor": "Rechnung an",
     "backToList": "Zurück zur Liste"
+  },
+  "documents": {
+    "title": "Rechnungen & Belege",
+    "description": "Ausgangsrechnungen und verbuchte Belege an einem Ort.",
+    "workStatus": "Arbeitsstand",
+    "drafts": "Entwürfe",
+    "openInvoices": "Offene Rechnungen",
+    "overdue": "Überfällig",
+    "receiptCount": "Belege im Archiv",
+    "outstanding": "{count, plural, =0 {Keine offenen Rechnungen} =1 {1 offene Rechnung} other {# offene Rechnungen}}",
+    "invoiceSection": "Ausgangsrechnungen",
+    "invoiceSectionDescription": "Entwürfe, versendete und bezahlte Rechnungen im Überblick.",
+    "receiptSection": "Belegarchiv",
+    "receiptSectionDescription": "Belege aus deinen Buchungen, chronologisch abgelegt.",
+    "captureReceipt": "Beleg erfassen",
+    "noReceipts": "Noch keine Belege archiviert.",
+    "noReceiptsHint": "Erfasse eine Ausgabe und hänge den Beleg direkt an die Buchung.",
+    "fileSize": "Dateigröße",
+    "receiptFor": "Beleg zu {description}"
   },
   "projects": {
     "title": "Projekte",

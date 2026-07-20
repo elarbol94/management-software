@@ -16,6 +16,33 @@ function periodPrefix(year: number, month?: number) {
 
 export type EntryRow = Awaited<ReturnType<typeof listEntries>>[number];
 
+export type ReceiptDocumentRow = ReturnType<typeof listReceiptDocuments>[number];
+
+/** Receipt files attached to ledger entries, with the context needed for a document inbox. */
+export function listReceiptDocuments() {
+  return db
+    .select({
+      id: attachments.id,
+      fileName: attachments.fileName,
+      mimeType: attachments.mimeType,
+      sizeBytes: attachments.sizeBytes,
+      uploadedAt: attachments.createdAt,
+      entryId: entries.id,
+      entryKind: entries.kind,
+      entryDate: entries.date,
+      description: entries.description,
+      counterparty: entries.counterparty,
+      categoryName: categories.name,
+      grossAmountCents: entries.grossAmountCents,
+    })
+    .from(attachments)
+    .innerJoin(entries, eq(attachments.entityId, entries.id))
+    .innerJoin(categories, eq(entries.categoryId, categories.id))
+    .where(eq(attachments.entityType, "entry"))
+    .orderBy(desc(entries.date), desc(attachments.createdAt))
+    .all();
+}
+
 export function listEntries(filters: EntryFilters) {
   const conditions = [like(entries.date, periodPrefix(filters.year, filters.month))];
   if (filters.kind) conditions.push(eq(entries.kind, filters.kind));
