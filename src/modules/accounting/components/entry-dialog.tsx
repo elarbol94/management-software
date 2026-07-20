@@ -28,6 +28,7 @@ import { deleteEntry, upsertEntry, type EntryInput } from "@/modules/accounting/
 import type { EntryRow } from "@/modules/accounting/queries";
 import type { categories as categoriesTable, CategoryTemplate } from "@/modules/accounting/schema";
 import { formatCents, parseAmountToCents } from "@/lib/money";
+import { ENTRY_FORM_CONFIG, type EntryBaseField } from "../lib/entry-form-config";
 import { breakdownFromGross, breakdownFromNet, VAT_RATES } from "../lib/vat";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -130,6 +131,26 @@ function FieldLabel({ htmlFor, children, help }: { htmlFor?: string; children: R
       <Label htmlFor={htmlFor}>{children}</Label>
       {help && <TaxHelp text={help} />}
     </span>
+  );
+}
+
+function FormSection({
+  title,
+  description,
+  children,
+}: {
+  title: string;
+  description?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <section className="overflow-hidden rounded-xl border border-[#dfe5e1] bg-white">
+      <div className="border-b border-[#e4e9e6] bg-[#f8faf8] px-4 py-3">
+        <h3 className="font-medium text-[#29463e]">{title}</h3>
+        {description && <p className="mt-0.5 text-xs leading-5 text-[#7c8984]">{description}</p>}
+      </div>
+      <div className="grid gap-4 p-4 sm:grid-cols-2">{children}</div>
+    </section>
   );
 }
 
@@ -241,6 +262,9 @@ export function EntryDialog({
 
   const category = categories.find((item) => item.id === categoryId);
   const template = category?.template ?? (kind === "income" ? "standard_income" : "standard_expense");
+  const formConfig = ENTRY_FORM_CONFIG[template];
+  const hasBaseField = (field: EntryBaseField) =>
+    (formConfig.baseFields as readonly EntryBaseField[]).includes(field);
   const filteredCategories = categories.filter(
     (item) =>
       (canManagePersonnel || item.template !== "personnel") &&
@@ -260,6 +284,8 @@ export function EntryDialog({
       : (rateFromName ?? taxSettings.defaultVatRate);
     const inputPercent = next.template === "vehicle" || taxSettings.kleinunternehmer ? 0 : 100;
     setTaxLines([newLine(rate, inputPercent)]);
+    setSpecial(next.template === "svs" ? { authority: "SVS" } : {});
+    setDeductiblePercent(next.template === "hospitality" ? 50 : 100);
     setStep("form");
   }
 
@@ -306,6 +332,18 @@ export function EntryDialog({
         inputVatDeductiblePercent: 0,
       }];
     }
+    if (formConfig.amountMode === "gross") {
+      const cents = parseAmountToCents(taxLines[0]?.amountText ?? "");
+      if (cents === null || cents <= 0) return [];
+      return [{
+        description,
+        netAmountCents: cents,
+        vatRate: 0,
+        vatAmountCents: 0,
+        grossAmountCents: cents,
+        inputVatDeductiblePercent: 0,
+      }];
+    }
     return taxLines.flatMap((line) => {
       const cents = parseAmountToCents(line.amountText);
       if (cents === null || cents <= 0) return [];
@@ -318,10 +356,14 @@ export function EntryDialog({
         vatRate: line.vatRate,
         vatAmountCents: breakdown.vatCents,
         grossAmountCents: breakdown.grossCents,
-        inputVatDeductiblePercent: taxSettings.kleinunternehmer ? 0 : line.inputVatDeductiblePercent,
+        inputVatDeductiblePercent: taxSettings.kleinunternehmer
+          ? 0
+          : template === "vehicle"
+            ? (special.inputVatEligible === true ? 100 : 0)
+            : line.inputVatDeductiblePercent,
       }];
     });
-  }, [personnelCostCents, taxLines, taxSettings.kleinunternehmer, template, tf]);
+  }, [description, formConfig.amountMode, personnelCostCents, special.inputVatEligible, taxLines, taxSettings.kleinunternehmer, template, tf]);
 
   const computedPaymentLines = useMemo(() => {
     if (template !== "personnel") {
@@ -343,10 +385,13 @@ export function EntryDialog({
     (sum, line) => ({ net: sum.net + line.netAmountCents, vat: sum.vat + line.vatAmountCents, gross: sum.gross + line.grossAmountCents }),
     { net: 0, vat: 0, gross: 0 },
   );
+  const paymentRecipient = template === "svs" || template === "tax_levy"
+    ? String(special.authority ?? (template === "svs" ? "SVS" : ""))
+    : counterparty;
   const paymentLines = template === "personnel"
     ? computedPaymentLines
     : totals.gross > 0
-      ? [{ date, description, recipient: counterparty, amountCents: totals.gross, paymentMethod }]
+      ? [{ date, description, recipient: paymentRecipient, amountCents: totals.gross, paymentMethod }]
       : [];
   const paymentTotal = paymentLines.reduce((sum, line) => sum + line.amountCents, 0);
   const hasEvidence = existingAttachments.length > 0 || pendingFiles.length > 0;
@@ -376,23 +421,28 @@ export function EntryDialog({
     if (status === "finalized" && warnings.length > 0 && !warningOverrideReason.trim()) return;
     setPending(true);
     try {
+      const effectiveDeductiblePercent = formConfig.deductibility === "vehicleBusinessUse"
+        ? Math.min(100, Math.max(0, Number(special.businessUsePercent ?? 100)))
+        : formConfig.deductibility === "general"
+          ? deductiblePercent
+          : 100;
       const input: EntryInput = {
         id: isDuplicate ? undefined : entry?.id,
         kind,
         date,
-        documentDate: documentDate || null,
-        documentNumber,
-        servicePeriodStart: servicePeriodStart || null,
-        servicePeriodEnd: servicePeriodEnd || null,
+        documentDate: hasBaseField("documentDate") ? (documentDate || null) : null,
+        documentNumber: hasBaseField("documentNumber") ? documentNumber : "",
+        servicePeriodStart: hasBaseField("servicePeriod") ? (servicePeriodStart || null) : null,
+        servicePeriodEnd: hasBaseField("servicePeriod") ? (servicePeriodEnd || null) : null,
         status,
         description: description.trim() || tf("untitledDraft"),
-        counterparty,
+        counterparty: hasBaseField("counterparty") ? counterparty : paymentRecipient,
         categoryId,
         grossAmountCents: totals.gross,
         vatRate: computedLines[0]?.vatRate ?? 0,
         paymentMethod,
         notes,
-        deductiblePercent,
+        deductiblePercent: effectiveDeductiblePercent,
         warningOverrideReason,
         specialFields: Object.fromEntries(
           Object.entries(special).map(([key, value]) => [key, value === "" ? null : value]),
@@ -434,21 +484,21 @@ export function EntryDialog({
 
   function renderSpecialFields() {
     if (template === "grant_income") return (
-      <section className="rounded-xl border border-[#dfe6e2] bg-[#f8faf8] p-4">
-        <div className="max-w-md"><FieldLabel>{tf("fundingProject")}</FieldLabel><Select value={String(special.fundingProjectId ?? "none")} onValueChange={(value) => setSpecialValue("fundingProjectId", value === "none" ? "" : (value ?? ""))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="none">{tf("noFundingProject")}</SelectItem>{fundingProjects.map((project) => <SelectItem key={project.id} value={project.id}>{project.name}</SelectItem>)}</SelectContent></Select><p className="mt-1.5 text-xs text-[#7c8984]">{tf("fundingProjectHint")}</p></div>
-      </section>
+      <FormSection title={tf("categoryDetails")} description={tf(`templates.${template}.description`)}>
+        <div className="sm:col-span-2"><FieldLabel>{tf("fundingProject")}</FieldLabel><Select value={String(special.fundingProjectId ?? "none")} onValueChange={(value) => setSpecialValue("fundingProjectId", value === "none" ? "" : (value ?? ""))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="none">{tf("noFundingProject")}</SelectItem>{fundingProjects.map((project) => <SelectItem key={project.id} value={project.id}>{project.name}</SelectItem>)}</SelectContent></Select><p className="mt-1.5 text-xs text-[#7c8984]">{tf("fundingProjectHint")}</p></div>
+      </FormSection>
     );
     if (template === "hospitality") return (
-      <section className="grid gap-4 rounded-xl border border-[#dfe6e2] bg-[#f8faf8] p-4 sm:grid-cols-2">
+      <FormSection title={tf("categoryDetails")} description={tf(`templates.${template}.description`)}>
         <div className="sm:col-span-2"><FieldLabel htmlFor="business-purpose" help={tf("help.businessPurpose")}>{tf("businessPurpose")}</FieldLabel><Input id="business-purpose" value={String(special.businessPurpose ?? "")} onChange={(e) => setSpecialValue("businessPurpose", e.target.value)} /></div>
         <div><FieldLabel htmlFor="participants" help={tf("help.participants")}>{tf("participants")}</FieldLabel><Input id="participants" value={String(special.participants ?? "")} onChange={(e) => setSpecialValue("participants", e.target.value)} /></div>
         <label className="flex items-center gap-3 self-end rounded-lg border bg-white p-3"><Checkbox checked={special.advertisingPurpose === true} onCheckedChange={(checked) => setSpecialValue("advertisingPurpose", checked === true)} /><span>{tf("advertisingPurpose")}</span><TaxHelp text={tf("help.advertisingPurpose")} /></label>
-      </section>
+      </FormSection>
     );
     if (template === "travel") {
       const km = Number(String(special.kilometres ?? "").replace(",", ".")) || 0;
       return (
-        <section className="grid gap-4 rounded-xl border border-[#dfe6e2] bg-[#f8faf8] p-4 sm:grid-cols-2">
+        <FormSection title={tf("categoryDetails")} description={tf(`templates.${template}.description`)}>
           <div><FieldLabel htmlFor="traveler">{tf("traveler")}</FieldLabel><Input id="traveler" value={String(special.traveler ?? "")} onChange={(e) => setSpecialValue("traveler", e.target.value)} /></div>
           <div><FieldLabel htmlFor="destination">{tf("destination")}</FieldLabel><Input id="destination" value={String(special.destination ?? "")} onChange={(e) => setSpecialValue("destination", e.target.value)} /></div>
           <div className="sm:col-span-2"><FieldLabel htmlFor="travel-purpose">{tf("travelPurpose")}</FieldLabel><Input id="travel-purpose" value={String(special.travelPurpose ?? "")} onChange={(e) => setSpecialValue("travelPurpose", e.target.value)} /></div>
@@ -456,29 +506,29 @@ export function EntryDialog({
           <div><FieldLabel htmlFor="trip-end">{tf("tripEnd")}</FieldLabel><Input id="trip-end" type="datetime-local" value={String(special.tripEnd ?? "")} onChange={(e) => setSpecialValue("tripEnd", e.target.value)} /></div>
           <div><FieldLabel htmlFor="kilometres" help={tf("help.kilometreAllowance")}>{tf("kilometres")}</FieldLabel><Input id="kilometres" inputMode="decimal" value={String(special.kilometres ?? "")} onChange={(e) => setSpecialValue("kilometres", e.target.value)} /></div>
           <div className="rounded-lg border border-[#d6e1dc] bg-white p-3 text-sm"><span className="text-[#6c7b75]">{tf("kilometreSuggestion")}</span><strong className="mt-1 block text-[#24483d]">{formatCents(Math.round(km * 50), locale)}</strong><span className="text-xs text-[#87938f]">{tf("ruleReviewRequired")}</span></div>
-        </section>
+        </FormSection>
       );
     }
     if (template === "vehicle") return (
-      <section className="grid gap-4 rounded-xl border border-[#dfe6e2] bg-[#f8faf8] p-4 sm:grid-cols-2">
+      <FormSection title={tf("categoryDetails")} description={tf(`templates.${template}.description`)}>
         <div><FieldLabel htmlFor="vehicle-name">{tf("vehicleName")}</FieldLabel><Input id="vehicle-name" value={String(special.vehicleName ?? "")} onChange={(e) => setSpecialValue("vehicleName", e.target.value)} /></div>
         <div><FieldLabel htmlFor="vehicle-type" help={tf("help.vehicleType")}>{tf("vehicleType")}</FieldLabel><Select value={String(special.vehicleType ?? "")} onValueChange={(value) => setSpecialValue("vehicleType", value ?? "")}><SelectTrigger id="vehicle-type"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="pkw">{tf("vehicleTypes.pkw")}</SelectItem><SelectItem value="fiscalTruck">{tf("vehicleTypes.fiscalTruck")}</SelectItem><SelectItem value="electric">{tf("vehicleTypes.electric")}</SelectItem><SelectItem value="other">{tf("vehicleTypes.other")}</SelectItem></SelectContent></Select></div>
         <div><FieldLabel htmlFor="business-use">{tf("businessUsePercent")}</FieldLabel><Input id="business-use" type="number" min={0} max={100} value={String(special.businessUsePercent ?? "100")} onChange={(e) => setSpecialValue("businessUsePercent", e.target.value)} /></div>
         <label className="flex items-center gap-3 self-end rounded-lg border bg-white p-3"><Checkbox checked={special.inputVatEligible === true} onCheckedChange={(checked) => setSpecialValue("inputVatEligible", checked === true)} /><span>{tf("inputVatEligible")}</span><TaxHelp text={tf("help.inputVatVehicle")} /></label>
-      </section>
+      </FormSection>
     );
     if (template === "asset") return (
-      <section className="grid gap-4 rounded-xl border border-[#dfe6e2] bg-[#f8faf8] p-4 sm:grid-cols-3">
-        <div className="sm:col-span-3"><FieldLabel htmlFor="asset-name">{tf("assetName")}</FieldLabel><Input id="asset-name" value={String(special.assetName ?? "")} onChange={(e) => setSpecialValue("assetName", e.target.value)} /></div>
+      <FormSection title={tf("categoryDetails")} description={tf(`templates.${template}.description`)}>
+        <div className="sm:col-span-2"><FieldLabel htmlFor="asset-name">{tf("assetName")}</FieldLabel><Input id="asset-name" value={String(special.assetName ?? "")} onChange={(e) => setSpecialValue("assetName", e.target.value)} /></div>
         <div><FieldLabel htmlFor="placed-in-service">{tf("placedInService")}</FieldLabel><Input id="placed-in-service" type="date" value={String(special.placedInServiceOn ?? documentDate)} onChange={(e) => setSpecialValue("placedInServiceOn", e.target.value)} /></div>
         <div><FieldLabel htmlFor="useful-life" help={tf("help.usefulLife")}>{tf("usefulLifeYears")}</FieldLabel><Input id="useful-life" type="number" min={1} max={100} value={String(special.usefulLifeYears ?? "")} onChange={(e) => setSpecialValue("usefulLifeYears", e.target.value)} /></div>
-        <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs leading-5 text-amber-900">{tf("assetReviewNotice")}</div>
-      </section>
+        <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs leading-5 text-amber-900 sm:col-span-2">{tf("assetReviewNotice")}</div>
+      </FormSection>
     );
     if (template === "personnel") {
       const fields = ["grossSalary", "netSalary", "employeeSv", "wageTax", "employerSv", "db", "dz", "municipalTax", "bvContribution", "viennaLevy", "otherPersonnelCost"] as const;
       return (
-        <section className="grid gap-4 rounded-xl border border-[#dddfd7] bg-[#faf9f5] p-4 sm:grid-cols-2">
+        <FormSection title={tf("categoryDetails")} description={tf(`templates.${template}.description`)}>
           <div className="sm:col-span-2"><FieldLabel>{tf("personnel.employeeMaster")}</FieldLabel><Select value={special.employeeId ? String(special.employeeId) : "new"} onValueChange={(value) => { const employee = personnelEmployees.find((item) => item.id === value); setSpecial((current) => employee ? { ...current, employeeId: employee.id, employeeName: employee.name, personnelNumber: employee.personnelNumber, employmentType: employee.employmentType } : { ...current, employeeId: "", employeeName: "", personnelNumber: "", employmentType: "employee" }); }}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="new">{tf("personnel.newEmployee")}</SelectItem>{personnelEmployees.map((employee) => <SelectItem key={employee.id} value={employee.id}>{employee.name}{employee.personnelNumber ? ` · ${employee.personnelNumber}` : ""}</SelectItem>)}</SelectContent></Select></div>
           <div><FieldLabel htmlFor="employee-name">{tf("personnel.employeeName")}</FieldLabel><Input id="employee-name" value={String(special.employeeName ?? "")} disabled={Boolean(special.employeeId)} onChange={(e) => setSpecialValue("employeeName", e.target.value)} /></div>
           <div><FieldLabel htmlFor="personnel-number">{tf("personnel.personnelNumber")}</FieldLabel><Input id="personnel-number" value={String(special.personnelNumber ?? "")} onChange={(e) => setSpecialValue("personnelNumber", e.target.value)} /></div>
@@ -490,15 +540,15 @@ export function EntryDialog({
           <div className="sm:col-span-2 flex items-center justify-between rounded-lg bg-[#24483d] px-4 py-3 text-white"><span>{tf("personnel.total")}</span><strong>{formatCents(personnelCostCents ?? 0, locale)}</strong></div>
           <div className="sm:col-span-2 flex items-center justify-between rounded-lg border border-[#d8d2c3] bg-white px-4 py-3 text-[#4d493e]"><span>{tf("personnel.paymentTotal")}</span><strong>{formatCents(paymentTotal, locale)}</strong></div>
           <p className="sm:col-span-2 text-xs leading-5 text-[#766f60]">{tf("personnel.noPayrollCalculation")}</p>
-        </section>
+        </FormSection>
       );
     }
     if (template === "svs" || template === "tax_levy") return (
-      <section className="grid gap-4 rounded-xl border border-[#dfe6e2] bg-[#f8faf8] p-4 sm:grid-cols-3">
-        <div><FieldLabel htmlFor="authority">{tf("authority")}</FieldLabel><Input id="authority" value={String(special.authority ?? "")} onChange={(e) => setSpecialValue("authority", e.target.value)} /></div>
-        <div><FieldLabel htmlFor="levy-type">{tf("levyType")}</FieldLabel><Input id="levy-type" value={String(special.levyType ?? "")} onChange={(e) => setSpecialValue("levyType", e.target.value)} /></div>
-        <div><FieldLabel htmlFor="assessment-period">{tf("assessmentPeriod")}</FieldLabel><Input id="assessment-period" value={String(special.assessmentPeriod ?? "")} onChange={(e) => setSpecialValue("assessmentPeriod", e.target.value)} /></div>
-      </section>
+      <FormSection title={tf("categoryDetails")} description={tf(`templates.${template}.description`)}>
+        <div><FieldLabel htmlFor="authority" help={template === "svs" ? tf("help.svsAuthority") : tf("help.taxAuthority")}>{tf("authority")}</FieldLabel><Input id="authority" value={String(special.authority ?? (template === "svs" ? "SVS" : ""))} onChange={(e) => setSpecialValue("authority", e.target.value)} /></div>
+        {template === "tax_levy" && <div><FieldLabel htmlFor="levy-type" help={tf("help.levyType")}>{tf("levyType")}</FieldLabel><Input id="levy-type" value={String(special.levyType ?? "")} onChange={(e) => setSpecialValue("levyType", e.target.value)} /></div>}
+        <div className={template === "svs" ? "" : "sm:col-span-2"}><FieldLabel htmlFor="assessment-period" help={tf("help.assessmentPeriod")}>{tf("assessmentPeriod")}</FieldLabel><Input id="assessment-period" value={String(special.assessmentPeriod ?? "")} onChange={(e) => setSpecialValue("assessmentPeriod", e.target.value)} /></div>
+      </FormSection>
     );
     return null;
   }
@@ -528,42 +578,46 @@ export function EntryDialog({
                 <DialogHeader><p className="text-xs font-semibold tracking-[0.12em] text-[#71807a] uppercase">{category?.name}</p><DialogTitle className="text-xl tracking-[-0.025em] text-[#173c32]">{entry && !isDuplicate ? t("editEntry") : t("newEntry")}</DialogTitle></DialogHeader>
               </div>
               <div className="flex flex-col gap-5 px-5 py-5 sm:px-7">
-                <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                  <div><FieldLabel htmlFor="entry-date" help={tf("help.paymentDate")}>{t("date")}</FieldLabel><Input id="entry-date" type="date" value={date} onChange={(e) => setDate(e.target.value)} required /></div>
-                  <div><FieldLabel htmlFor="document-date">{tf("documentDate")}</FieldLabel><Input id="document-date" type="date" value={documentDate} onChange={(e) => setDocumentDate(e.target.value)} /></div>
-                  <div><FieldLabel htmlFor="document-number">{tf("documentNumber")}</FieldLabel><Input id="document-number" value={documentNumber} onChange={(e) => setDocumentNumber(e.target.value)} /></div>
-                  <div><FieldLabel>{t("paymentMethod")}</FieldLabel><Select value={paymentMethod} onValueChange={(value) => setPaymentMethod(value as typeof paymentMethod)}><SelectTrigger><SelectValue>{t(paymentMethod)}</SelectValue></SelectTrigger><SelectContent><SelectItem value="bank">{t("bank")}</SelectItem><SelectItem value="cash">{t("cash")}</SelectItem><SelectItem value="card">{t("card")}</SelectItem></SelectContent></Select></div>
-                  <div className="sm:col-span-2"><FieldLabel htmlFor="entry-description">{t("description")}</FieldLabel><Input id="entry-description" value={description} onChange={(e) => setDescription(e.target.value)} maxLength={500} /></div>
-                  <div className="sm:col-span-2"><FieldLabel htmlFor="entry-counterparty">{t("counterparty")}</FieldLabel><Input id="entry-counterparty" value={counterparty} onChange={(e) => setCounterparty(e.target.value)} maxLength={200} /></div>
-                  <div><FieldLabel htmlFor="service-start">{tf("servicePeriodStart")}</FieldLabel><Input id="service-start" type="date" value={servicePeriodStart} onChange={(e) => setServicePeriodStart(e.target.value)} /></div>
-                  <div><FieldLabel htmlFor="service-end">{tf("servicePeriodEnd")}</FieldLabel><Input id="service-end" type="date" value={servicePeriodEnd} onChange={(e) => setServicePeriodEnd(e.target.value)} /></div>
-                </section>
+                <FormSection title={tf("bookingDetails")} description={tf("bookingDetailsDescription")}>
+                  {hasBaseField("paymentDate") && <div><FieldLabel htmlFor="entry-date" help={tf("help.paymentDate")}>{t("date")}</FieldLabel><Input id="entry-date" type="date" value={date} onChange={(e) => setDate(e.target.value)} required /></div>}
+                  {hasBaseField("documentDate") && <div><FieldLabel htmlFor="document-date">{tf("documentDate")}</FieldLabel><Input id="document-date" type="date" value={documentDate} onChange={(e) => setDocumentDate(e.target.value)} /></div>}
+                  {hasBaseField("documentNumber") && <div><FieldLabel htmlFor="document-number">{tf("documentNumber")}</FieldLabel><Input id="document-number" value={documentNumber} onChange={(e) => setDocumentNumber(e.target.value)} /></div>}
+                  {hasBaseField("paymentMethod") && <div><FieldLabel>{t("paymentMethod")}</FieldLabel><Select value={paymentMethod} onValueChange={(value) => setPaymentMethod(value as typeof paymentMethod)}><SelectTrigger><SelectValue>{t(paymentMethod)}</SelectValue></SelectTrigger><SelectContent><SelectItem value="bank">{t("bank")}</SelectItem><SelectItem value="cash">{t("cash")}</SelectItem><SelectItem value="card">{t("card")}</SelectItem></SelectContent></Select></div>}
+                  {hasBaseField("description") && <div className="sm:col-span-2"><FieldLabel htmlFor="entry-description">{t("description")}</FieldLabel><Input id="entry-description" value={description} onChange={(e) => setDescription(e.target.value)} maxLength={500} /></div>}
+                  {hasBaseField("counterparty") && <div className="sm:col-span-2"><FieldLabel htmlFor="entry-counterparty">{template === "grant_income" ? tf("fundingBody") : t("counterparty")}</FieldLabel><Input id="entry-counterparty" value={counterparty} onChange={(e) => setCounterparty(e.target.value)} maxLength={200} /></div>}
+                  {hasBaseField("servicePeriod") && <><div><FieldLabel htmlFor="service-start">{tf("servicePeriodStart")}</FieldLabel><Input id="service-start" type="date" value={servicePeriodStart} onChange={(e) => setServicePeriodStart(e.target.value)} /></div><div><FieldLabel htmlFor="service-end">{tf("servicePeriodEnd")}</FieldLabel><Input id="service-end" type="date" value={servicePeriodEnd} onChange={(e) => setServicePeriodEnd(e.target.value)} /></div></>}
+                </FormSection>
 
                 {renderSpecialFields()}
 
-                {template !== "personnel" && <section className="rounded-xl border border-[#dfe5e1]">
-                  <div className="flex items-center justify-between border-b border-[#e4e9e6] bg-[#f8faf8] px-4 py-3"><div><h3 className="font-medium text-[#29463e]">{tf("taxLines")}</h3><p className="text-xs text-[#7c8984]">{taxSettings.kleinunternehmer ? tf("smallBusinessTaxNotice") : tf("taxLinesDescription")}</p></div><Button type="button" variant="outline" size="sm" onClick={() => setTaxLines((current) => [...current, newLine(NON_VAT_TEMPLATES.has(template) ? 0 : taxSettings.defaultVatRate, taxSettings.kleinunternehmer ? 0 : 100)])}><Plus className="size-3.5" />{tf("addTaxLine")}</Button></div>
+                {formConfig.amountMode === "vat" && <section className="overflow-hidden rounded-xl border border-[#dfe5e1] bg-white">
+                  <div className="flex items-center justify-between gap-3 border-b border-[#e4e9e6] bg-[#f8faf8] px-4 py-3"><div><h3 className="font-medium text-[#29463e]">{tf("taxLines")}</h3><p className="text-xs leading-5 text-[#7c8984]">{taxSettings.kleinunternehmer ? tf("smallBusinessTaxNotice") : tf("taxLinesDescription")}</p></div><Button type="button" variant="outline" size="sm" onClick={() => setTaxLines((current) => [...current, newLine(taxSettings.defaultVatRate, taxSettings.kleinunternehmer ? 0 : 100)])}><Plus className="size-3.5" />{tf("addTaxLine")}</Button></div>
                   <div className="divide-y divide-[#e8ecea]">{taxLines.map((line, index) => {
                     const computed = computedLines[index];
-                    return <div key={line.key} className="grid gap-3 p-4 sm:grid-cols-[1fr_120px_110px_100px_auto] sm:items-end">
-                      <div><FieldLabel htmlFor={`line-description-${line.key}`}>{tf("lineDescription")}</FieldLabel><Input id={`line-description-${line.key}`} value={line.description} onChange={(e) => setTaxLines((current) => current.map((item) => item.key === line.key ? { ...item, description: e.target.value } : item))} /></div>
+                    return <div key={line.key} className={`grid gap-3 p-4 sm:items-end ${taxLines.length > 1 ? "sm:grid-cols-[1fr_120px_110px_100px_auto]" : "sm:grid-cols-[minmax(160px,1fr)_140px_120px_auto]"}`}>
+                      {taxLines.length > 1 && <div><FieldLabel htmlFor={`line-description-${line.key}`}>{tf("lineDescription")}</FieldLabel><Input id={`line-description-${line.key}`} value={line.description} onChange={(e) => setTaxLines((current) => current.map((item) => item.key === line.key ? { ...item, description: e.target.value } : item))} /></div>}
                       <div><FieldLabel htmlFor={`line-amount-${line.key}`}>{line.mode === "gross" ? t("gross") : t("net")}</FieldLabel><Input id={`line-amount-${line.key}`} inputMode="decimal" placeholder="0,00" value={line.amountText} onChange={(e) => setTaxLines((current) => current.map((item) => item.key === line.key ? { ...item, amountText: e.target.value } : item))} /></div>
                       <div><FieldLabel>{tf("amountMode")}</FieldLabel><Select value={line.mode} onValueChange={(value) => setTaxLines((current) => current.map((item) => item.key === line.key ? { ...item, mode: value as AmountMode } : item))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="gross">{t("gross")}</SelectItem><SelectItem value="net">{t("net")}</SelectItem></SelectContent></Select></div>
                       <div><FieldLabel help={tf("help.vatRate")}>{t("vatRate")}</FieldLabel><Select value={String(line.vatRate)} onValueChange={(value) => setTaxLines((current) => current.map((item) => item.key === line.key ? { ...item, vatRate: Number(value) } : item))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{VAT_RATES.map((rate) => <SelectItem key={rate} value={String(rate)}>{rate} %</SelectItem>)}</SelectContent></Select></div>
                       <Button type="button" variant="ghost" size="icon-sm" disabled={taxLines.length === 1} onClick={() => setTaxLines((current) => current.filter((item) => item.key !== line.key))}><Trash2 className="size-4" /></Button>
-                      {kind === "expense" && <div className="sm:col-span-2"><FieldLabel htmlFor={`input-vat-${line.key}`} help={tf("help.inputVatDeductible")}>{tf("inputVatDeductiblePercent")}</FieldLabel><Input id={`input-vat-${line.key}`} type="number" min={0} max={100} disabled={taxSettings.kleinunternehmer} value={taxSettings.kleinunternehmer ? 0 : line.inputVatDeductiblePercent} onChange={(e) => setTaxLines((current) => current.map((item) => item.key === line.key ? { ...item, inputVatDeductiblePercent: Number(e.target.value) } : item))} /></div>}
-                      {computed && <p className="text-xs text-[#71807a] sm:col-span-3">{t("net")}: {formatCents(computed.netAmountCents, locale)} · {t("vat")}: {formatCents(computed.vatAmountCents, locale)} · {t("gross")}: {formatCents(computed.grossAmountCents, locale)}</p>}
+                      {kind === "expense" && template !== "vehicle" && <div className="sm:col-span-2"><FieldLabel htmlFor={`input-vat-${line.key}`} help={tf("help.inputVatDeductible")}>{tf("inputVatDeductiblePercent")}</FieldLabel><Input id={`input-vat-${line.key}`} type="number" min={0} max={100} disabled={taxSettings.kleinunternehmer} value={taxSettings.kleinunternehmer ? 0 : line.inputVatDeductiblePercent} onChange={(e) => setTaxLines((current) => current.map((item) => item.key === line.key ? { ...item, inputVatDeductiblePercent: Number(e.target.value) } : item))} /></div>}
+                      {computed && <p className="text-xs text-[#71807a] sm:col-span-2">{t("net")}: {formatCents(computed.netAmountCents, locale)} · {t("vat")}: {formatCents(computed.vatAmountCents, locale)} · {t("gross")}: {formatCents(computed.grossAmountCents, locale)}</p>}
                     </div>;
                   })}</div>
+                  {formConfig.deductibility === "general" && <div className="border-t border-[#e8ecea] p-4"><div className="max-w-xs"><FieldLabel htmlFor="deductible-percent" help={template === "hospitality" ? tf("help.hospitalityDeductibility") : tf("help.deductiblePercent")}>{tf("deductiblePercent")}</FieldLabel><Input id="deductible-percent" type="number" min={0} max={100} value={deductiblePercent} onChange={(e) => setDeductiblePercent(Number(e.target.value))} /></div></div>}
                   <div className="grid grid-cols-3 gap-3 border-t border-[#dfe5e1] bg-[#173c32] px-4 py-3 text-white"><div><span className="text-[10px] uppercase text-white/60">{t("net")}</span><strong className="block tabular-nums">{formatCents(totals.net, locale)}</strong></div><div><span className="text-[10px] uppercase text-white/60">{t("vat")}</span><strong className="block tabular-nums">{formatCents(totals.vat, locale)}</strong></div><div><span className="text-[10px] uppercase text-white/60">{t("gross")}</span><strong className="block tabular-nums">{formatCents(totals.gross, locale)}</strong></div></div>
                 </section>}
 
-                {kind === "expense" && <div className="max-w-xs"><FieldLabel htmlFor="deductible-percent" help={tf("help.deductiblePercent")}>{tf("deductiblePercent")}</FieldLabel><Input id="deductible-percent" type="number" min={0} max={100} value={deductiblePercent} onChange={(e) => setDeductiblePercent(Number(e.target.value))} /></div>}
+                {formConfig.amountMode === "gross" && <FormSection title={tf("amount")} description={tf("grossAmountDescription")}>
+                  <div><FieldLabel htmlFor={`line-amount-${taxLines[0].key}`} help={tf("help.nonVatAmount")}>{t("gross")}</FieldLabel><Input id={`line-amount-${taxLines[0].key}`} inputMode="decimal" placeholder="0,00" value={taxLines[0].amountText} onChange={(e) => setTaxLines((current) => current.map((item, index) => index === 0 ? { ...item, amountText: e.target.value, vatRate: 0, mode: "gross" } : item))} /></div>
+                  {formConfig.deductibility === "general" && <div><FieldLabel htmlFor="deductible-percent" help={tf("help.taxDeductibility")}>{tf("deductiblePercent")}</FieldLabel><Input id="deductible-percent" type="number" min={0} max={100} value={deductiblePercent} onChange={(e) => setDeductiblePercent(Number(e.target.value))} /></div>}
+                  <div className="flex items-center justify-between rounded-lg bg-[#173c32] px-4 py-3 text-white sm:col-span-2"><span>{tf("bookingTotal")}</span><strong className="tabular-nums">{formatCents(totals.gross, locale)}</strong></div>
+                </FormSection>}
 
-                <section className="grid gap-4 sm:grid-cols-2">
+                <FormSection title={tf("supportingInformation")} description={tf("supportingInformationDescription")}>
                   <div><FieldLabel htmlFor="entry-notes">{t("notes")}</FieldLabel><Textarea id="entry-notes" rows={4} value={notes} onChange={(e) => setNotes(e.target.value)} maxLength={2000} /></div>
                   <div><FieldLabel>{t("receipts")}</FieldLabel><div className="mt-1 flex flex-col gap-1">{existingAttachments.map((attachment) => <div key={attachment.id} className="flex items-center gap-2 text-sm"><Paperclip className="size-3.5" /><a className="min-w-0 flex-1 truncate hover:underline" href={`/api/files/${attachment.id}`} target="_blank" rel="noreferrer">{attachment.fileName}</a><Button type="button" variant="ghost" size="icon-xs" onClick={() => void removeExistingAttachment(attachment.id)}><X className="size-3.5" /></Button></div>)}{pendingFiles.map((file, index) => <div key={`${file.name}-${index}`} className="flex items-center gap-2 text-sm text-[#73817c]"><Upload className="size-3.5" /><span className="min-w-0 flex-1 truncate">{file.name}</span><Button type="button" variant="ghost" size="icon-xs" onClick={() => setPendingFiles((current) => current.filter((_, itemIndex) => itemIndex !== index))}><X className="size-3.5" /></Button></div>)}</div><input ref={fileInputRef} type="file" accept="application/pdf,image/png,image/jpeg,image/webp,image/heic" multiple className="hidden" onChange={(event) => { const files = Array.from(event.currentTarget.files ?? []); setPendingFiles((current) => [...current, ...files]); event.currentTarget.value = ""; }} /><Button type="button" variant="outline" size="sm" className="mt-2" onClick={() => fileInputRef.current?.click()}><Upload className="size-4" />{t("uploadReceipt")}</Button></div>
-                </section>
+                </FormSection>
 
                 {warnings.length > 0 && <section className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-amber-950"><h3 className="font-medium">{tf("warnings.title")}</h3><ul className="mt-2 list-disc space-y-1 pl-5 text-sm">{warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul><div className="mt-3"><FieldLabel htmlFor="warning-reason">{tf("warnings.overrideReason")}</FieldLabel><Textarea id="warning-reason" rows={2} value={warningOverrideReason} onChange={(e) => setWarningOverrideReason(e.target.value)} placeholder={tf("warnings.overridePlaceholder")} /></div></section>}
               </div>
