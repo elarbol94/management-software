@@ -208,6 +208,10 @@ export function AccountingOverview({
   categories,
   years,
   year,
+  canManagePersonnel,
+  taxSettings,
+  fundingProjects,
+  personnelEmployees,
 }: {
   entries: EntryRow[];
   months: MonthlySummary[];
@@ -216,6 +220,10 @@ export function AccountingOverview({
   categories: Category[];
   years: number[];
   year: number;
+  canManagePersonnel: boolean;
+  taxSettings: { kleinunternehmer: boolean; defaultVatRate: number };
+  fundingProjects: Array<{ id: string; name: string }>;
+  personnelEmployees: Array<{ id: string; name: string; personnelNumber: string; employmentType: string }>;
 }) {
   const t = useTranslations("accounting");
   const tOverview = useTranslations("accountingOverview");
@@ -492,6 +500,10 @@ export function AccountingOverview({
         onOpenChange={setDialogOpen}
         entry={dialogEntry}
         categories={categories}
+        canManagePersonnel={canManagePersonnel}
+        taxSettings={taxSettings}
+        fundingProjects={fundingProjects}
+        personnelEmployees={personnelEmployees}
       />
     </div>
   );

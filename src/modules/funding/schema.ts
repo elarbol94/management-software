@@ -239,6 +239,29 @@ export const fundingBookingAllocations = sqliteTable(
   ],
 );
 
+// Funding owns the relationship between received grant income and the
+// accounting ledger. The entry id is a logical reference, matching the
+// existing allocation boundary until the accounting schema is fully stable.
+export const fundingIncomeLinks = sqliteTable(
+  "funding_income_links",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => createId()),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => fundingProjects.id, { onDelete: "cascade" }),
+    accountingEntryId: text("accounting_entry_id").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex("funding_income_links_entry_idx").on(table.accountingEntryId),
+    index("funding_income_links_project_idx").on(table.projectId),
+  ],
+);
+
 export const fundingEvidenceItems = sqliteTable(
   "funding_evidence_items",
   {

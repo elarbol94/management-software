@@ -4,10 +4,13 @@ import {
   entryTotals,
   listCategories,
   listEntries,
+  listPersonnelEmployees,
   yearsWithEntries,
   type EntryFilters,
 } from "@/modules/accounting/queries";
 import { LedgerClient } from "@/modules/accounting/components/ledger-client";
+import { getAppSettings } from "@/modules/settings/queries";
+import { listFundingProjects } from "@/modules/funding/queries";
 
 function parseFilters(params: {
   year?: string;
@@ -41,8 +44,11 @@ export default async function BookingsPage({
     category?: string;
   }>;
 }) {
-  await requireUser();
-  const filters = parseFilters(await searchParams);
+  const user = await requireUser();
+  const filters = {
+    ...parseFilters(await searchParams),
+    includePersonnelDetails: user.role === "admin" || user.role === "personnel",
+  };
   const t = await getTranslations("accountingBookings");
 
   const entries = listEntries(filters);
@@ -50,6 +56,9 @@ export default async function BookingsPage({
   const categories = listCategories();
   const years = yearsWithEntries();
   const currentYear = new Date().getFullYear();
+  const settings = getAppSettings();
+  const fundingProjects = listFundingProjects().map(({ id, name }) => ({ id, name }));
+  const personnelEmployees = filters.includePersonnelDetails ? listPersonnelEmployees() : [];
   if (!years.includes(currentYear)) years.unshift(currentYear);
   if (!years.includes(filters.year)) years.push(filters.year);
   years.sort((a, b) => b - a);
@@ -73,6 +82,10 @@ export default async function BookingsPage({
         categories={categories}
         years={years}
         filters={filters}
+        canManagePersonnel={filters.includePersonnelDetails}
+        taxSettings={{ kleinunternehmer: settings.kleinunternehmer, defaultVatRate: settings.defaultVatRate }}
+        fundingProjects={fundingProjects}
+        personnelEmployees={personnelEmployees}
       />
     </div>
   );

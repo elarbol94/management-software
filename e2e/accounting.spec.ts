@@ -12,9 +12,12 @@ test("initial setup creates the admin account", async ({ page }) => {
   await page.locator("#name").fill("E2E Admin");
   await page.locator("#email").fill("admin@example.com");
   await page.locator("#password").fill("super-secret-1");
+  const signupResponsePromise = page.waitForResponse((response) => response.url().includes("/api/auth/sign-up"));
   await page.getByRole("button", { name: "Administratorkonto erstellen" }).click();
+  const signupResponse = await signupResponsePromise;
+  expect(signupResponse.ok(), await signupResponse.text()).toBe(true);
 
-  await expect(page.getByText("Willkommen, E2E Admin!")).toBeVisible();
+  await expect(page.getByText("Willkommen, E2E Admin!")).toBeVisible({ timeout: 30_000 });
 });
 
 test("create an entry and see it in ledger, report and CSV", async ({ page }) => {
@@ -27,15 +30,13 @@ test("create an entry and see it in ledger, report and CSV", async ({ page }) =>
 
   await page.goto("/accounting");
   await page.getByRole("button", { name: "Neuer Eintrag" }).click();
+  await page.getByRole("button", { name: /Software & Hosting/ }).click();
 
   await page.locator("#entry-date").fill("2026-07-10");
   await page.locator("#entry-description").fill("Playwright Hosting");
   await page.locator("#entry-counterparty").fill("Test GmbH");
 
-  await page.locator("#entry-category").click();
-  await page.getByRole("option", { name: "Software & Hosting" }).click();
-
-  await page.locator("#entry-amount").fill("120");
+  await page.locator('input[id^="line-amount-"]').fill("120");
   // Live VAT breakdown appears (120 gross @ 20% = 100 net + 20 VAT).
   await expect(page.getByText("Netto: € 100,00")).toBeVisible();
 
@@ -47,7 +48,7 @@ test("create an entry and see it in ledger, report and CSV", async ({ page }) =>
   });
   await expect(page.getByText("beleg.pdf")).toBeVisible();
 
-  await page.getByRole("button", { name: "Speichern" }).click();
+  await page.getByRole("button", { name: "Buchung finalisieren" }).click();
 
   // Row appears in the ledger with negative (expense) amounts.
   const row = page.getByRole("row", { name: /Playwright Hosting/ });
@@ -113,15 +114,64 @@ test("edit and delete the entry", async ({ page }) => {
   expect(download.headers()["content-type"]).toBe("application/pdf");
 
   await page.locator("#entry-description").fill("Playwright Hosting (edited)");
-  await page.getByRole("button", { name: "Speichern" }).click();
+  await page.getByRole("button", { name: "Buchung finalisieren" }).click();
   await expect(
     page.getByRole("row", { name: /Playwright Hosting \(edited\)/ }),
   ).toBeVisible();
 
   await page.getByRole("row", { name: /Playwright Hosting \(edited\)/ }).click();
   page.once("dialog", (dialog) => dialog.accept());
-  await page.getByRole("button", { name: "Eintrag löschen" }).click();
+  await page.getByRole("button", { name: "Buchung stornieren" }).click();
   await expect(page.getByText("Noch keine Einträge in diesem Zeitraum.")).toBeVisible();
+});
+
+test("capture personnel costs with reconciled payroll payments", async ({ page }) => {
+  await page.goto("/login");
+  await page.locator("#email").fill("admin@example.com");
+  await page.locator("#password").fill("super-secret-1");
+  await page.getByRole("button", { name: "Anmelden" }).click();
+  await expect(page.getByText("Willkommen, E2E Admin!")).toBeVisible();
+
+  await page.goto("/accounting/bookings?year=2026&month=7");
+  await page.getByRole("button", { name: "Neuer Eintrag" }).click();
+  await page.getByRole("button", { name: /Personalkosten/ }).click();
+
+  await page.locator("#entry-date").fill("2026-07-31");
+  await page.locator("#entry-description").fill("Lohnverrechnung Juli");
+  await page.locator("#employee-name").fill("Max Muster");
+  await page.locator("#personnel-number").fill("P-001");
+  await page.locator("#payroll-month").fill("2026-07");
+  await page.locator("#grossSalary").fill("3000");
+  await page.locator("#netSalary").fill("2200");
+  await page.locator("#employeeSv").fill("550");
+  await page.locator("#wageTax").fill("250");
+  await page.locator("#employerSv").fill("650");
+  await page.locator("#db").fill("90");
+  await page.locator("#dz").fill("12");
+  await page.locator("#municipalTax").fill("90");
+  await page.locator("#bvContribution").fill("45");
+  await page.locator("#warning-reason").fill("Lohnabrechnung wird nachgereicht.");
+
+  await expect(page.getByText("€ 3.887,00")).toHaveCount(2);
+  await page.getByRole("button", { name: "Buchung finalisieren" }).click();
+
+  const row = page.getByRole("row", { name: /Lohnverrechnung Juli/ });
+  await expect(row).toBeVisible();
+  await expect(row).toContainText("-€ 3.887,00");
+  await row.getByRole("button", { name: "Buchungsdetails ein- oder ausblenden" }).click();
+  await expect(page.getByText("ÖGK")).toBeVisible();
+  await expect(page.getByText("Finanzamt")).toBeVisible();
+  await expect(page.getByText("Vorsorgekasse")).toBeVisible();
+
+  await row.click();
+  await page.getByRole("button", { name: "Für Folgemonat duplizieren" }).click();
+  await expect(page.locator("#entry-date")).toHaveValue("2026-08-31");
+  await expect(page.locator("#payroll-month")).toHaveValue("2026-08");
+  await page.locator("#entry-description").fill("Lohnverrechnung August");
+  await page.locator("#warning-reason").fill("Lohnabrechnung wird nachgereicht.");
+  await page.getByRole("button", { name: "Buchung finalisieren" }).click();
+  await page.goto("/accounting/bookings?year=2026&month=8");
+  await expect(page.getByRole("row", { name: /Lohnverrechnung August/ })).toBeVisible();
 });
 
 test("language switcher changes the UI to English and back", async ({ page }) => {

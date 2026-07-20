@@ -11,6 +11,7 @@ import {
   upsertCategory,
 } from "@/modules/accounting/actions";
 import type { categories as categoriesTable } from "@/modules/accounting/schema";
+import { categoryTemplates, type CategoryTemplate } from "@/modules/accounting/schema";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -42,6 +43,7 @@ export function CategoriesManager({ categories }: { categories: Category[] }) {
   const [name, setName] = useState("");
   const [kind, setKind] = useState<"income" | "expense">("expense");
   const [color, setColor] = useState("#64748b");
+  const [template, setTemplate] = useState<CategoryTemplate>("standard_expense");
   const [pending, setPending] = useState(false);
 
   function openDialog(category: Category | null) {
@@ -49,6 +51,10 @@ export function CategoriesManager({ categories }: { categories: Category[] }) {
     setName(category?.name ?? "");
     setKind(category?.kind ?? "expense");
     setColor(category?.color ?? "#64748b");
+    setTemplate(
+      category?.template ??
+        (category?.kind === "income" ? "standard_income" : "standard_expense"),
+    );
     setDialogOpen(true);
   }
 
@@ -56,7 +62,7 @@ export function CategoriesManager({ categories }: { categories: Category[] }) {
     e.preventDefault();
     setPending(true);
     try {
-      await upsertCategory({ id: editing?.id, name, kind, color });
+      await upsertCategory({ id: editing?.id, name, kind, color, template });
       toast.success(tCommon("saved"));
       setDialogOpen(false);
       router.refresh();
@@ -118,6 +124,7 @@ export function CategoriesManager({ categories }: { categories: Category[] }) {
                 >
                   {category.name}
                 </span>
+                <Badge variant="outline">{t(`templates.${category.template}`)}</Badge>
                 {category.archived && (
                   <Badge variant="secondary">{t("archived")}</Badge>
                 )}
@@ -176,7 +183,13 @@ export function CategoriesManager({ categories }: { categories: Category[] }) {
                 <Label>{t("kind")}</Label>
                 <Select
                   value={kind}
-                  onValueChange={(value) => setKind(value as typeof kind)}
+                  onValueChange={(value) => {
+                    const nextKind = value as typeof kind;
+                    setKind(nextKind);
+                    setTemplate(
+                      nextKind === "income" ? "standard_income" : "standard_expense",
+                    );
+                  }}
                 >
                   <SelectTrigger>
                     <SelectValue>
@@ -196,6 +209,30 @@ export function CategoriesManager({ categories }: { categories: Category[] }) {
                 </Select>
               </div>
             )}
+            <div className="flex flex-col gap-2">
+              <Label>{t("template")}</Label>
+              <Select
+                value={template}
+                onValueChange={(value) => setTemplate(value as CategoryTemplate)}
+              >
+                <SelectTrigger>
+                  <SelectValue>{t(`templates.${template}`)}</SelectValue>
+                </SelectTrigger>
+                <SelectContent>
+                  {categoryTemplates
+                    .filter((item) =>
+                      kind === "income"
+                        ? item === "standard_income" || item === "grant_income"
+                        : item !== "standard_income" && item !== "grant_income",
+                    )
+                    .map((item) => (
+                      <SelectItem key={item} value={item}>
+                        {t(`templates.${item}`)}
+                      </SelectItem>
+                    ))}
+                </SelectContent>
+              </Select>
+            </div>
             <div className="flex flex-col gap-2">
               <Label htmlFor="category-color">{t("color")}</Label>
               <input

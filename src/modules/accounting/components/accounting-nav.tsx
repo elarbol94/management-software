@@ -28,7 +28,7 @@ export function AccountingNav() {
     <nav aria-label={t("navigationLabel")} className="overflow-x-auto">
       <div className="flex min-w-max gap-1">
         {items.map((item) => {
-          const active = item.exact
+          const active = "exact" in item && item.exact
             ? pathname === item.href
             : pathname.startsWith(item.href);
           const Icon = item.icon;

@@ -1,9 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useFormatter, useLocale, useTranslations } from "next-intl";
-import { Download, Filter, Paperclip, Plus } from "lucide-react";
+import { ChevronDown, ChevronRight, Download, Filter, Paperclip, Plus } from "lucide-react";
 import { formatCents } from "@/lib/money";
 import type { EntryFilters, EntryRow } from "@/modules/accounting/queries";
 import type { categories as categoriesTable } from "@/modules/accounting/schema";
@@ -34,12 +34,20 @@ export function LedgerClient({
   categories,
   years,
   filters,
+  canManagePersonnel,
+  taxSettings,
+  fundingProjects,
+  personnelEmployees,
 }: {
   entries: EntryRow[];
   totals: { incomeGross: number; expenseGross: number; balance: number };
   categories: Category[];
   years: number[];
   filters: EntryFilters;
+  canManagePersonnel: boolean;
+  taxSettings: { kleinunternehmer: boolean; defaultVatRate: number };
+  fundingProjects: Array<{ id: string; name: string }>;
+  personnelEmployees: Array<{ id: string; name: string; personnelNumber: string; employmentType: string }>;
 }) {
   const t = useTranslations("accounting");
   const tBookings = useTranslations("accountingBookings");
@@ -49,6 +57,7 @@ export function LedgerClient({
   const searchParams = useSearchParams();
   const [dialogEntry, setDialogEntry] = useState<EntryRow | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
 
   function setParam(key: string, value: string | null | undefined) {
     const params = new URLSearchParams(searchParams.toString());
@@ -230,8 +239,8 @@ export function LedgerClient({
             {entries.map((entry) => {
               const sign = entry.kind === "expense" ? -1 : 1;
               return (
+                <Fragment key={entry.id}>
                 <TableRow
-                  key={entry.id}
                   tabIndex={0}
                   className="cursor-pointer border-[#edf0ee] hover:bg-[#f6f9f7] focus-visible:bg-[#f0f5f2] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#315c73]"
                   onClick={() => {
@@ -254,6 +263,18 @@ export function LedgerClient({
                   </TableCell>
                   <TableCell className="max-w-72">
                     <span className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        className="flex size-6 shrink-0 items-center justify-center rounded-md text-[#788680] hover:bg-[#e8efeb] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#315c73]"
+                        aria-label={tBookings("toggleDetails")}
+                        aria-expanded={expandedId === entry.id}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          setExpandedId((current) => current === entry.id ? null : entry.id);
+                        }}
+                      >
+                        {expandedId === entry.id ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
+                      </button>
                       <span className="min-w-0">
                         <span className="block truncate font-medium text-[#213c35]">
                           {entry.description}
@@ -281,6 +302,11 @@ export function LedgerClient({
                       />
                       {entry.categoryName}
                     </Badge>
+                    {entry.status === "draft" && (
+                      <Badge className="ml-1 bg-amber-50 text-amber-800" variant="outline">
+                        {tBookings("draft")}
+                      </Badge>
+                    )}
                   </TableCell>
                   <TableCell className="hidden text-right tabular-nums text-[#5c6b66] lg:table-cell">
                     {formatCents(sign * entry.netAmountCents, locale)}
@@ -296,6 +322,55 @@ export function LedgerClient({
                     {formatCents(sign * entry.grossAmountCents, locale)}
                   </TableCell>
                 </TableRow>
+                {expandedId === entry.id && (
+                  <TableRow className="border-[#e4eae7] bg-[#f8faf8] hover:bg-[#f8faf8]">
+                    <TableCell colSpan={7} className="px-5 py-4 sm:px-6">
+                      <div className="grid gap-4 text-xs sm:grid-cols-[220px_1fr]">
+                        <div className="space-y-1 text-[#66756f]">
+                          <p><strong className="text-[#2b473f]">{tBookings("documentDate")}:</strong> {entry.documentDate ?? "–"}</p>
+                          <p><strong className="text-[#2b473f]">{tBookings("documentNumber")}:</strong> {entry.documentNumber || "–"}</p>
+                          <p><strong className="text-[#2b473f]">{tBookings("deductible")}:</strong> {entry.deductiblePercent} %</p>
+                        </div>
+                        <div className="space-y-2">
+                        <div className="overflow-hidden rounded-lg border border-[#dfe5e1] bg-white">
+                          {entry.taxLines.map((line, index) => (
+                            <div key={line.id} className="grid grid-cols-[1fr_auto_auto_auto] gap-3 border-b border-[#edf0ee] px-3 py-2 last:border-b-0">
+                              <span className="truncate text-[#52635d]">{line.description || `${tBookings("taxLine")} ${index + 1}`}</span>
+                              <span>{line.vatRate} %</span>
+                              <span className="tabular-nums">{formatCents(line.netAmountCents, locale)}</span>
+                              <strong className="tabular-nums text-[#29463e]">{formatCents(line.grossAmountCents, locale)}</strong>
+                            </div>
+                          ))}
+                        </div>
+                        {entry.paymentLines.length > 0 && (
+                          <div className="overflow-hidden rounded-lg border border-[#dfe5e1] bg-white">
+                            <div className="bg-[#f1f5f2] px-3 py-2 font-semibold text-[#38554c]">{tBookings("payments")}</div>
+                            {entry.paymentLines.map((line) => (
+                              <div key={line.id} className="grid grid-cols-[auto_1fr_auto] gap-3 border-b border-[#edf0ee] px-3 py-2 last:border-b-0">
+                                <span className="whitespace-nowrap text-[#71807a]">{line.date}</span>
+                                <span className="truncate text-[#52635d]">{line.description}{line.recipient ? ` · ${line.recipient}` : ""}</span>
+                                <strong className="tabular-nums text-[#29463e]">{formatCents(line.amountCents, locale)}</strong>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        {entry.auditHistory.length > 0 && (
+                          <div className="overflow-hidden rounded-lg border border-[#dfe5e1] bg-white">
+                            <div className="bg-[#f1f5f2] px-3 py-2 font-semibold text-[#38554c]">{tBookings("auditHistory")}</div>
+                            {entry.auditHistory.map((item) => (
+                              <div key={item.id} className="grid gap-1 border-b border-[#edf0ee] px-3 py-2 last:border-b-0 sm:grid-cols-[auto_1fr]">
+                                <span className="whitespace-nowrap text-[#71807a]">{format.dateTime(item.changedAt, { dateStyle: "medium", timeStyle: "short" })}</span>
+                                <span className="text-[#52635d]">{tBookings(`auditActions.${item.action}`)} · {item.changedByName}{item.reason ? ` — ${item.reason}` : ""}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        </div>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                )}
+                </Fragment>
               );
             })}
           </TableBody>
@@ -344,6 +419,10 @@ export function LedgerClient({
         onOpenChange={setDialogOpen}
         entry={dialogEntry}
         categories={categories}
+        canManagePersonnel={canManagePersonnel}
+        taxSettings={taxSettings}
+        fundingProjects={fundingProjects}
+        personnelEmployees={personnelEmployees}
       />
     </div>
   );

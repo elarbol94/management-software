@@ -1,6 +1,6 @@
-import { and, asc, desc, eq, like, sql, inArray } from "drizzle-orm";
+import { and, asc, desc, eq, like, ne, sql, inArray } from "drizzle-orm";
 import { db } from "@/db";
-import { attachments, budgetPlans, categories, entries } from "@/db/schema";
+import { attachments, budgetPlans, categories, employees, entries, entryAuditLog, entryPaymentLines, entryTaxLines, user } from "@/db/schema";
 import type { EntryKind } from "./schema";
 
 export type EntryFilters = {
@@ -8,6 +8,7 @@ export type EntryFilters = {
   month?: number; // 1-12
   kind?: EntryKind;
   categoryId?: string;
+  includePersonnelDetails?: boolean;
 };
 
 function periodPrefix(year: number, month?: number) {
@@ -44,7 +45,10 @@ export function listReceiptDocuments() {
 }
 
 export function listEntries(filters: EntryFilters) {
-  const conditions = [like(entries.date, periodPrefix(filters.year, filters.month))];
+  const conditions = [
+    like(entries.date, periodPrefix(filters.year, filters.month)),
+    ne(entries.status, "voided"),
+  ];
   if (filters.kind) conditions.push(eq(entries.kind, filters.kind));
   if (filters.categoryId) conditions.push(eq(entries.categoryId, filters.categoryId));
 
@@ -53,17 +57,26 @@ export function listEntries(filters: EntryFilters) {
       id: entries.id,
       kind: entries.kind,
       date: entries.date,
+      documentDate: entries.documentDate,
+      documentNumber: entries.documentNumber,
+      servicePeriodStart: entries.servicePeriodStart,
+      servicePeriodEnd: entries.servicePeriodEnd,
+      status: entries.status,
       description: entries.description,
       counterparty: entries.counterparty,
       categoryId: entries.categoryId,
       categoryName: categories.name,
       categoryColor: categories.color,
+      categoryTemplate: categories.template,
       grossAmountCents: entries.grossAmountCents,
       vatRate: entries.vatRate,
       vatAmountCents: entries.vatAmountCents,
       netAmountCents: entries.netAmountCents,
       paymentMethod: entries.paymentMethod,
       notes: entries.notes,
+      deductiblePercent: entries.deductiblePercent,
+      warningOverrideReason: entries.warningOverrideReason,
+      specialFields: entries.specialFields,
     })
     .from(entries)
     .innerJoin(categories, eq(entries.categoryId, categories.id))
@@ -71,7 +84,15 @@ export function listEntries(filters: EntryFilters) {
     .orderBy(desc(entries.date), desc(entries.createdAt))
     .all();
 
-  if (rows.length === 0) return rows.map((row) => ({ ...row, attachmentCount: 0 }));
+  if (rows.length === 0) {
+    return rows.map((row) => ({
+      ...row,
+      attachmentCount: 0,
+      taxLines: [],
+      paymentLines: [],
+      auditHistory: [],
+    }));
+  }
 
   const counts = db
     .select({
@@ -92,9 +113,68 @@ export function listEntries(filters: EntryFilters) {
     .all();
 
   const countMap = new Map(counts.map((c) => [c.entityId, c.count]));
+  const taxRows = db
+    .select()
+    .from(entryTaxLines)
+    .where(inArray(entryTaxLines.entryId, rows.map((row) => row.id)))
+    .orderBy(asc(entryTaxLines.sortOrder))
+    .all();
+  const taxMap = new Map<string, typeof taxRows>();
+  for (const line of taxRows) {
+    taxMap.set(line.entryId, [...(taxMap.get(line.entryId) ?? []), line]);
+  }
+  const paymentRows = db
+    .select()
+    .from(entryPaymentLines)
+    .where(inArray(entryPaymentLines.entryId, rows.map((row) => row.id)))
+    .orderBy(asc(entryPaymentLines.sortOrder))
+    .all();
+  const paymentMap = new Map<string, typeof paymentRows>();
+  for (const line of paymentRows) {
+    paymentMap.set(line.entryId, [...(paymentMap.get(line.entryId) ?? []), line]);
+  }
+  const auditRows = db
+    .select({
+      id: entryAuditLog.id,
+      entryId: entryAuditLog.entryId,
+      action: entryAuditLog.action,
+      reason: entryAuditLog.reason,
+      changedAt: entryAuditLog.changedAt,
+      changedByName: user.name,
+    })
+    .from(entryAuditLog)
+    .innerJoin(user, eq(entryAuditLog.changedBy, user.id))
+    .where(inArray(entryAuditLog.entryId, rows.map((row) => row.id)))
+    .orderBy(desc(entryAuditLog.changedAt))
+    .all();
+  const auditMap = new Map<string, typeof auditRows>();
+  for (const item of auditRows) {
+    auditMap.set(item.entryId, [...(auditMap.get(item.entryId) ?? []), item]);
+  }
   return rows.map((row) => ({
     ...row,
+    description:
+      row.categoryTemplate === "personnel" && !filters.includePersonnelDetails
+        ? "Personalkosten"
+        : row.description,
+    counterparty:
+      row.categoryTemplate === "personnel" && !filters.includePersonnelDetails
+        ? ""
+        : row.counterparty,
+    specialFields:
+      row.categoryTemplate === "personnel" && !filters.includePersonnelDetails
+        ? {}
+        : row.specialFields,
     attachmentCount: countMap.get(row.id) ?? 0,
+    taxLines: taxMap.get(row.id) ?? [],
+    paymentLines:
+      row.categoryTemplate === "personnel" && !filters.includePersonnelDetails
+        ? []
+        : paymentMap.get(row.id) ?? [],
+    auditHistory:
+      row.categoryTemplate === "personnel" && !filters.includePersonnelDetails
+        ? []
+        : auditMap.get(row.id) ?? [],
   }));
 }
 
@@ -102,7 +182,7 @@ export function entryTotals(filters: EntryFilters) {
   const rows = listEntries(filters);
   let incomeGross = 0;
   let expenseGross = 0;
-  for (const row of rows) {
+  for (const row of rows.filter((entry) => entry.status === "finalized")) {
     if (row.kind === "income") incomeGross += row.grossAmountCents;
     else expenseGross += row.grossAmountCents;
   }
@@ -185,7 +265,7 @@ export function planningOverview(year: number): PlanningRow[] {
       amountCents: sql<number>`sum(${entries.grossAmountCents})`,
     })
     .from(entries)
-    .where(like(entries.date, `${year}-%`))
+    .where(and(like(entries.date, `${year}-%`), eq(entries.status, "finalized")))
     .groupBy(entries.categoryId, sql`substr(${entries.date}, 6, 2)`)
     .all();
 
@@ -238,7 +318,7 @@ export function monthlySummary(year: number): MonthlySummary[] {
       gross: sql<number>`sum(${entries.grossAmountCents})`,
     })
     .from(entries)
-    .where(like(entries.date, `${year}-%`))
+    .where(and(like(entries.date, `${year}-%`), eq(entries.status, "finalized")))
     .groupBy(sql`substr(${entries.date}, 6, 2)`, entries.kind)
     .all();
 
@@ -264,6 +344,7 @@ export type CategorySummary = {
   gross: number;
   net: number;
   vat: number;
+  deductible: number;
 };
 
 export function categorySummary(year: number): CategorySummary[] {
@@ -273,15 +354,17 @@ export function categorySummary(year: number): CategorySummary[] {
       categoryName: categories.name,
       categoryColor: categories.color,
       kind: entries.kind,
-      gross: sql<number>`sum(${entries.grossAmountCents})`,
-      net: sql<number>`sum(${entries.netAmountCents})`,
-      vat: sql<number>`sum(${entries.vatAmountCents})`,
+      gross: sql<number>`sum(${entryTaxLines.grossAmountCents})`,
+      net: sql<number>`sum(${entryTaxLines.netAmountCents})`,
+      vat: sql<number>`sum(${entryTaxLines.vatAmountCents})`,
+      deductible: sql<number>`sum(round((${entryTaxLines.netAmountCents} + ${entryTaxLines.vatAmountCents} - round(${entryTaxLines.vatAmountCents} * ${entryTaxLines.inputVatDeductiblePercent} / 100.0)) * ${entries.deductiblePercent} / 100.0))`,
     })
     .from(entries)
     .innerJoin(categories, eq(entries.categoryId, categories.id))
-    .where(like(entries.date, `${year}-%`))
+    .innerJoin(entryTaxLines, eq(entryTaxLines.entryId, entries.id))
+    .where(and(like(entries.date, `${year}-%`), eq(entries.status, "finalized")))
     .groupBy(entries.categoryId, entries.kind)
-    .orderBy(desc(entries.kind), desc(sql`sum(${entries.grossAmountCents})`))
+    .orderBy(desc(entries.kind), desc(sql`sum(${entryTaxLines.grossAmountCents})`))
     .all();
 }
 
@@ -296,14 +379,25 @@ export type VatSummary = {
 export function vatSummary(year: number): VatSummary[] {
   return db
     .select({
-      vatRate: entries.vatRate,
+      vatRate: entryTaxLines.vatRate,
       kind: entries.kind,
-      net: sql<number>`sum(${entries.netAmountCents})`,
-      vat: sql<number>`sum(${entries.vatAmountCents})`,
+      net: sql<number>`sum(${entryTaxLines.netAmountCents})`,
+      vat: sql<number>`sum(case when ${entries.kind} = 'expense' then round(${entryTaxLines.vatAmountCents} * ${entryTaxLines.inputVatDeductiblePercent} / 100.0) else ${entryTaxLines.vatAmountCents} end)`,
     })
     .from(entries)
-    .where(like(entries.date, `${year}-%`))
-    .groupBy(entries.vatRate, entries.kind)
-    .orderBy(desc(entries.vatRate))
+    .innerJoin(entryTaxLines, eq(entryTaxLines.entryId, entries.id))
+    .where(and(like(entries.date, `${year}-%`), eq(entries.status, "finalized")))
+    .groupBy(entryTaxLines.vatRate, entries.kind)
+    .orderBy(desc(entryTaxLines.vatRate))
+    .all();
+}
+
+/** Call only after a page has checked the personnel permission. */
+export function listPersonnelEmployees() {
+  return db
+    .select()
+    .from(employees)
+    .where(eq(employees.active, true))
+    .orderBy(asc(employees.name))
     .all();
 }

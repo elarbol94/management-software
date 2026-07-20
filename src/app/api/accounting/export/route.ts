@@ -21,7 +21,9 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "Invalid month" }, { status: 400 });
   }
 
-  const rows = listEntries({ year, month });
+  const canManagePersonnel = session.user.role === "admin" || session.user.role === "personnel";
+  const rows = listEntries({ year, month, includePersonnelDetails: canManagePersonnel })
+    .filter((row) => row.status === "finalized");
   // CSV rows are ordered oldest first for the tax advisor.
   const csv = buildEntriesCsv([...rows].reverse());
 
