@@ -260,5 +260,7 @@ export async function setInvoiceStatus(
 
   revalidatePath("/accounting/invoices");
   revalidatePath("/accounting");
+  revalidatePath("/accounting/bookings");
   revalidatePath("/documents");
+  revalidatePath("/accounting/planning");
 }

@@ -128,3 +128,31 @@ export const entries = sqliteTable(
     index("entries_category_idx").on(table.categoryId),
   ],
 );
+
+// Gross monthly targets by category. A missing row is equivalent to a zero
+// target, keeping future planning years sparse while preserving exact cents.
+export const budgetPlans = sqliteTable(
+  "budget_plans",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => createId()),
+    categoryId: text("category_id")
+      .notNull()
+      .references(() => categories.id),
+    year: integer("year").notNull(),
+    month: integer("month").notNull(),
+    amountCents: integer("amount_cents").notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex("budget_plans_category_year_month_idx").on(
+      table.categoryId,
+      table.year,
+      table.month,
+    ),
+    index("budget_plans_year_idx").on(table.year),
+  ],
+);

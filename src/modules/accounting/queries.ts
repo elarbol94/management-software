@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, like, sql, inArray } from "drizzle-orm";
 import { db } from "@/db";
-import { attachments, categories, entries } from "@/db/schema";
+import { attachments, budgetPlans, categories, entries } from "@/db/schema";
 import type { EntryKind } from "./schema";
 
 export type EntryFilters = {
@@ -120,13 +120,19 @@ export function listCategories(options?: { includeArchived?: boolean }) {
 }
 
 export function categoryUsageCount(categoryId: string): number {
-  return (
+  const entryCount =
     db
       .select({ value: sql<number>`count(*)` })
       .from(entries)
       .where(eq(entries.categoryId, categoryId))
-      .get()?.value ?? 0
-  );
+      .get()?.value ?? 0;
+  const planCount =
+    db
+      .select({ value: sql<number>`count(*)` })
+      .from(budgetPlans)
+      .where(eq(budgetPlans.categoryId, categoryId))
+      .get()?.value ?? 0;
+  return entryCount + planCount;
 }
 
 export function yearsWithEntries(): number[] {
@@ -138,6 +144,82 @@ export function yearsWithEntries(): number[] {
     .map((row) => Number(row.year))
     .filter((year) => Number.isFinite(year))
     .sort((a, b) => b - a);
+}
+
+export function yearsWithPlans(): number[] {
+  return db
+    .select({ year: budgetPlans.year })
+    .from(budgetPlans)
+    .groupBy(budgetPlans.year)
+    .orderBy(desc(budgetPlans.year))
+    .all()
+    .map((row) => row.year);
+}
+
+export type PlanningRow = {
+  categoryId: string;
+  categoryName: string;
+  categoryColor: string;
+  kind: EntryKind;
+  archived: boolean;
+  plannedByMonth: number[];
+  actualByMonth: number[];
+};
+
+/** Monthly gross targets and journal actuals for the annual planning view. */
+export function planningOverview(year: number): PlanningRow[] {
+  const categoryRows = listCategories({ includeArchived: true });
+  const planRows = db
+    .select({
+      categoryId: budgetPlans.categoryId,
+      month: budgetPlans.month,
+      amountCents: budgetPlans.amountCents,
+    })
+    .from(budgetPlans)
+    .where(eq(budgetPlans.year, year))
+    .all();
+  const actualRows = db
+    .select({
+      categoryId: entries.categoryId,
+      month: sql<string>`substr(${entries.date}, 6, 2)`,
+      amountCents: sql<number>`sum(${entries.grossAmountCents})`,
+    })
+    .from(entries)
+    .where(like(entries.date, `${year}-%`))
+    .groupBy(entries.categoryId, sql`substr(${entries.date}, 6, 2)`)
+    .all();
+
+  return categoryRows
+    .map((category) => {
+      const plannedByMonth = Array<number>(12).fill(0);
+      const actualByMonth = Array<number>(12).fill(0);
+      for (const plan of planRows) {
+        if (plan.categoryId === category.id && plan.month >= 1 && plan.month <= 12) {
+          plannedByMonth[plan.month - 1] = plan.amountCents;
+        }
+      }
+      for (const actual of actualRows) {
+        const month = Number(actual.month);
+        if (actual.categoryId === category.id && month >= 1 && month <= 12) {
+          actualByMonth[month - 1] = actual.amountCents;
+        }
+      }
+      return {
+        categoryId: category.id,
+        categoryName: category.name,
+        categoryColor: category.color,
+        kind: category.kind,
+        archived: category.archived,
+        plannedByMonth,
+        actualByMonth,
+      };
+    })
+    .filter(
+      (row) =>
+        !row.archived ||
+        row.plannedByMonth.some((amount) => amount !== 0) ||
+        row.actualByMonth.some((amount) => amount !== 0),
+    );
 }
 
 // --- Auswertung (report) queries ---
