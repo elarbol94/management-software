@@ -7,7 +7,7 @@ import {
   Plus,
   Upload,
   Users,
-} from "lucide-react";
+} from "@/components/server-safe-icons";
 import { formatCents } from "@/lib/money";
 import { listInvoices } from "@/modules/accounting/invoice-queries";
 import { listReceiptDocuments } from "@/modules/accounting/queries";

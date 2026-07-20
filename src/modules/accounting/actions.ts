@@ -144,7 +144,6 @@ export async function deleteCategory(id: string): Promise<{ deleted: boolean }> 
   if (categoryUsageCount(id) > 0) return { deleted: false };
   db.delete(categories).where(eq(categories.id, id)).run();
   revalidatePath("/settings/categories");
-  revalidatePath("/documents");
   revalidatePath("/accounting");
   revalidatePath("/accounting/bookings");
   revalidatePath("/accounting/planning");

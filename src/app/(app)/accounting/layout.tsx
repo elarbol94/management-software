@@ -1,5 +1,5 @@
 import { getTranslations } from "next-intl/server";
-import { Landmark } from "lucide-react";
+import { Landmark } from "@/components/server-safe-icons";
 import { AccountingNav } from "@/modules/accounting/components/accounting-nav";
 
 export default async function AccountingLayout({

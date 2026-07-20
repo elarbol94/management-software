@@ -3,13 +3,21 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useTranslations } from "next-intl";
-import { BookOpenText, FileText, LayoutDashboard } from "lucide-react";
+import {
+  BookOpenText,
+  CalendarRange,
+  FileText,
+  HandCoins,
+  LayoutDashboard,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const items = [
   { key: "overview", href: "/accounting", icon: LayoutDashboard, exact: true },
   { key: "bookings", href: "/accounting/bookings", icon: BookOpenText },
   { key: "invoices", href: "/accounting/invoices", icon: FileText },
+  { key: "planning", href: "/accounting/planning", icon: CalendarRange },
+  { key: "funding", href: "/accounting/funding-projects", icon: HandCoins },
 ] as const;
 
 export function AccountingNav() {

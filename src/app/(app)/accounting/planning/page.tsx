@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft } from "@/components/server-safe-icons";
 import { getLocale, getTranslations } from "next-intl/server";
 import { requireUser } from "@/lib/auth";
 import {

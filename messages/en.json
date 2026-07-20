@@ -108,7 +108,9 @@
     "navigationLabel": "Accounting navigation",
     "overview": "Overview",
     "bookings": "Bookings",
-    "invoices": "Invoices"
+    "invoices": "Invoices & receipts",
+    "planning": "Planning",
+    "funding": "Funding projects"
   },
   "accountingOverview": {
       "period": "Financial year {year}",

@@ -108,7 +108,9 @@
     "navigationLabel": "Buchhaltungsnavigation",
     "overview": "Übersicht",
     "bookings": "Buchungen",
-    "invoices": "Rechnungen"
+    "invoices": "Rechnungen & Belege",
+    "planning": "Planung",
+    "funding": "Förderprojekte"
   },
   "accountingOverview": {
       "period": "Geschäftsjahr {year}",
