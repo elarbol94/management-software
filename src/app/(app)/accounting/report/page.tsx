@@ -213,6 +213,7 @@ export default async function ReportPage({
                   <TableRow>
                     <TableHead>{t("category")}</TableHead>
                     <TableHead className="text-right">{t("net")}</TableHead>
+                    <TableHead className="text-right">{t("deductible")}</TableHead>
                     <TableHead className="text-right">{t("gross")}</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -231,6 +232,12 @@ export default async function ReportPage({
                       <TableCell className="text-right tabular-nums">
                         {formatCents(
                           row.kind === "expense" ? -row.net : row.net,
+                          locale,
+                        )}
+                      </TableCell>
+                      <TableCell className="text-right font-medium tabular-nums">
+                        {formatCents(
+                          row.kind === "expense" ? -row.deductible : row.deductible,
                           locale,
                         )}
                       </TableCell>

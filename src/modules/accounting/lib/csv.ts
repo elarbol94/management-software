@@ -4,7 +4,11 @@ import { formatCentsPlainDe } from "@/lib/money";
 // German-locale Excel, which is what the Steuerberater will use.
 
 export type CsvEntry = {
+  id?: string;
   date: string;
+  documentDate?: string | null;
+  documentNumber?: string;
+  status?: "draft" | "finalized" | "voided";
   kind: "income" | "expense";
   description: string;
   counterparty: string;
@@ -15,6 +19,22 @@ export type CsvEntry = {
   vatAmountCents: number;
   grossAmountCents: number;
   notes: string;
+  deductiblePercent?: number;
+  taxLines?: Array<{
+    description: string;
+    netAmountCents: number;
+    vatRate: number;
+    vatAmountCents: number;
+    grossAmountCents: number;
+    inputVatDeductiblePercent: number;
+  }>;
+  paymentLines?: Array<{
+    date: string;
+    description: string;
+    recipient: string;
+    amountCents: number;
+    paymentMethod: "bank" | "cash" | "card";
+  }>;
 };
 
 const KIND_LABELS = { income: "Einnahme", expense: "Ausgabe" } as const;
@@ -32,6 +52,19 @@ const HEADER = [
   "USt",
   "Brutto",
   "Notizen",
+  "Buchungs-ID",
+  "Belegdatum",
+  "Belegnummer",
+  "Steuerzeile",
+  "Vorsteuer abzugsfähig (%)",
+  "Betrieblich abzugsfähig (%)",
+  "Status",
+  "Detailtyp",
+  "Zahlungsdatum",
+  "Zahlungsempfänger",
+  "Zahlungsbeschreibung",
+  "Zahlungsbetrag",
+  "Zahlungsart Detail",
 ];
 
 function escapeField(value: string): string {
@@ -50,21 +83,72 @@ function formatDateDe(isoDate: string): string {
 export function buildEntriesCsv(rows: CsvEntry[]): string {
   const lines = [HEADER.join(";")];
   for (const row of rows) {
-    lines.push(
-      [
+    const taxLines = row.taxLines?.length
+      ? row.taxLines
+      : [{
+          description: "",
+          netAmountCents: row.netAmountCents,
+          vatRate: row.vatRate,
+          vatAmountCents: row.vatAmountCents,
+          grossAmountCents: row.grossAmountCents,
+          inputVatDeductiblePercent: 100,
+        }];
+    taxLines.forEach((taxLine, index) => {
+      lines.push([
         formatDateDe(row.date),
         KIND_LABELS[row.kind],
         escapeField(row.description),
         escapeField(row.counterparty),
         escapeField(row.categoryName),
         PAYMENT_LABELS[row.paymentMethod],
-        formatCentsPlainDe(row.netAmountCents),
-        String(row.vatRate),
-        formatCentsPlainDe(row.vatAmountCents),
-        formatCentsPlainDe(row.grossAmountCents),
+        formatCentsPlainDe(taxLine.netAmountCents),
+        String(taxLine.vatRate),
+        formatCentsPlainDe(taxLine.vatAmountCents),
+        formatCentsPlainDe(taxLine.grossAmountCents),
         escapeField(row.notes),
-      ].join(";"),
-    );
+        row.id ?? "",
+        row.documentDate ? formatDateDe(row.documentDate) : "",
+        escapeField(row.documentNumber ?? ""),
+        escapeField(taxLine.description || String(index + 1)),
+        String(taxLine.inputVatDeductiblePercent),
+        String(row.deductiblePercent ?? 100),
+        row.status ?? "finalized",
+        "Steuerzeile",
+        "",
+        "",
+        "",
+        "",
+        "",
+      ].join(";"));
+    });
+    for (const paymentLine of row.paymentLines ?? []) {
+      lines.push([
+        formatDateDe(row.date),
+        KIND_LABELS[row.kind],
+        escapeField(row.description),
+        escapeField(row.counterparty),
+        escapeField(row.categoryName),
+        PAYMENT_LABELS[row.paymentMethod],
+        "",
+        "",
+        "",
+        "",
+        escapeField(row.notes),
+        row.id ?? "",
+        row.documentDate ? formatDateDe(row.documentDate) : "",
+        escapeField(row.documentNumber ?? ""),
+        "",
+        "",
+        String(row.deductiblePercent ?? 100),
+        row.status ?? "finalized",
+        "Zahlung",
+        formatDateDe(paymentLine.date),
+        escapeField(paymentLine.recipient),
+        escapeField(paymentLine.description),
+        formatCentsPlainDe(paymentLine.amountCents),
+        PAYMENT_LABELS[paymentLine.paymentMethod],
+      ].join(";"));
+    }
   }
   // BOM so Excel detects UTF-8; CRLF line endings for Windows Excel.
   return "\uFEFF" + lines.join("\r\n") + "\r\n";

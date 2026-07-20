@@ -34,7 +34,7 @@ export function CreateUserDialog() {
     name: "",
     email: "",
     password: "",
-    role: "member" as "member" | "admin",
+    role: "member" as "member" | "personnel" | "admin",
   });
 
   async function onSubmit(e: React.FormEvent) {
@@ -108,16 +108,21 @@ export function CreateUserDialog() {
             <Select
               value={form.role}
               onValueChange={(value) =>
-                setForm({ ...form, role: value as "member" | "admin" })
+                setForm({ ...form, role: value as "member" | "personnel" | "admin" })
               }
             >
               <SelectTrigger>
                 <SelectValue>
-                  {form.role === "admin" ? t("roleAdmin") : t("roleMember")}
+                  {form.role === "admin"
+                    ? t("roleAdmin")
+                    : form.role === "personnel"
+                      ? t("rolePersonnel")
+                      : t("roleMember")}
                 </SelectValue>
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="member">{t("roleMember")}</SelectItem>
+                <SelectItem value="personnel">{t("rolePersonnel")}</SelectItem>
                 <SelectItem value="admin">{t("roleAdmin")}</SelectItem>
               </SelectContent>
             </Select>

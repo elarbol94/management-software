@@ -55,7 +55,11 @@ export default async function UsersSettingsPage() {
                     <Badge
                       variant={user.role === "admin" ? "default" : "secondary"}
                     >
-                      {user.role === "admin" ? t("roleAdmin") : t("roleMember")}
+                      {user.role === "admin"
+                        ? t("roleAdmin")
+                        : user.role === "personnel"
+                          ? t("rolePersonnel")
+                          : t("roleMember")}
                     </Badge>
                     {user.banned && (
                       <Badge variant="destructive">{t("banned")}</Badge>
