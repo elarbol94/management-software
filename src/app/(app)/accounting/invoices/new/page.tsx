@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { getTranslations } from "next-intl/server";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft } from "@/components/server-safe-icons";
 import { requireUser } from "@/lib/auth";
 import { getAppSettings } from "@/modules/settings/queries";
 import { listCustomers } from "@/modules/accounting/invoice-queries";

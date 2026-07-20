@@ -1,6 +1,6 @@
 import { getFormatter, getLocale, getTranslations } from "next-intl/server";
 import Link from "next/link";
-import { Download, ArrowLeft } from "lucide-react";
+import { Download, ArrowLeft } from "@/components/server-safe-icons";
 import { requireUser } from "@/lib/auth";
 import { formatCents } from "@/lib/money";
 import {

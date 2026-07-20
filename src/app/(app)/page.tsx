@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { getFormatter, getTranslations } from "next-intl/server";
-import { CalendarDays } from "lucide-react";
+import { CalendarDays } from "@/components/server-safe-icons";
 import { requireUser } from "@/lib/auth";
 import { listMyTasks } from "@/modules/projects/queries";
 import { Badge } from "@/components/ui/badge";

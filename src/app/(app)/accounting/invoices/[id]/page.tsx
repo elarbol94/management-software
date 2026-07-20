@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getFormatter, getLocale, getTranslations } from "next-intl/server";
-import { ArrowLeft, Printer } from "lucide-react";
+import { ArrowLeft, Printer } from "@/components/server-safe-icons";
 import { requireUser } from "@/lib/auth";
 import { formatCents } from "@/lib/money";
 import { getAppSettings } from "@/modules/settings/queries";
