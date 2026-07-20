@@ -1,69 +1,55 @@
-import { getTranslations } from "next-intl/server";
 import { requireUser } from "@/lib/auth";
 import {
   entryTotals,
   listCategories,
   listEntries,
+  monthlySummary,
+  vatSummary,
   yearsWithEntries,
-  type EntryFilters,
 } from "@/modules/accounting/queries";
-import { LedgerClient } from "@/modules/accounting/components/ledger-client";
+import { AccountingOverview } from "@/modules/accounting/components/accounting-overview";
 
-function parseFilters(params: {
-  year?: string;
-  month?: string;
-  kind?: string;
-  category?: string;
-}): EntryFilters {
-  const now = new Date();
-  const year =
-    params.year && /^\d{4}$/.test(params.year)
-      ? Number(params.year)
-      : now.getFullYear();
-  const month =
-    params.month && /^\d{1,2}$/.test(params.month)
-      ? Math.min(12, Math.max(1, Number(params.month)))
-      : undefined;
-  const kind =
-    params.kind === "income" || params.kind === "expense"
-      ? params.kind
-      : undefined;
-  return { year, month, kind, categoryId: params.category || undefined };
+function parseYear(value?: string) {
+  return value && /^\d{4}$/.test(value)
+    ? Number(value)
+    : new Date().getFullYear();
 }
 
 export default async function AccountingPage({
   searchParams,
 }: {
-  searchParams: Promise<{
-    year?: string;
-    month?: string;
-    kind?: string;
-    category?: string;
-  }>;
+  searchParams: Promise<{ year?: string }>;
 }) {
   await requireUser();
-  const filters = parseFilters(await searchParams);
-  const t = await getTranslations("accounting");
-
+  const year = parseYear((await searchParams).year);
+  const filters = { year };
   const entries = listEntries(filters);
   const totals = entryTotals(filters);
+  const months = monthlySummary(year);
   const categories = listCategories();
+  const vatRows = vatSummary(year);
+  const vatCollected = vatRows
+    .filter((row) => row.kind === "income")
+    .reduce((sum, row) => sum + row.vat, 0);
+  const vatPaid = vatRows
+    .filter((row) => row.kind === "expense")
+    .reduce((sum, row) => sum + row.vat, 0);
+
   const years = yearsWithEntries();
   const currentYear = new Date().getFullYear();
   if (!years.includes(currentYear)) years.unshift(currentYear);
-  if (!years.includes(filters.year)) years.push(filters.year);
+  if (!years.includes(year)) years.push(year);
   years.sort((a, b) => b - a);
 
   return (
-    <div className="flex flex-col gap-6">
-      <h1 className="text-2xl font-semibold tracking-tight">{t("title")}</h1>
-      <LedgerClient
-        entries={entries}
-        totals={totals}
-        categories={categories}
-        years={years}
-        filters={filters}
-      />
-    </div>
+    <AccountingOverview
+      entries={entries}
+      months={months}
+      totals={totals}
+      vatBalance={vatCollected - vatPaid}
+      categories={categories}
+      years={years}
+      year={year}
+    />
   );
 }
