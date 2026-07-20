@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   buildFtsQuery,
   extractInternalSlugs,
+  extractCitations,
+  extractCommentAnchors,
   extractText,
   slugify,
   type TiptapNode,
@@ -84,6 +86,24 @@ describe("extractInternalSlugs", () => {
       ],
     };
     expect(extractInternalSlugs(external)).toEqual([]);
+  });
+
+  it("accepts canonical page links", () => {
+    expect(extractInternalSlugs({ type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "x", marks: [{ type: "link", attrs: { href: "/wiki/pages/research" } }] }] }] })).toEqual(["research"]);
+  });
+});
+
+describe("research nodes", () => {
+  it("extracts citations and comment anchors", () => {
+    const researchDoc: TiptapNode = {
+      type: "doc",
+      content: [
+        { type: "citation", attrs: { items: [{ sourceId: "source-1", locator: "12" }] } },
+        { type: "paragraph", content: [{ type: "text", text: "claim", marks: [{ type: "comment", attrs: { threadId: "thread-1" } }] }] },
+      ],
+    };
+    expect(extractCitations(researchDoc)).toEqual([{ sourceId: "source-1", locator: "12" }]);
+    expect(extractCommentAnchors(researchDoc)).toEqual(["thread-1"]);
   });
 });
 

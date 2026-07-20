@@ -4,8 +4,17 @@
 export type TiptapNode = {
   type?: string;
   text?: string;
+  attrs?: Record<string, unknown>;
   content?: TiptapNode[];
   marks?: Array<{ type?: string; attrs?: Record<string, unknown> }>;
+};
+
+export type CitationItem = {
+  sourceId: string;
+  locator?: string;
+  locatorType?: "page" | "chapter" | "timestamp";
+  prefix?: string;
+  suffix?: string;
 };
 
 /** Extracts plain text for the FTS index. Blocks are joined with newlines. */
@@ -15,6 +24,7 @@ export function extractText(doc: TiptapNode | null | undefined): string {
 
   function walkBlock(node: TiptapNode): string {
     if (node.text) return node.text;
+    if (node.type === "citation" && typeof node.attrs?.label === "string") return node.attrs.label;
     if (!node.content) return "";
     return node.content.map(walkBlock).join("");
   }
@@ -35,7 +45,7 @@ export function extractText(doc: TiptapNode | null | undefined): string {
   return blocks.join("\n");
 }
 
-/** Collects slugs of internal wiki links (hrefs of the form /wiki/<slug>). */
+/** Collects slugs from legacy and canonical internal wiki page links. */
 export function extractInternalSlugs(doc: TiptapNode | null | undefined): string[] {
   if (!doc) return [];
   const slugs = new Set<string>();
@@ -44,7 +54,7 @@ export function extractInternalSlugs(doc: TiptapNode | null | undefined): string
     for (const mark of node.marks ?? []) {
       if (mark.type === "link") {
         const href = String(mark.attrs?.href ?? "");
-        const match = href.match(/^\/wiki\/([^/?#]+)$/);
+        const match = href.match(/^\/wiki\/(?:pages\/)?([^/?#]+)$/);
         if (match) slugs.add(decodeURIComponent(match[1]));
       }
     }
@@ -53,6 +63,49 @@ export function extractInternalSlugs(doc: TiptapNode | null | undefined): string
 
   walk(doc);
   return [...slugs];
+}
+
+/** Collects structured citations from inline citation nodes. */
+export function extractCitations(doc: TiptapNode | null | undefined): CitationItem[] {
+  if (!doc) return [];
+  const citations: CitationItem[] = [];
+  function walk(node: TiptapNode) {
+    if (node.type === "citation") {
+      const raw = node.attrs?.items;
+      if (Array.isArray(raw)) {
+        for (const item of raw) {
+          if (item && typeof item === "object" && typeof item.sourceId === "string") {
+            citations.push(item as CitationItem);
+          }
+        }
+      } else if (typeof node.attrs?.sourceId === "string") {
+        citations.push({
+          sourceId: node.attrs.sourceId,
+          locator: typeof node.attrs.locator === "string" ? node.attrs.locator : undefined,
+          locatorType: node.attrs.locatorType as CitationItem["locatorType"],
+        });
+      }
+    }
+    for (const child of node.content ?? []) walk(child);
+  }
+  walk(doc);
+  return citations;
+}
+
+/** Comment thread ids whose anchor mark is still present in the document. */
+export function extractCommentAnchors(doc: TiptapNode | null | undefined): string[] {
+  if (!doc) return [];
+  const ids = new Set<string>();
+  function walk(node: TiptapNode) {
+    for (const mark of node.marks ?? []) {
+      if (mark.type === "comment" && typeof mark.attrs?.threadId === "string") {
+        ids.add(mark.attrs.threadId);
+      }
+    }
+    for (const child of node.content ?? []) walk(child);
+  }
+  walk(doc);
+  return [...ids];
 }
 
 /** Creates a URL-safe slug from a title (umlauts transliterated). */

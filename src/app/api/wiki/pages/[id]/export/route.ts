@@ -1,0 +1,9 @@
+import { getSession } from "@/lib/auth";
+import { db } from "@/db";
+import { eq } from "drizzle-orm";
+import { wikiPages } from "@/db/schema";
+import { extractText, type TiptapNode } from "@/modules/wiki/lib/tiptap";
+import { getCitationSourcesForPage } from "@/modules/wiki/research-queries";
+import { formatBibliographyEntry } from "@/modules/wiki/lib/citations";
+function escape(value: string) { return value.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
+export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) { if (!await getSession()) return new Response("Unauthorized", { status: 401 }); const { id } = await params; const page = db.select().from(wikiPages).where(eq(wikiPages.id, id)).get(); if (!page) return new Response("Not found", { status: 404 }); const format = new URL(request.url).searchParams.get("format") === "html" ? "html" : "markdown"; let doc: TiptapNode | null = null; try { doc = JSON.parse(page.contentJson); } catch { /* empty */ } const body = extractText(doc); const references = getCitationSourcesForPage(id).map(formatBibliographyEntry); const text = format === "html" ? `<!doctype html><html><head><meta charset="utf-8"><title>${escape(page.title)}</title></head><body><h1>${escape(page.title)}</h1><article>${escape(body).replace(/\n/g,"<br>\n")}</article>${references.length ? `<h2>References</h2><ol>${references.map((item) => `<li>${escape(item)}</li>`).join("")}</ol>` : ""}</body></html>` : `# ${page.title}\n\n${body}${references.length ? `\n\n## References\n\n${references.map((item) => `- ${item}`).join("\n")}` : ""}\n`; const ext = format === "html" ? "html" : "md"; return new Response(text, { headers: { "Content-Type": `${format === "html" ? "text/html" : "text/markdown"}; charset=utf-8`, "Content-Disposition": `attachment; filename="${page.slug}.${ext}"` } }); }

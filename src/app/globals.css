@@ -128,4 +128,25 @@
   html {
     @apply font-sans;
   }
+
+  .wiki-citation {
+    @apply mx-0.5 inline-flex cursor-default items-baseline rounded bg-indigo-50 px-1 py-0.5 text-[0.92em] font-medium text-indigo-800 ring-1 ring-indigo-200 dark:bg-indigo-950/60 dark:text-indigo-200 dark:ring-indigo-800;
+  }
+
+  .wiki-comment-anchor {
+    @apply rounded-sm bg-amber-100 decoration-amber-500 decoration-2 underline-offset-2 dark:bg-amber-950/60;
+    text-decoration-line: underline;
+  }
+
+  .wiki-highlight {
+    @apply rounded-sm bg-yellow-200/80 px-0.5 dark:bg-yellow-700/50;
+  }
+
+  .ProseMirror > *:first-child {
+    margin-top: 0;
+  }
+
+  .ProseMirror:focus-visible {
+    outline: none;
+  }
 }

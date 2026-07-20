@@ -1,8 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
 
-// Runs after accounting.spec.ts (workers: 1, same database) — the admin
-// account already exists.
-
 test.describe.configure({ mode: "serial" });
 
 async function login(page: Page) {
@@ -13,102 +10,75 @@ async function login(page: Page) {
   await expect(page.getByText("Willkommen, E2E Admin!")).toBeVisible();
 }
 
-test("create the first page and write autosaved content", async ({ page }) => {
-  await login(page);
-  await page.goto("/wiki");
-
-  await expect(page.getByText("Noch keine Seiten im Wiki.")).toBeVisible();
-  page.once("dialog", (dialog) => dialog.accept("Onboarding"));
-  await page.getByRole("button", { name: "Erste Seite anlegen" }).click();
-
-  await expect(page).toHaveURL(/\/wiki\/onboarding/);
-  await expect(page.getByRole("heading", { name: "Onboarding" })).toBeVisible();
-
-  await page.locator(".ProseMirror").click();
-  await page.keyboard.type("Willkommen im Team! Erste Schritte für neue Kollegen.");
-  await expect(page.getByText("Gespeichert", { exact: true })).toBeVisible({
-    timeout: 10_000,
-  });
-
+async function quickNote(page: Page, title: string, body: string) {
+  await page.goto("/wiki/inbox");
+  await page.getByRole("button", { name: "Schnelle Notiz" }).last().click();
+  await expect(page).toHaveURL(/\/wiki\/pages\/unbenannte-notiz/);
+  const editor = page.locator(".ProseMirror");
+  await editor.click();
+  await page.keyboard.type(title);
+  await page.keyboard.press("Enter");
+  await page.keyboard.type(body);
+  await expect(page.getByText("Gespeichert", { exact: true })).toBeVisible({ timeout: 10_000 });
   await page.reload();
-  await expect(
-    page.getByText("Willkommen im Team! Erste Schritte für neue Kollegen."),
-  ).toBeVisible();
+  await expect(page.getByRole("button", { name: title })).toBeVisible();
+}
+
+test("capture an inbox note and retain autosaved content", async ({ page }) => {
+  await login(page);
+  await quickNote(page, "Onboarding", "Willkommen im Team! Erste Schritte für neue Kollegen.");
+  await expect(page.getByText("Willkommen im Team! Erste Schritte für neue Kollegen.")).toBeVisible();
 });
 
-test("internal links create backlinks", async ({ page }) => {
+test("internal links create backlinks and unified search finds content", async ({ page }) => {
   await login(page);
-  await page.goto("/wiki");
-
-  // Create a second page.
-  page.once("dialog", (dialog) => dialog.accept("IT-Setup"));
-  await page.getByRole("button", { name: "Neue Seite" }).click();
-  await expect(page).toHaveURL(/\/wiki\/it-setup/);
-
-  // Write some text, then insert a link to "Onboarding" via the page picker.
+  await quickNote(page, "IT-Setup", "Laptop einrichten. Siehe auch: ");
   await page.locator(".ProseMirror").click();
-  await page.keyboard.type("Laptop einrichten. Siehe auch: ");
   await page.getByRole("button", { name: "Seite verlinken" }).click();
   await page.getByRole("button", { name: "Onboarding" }).click();
-  await expect(page.getByText("Gespeichert", { exact: true })).toBeVisible({
-    timeout: 10_000,
-  });
-
-  // The Onboarding page now shows IT-Setup as a backlink.
+  await expect(page.getByText("Gespeichert", { exact: true })).toBeVisible({ timeout: 10_000 });
   await page.getByRole("link", { name: "Onboarding" }).first().click();
   await expect(page.getByText("Verweise auf diese Seite")).toBeVisible();
-  await expect(
-    page.getByRole("link", { name: "IT-Setup" }).nth(1),
-  ).toBeVisible();
+  await expect(page.getByRole("link", { name: "IT-Setup" }).last()).toBeVisible();
+  await page.getByPlaceholder("Seiten und Quellen durchsuchen…").fill("Laptop");
+  await expect(page.getByRole("link", { name: /IT-Setup/ }).first()).toBeVisible();
 });
 
-test("full-text search finds pages by content", async ({ page }) => {
+test("create a source, cite it, and render the bibliography", async ({ page }) => {
   await login(page);
-  await page.goto("/wiki");
-
-  await page.getByPlaceholder("Wiki durchsuchen…").fill("Laptop");
-  const result = page.getByRole("link", { name: /IT-Setup/ }).first();
-  await expect(result).toBeVisible();
+  await page.goto("/wiki/sources");
+  await page.getByRole("button", { name: "Neue Quelle" }).click();
+  await page.getByLabel("Titel").fill("Knowledge Systems");
+  await page.getByLabel("Mitwirkende").fill("Smith, Jane");
+  await page.getByLabel("Erscheinungsdatum").fill("2026");
+  await page.getByRole("button", { name: "Quelle anlegen" }).click();
+  await expect(page).toHaveURL(/\/wiki\/sources\//);
+  await expect(page.getByRole("heading", { name: "Knowledge Systems" })).toBeVisible();
+  await page.getByRole("link", { name: "Onboarding" }).first().click();
+  await page.locator(".ProseMirror").click();
+  await page.getByRole("button", { name: "Zitat einfügen" }).click();
+  await page.getByRole("button", { name: /Knowledge Systems/ }).click();
+  await expect(page.getByText("Gespeichert", { exact: true })).toBeVisible({ timeout: 10_000 });
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "Literaturverzeichnis" })).toBeVisible();
+  await expect(page.getByText(/Smith, J\. \(2026\).*Knowledge Systems/)).toBeVisible();
 });
 
-test("subpages appear nested in the tree", async ({ page }) => {
+test("subpages remain nested and deletion is recoverable", async ({ page }) => {
   await login(page);
-  await page.goto("/wiki/onboarding");
-
-  // Add a subpage under Onboarding via the tree row menu.
-  const treeRow = page
-    .locator("nav div")
-    .filter({ hasText: /^Onboarding$/ })
-    .first();
-  await treeRow.hover();
-  await treeRow.getByRole("button").last().click();
+  await page.goto("/wiki/pages");
+  await page.getByRole("link", { name: "Onboarding" }).last().click();
   page.once("dialog", (dialog) => dialog.accept("Erster Arbeitstag"));
-  await page.getByRole("menuitem", { name: "Unterseite anlegen" }).click();
-
-  await expect(page).toHaveURL(/\/wiki\/erster-arbeitstag/);
-  await expect(
-    page.getByRole("heading", { name: "Erster Arbeitstag" }),
-  ).toBeVisible();
-});
-
-test("rename and delete a page", async ({ page }) => {
-  await login(page);
-  await page.goto("/wiki/erster-arbeitstag");
-
+  await page.getByRole("button", { name: "Unterseite anlegen" }).click();
+  await expect(page).toHaveURL(/\/wiki\/pages\/erster-arbeitstag/);
   page.once("dialog", (dialog) => dialog.accept("Tag Eins"));
-  await page.getByRole("heading", { name: "Erster Arbeitstag" }).click();
-  await expect(page.getByRole("heading", { name: "Tag Eins" })).toBeVisible();
-
-  const treeRow = page
-    .locator("nav div")
-    .filter({ hasText: /^Tag Eins$/ })
-    .first();
-  await treeRow.hover();
-  await treeRow.getByRole("button").last().click();
+  await page.getByRole("button", { name: "Erster Arbeitstag" }).click();
+  await expect(page.getByRole("button", { name: "Tag Eins" })).toBeVisible();
   page.once("dialog", (dialog) => dialog.accept());
-  await page.getByRole("menuitem", { name: "Seite löschen" }).click();
-
-  await expect(page).toHaveURL(/\/wiki\/onboarding/);
-  await expect(page.getByRole("heading", { name: "Onboarding" })).toBeVisible();
-  await expect(page.getByRole("link", { name: "Tag Eins" })).toHaveCount(0);
+  await page.getByRole("button", { name: "Seite löschen" }).click();
+  await expect(page).toHaveURL(/\/wiki\/inbox/);
+  await page.goto("/wiki/trash");
+  await expect(page.getByText("Tag Eins")).toBeVisible();
+  await page.getByRole("button", { name: "Wiederherstellen" }).click();
+  await expect(page.getByText("Tag Eins")).toHaveCount(0);
 });
