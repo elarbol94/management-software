@@ -25,6 +25,8 @@ export function listUsers() {
     .select({
       id: user.id,
       name: user.name,
+      username: user.username,
+      displayUsername: user.displayUsername,
       email: user.email,
       role: user.role,
       banned: user.banned,

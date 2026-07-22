@@ -25,9 +25,21 @@ ENV NODE_ENV=production \
     PORT=3000 \
     HOSTNAME=0.0.0.0 \
     DATABASE_PATH=/data/app.db \
-    UPLOADS_PATH=/data/uploads
-RUN groupadd --system app && useradd --system --gid app app \
-    && mkdir -p /data && chown app:app /data
+    UPLOADS_PATH=/data/uploads \
+    MAX_PDF_UPLOAD_BYTES=104857600 \
+    PDF_OCR_LANGUAGES=deu+eng
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+      ca-certificates \
+      poppler-utils \
+      tesseract-ocr \
+      tesseract-ocr-deu \
+      tesseract-ocr-eng \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --system app \
+    && useradd --system --gid app app \
+    && mkdir -p /data \
+    && chown app:app /data
 COPY --from=build --chown=app:app /app/.next/standalone ./
 COPY --from=build --chown=app:app /app/.next/static ./.next/static
 COPY --from=build --chown=app:app /app/public ./public

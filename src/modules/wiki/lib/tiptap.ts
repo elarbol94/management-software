@@ -11,11 +11,33 @@ export type TiptapNode = {
 
 export type CitationItem = {
   sourceId: string;
+  annotationId?: string;
   locator?: string;
   locatorType?: "page" | "chapter" | "timestamp";
   prefix?: string;
   suffix?: string;
 };
+
+/** Converts current JSON and legacy empty/plain-text revision payloads into a valid Tiptap document. */
+export function parseStoredDocument(value: string): TiptapNode {
+  const paragraph = (text = ""): TiptapNode => ({
+    type: "paragraph",
+    ...(text ? { content: [{ type: "text", text }] } : {}),
+  });
+  const fallback = (text: string): TiptapNode => ({
+    type: "doc",
+    content: (text.split(/\r?\n/) || [""]).map((line) => paragraph(line)),
+  });
+  if (!value.trim()) return fallback("");
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (parsed && typeof parsed === "object" && (parsed as TiptapNode).type === "doc") return parsed as TiptapNode;
+    if (typeof parsed === "string") return fallback(parsed);
+    return fallback(value);
+  } catch {
+    return fallback(value);
+  }
+}
 
 /** Extracts plain text for the FTS index. Blocks are joined with newlines. */
 export function extractText(doc: TiptapNode | null | undefined): string {
@@ -25,6 +47,7 @@ export function extractText(doc: TiptapNode | null | undefined): string {
   function walkBlock(node: TiptapNode): string {
     if (node.text) return node.text;
     if (node.type === "citation" && typeof node.attrs?.label === "string") return node.attrs.label;
+    if (node.type === "pdfEvidence" && typeof node.attrs?.quote === "string") return node.attrs.quote;
     if (!node.content) return "";
     return node.content.map(walkBlock).join("");
   }
@@ -92,16 +115,55 @@ export function extractCitations(doc: TiptapNode | null | undefined): CitationIt
   return citations;
 }
 
+/** Collects annotation ids referenced by inline PDF evidence nodes. */
+export function extractEvidenceAnnotationIds(doc: TiptapNode | null | undefined): string[] {
+  if (!doc) return [];
+  const ids = new Set<string>();
+  function walk(node: TiptapNode) {
+    if (node.type === "pdfEvidence" && typeof node.attrs?.annotationId === "string" && node.attrs.annotationId) {
+      ids.add(node.attrs.annotationId);
+    }
+    for (const child of node.content ?? []) walk(child);
+  }
+  walk(doc);
+  return [...ids];
+}
+
 /** Comment thread ids whose anchor mark is still present in the document. */
 export function extractCommentAnchors(doc: TiptapNode | null | undefined): string[] {
   if (!doc) return [];
   const ids = new Set<string>();
   function walk(node: TiptapNode) {
     for (const mark of node.marks ?? []) {
-      if (mark.type === "comment" && typeof mark.attrs?.threadId === "string") {
-        ids.add(mark.attrs.threadId);
+      if (mark.type === "comment") {
+        if (typeof mark.attrs?.threadId === "string") ids.add(mark.attrs.threadId);
+        if (Array.isArray(mark.attrs?.threadIds)) for (const id of mark.attrs.threadIds) if (typeof id === "string") ids.add(id);
       }
     }
+    for (const child of node.content ?? []) walk(child);
+  }
+  walk(doc);
+  return [...ids];
+}
+
+/** Stable commentable media node ids still present in the document. */
+export function extractCommentNodeIds(doc: TiptapNode | null | undefined): string[] {
+  if (!doc) return [];
+  const ids = new Set<string>();
+  function walk(node: TiptapNode) {
+    if ((node.type === "commentableImage" || node.type === "pdfEvidence") && typeof node.attrs?.nodeId === "string" && node.attrs.nodeId) ids.add(node.attrs.nodeId);
+    for (const child of node.content ?? []) walk(child);
+  }
+  walk(doc);
+  return [...ids];
+}
+
+/** Attachment ids that must not be deleted while an inline image node references them. */
+export function extractEmbeddedAttachmentIds(doc: TiptapNode | null | undefined): string[] {
+  if (!doc) return [];
+  const ids = new Set<string>();
+  function walk(node: TiptapNode) {
+    if (node.type === "commentableImage" && typeof node.attrs?.attachmentId === "string" && node.attrs.attachmentId) ids.add(node.attrs.attachmentId);
     for (const child of node.content ?? []) walk(child);
   }
   walk(doc);

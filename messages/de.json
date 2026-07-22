@@ -1,6 +1,6 @@
 {
   "common": {
-    "appName": "Firmenzentrale",
+    "appName": "management-platform",
     "save": "Speichern",
     "cancel": "Abbrechen",
     "delete": "Löschen",
@@ -27,15 +27,11 @@
   },
   "auth": {
     "loginTitle": "Anmelden",
-    "loginSubtitle": "Melde dich mit deinem Firmenkonto an.",
-    "setupTitle": "Erste Einrichtung",
-    "setupSubtitle": "Erstelle das erste Administratorkonto für dein Unternehmen.",
-    "name": "Name",
-    "email": "E-Mail",
+    "loginSubtitle": "Gib deinen Benutzernamen und dein Passwort ein.",
+    "username": "Benutzername",
     "password": "Passwort",
     "signIn": "Anmelden",
-    "createAdmin": "Administratorkonto erstellen",
-    "invalidCredentials": "E-Mail oder Passwort ist falsch.",
+    "invalidCredentials": "Benutzername oder Passwort ist falsch.",
     "genericError": "Anmeldung fehlgeschlagen. Bitte versuche es erneut."
   },
   "dashboard": {
@@ -107,14 +103,30 @@
     "voidConfirm": "Diese finale Buchung stornieren? Der Vorgang bleibt im Änderungsverlauf erhalten.",
     "voided": "Buchung storniert",
     "templates": {
-      "standard_income": { "description": "Einnahme mit einem oder mehreren österreichischen USt-Sätzen." },
-      "grant_income": { "description": "Förderzahlung ohne automatische Umsatzsteuerberechnung." },
-      "standard_expense": { "description": "Lieferantenbeleg mit Vorsteuer und betrieblichem Anteil." },
-      "hospitality": { "description": "Bewirtung mit Anlass, Teilnehmern und steuerlichem Nachweis." },
-      "travel": { "description": "Reisebelege, Reisezweck und prüfbarer Kilometergeld-Vorschlag." },
-      "vehicle": { "description": "KFZ-Kosten mit Fahrzeugart, Privatanteil und Vorsteuerprüfung." },
-      "asset": { "description": "GWG oder Anlagegut mit Nutzungsbeginn und Nutzungsdauer." },
-      "personnel": { "description": "Bruttobezüge und österreichische Lohnnebenkosten aus einer Abrechnung." },
+      "standard_income": {
+        "description": "Einnahme mit einem oder mehreren österreichischen USt-Sätzen."
+      },
+      "grant_income": {
+        "description": "Förderzahlung ohne automatische Umsatzsteuerberechnung."
+      },
+      "standard_expense": {
+        "description": "Lieferantenbeleg mit Vorsteuer und betrieblichem Anteil."
+      },
+      "hospitality": {
+        "description": "Bewirtung mit Anlass, Teilnehmern und steuerlichem Nachweis."
+      },
+      "travel": {
+        "description": "Reisebelege, Reisezweck und prüfbarer Kilometergeld-Vorschlag."
+      },
+      "vehicle": {
+        "description": "KFZ-Kosten mit Fahrzeugart, Privatanteil und Vorsteuerprüfung."
+      },
+      "asset": {
+        "description": "GWG oder Anlagegut mit Nutzungsbeginn und Nutzungsdauer."
+      },
+      "personnel": {
+        "description": "Bruttobezüge und österreichische Lohnnebenkosten aus einer Abrechnung."
+      },
       "svs": { "description": "SVS-Vorschreibung mit Zeitraum und Referenz." },
       "tax_levy": { "description": "Steuern und Abgaben ohne Umsatzsteuer." }
     },
@@ -149,7 +161,12 @@
       "overrideReason": "Begründung für die Abweichung",
       "overridePlaceholder": "Warum wird die Buchung trotz Warnung finalisiert?"
     },
-    "vehicleTypes": { "pkw": "PKW/Kombi", "fiscalTruck": "Fiskal-LKW", "electric": "Elektrofahrzeug", "other": "Sonstiges Fahrzeug" },
+    "vehicleTypes": {
+      "pkw": "PKW/Kombi",
+      "fiscalTruck": "Fiskal-LKW",
+      "electric": "Elektrofahrzeug",
+      "other": "Sonstiges Fahrzeug"
+    },
     "personnel": {
       "employeeName": "Beschäftigte Person",
       "employeeMaster": "Beschäftigten-Stammdaten",
@@ -204,7 +221,15 @@
         "vienna_levy_assumptions": "Die Wiener Dienstgeberabgabe wird für ein durchgehend bestehendes, nicht befreites Dienstverhältnis angesetzt.",
         "unsupported_year": "Für diesen Abrechnungsmonat existiert keine Automatik; bitte auf manuell umstellen."
       },
-      "types": { "worker": "Arbeiter/in", "employee": "Angestellte/r", "marginal": "Geringfügig beschäftigt", "apprentice": "Lehrling", "freelance": "Freie/r Dienstnehmer/in", "managing_director_asvg": "Geschäftsführer/in ASVG", "shareholder_managing_director_gsvg": "Gesellschafter-Geschäftsführer/in GSVG" },
+      "types": {
+        "worker": "Arbeiter/in",
+        "employee": "Angestellte/r",
+        "marginal": "Geringfügig beschäftigt",
+        "apprentice": "Lehrling",
+        "freelance": "Freie/r Dienstnehmer/in",
+        "managing_director_asvg": "Geschäftsführer/in ASVG",
+        "shareholder_managing_director_gsvg": "Gesellschafter-Geschäftsführer/in GSVG"
+      },
       "help": {
         "grossSalary": "Laufende und sonstige Bruttobezüge laut bestehender Lohnabrechnung.",
         "netSalary": "Tatsächlich an die beschäftigte Person ausbezahlter Nettobetrag.",
@@ -218,7 +243,14 @@
         "viennaLevy": "Wiener Dienstgeberabgabe: 2 € je Dienstverhältnis und angefangener Woche, sofern keine Ausnahme gilt.",
         "otherPersonnelCost": "Weitere belegte Arbeitgeberkosten, die keiner Standardzeile entsprechen."
       },
-      "payments": { "net": "Nettoentgelt", "social": "Sozialversicherung", "taxOffice": "Lohnabgaben", "municipality": "Gemeindeabgaben", "provision": "Betriebliche Vorsorge", "other": "Weitere Personalkosten" }
+      "payments": {
+        "net": "Nettoentgelt",
+        "social": "Sozialversicherung",
+        "taxOffice": "Lohnabgaben",
+        "municipality": "Gemeindeabgaben",
+        "provision": "Betriebliche Vorsorge",
+        "other": "Weitere Personalkosten"
+      }
     }
   },
   "accounting": {
@@ -292,31 +324,31 @@
     "funding": "Förderprojekte"
   },
   "accountingOverview": {
-      "period": "Geschäftsjahr {year}",
-      "title": "Ihre Zahlen. Auf einen Blick.",
-      "description": "Ergebnis, Zahlungsströme und offene Steuerpositionen – kompakt zusammengeführt für sichere Entscheidungen.",
-      "keyFigures": "Kennzahlen",
-      "result": "Betriebsergebnis",
-      "resultDetail": "Einnahmen abzüglich Ausgaben",
-      "incomeDetail": "Gebuchte Bruttoeinnahmen",
-      "expenseDetail": "Gebuchte Bruttoausgaben",
-      "vatPosition": "USt-Position",
-      "vatDetail": "Umsatzsteuer abzüglich Vorsteuer",
-      "cashflowTitle": "Saldoentwicklung",
-      "cashflowDescription": "Kumulierter Saldo über das Geschäftsjahr",
-      "runningBalance": "Laufender Saldo",
-      "chartLabel": "Saldoentwicklung im Jahr {year}",
-      "month": "Monat",
-      "income": "Einnahmen",
-      "expenses": "Ausgaben",
-      "ledgerBadge": "Journal",
-      "ledgerTitle": "Jede Bewegung nachvollziehbar.",
-      "ledgerDescription": "Das Buchungsjournal bündelt Einnahmen, Ausgaben, Kategorien und Belege in einer prüfbaren Ansicht.",
-      "bookingCount": "Buchungen im Zeitraum",
-      "openLedger": "Journal öffnen",
-      "recentTitle": "Letzte Buchungen",
-      "recentDescription": "Die jüngsten Kontobewegungen des gewählten Jahres",
-      "showAll": "Alle anzeigen"
+    "period": "Geschäftsjahr {year}",
+    "title": "Ihre Zahlen. Auf einen Blick.",
+    "description": "Ergebnis, Zahlungsströme und offene Steuerpositionen – kompakt zusammengeführt für sichere Entscheidungen.",
+    "keyFigures": "Kennzahlen",
+    "result": "Betriebsergebnis",
+    "resultDetail": "Einnahmen abzüglich Ausgaben",
+    "incomeDetail": "Gebuchte Bruttoeinnahmen",
+    "expenseDetail": "Gebuchte Bruttoausgaben",
+    "vatPosition": "USt-Position",
+    "vatDetail": "Umsatzsteuer abzüglich Vorsteuer",
+    "cashflowTitle": "Saldoentwicklung",
+    "cashflowDescription": "Kumulierter Saldo über das Geschäftsjahr",
+    "runningBalance": "Laufender Saldo",
+    "chartLabel": "Saldoentwicklung im Jahr {year}",
+    "month": "Monat",
+    "income": "Einnahmen",
+    "expenses": "Ausgaben",
+    "ledgerBadge": "Journal",
+    "ledgerTitle": "Jede Bewegung nachvollziehbar.",
+    "ledgerDescription": "Das Buchungsjournal bündelt Einnahmen, Ausgaben, Kategorien und Belege in einer prüfbaren Ansicht.",
+    "bookingCount": "Buchungen im Zeitraum",
+    "openLedger": "Journal öffnen",
+    "recentTitle": "Letzte Buchungen",
+    "recentDescription": "Die jüngsten Kontobewegungen des gewählten Jahres",
+    "showAll": "Alle anzeigen"
   },
   "accountingBookings": {
     "eyebrow": "Journal",
@@ -514,7 +546,9 @@
       "variance": "Abweichung",
       "evidence": "Nachweise vollständig"
     },
-    "validation": { "money": "Bitte gültige Beträge und eine Förderquote zwischen 0 und 100 eingeben." },
+    "validation": {
+      "money": "Bitte gültige Beträge und eine Förderquote zwischen 0 und 100 eingeben."
+    },
     "costPlanDescription": "Planwerte werden aus Menge bzw. Stunden und Preis je Einheit centgenau berechnet.",
     "budget": {
       "add": "Kostenposition anlegen",
@@ -589,11 +623,26 @@
     },
     "warnings": {
       "title": "Förderrisiken",
-      "cost_before_start": { "title": "Kosten vor Projektstart", "description": "Mindestens eine zugeordnete Buchung liegt vor dem förderfähigen Projektstart." },
-      "plan_overrun": { "title": "Planüberschreitung", "description": "Mindestens eine Kostenposition überschreitet ihren Planwert." },
-      "missing_evidence": { "title": "Nachweise unvollständig", "description": "Für mindestens eine Ist-Buchung fehlen noch vollständige Nachweise." },
-      "financing_gap": { "title": "Finanzierungslücke", "description": "Die erfassten Finanzierungsquellen decken die geplanten Projektkosten noch nicht vollständig." },
-      "project_end_near": { "title": "Projektende rückt näher", "description": "Das Projekt endet innerhalb der nächsten 60 Tage. Abrechnung und Nachweise jetzt prüfen." }
+      "cost_before_start": {
+        "title": "Kosten vor Projektstart",
+        "description": "Mindestens eine zugeordnete Buchung liegt vor dem förderfähigen Projektstart."
+      },
+      "plan_overrun": {
+        "title": "Planüberschreitung",
+        "description": "Mindestens eine Kostenposition überschreitet ihren Planwert."
+      },
+      "missing_evidence": {
+        "title": "Nachweise unvollständig",
+        "description": "Für mindestens eine Ist-Buchung fehlen noch vollständige Nachweise."
+      },
+      "financing_gap": {
+        "title": "Finanzierungslücke",
+        "description": "Die erfassten Finanzierungsquellen decken die geplanten Projektkosten noch nicht vollständig."
+      },
+      "project_end_near": {
+        "title": "Projektende rückt näher",
+        "description": "Das Projekt endet innerhalb der nächsten 60 Tage. Abrechnung und Nachweise jetzt prüfen."
+      }
     }
   },
   "wiki": {
@@ -618,6 +667,17 @@
     "quickNote": "Schnelle Notiz",
     "searchEverything": "Seiten und Quellen durchsuchen…",
     "inbox": "Eingang",
+    "notesWorkspace": "Notizen",
+    "notesWorkspaceDescription": "Erfasse, ordne und finde gemeinsame Notizen an einem Ort.",
+    "searchNotes": "Notizen durchsuchen…",
+    "allPageStatuses": "Alle Status",
+    "allTags": "Alle Schlagwörter",
+    "favoritesOnly": "Nur Favoriten",
+    "activeFilters": "Aktive Filter:",
+    "clearFilters": "Filter zurücksetzen",
+    "emptyStatusGroup": "Keine Notizen in diesem Bereich.",
+    "expand": "Aufklappen",
+    "collapse": "Einklappen",
     "pages": "Seiten",
     "sources": "Quellen",
     "favorites": "Favoriten",
@@ -638,14 +698,34 @@
     "noSourcesDescription": "Lege eine Quelle an, suche eine Kennung oder importiere eine Bibliothek.",
     "sourceTitle": "Titel",
     "sourceType": "Quellentyp",
+    "documentType": "Dokumenttyp",
+    "documentTypePlaceholder": "z. B. Förderung, Paper, Bericht",
     "readingStatus": "Lesestatus",
     "contributors": "Mitwirkende",
     "year": "Jahr",
     "evidence": "Nachweise",
+    "sourceActionsMenu": "Quellenaktionen",
+    "edit": "Bearbeiten",
+    "delete": "Löschen",
     "citations": "Zitate",
-    "sourceTypes": { "journalArticle": "Zeitschriftenartikel", "book": "Buch", "bookChapter": "Buchkapitel", "report": "Bericht", "webPage": "Webseite", "document": "Dokument" },
-    "readingStatuses": { "toRead": "Zu lesen", "reading": "Wird gelesen", "read": "Gelesen" },
-    "pageStatuses": { "inbox": "Eingang", "working": "In Arbeit", "evergreen": "Dauerhaft" },
+    "sourceTypes": {
+      "journalArticle": "Zeitschriftenartikel",
+      "book": "Buch",
+      "bookChapter": "Buchkapitel",
+      "report": "Bericht",
+      "webPage": "Webseite",
+      "document": "Dokument"
+    },
+    "readingStatuses": {
+      "toRead": "Zu lesen",
+      "reading": "Wird gelesen",
+      "read": "Gelesen"
+    },
+    "pageStatuses": {
+      "inbox": "Eingang",
+      "working": "In Arbeit",
+      "evergreen": "Dauerhaft"
+    },
     "allReadingStatuses": "Alle Lesestatus",
     "searchSources": "Titel, Autor, DOI oder ISBN suchen…",
     "subtitle": "Untertitel",
@@ -683,24 +763,159 @@
     "noAttachments": "Keine Dateien angehängt.",
     "uploadFailed": "Die Datei konnte nicht hochgeladen werden.",
     "deleteAttachmentConfirm": "Diesen Anhang löschen?",
+    "attachmentInUse": "Dieses Bild ist noch im Seitentext eingebettet. Entferne dort zuerst das Bild.",
+    "deleteAttachmentFailed": "Der Anhang konnte nicht gelöscht werden.",
     "supportingSources": "Unterstützende Quellen",
     "chooseSource": "Quelle auswählen",
     "references": "Literaturverzeichnis",
     "comments": "Kommentare",
+    "hideComments": "Kommentare ausblenden",
+    "showComments": "Kommentare anzeigen",
     "pageCommentPlaceholder": "Seitenkommentar oder @Name-Erwähnung…",
     "commentPlaceholder": "Kommentar oder @Name-Erwähnung schreiben…",
     "addComment": "Kommentieren",
     "inlineComment": "Auswahl kommentieren",
+    "highlightSelection": "Hervorheben",
+    "commentSelection": "Kommentieren",
+    "insertImage": "Bild einfügen",
+    "uploadingImage": "Bild wird hochgeladen…",
+    "inlineImageUnsupported": "Inline werden PNG-, JPEG- und WebP-Bilder unterstützt.",
+    "image": "Bild",
+    "imageComment": "Bild kommentieren",
+    "commentWholeImage": "Ganzes Bild kommentieren",
+    "selectImageRegion": "Bildbereich auswählen",
     "unassigned": "Nicht zugewiesen",
     "orphaned": "Textstelle entfernt",
     "resolve": "Erledigen",
     "reopen": "Wieder öffnen",
+    "commentRail": {
+      "textComment": "Textkommentar",
+      "imageComment": "Bildkommentar",
+      "generalComment": "Allgemeiner Kommentar",
+      "open": "Offen",
+      "resolved": "Erledigt",
+      "reply": "Antworten",
+      "replyPlaceholder": "Antwort schreiben…",
+      "showResolved": "Erledigte zeigen",
+      "hideResolved": "Nur offene",
+      "noOpenComments": "Keine offenen Kommentare.",
+      "mobileTitle": "Kommentare",
+      "mobileDescription": "Kommentare zur Seite sowie zu markiertem Text und Bildern"
+    },
     "restore": "Wiederherstellen",
     "restoreRevisionConfirm": "Diese Version wiederherstellen? Die aktuelle Seite bleibt im Verlauf.",
     "insertCitation": "Zitat einfügen",
     "findSource": "Quelle suchen…",
     "pageShort": "Seite",
     "filterPages": "Seiten filtern…",
+    "slash": {
+      "ariaLabel": "Slash-Befehle",
+      "empty": "Keine passenden Befehle",
+      "groups": {
+        "text": "Text",
+        "lists": "Listen",
+        "blocks": "Blöcke",
+        "wiki": "Wiki & Zusammenarbeit"
+      },
+      "commands": {
+        "paragraph": {
+          "label": "Text",
+          "description": "Normalen Absatz schreiben",
+          "keywords": ["absatz", "paragraph", "normal"]
+        },
+        "heading1": {
+          "label": "Überschrift 1",
+          "description": "Große Abschnittsüberschrift",
+          "keywords": ["überschrift", "uberschrift", "heading", "h1", "titel"]
+        },
+        "heading2": {
+          "label": "Überschrift 2",
+          "description": "Mittlere Abschnittsüberschrift",
+          "keywords": ["überschrift", "uberschrift", "heading", "h2"]
+        },
+        "heading3": {
+          "label": "Überschrift 3",
+          "description": "Kleine Abschnittsüberschrift",
+          "keywords": ["überschrift", "uberschrift", "heading", "h3"]
+        },
+        "bulletList": {
+          "label": "Aufzählung",
+          "description": "Liste mit Aufzählungspunkten",
+          "keywords": ["liste", "punkte", "bullet", "unordered"]
+        },
+        "orderedList": {
+          "label": "Nummerierte Liste",
+          "description": "Liste mit laufenden Nummern",
+          "keywords": ["liste", "nummern", "ordered"]
+        },
+        "taskList": {
+          "label": "Aufgabenliste",
+          "description": "Checkliste mit abhakbaren Aufgaben",
+          "keywords": ["aufgabe", "checkliste", "todo", "task"]
+        },
+        "blockquote": {
+          "label": "Zitatblock",
+          "description": "Text als hervorgehobenes Zitat",
+          "keywords": ["zitat", "quote", "blockquote"]
+        },
+        "codeBlock": {
+          "label": "Codeblock",
+          "description": "Vorformatierten Code einfügen",
+          "keywords": ["code", "programmieren"]
+        },
+        "horizontalRule": {
+          "label": "Trennlinie",
+          "description": "Abschnitte visuell trennen",
+          "keywords": ["linie", "trenner", "divider", "horizontal"]
+        },
+        "pageLink": {
+          "label": "Seite verknüpfen",
+          "description": "Link zu einer Wiki-Seite einfügen",
+          "keywords": ["verknüpfung", "verknupfung", "link", "seite", "wiki"]
+        },
+        "externalLink": {
+          "label": "Externen Link einfügen",
+          "description": "Webadresse an der Textstelle verlinken",
+          "keywords": ["link", "url", "webseite", "extern"]
+        },
+        "citation": {
+          "label": "Zitat einfügen",
+          "description": "Quelle mit Seitenangabe zitieren",
+          "keywords": ["zitat", "quelle", "citation", "beleg"]
+        },
+        "pdfEvidence": {
+          "label": "PDF-Nachweis einfügen",
+          "description": "Markierung aus einer PDF übernehmen",
+          "keywords": ["pdf", "nachweis", "markierung", "evidence"]
+        },
+        "inlineImage": {
+          "label": "Bild einfügen",
+          "description": "PNG-, JPEG- oder WebP-Bild hochladen",
+          "keywords": ["bild", "image", "foto", "grafik", "upload"]
+        },
+        "attachment": {
+          "label": "Anhang hinzufügen",
+          "description": "Datei an diese Seite anhängen",
+          "keywords": ["anhang", "anhänge", "anhange", "datei", "upload"]
+        },
+        "supportingSource": {
+          "label": "Quelle verknüpfen",
+          "description": "Unterstützende Quelle mit der Seite verbinden",
+          "keywords": [
+            "quelle",
+            "verknüpfung",
+            "verknupfung",
+            "supporting",
+            "source"
+          ]
+        },
+        "pageComment": {
+          "label": "Kommentar hinzufügen",
+          "description": "Seitenkommentar schreiben",
+          "keywords": ["kommentar", "kommentare", "diskussion", "comment"]
+        }
+      }
+    },
     "editConflict": "Bearbeitungskonflikt",
     "editConflictDescription": "Eine andere Version wurde zuerst gespeichert. Dein Entwurf bleibt im Verlauf erhalten.",
     "loadCurrent": "Aktuelle laden",
@@ -710,7 +925,12 @@
     "teamActivity": "Teamaktivität",
     "noNotifications": "Keine Benachrichtigungen.",
     "markAllRead": "Alle als gelesen markieren",
-    "notificationTypes": { "mention": "hat dich erwähnt in", "reply": "hat geantwortet in", "assignment": "hat dir zugewiesen in", "resolved": "hat einen Kommentar erledigt in" },
+    "notificationTypes": {
+      "mention": "hat dich erwähnt in",
+      "reply": "hat geantwortet in",
+      "assignment": "hat dir zugewiesen in",
+      "resolved": "hat einen Kommentar erledigt in"
+    },
     "recoverableDeletion": "Wiederherstellbares Löschen",
     "trashDescription": "Gelöschte Seiten und Quellen bleiben erhalten, bis ein Administrator sie endgültig entfernt.",
     "trashEmpty": "Der Papierkorb ist leer.",
@@ -729,6 +949,79 @@
     "importPreview": "{count} Einträge in {name} gefunden.",
     "importConfirmed": "Einträge importieren",
     "importComplete": "{imported} importiert; {duplicates} Duplikate müssen geprüft werden.",
+    "addPdf": "PDF hinzufügen",
+    "pdfDropTitle": "PDFs hier ablegen",
+    "pdfDropDescription": "Eine oder mehrere vollständige PDFs hochladen. Quellen und durchsuchbarer Text werden automatisch angelegt.",
+    "choosePdfs": "PDFs auswählen",
+    "pdfUploadFailed": "Die PDF konnte nicht hochgeladen werden.",
+    "pdfDocuments": "PDF-Dokumente",
+    "pdfPages": "PDF-Seiten",
+    "metadataSuggestions": "Erkannte Metadaten prüfen",
+    "metadataSuggestionsHint": "Vorschläge werden nie automatisch in bestätigte Quellenangaben übernommen.",
+    "metadataSuggestionFields": {
+      "title": "Titel",
+      "author": "Autor:in",
+      "date": "Datum",
+      "language": "Sprache",
+      "doi": "DOI",
+      "isbn": "ISBN"
+    },
+    "noPdfDocuments": "Noch keine PDF hinterlegt.",
+    "primaryPdf": "Hauptdokument",
+    "supplementaryPdf": "Ergänzendes Dokument",
+    "readPdf": "PDF lesen",
+    "pdfStatuses": {
+      "queued": "Wartet auf Verarbeitung",
+      "extracting": "Text wird extrahiert",
+      "ocr": "Scan wird lokal erkannt",
+      "ready": "Bereit",
+      "failed": "Verarbeitung fehlgeschlagen"
+    },
+    "retry": "Erneut versuchen",
+    "pagesCount": "Seiten",
+    "pdfLoadFailed": "Die PDF konnte nicht geladen werden.",
+    "backToSource": "Zurück zur Quelle",
+    "fitWidth": "An Breite anpassen",
+    "annotationColor": "Markierungsfarbe",
+    "annotationColors": {
+      "yellow": "Gelb",
+      "green": "Grün",
+      "blue": "Blau",
+      "pink": "Rosa",
+      "purple": "Violett"
+    },
+    "captureRegion": "Bereich markieren",
+    "bookmarkPage": "Seite merken",
+    "viewMode": "Ansicht",
+    "continuousView": "Alle Seiten",
+    "singlePageView": "Eine Seite",
+    "doublePageView": "Zwei Seiten",
+    "searchInPdf": "In der PDF suchen…",
+    "pageNumber": "Seite {page}",
+    "annotationNotePrompt": "Optionale Notiz zu diesem Nachweis",
+    "replyToAnnotation": "Antwort schreiben",
+    "sendReply": "Antwort senden",
+    "highlightSelection": "Text markieren",
+    "saveRegion": "Bereich speichern",
+    "cancel": "Abbrechen",
+    "annotations": "Markierungen und Nachweise",
+    "noAnnotations": "Noch keine Markierungen. Wähle Text oder ziehe einen Bereich auf.",
+    "annotationKinds": {
+      "text": "Textstelle",
+      "region": "Bild/Bereich",
+      "bookmark": "Seitenmarke"
+    },
+    "linkedEvidence": "Verknüpfte Nachweise",
+    "addEvidence": "Nachweis hinzufügen",
+    "chooseEvidence": "Nachweis auswählen",
+    "searchEvidence": "Markierungen, Notizen oder Quellen durchsuchen…",
+    "search": "Suchen",
+    "noLinkedEvidence": "Noch keine PDF-Nachweise verknüpft.",
+    "removedEvidence": "Dieser Nachweis ist nicht mehr verfügbar.",
+    "insertPdfEvidence": "PDF-Nachweis einfügen",
+    "findEvidence": "PDF-Markierungen durchsuchen…",
+    "noEvidenceAvailable": "Noch keine verwendbaren PDF-Markierungen vorhanden.",
+    "loading": "Wird geladen…",
     "exportPage": "Seite exportieren"
   },
   "settings": {
@@ -796,6 +1089,7 @@
       "description": "Nur Administratoren können Benutzer anlegen.",
       "addUser": "Benutzer anlegen",
       "name": "Name",
+      "username": "Benutzername",
       "email": "E-Mail",
       "role": "Rolle",
       "password": "Anfangspasswort",

@@ -1,10 +1,14 @@
 "use server";
 
+import fs from "node:fs";
+import path from "node:path";
+
 import { z } from "zod";
 import { and, eq, inArray, isNull } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { db, sqlite } from "@/db";
 import {
+  evidenceLinks,
   user,
   wikiCommentThreads,
   wikiComments,
@@ -12,6 +16,8 @@ import {
   wikiNotifications,
   wikiPageRevisions,
   wikiPages,
+  wikiPdfAnnotations,
+  wikiPdfDocuments,
   wikiPageSources,
   wikiPageTags,
   wikiSourceContributors,
@@ -21,10 +27,13 @@ import {
   wikiTags,
 } from "@/db/schema";
 import { requireAdmin, requireUserOrThrow } from "@/lib/auth";
-import { deleteAttachmentsFor } from "@/lib/files";
+import { deleteAttachmentsFor, UPLOADS_PATH } from "@/lib/files";
+import { pdfSourcePurgeBlocker } from "./lib/pdf-evidence";
+import { sourceInputSchema } from "./lib/source-input";
 import { normalizeDoi, normalizeIsbn, normalizeUrl } from "./lib/citations";
-import { slugify } from "./lib/tiptap";
-import { buildFtsQuery } from "./lib/tiptap";
+import type { CommentAnchor } from "./lib/comment-anchors";
+import { buildFtsQuery, extractText, parseStoredDocument, slugify } from "./lib/tiptap";
+import { searchPdfPageText } from "./pdf-queries";
 
 function revalidateWiki() {
   revalidatePath("/wiki", "layout");
@@ -97,22 +106,6 @@ export async function toggleFavorite(entityType: "page" | "source", entityId: st
   return { favorite: !existing };
 }
 
-const contributorSchema = z.object({ role: z.enum(["author", "editor"]), given: z.string().max(120), family: z.string().max(120), literal: z.string().max(240) });
-export const sourceInputSchema = z.object({
-  id: z.string().optional(),
-  type: z.enum(["journalArticle", "book", "bookChapter", "report", "webPage", "document"]),
-  title: z.string().trim().min(1).max(500), subtitle: z.string().max(500).default(""),
-  issuedDate: z.string().max(20).default(""), containerTitle: z.string().max(500).default(""),
-  publisher: z.string().max(300).default(""), institution: z.string().max(300).default(""),
-  edition: z.string().max(80).default(""), volume: z.string().max(80).default(""), issue: z.string().max(80).default(""), pages: z.string().max(80).default(""),
-  doi: z.string().max(300).default(""), isbn: z.string().max(40).default(""), url: z.string().max(2000).default(""),
-  accessedAt: z.string().max(20).default(""), language: z.string().max(40).default(""),
-  abstract: z.string().max(20_000).default(""), notes: z.string().max(20_000).default(""),
-  readingStatus: z.enum(["toRead", "reading", "read"]).default("toRead"),
-  contributors: z.array(contributorSchema).max(100).default([]),
-  tagNames: z.array(z.string().trim().min(1).max(40)).max(30).default([]),
-});
-
 function sourceFtsText(source: z.infer<typeof sourceInputSchema>) {
   const contributors = source.contributors.map((person) => person.literal || `${person.given} ${person.family}`).join(" ");
   const metadata = [source.type, source.issuedDate, source.containerTitle, source.publisher, source.institution, source.doi, source.isbn, source.url, ...source.tagNames].join(" ");
@@ -137,7 +130,7 @@ export async function saveSource(input: z.infer<typeof sourceInputSchema>) {
   if (duplicate) return { ok: false as const, duplicate };
   const tags = ensureTags(data.tagNames, currentUser.id);
   const sourceValues = {
-    type: data.type, title: data.title, subtitle: data.subtitle, issuedDate: data.issuedDate,
+    type: data.type, documentType: data.documentType, title: data.title, subtitle: data.subtitle, issuedDate: data.issuedDate,
     containerTitle: data.containerTitle, publisher: data.publisher, institution: data.institution,
     edition: data.edition, volume: data.volume, issue: data.issue, pages: data.pages,
     doi: data.doi, isbn: data.isbn, url: data.url, accessedAt: data.accessedAt,
@@ -217,7 +210,18 @@ export async function purgeFromTrash(entityType: "page" | "source", id: string) 
   if (entityType === "source") {
     const references = db.select({ pageId: wikiPageSources.pageId }).from(wikiPageSources).innerJoin(wikiPages, eq(wikiPageSources.pageId, wikiPages.id))
       .where(and(eq(wikiPageSources.sourceId, id), isNull(wikiPages.deletedAt))).all();
-    if (references.length) throw new Error("Source is still referenced by active pages");
+    const evidenceReferences = db.select({ id: evidenceLinks.id }).from(evidenceLinks)
+      .innerJoin(wikiPdfAnnotations, eq(evidenceLinks.annotationId, wikiPdfAnnotations.id))
+      .where(eq(wikiPdfAnnotations.sourceId, id)).all();
+    const purgeBlocker = pdfSourcePurgeBlocker({ activePageReferences: references.length, evidenceReferences: evidenceReferences.length });
+    if (purgeBlocker === "active-pages") throw new Error("Source is still referenced by active pages");
+    if (purgeBlocker === "evidence") throw new Error("Source PDF evidence is still referenced");
+    const documents = db.select({ id: wikiPdfDocuments.id }).from(wikiPdfDocuments)
+      .where(eq(wikiPdfDocuments.sourceId, id)).all();
+    for (const document of documents) {
+      sqlite.prepare("DELETE FROM wiki_pdf_pages_fts WHERE document_id = ?").run(document.id);
+      fs.rmSync(path.join(UPLOADS_PATH, "derived", document.id), { recursive: true, force: true });
+    }
     deleteAttachmentsFor("wikiSource", id);
     db.delete(wikiSources).where(eq(wikiSources.id, id)).run();
   } else {
@@ -233,14 +237,49 @@ export async function purgeFromTrash(entityType: "page" | "source", id: string) 
   revalidateWiki();
 }
 
-const commentSchema = z.object({ pageId: z.string(), threadId: z.string().optional(), body: z.string().trim().min(1).max(10_000), anchorQuote: z.string().max(2_000).default(""), assigneeId: z.string().nullable().optional() });
+const normalizedRectSchema = z.object({
+  x: z.number().min(0).max(1),
+  y: z.number().min(0).max(1),
+  width: z.number().positive().max(1),
+  height: z.number().positive().max(1),
+}).refine((rect) => rect.x + rect.width <= 1.000_001 && rect.y + rect.height <= 1.000_001);
+
+const commentAnchorSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("page") }),
+  z.object({ type: z.literal("text"), quote: z.string().trim().min(1).max(2_000) }),
+  z.object({
+    type: z.literal("image"),
+    nodeId: z.string().min(1).max(200),
+    mode: z.enum(["whole", "region"]),
+    rect: normalizedRectSchema.optional(),
+    label: z.string().max(500).default(""),
+  }).refine((anchor) => anchor.mode === "whole" || anchor.rect !== undefined),
+]);
+
+const commentSchema = z.object({
+  pageId: z.string(),
+  threadId: z.string().optional(),
+  body: z.string().trim().min(1).max(10_000),
+  anchor: commentAnchorSchema.optional(),
+  anchorQuote: z.string().max(2_000).optional(),
+  assigneeId: z.string().nullable().optional(),
+});
 export async function addComment(input: z.infer<typeof commentSchema>) {
   const currentUser = await requireUserOrThrow();
   const data = commentSchema.parse(input);
   let threadId = data.threadId;
   db.transaction(() => {
     if (!threadId) {
-      threadId = db.insert(wikiCommentThreads).values({ pageId: data.pageId, anchorQuote: data.anchorQuote, assigneeId: data.assigneeId ?? null, createdBy: currentUser.id }).returning({ id: wikiCommentThreads.id }).get().id;
+      const anchor: CommentAnchor = data.anchor ?? (data.anchorQuote ? { type: "text", quote: data.anchorQuote } : { type: "page" });
+      threadId = db.insert(wikiCommentThreads).values({
+        pageId: data.pageId,
+        anchorQuote: anchor.type === "text" ? anchor.quote : anchor.type === "image" ? anchor.label : "",
+        anchorType: anchor.type,
+        anchorNodeId: anchor.type === "image" ? anchor.nodeId : null,
+        anchorData: anchor.type === "image" ? { mode: anchor.mode, rect: anchor.rect, label: anchor.label } : {},
+        assigneeId: data.assigneeId ?? null,
+        createdBy: currentUser.id,
+      }).returning({ id: wikiCommentThreads.id }).get().id;
       if (data.assigneeId && data.assigneeId !== currentUser.id) db.insert(wikiNotifications).values({ userId: data.assigneeId, actorId: currentUser.id, type: "assignment", pageId: data.pageId, threadId }).run();
     } else {
       const thread = db.select().from(wikiCommentThreads).where(eq(wikiCommentThreads.id, threadId)).get();
@@ -276,9 +315,14 @@ export async function restorePageRevision(revisionId: string) {
   if (!revision) throw new Error("Revision not found");
   const page = db.select().from(wikiPages).where(eq(wikiPages.id, revision.pageId)).get();
   if (!page) throw new Error("Page not found");
+  const restoredDocument = parseStoredDocument(revision.contentJson);
+  const restoredContentJson = JSON.stringify(restoredDocument);
+  const contentText = extractText(restoredDocument);
   db.transaction(() => {
     db.insert(wikiPageRevisions).values({ pageId: page.id, version: page.version, title: page.title, contentJson: page.contentJson, status: page.status, citationLocale: page.citationLocale, kind: "restore", createdBy: currentUser.id }).run();
-    db.update(wikiPages).set({ title: revision.title, contentJson: revision.contentJson, status: revision.status, citationLocale: revision.citationLocale, version: page.version + 1, updatedBy: currentUser.id, updatedAt: new Date() }).where(eq(wikiPages.id, page.id)).run();
+    db.update(wikiPages).set({ title: revision.title, contentJson: restoredContentJson, contentText, status: revision.status, citationLocale: revision.citationLocale, version: page.version + 1, updatedBy: currentUser.id, updatedAt: new Date() }).where(eq(wikiPages.id, page.id)).run();
+    sqlite.prepare("DELETE FROM wiki_pages_fts WHERE page_id = ?").run(page.id);
+    sqlite.prepare("INSERT INTO wiki_pages_fts (page_id, title, content_text) VALUES (?, ?, ?)").run(page.id, revision.title, contentText);
   });
   revalidateWiki();
 }
@@ -307,7 +351,7 @@ export async function searchResearch(query: string) {
   await requireUserOrThrow();
   const clean = z.string().max(200).parse(query);
   const fts = buildFtsQuery(clean);
-  if (!fts) return { pages: [], sources: [] };
+  if (!fts) return { pages: [], sources: [], pdfPages: [] };
   const pages = sqlite.prepare(`SELECT p.id, p.title, p.slug, p.status,
     snippet(wiki_pages_fts, 2, '<mark>', '</mark>', '…', 12) AS snippet
     FROM wiki_pages_fts f JOIN wiki_pages p ON p.id = f.page_id
@@ -316,9 +360,11 @@ export async function searchResearch(query: string) {
     snippet(wiki_sources_fts, 4, '<mark>', '</mark>', '…', 12) AS snippet
     FROM wiki_sources_fts f JOIN wiki_sources s ON s.id = f.source_id
     WHERE wiki_sources_fts MATCH ? AND s.deleted_at IS NULL ORDER BY rank LIMIT 10`).all(fts);
-  return { pages, sources } as {
+  const pdfPages = searchPdfPageText(clean, 15);
+  return { pages, sources, pdfPages } as {
     pages: Array<{ id: string; title: string; slug: string; status: string; snippet: string }>;
     sources: Array<{ id: string; title: string; type: string; issuedDate: string; snippet: string }>;
+    pdfPages: Array<{ documentId: string; sourceId: string; pageNumber: number; sourceTitle: string; snippet: string }>;
   };
 }
 

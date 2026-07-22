@@ -1,6 +1,6 @@
 {
   "common": {
-    "appName": "Company HQ",
+    "appName": "management-platform",
     "save": "Save",
     "cancel": "Cancel",
     "delete": "Delete",
@@ -27,15 +27,11 @@
   },
   "auth": {
     "loginTitle": "Sign in",
-    "loginSubtitle": "Sign in with your company account.",
-    "setupTitle": "Initial setup",
-    "setupSubtitle": "Create the first administrator account for your company.",
-    "name": "Name",
-    "email": "Email",
+    "loginSubtitle": "Enter your username and password.",
+    "username": "Username",
     "password": "Password",
     "signIn": "Sign in",
-    "createAdmin": "Create administrator account",
-    "invalidCredentials": "Email or password is incorrect.",
+    "invalidCredentials": "Username or password is incorrect.",
     "genericError": "Sign-in failed. Please try again."
   },
   "dashboard": {
@@ -107,14 +103,30 @@
     "voidConfirm": "Void this finalized booking? The action remains in its audit history.",
     "voided": "Booking voided",
     "templates": {
-      "standard_income": { "description": "Income with one or more Austrian VAT rates." },
-      "grant_income": { "description": "Grant payment without automatic VAT calculation." },
-      "standard_expense": { "description": "Supplier document with input VAT and business share." },
-      "hospitality": { "description": "Hospitality with purpose, participants and tax evidence." },
-      "travel": { "description": "Travel evidence, purpose and reviewable mileage suggestion." },
-      "vehicle": { "description": "Vehicle costs with type, private share and input VAT check." },
-      "asset": { "description": "Low-value or depreciable asset with useful life." },
-      "personnel": { "description": "Gross remuneration and Austrian employer costs from a payroll statement." },
+      "standard_income": {
+        "description": "Income with one or more Austrian VAT rates."
+      },
+      "grant_income": {
+        "description": "Grant payment without automatic VAT calculation."
+      },
+      "standard_expense": {
+        "description": "Supplier document with input VAT and business share."
+      },
+      "hospitality": {
+        "description": "Hospitality with purpose, participants and tax evidence."
+      },
+      "travel": {
+        "description": "Travel evidence, purpose and reviewable mileage suggestion."
+      },
+      "vehicle": {
+        "description": "Vehicle costs with type, private share and input VAT check."
+      },
+      "asset": {
+        "description": "Low-value or depreciable asset with useful life."
+      },
+      "personnel": {
+        "description": "Gross remuneration and Austrian employer costs from a payroll statement."
+      },
       "svs": { "description": "SVS assessment with period and reference." },
       "tax_levy": { "description": "Taxes and levies without VAT." }
     },
@@ -149,7 +161,12 @@
       "overrideReason": "Reason for overriding the warning",
       "overridePlaceholder": "Why is this booking being finalized despite the warning?"
     },
-    "vehicleTypes": { "pkw": "Passenger car/estate", "fiscalTruck": "Fiscal commercial vehicle", "electric": "Electric vehicle", "other": "Other vehicle" },
+    "vehicleTypes": {
+      "pkw": "Passenger car/estate",
+      "fiscalTruck": "Fiscal commercial vehicle",
+      "electric": "Electric vehicle",
+      "other": "Other vehicle"
+    },
     "personnel": {
       "employeeName": "Employee",
       "employeeMaster": "Employee master record",
@@ -204,7 +221,15 @@
         "vienna_levy_assumptions": "The Vienna employer levy assumes a continuous, non-exempt employment relationship.",
         "unsupported_year": "No automatic rule exists for this payroll month; switch to manual mode."
       },
-      "types": { "worker": "Worker", "employee": "Salaried employee", "marginal": "Marginal employment", "apprentice": "Apprentice", "freelance": "Freelance service", "managing_director_asvg": "Managing director (ASVG)", "shareholder_managing_director_gsvg": "Shareholder managing director (GSVG)" },
+      "types": {
+        "worker": "Worker",
+        "employee": "Salaried employee",
+        "marginal": "Marginal employment",
+        "apprentice": "Apprentice",
+        "freelance": "Freelance service",
+        "managing_director_asvg": "Managing director (ASVG)",
+        "shareholder_managing_director_gsvg": "Shareholder managing director (GSVG)"
+      },
       "help": {
         "grossSalary": "Regular and other gross remuneration from the existing payroll statement.",
         "netSalary": "Net amount actually paid to the employee.",
@@ -218,7 +243,14 @@
         "viennaLevy": "Vienna employer levy: €2 per employment relationship and commenced week unless an exemption applies.",
         "otherPersonnelCost": "Other evidenced employer costs not covered by a standard line."
       },
-      "payments": { "net": "Net remuneration", "social": "Social insurance", "taxOffice": "Payroll levies", "municipality": "Municipal levies", "provision": "Occupational provision", "other": "Other personnel costs" }
+      "payments": {
+        "net": "Net remuneration",
+        "social": "Social insurance",
+        "taxOffice": "Payroll levies",
+        "municipality": "Municipal levies",
+        "provision": "Occupational provision",
+        "other": "Other personnel costs"
+      }
     }
   },
   "accounting": {
@@ -292,31 +324,31 @@
     "funding": "Funding projects"
   },
   "accountingOverview": {
-      "period": "Financial year {year}",
-      "title": "Your numbers. At a glance.",
-      "description": "Results, cash flow, and tax positions brought together for confident day-to-day decisions.",
-      "keyFigures": "Key figures",
-      "result": "Operating result",
-      "resultDetail": "Income less expenses",
-      "incomeDetail": "Booked gross income",
-      "expenseDetail": "Booked gross expenses",
-      "vatPosition": "VAT position",
-      "vatDetail": "Output VAT less input VAT",
-      "cashflowTitle": "Balance development",
-      "cashflowDescription": "Cumulative balance across the financial year",
-      "runningBalance": "Running balance",
-      "chartLabel": "Balance development in {year}",
-      "month": "Month",
-      "income": "Income",
-      "expenses": "Expenses",
-      "ledgerBadge": "Ledger",
-      "ledgerTitle": "Every movement accounted for.",
-      "ledgerDescription": "The booking ledger combines income, expenses, categories, and receipts in one auditable view.",
-      "bookingCount": "Bookings in this period",
-      "openLedger": "Open ledger",
-      "recentTitle": "Recent bookings",
-      "recentDescription": "The latest account movements in the selected year",
-      "showAll": "Show all"
+    "period": "Financial year {year}",
+    "title": "Your numbers. At a glance.",
+    "description": "Results, cash flow, and tax positions brought together for confident day-to-day decisions.",
+    "keyFigures": "Key figures",
+    "result": "Operating result",
+    "resultDetail": "Income less expenses",
+    "incomeDetail": "Booked gross income",
+    "expenseDetail": "Booked gross expenses",
+    "vatPosition": "VAT position",
+    "vatDetail": "Output VAT less input VAT",
+    "cashflowTitle": "Balance development",
+    "cashflowDescription": "Cumulative balance across the financial year",
+    "runningBalance": "Running balance",
+    "chartLabel": "Balance development in {year}",
+    "month": "Month",
+    "income": "Income",
+    "expenses": "Expenses",
+    "ledgerBadge": "Ledger",
+    "ledgerTitle": "Every movement accounted for.",
+    "ledgerDescription": "The booking ledger combines income, expenses, categories, and receipts in one auditable view.",
+    "bookingCount": "Bookings in this period",
+    "openLedger": "Open ledger",
+    "recentTitle": "Recent bookings",
+    "recentDescription": "The latest account movements in the selected year",
+    "showAll": "Show all"
   },
   "accountingBookings": {
     "eyebrow": "Ledger",
@@ -457,29 +489,160 @@
     "total": "Total",
     "yes": "Yes",
     "no": "No",
-    "empty": { "title": "No funding projects yet", "description": "Create a project to manage its cost plan, financing, and evidence in one place." },
-    "sections": { "label": "Funding project sections", "project": "Project", "costPlan": "Cost plan", "financing": "Financing", "settlement": "Settlement & evidence" },
-    "fields": {
-      "name": "Project name", "template": "Programme template", "programName": "Programme / call", "fundingBody": "Funding body", "status": "Status", "submissionDeadline": "Submission deadline", "plannedSubmission": "Planned submission", "projectStart": "Project start", "projectEnd": "Project end", "projectPeriod": "Project period", "fundingRate": "Funding rate", "fundingCap": "Funding cap", "approvedFunding": "Approved funding", "contact": "Contact", "contactEmail": "Contact email", "fundingNumber": "Funding number", "vatDeductible": "Eligible for input VAT deduction", "deMinimis": "De-minimis relevant", "otherAid": "Other requested aid", "notes": "Notes"
+    "empty": {
+      "title": "No funding projects yet",
+      "description": "Create a project to manage its cost plan, financing, and evidence in one place."
     },
-    "status": { "planning": "Planning", "preparing": "Preparing", "submitted": "Submitted", "approved": "Approved", "active": "Active", "completed": "Completed", "rejected": "Rejected" },
-    "summary": { "totalCost": "Project cost", "eligible": "Eligible cost", "requested": "Requested funding", "approved": "Approved funding", "ownFunds": "Required own funds", "requiredOwnFunds": "Own-financing requirement", "financingTotal": "Total financing", "financingGap": "Financing gap", "maximumGrant": "Calculated funding envelope", "plan": "Plan", "actual": "Actual", "variance": "Variance", "evidence": "Evidence complete" },
-    "validation": { "money": "Enter valid amounts and a funding rate between 0 and 100." },
+    "sections": {
+      "label": "Funding project sections",
+      "project": "Project",
+      "costPlan": "Cost plan",
+      "financing": "Financing",
+      "settlement": "Settlement & evidence"
+    },
+    "fields": {
+      "name": "Project name",
+      "template": "Programme template",
+      "programName": "Programme / call",
+      "fundingBody": "Funding body",
+      "status": "Status",
+      "submissionDeadline": "Submission deadline",
+      "plannedSubmission": "Planned submission",
+      "projectStart": "Project start",
+      "projectEnd": "Project end",
+      "projectPeriod": "Project period",
+      "fundingRate": "Funding rate",
+      "fundingCap": "Funding cap",
+      "approvedFunding": "Approved funding",
+      "contact": "Contact",
+      "contactEmail": "Contact email",
+      "fundingNumber": "Funding number",
+      "vatDeductible": "Eligible for input VAT deduction",
+      "deMinimis": "De-minimis relevant",
+      "otherAid": "Other requested aid",
+      "notes": "Notes"
+    },
+    "status": {
+      "planning": "Planning",
+      "preparing": "Preparing",
+      "submitted": "Submitted",
+      "approved": "Approved",
+      "active": "Active",
+      "completed": "Completed",
+      "rejected": "Rejected"
+    },
+    "summary": {
+      "totalCost": "Project cost",
+      "eligible": "Eligible cost",
+      "requested": "Requested funding",
+      "approved": "Approved funding",
+      "ownFunds": "Required own funds",
+      "requiredOwnFunds": "Own-financing requirement",
+      "financingTotal": "Total financing",
+      "financingGap": "Financing gap",
+      "maximumGrant": "Calculated funding envelope",
+      "plan": "Plan",
+      "actual": "Actual",
+      "variance": "Variance",
+      "evidence": "Evidence complete"
+    },
+    "validation": {
+      "money": "Enter valid amounts and a funding rate between 0 and 100."
+    },
     "costPlanDescription": "Plan values are calculated in cents from quantity or hours and the unit rate.",
-    "budget": { "add": "Add cost item", "edit": "Edit cost item", "empty": "No cost items yet.", "costType": "Cost type", "customCostType": "Programme-specific cost type", "description": "Description", "workPackage": "Work package", "supplier": "Supplier / person", "quantity": "Quantity / hours", "unit": "Unit", "unitPrice": "Rate / unit price", "month": "Planned month", "total": "Total", "eligible": "Eligible", "necessity": "Necessity justification" },
-    "costType": { "personnel": "Personnel", "external_services": "External services", "material": "Material", "investments": "Investments / asset use", "travel": "Travel", "rent": "Rent / project workplaces", "overhead": "Overhead", "program_specific": "Programme-specific" },
-    "financing": { "sources": "Financing sources", "addSource": "Add source", "editSource": "Edit source", "emptySources": "No financing sources yet.", "sourceType": "Financing type", "label": "Label", "amount": "Amount", "disbursements": "Planned disbursement tranches", "addDisbursement": "Add tranche", "editDisbursement": "Edit tranche", "emptyDisbursements": "No disbursement tranches planned.", "plannedDate": "Planned disbursement", "receivedAt": "Received on" },
-    "sourceType": { "requested_grant": "Requested grant", "own_funds": "Own funds", "own_services": "Own services", "bank": "Bank financing", "shareholder": "Shareholder financing", "other_public": "Other public support", "private_investor": "Private investors" },
+    "budget": {
+      "add": "Add cost item",
+      "edit": "Edit cost item",
+      "empty": "No cost items yet.",
+      "costType": "Cost type",
+      "customCostType": "Programme-specific cost type",
+      "description": "Description",
+      "workPackage": "Work package",
+      "supplier": "Supplier / person",
+      "quantity": "Quantity / hours",
+      "unit": "Unit",
+      "unitPrice": "Rate / unit price",
+      "month": "Planned month",
+      "total": "Total",
+      "eligible": "Eligible",
+      "necessity": "Necessity justification"
+    },
+    "costType": {
+      "personnel": "Personnel",
+      "external_services": "External services",
+      "material": "Material",
+      "investments": "Investments / asset use",
+      "travel": "Travel",
+      "rent": "Rent / project workplaces",
+      "overhead": "Overhead",
+      "program_specific": "Programme-specific"
+    },
+    "financing": {
+      "sources": "Financing sources",
+      "addSource": "Add source",
+      "editSource": "Edit source",
+      "emptySources": "No financing sources yet.",
+      "sourceType": "Financing type",
+      "label": "Label",
+      "amount": "Amount",
+      "disbursements": "Planned disbursement tranches",
+      "addDisbursement": "Add tranche",
+      "editDisbursement": "Edit tranche",
+      "emptyDisbursements": "No disbursement tranches planned.",
+      "plannedDate": "Planned disbursement",
+      "receivedAt": "Received on"
+    },
+    "sourceType": {
+      "requested_grant": "Requested grant",
+      "own_funds": "Own funds",
+      "own_services": "Own services",
+      "bank": "Bank financing",
+      "shareholder": "Shareholder financing",
+      "other_public": "Other public support",
+      "private_investor": "Private investors"
+    },
     "disbursementStatus": { "planned": "Planned", "received": "Received" },
-    "settlement": { "description": "Map bookings to cost items and keep evidence status transparent.", "empty": "Create cost items before assigning actual bookings.", "addActual": "Assign actual booking", "bookings": "Assigned bookings", "budgetItem": "Cost item", "bookingDate": "Booking date", "actualAmount": "Actual amount", "accountingEntryId": "Booking reference (optional)", "accountingEntryPlaceholder": "Selected from bookings after integration", "evidenceStatus": "Evidence status", "evidenceNote": "Evidence note" },
-    "evidence": { "none": "No booking yet", "missing": "Missing", "partial": "Partial", "complete": "Complete" },
+    "settlement": {
+      "description": "Map bookings to cost items and keep evidence status transparent.",
+      "empty": "Create cost items before assigning actual bookings.",
+      "addActual": "Assign actual booking",
+      "bookings": "Assigned bookings",
+      "budgetItem": "Cost item",
+      "bookingDate": "Booking date",
+      "actualAmount": "Actual amount",
+      "accountingEntryId": "Booking reference (optional)",
+      "accountingEntryPlaceholder": "Selected from bookings after integration",
+      "evidenceStatus": "Evidence status",
+      "evidenceNote": "Evidence note"
+    },
+    "evidence": {
+      "none": "No booking yet",
+      "missing": "Missing",
+      "partial": "Partial",
+      "complete": "Complete"
+    },
     "warnings": {
       "title": "Funding risks",
-      "cost_before_start": { "title": "Cost before project start", "description": "At least one assigned booking predates the eligible project start." },
-      "plan_overrun": { "title": "Plan overrun", "description": "At least one cost item exceeds its planned amount." },
-      "missing_evidence": { "title": "Incomplete evidence", "description": "At least one actual booking still lacks complete evidence." },
-      "financing_gap": { "title": "Financing gap", "description": "Recorded financing sources do not yet cover planned project costs." },
-      "project_end_near": { "title": "Project end approaching", "description": "The project ends within 60 days. Review settlement and evidence now." }
+      "cost_before_start": {
+        "title": "Cost before project start",
+        "description": "At least one assigned booking predates the eligible project start."
+      },
+      "plan_overrun": {
+        "title": "Plan overrun",
+        "description": "At least one cost item exceeds its planned amount."
+      },
+      "missing_evidence": {
+        "title": "Incomplete evidence",
+        "description": "At least one actual booking still lacks complete evidence."
+      },
+      "financing_gap": {
+        "title": "Financing gap",
+        "description": "Recorded financing sources do not yet cover planned project costs."
+      },
+      "project_end_near": {
+        "title": "Project end approaching",
+        "description": "The project ends within 60 days. Review settlement and evidence now."
+      }
     }
   },
   "wiki": {
@@ -504,6 +667,17 @@
     "quickNote": "Quick note",
     "searchEverything": "Search pages and sources…",
     "inbox": "Inbox",
+    "notesWorkspace": "Notes",
+    "notesWorkspaceDescription": "Capture, organize, and find shared notes in one place.",
+    "searchNotes": "Search notes…",
+    "allPageStatuses": "All statuses",
+    "allTags": "All tags",
+    "favoritesOnly": "Favorites only",
+    "activeFilters": "Active filters:",
+    "clearFilters": "Clear filters",
+    "emptyStatusGroup": "No notes in this section.",
+    "expand": "Expand",
+    "collapse": "Collapse",
     "pages": "Pages",
     "sources": "Sources",
     "favorites": "Favorites",
@@ -524,14 +698,34 @@
     "noSourcesDescription": "Add a source manually, look up an identifier, or import a library.",
     "sourceTitle": "Title",
     "sourceType": "Source type",
+    "documentType": "Document type",
+    "documentTypePlaceholder": "e.g. funding, paper, report",
     "readingStatus": "Reading status",
     "contributors": "Contributors",
     "year": "Year",
     "evidence": "Evidence",
+    "sourceActionsMenu": "Source actions",
+    "edit": "Edit",
+    "delete": "Delete",
     "citations": "Citations",
-    "sourceTypes": { "journalArticle": "Journal article", "book": "Book", "bookChapter": "Book chapter", "report": "Report", "webPage": "Web page", "document": "Document" },
-    "readingStatuses": { "toRead": "To read", "reading": "Reading", "read": "Read" },
-    "pageStatuses": { "inbox": "Inbox", "working": "Working", "evergreen": "Evergreen" },
+    "sourceTypes": {
+      "journalArticle": "Journal article",
+      "book": "Book",
+      "bookChapter": "Book chapter",
+      "report": "Report",
+      "webPage": "Web page",
+      "document": "Document"
+    },
+    "readingStatuses": {
+      "toRead": "To read",
+      "reading": "Reading",
+      "read": "Read"
+    },
+    "pageStatuses": {
+      "inbox": "Inbox",
+      "working": "Working",
+      "evergreen": "Evergreen"
+    },
     "allReadingStatuses": "All reading states",
     "searchSources": "Search title, author, DOI, or ISBN…",
     "subtitle": "Subtitle",
@@ -569,24 +763,153 @@
     "noAttachments": "No files attached.",
     "uploadFailed": "The file could not be uploaded.",
     "deleteAttachmentConfirm": "Delete this attachment?",
+    "attachmentInUse": "This image is still embedded in the page. Remove the image from the editor first.",
+    "deleteAttachmentFailed": "The attachment could not be deleted.",
     "supportingSources": "Supporting sources",
     "chooseSource": "Choose source",
     "references": "References",
     "comments": "Comments",
+    "hideComments": "Hide comments",
+    "showComments": "Show comments",
     "pageCommentPlaceholder": "Add a page comment or mention @Name…",
     "commentPlaceholder": "Write a comment or mention @Name…",
     "addComment": "Add comment",
     "inlineComment": "Comment on selection",
+    "highlightSelection": "Highlight",
+    "commentSelection": "Comment",
+    "insertImage": "Insert image",
+    "uploadingImage": "Uploading image…",
+    "inlineImageUnsupported": "Inline images support PNG, JPEG, and WebP.",
+    "image": "Image",
+    "imageComment": "Comment on image",
+    "commentWholeImage": "Comment entire image",
+    "selectImageRegion": "Select image region",
     "unassigned": "No assignee",
     "orphaned": "anchor removed",
     "resolve": "Resolve",
     "reopen": "Reopen",
+    "commentRail": {
+      "textComment": "Text comment",
+      "imageComment": "Image comment",
+      "generalComment": "General comment",
+      "open": "Open",
+      "resolved": "Resolved",
+      "reply": "Reply",
+      "replyPlaceholder": "Write a reply…",
+      "showResolved": "Show resolved",
+      "hideResolved": "Open only",
+      "noOpenComments": "No open comments.",
+      "mobileTitle": "Comments",
+      "mobileDescription": "Page comments and comments on selected text and images"
+    },
     "restore": "Restore",
     "restoreRevisionConfirm": "Restore this version? The current page remains in history.",
     "insertCitation": "Insert citation",
     "findSource": "Find a source…",
     "pageShort": "Page",
     "filterPages": "Filter pages…",
+    "slash": {
+      "ariaLabel": "Slash commands",
+      "empty": "No matching commands",
+      "groups": {
+        "text": "Text",
+        "lists": "Lists",
+        "blocks": "Blocks",
+        "wiki": "Wiki & collaboration"
+      },
+      "commands": {
+        "paragraph": {
+          "label": "Text",
+          "description": "Write a normal paragraph",
+          "keywords": ["paragraph", "normal", "absatz"]
+        },
+        "heading1": {
+          "label": "Heading 1",
+          "description": "Large section heading",
+          "keywords": ["heading", "headline", "h1", "überschrift"]
+        },
+        "heading2": {
+          "label": "Heading 2",
+          "description": "Medium section heading",
+          "keywords": ["heading", "headline", "h2", "überschrift"]
+        },
+        "heading3": {
+          "label": "Heading 3",
+          "description": "Small section heading",
+          "keywords": ["heading", "headline", "h3", "überschrift"]
+        },
+        "bulletList": {
+          "label": "Bullet list",
+          "description": "List with bullet points",
+          "keywords": ["list", "bullets", "unordered", "aufzählung"]
+        },
+        "orderedList": {
+          "label": "Numbered list",
+          "description": "List with sequential numbers",
+          "keywords": ["list", "numbers", "ordered", "nummeriert"]
+        },
+        "taskList": {
+          "label": "Task list",
+          "description": "Checklist with completable tasks",
+          "keywords": ["task", "checklist", "todo", "aufgabe"]
+        },
+        "blockquote": {
+          "label": "Block quote",
+          "description": "Display text as a highlighted quote",
+          "keywords": ["quote", "blockquote", "zitat"]
+        },
+        "codeBlock": {
+          "label": "Code block",
+          "description": "Insert preformatted code",
+          "keywords": ["code", "programming"]
+        },
+        "horizontalRule": {
+          "label": "Divider",
+          "description": "Visually separate sections",
+          "keywords": ["line", "divider", "horizontal", "trennlinie"]
+        },
+        "pageLink": {
+          "label": "Link a page",
+          "description": "Insert a link to another wiki page",
+          "keywords": ["link", "page", "wiki", "verknüpfung"]
+        },
+        "externalLink": {
+          "label": "Insert external link",
+          "description": "Link a web address at the cursor",
+          "keywords": ["link", "url", "website", "external"]
+        },
+        "citation": {
+          "label": "Insert citation",
+          "description": "Cite a source with an optional page",
+          "keywords": ["citation", "source", "reference", "zitat"]
+        },
+        "pdfEvidence": {
+          "label": "Insert PDF evidence",
+          "description": "Reuse an annotation from a PDF",
+          "keywords": ["pdf", "evidence", "annotation", "nachweis"]
+        },
+        "inlineImage": {
+          "label": "Insert image",
+          "description": "Upload a PNG, JPEG, or WebP image",
+          "keywords": ["image", "photo", "picture", "upload", "bild"]
+        },
+        "attachment": {
+          "label": "Add attachment",
+          "description": "Attach a file to this page",
+          "keywords": ["attachment", "file", "upload", "anhang"]
+        },
+        "supportingSource": {
+          "label": "Link supporting source",
+          "description": "Connect a supporting source to this page",
+          "keywords": ["source", "supporting", "link", "quelle"]
+        },
+        "pageComment": {
+          "label": "Add comment",
+          "description": "Write a page-level comment",
+          "keywords": ["comment", "discussion", "feedback", "kommentar"]
+        }
+      }
+    },
     "editConflict": "Edit conflict",
     "editConflictDescription": "Another version was saved first. Your draft is preserved in history.",
     "loadCurrent": "Load current",
@@ -596,7 +919,12 @@
     "teamActivity": "Team activity",
     "noNotifications": "No notifications.",
     "markAllRead": "Mark all read",
-    "notificationTypes": { "mention": "mentioned you on", "reply": "replied on", "assignment": "assigned you on", "resolved": "resolved a thread on" },
+    "notificationTypes": {
+      "mention": "mentioned you on",
+      "reply": "replied on",
+      "assignment": "assigned you on",
+      "resolved": "resolved a thread on"
+    },
     "recoverableDeletion": "Recoverable deletion",
     "trashDescription": "Deleted pages and sources stay recoverable until an administrator purges them.",
     "trashEmpty": "Trash is empty.",
@@ -615,6 +943,79 @@
     "importPreview": "{count} records found in {name}.",
     "importConfirmed": "Import records",
     "importComplete": "Imported {imported}; {duplicates} duplicates need review.",
+    "addPdf": "Add PDF",
+    "pdfDropTitle": "Drop PDFs here",
+    "pdfDropDescription": "Upload one or more complete PDFs. Sources and searchable text are created automatically.",
+    "choosePdfs": "Choose PDFs",
+    "pdfUploadFailed": "The PDF could not be uploaded.",
+    "pdfDocuments": "PDF documents",
+    "pdfPages": "PDF pages",
+    "metadataSuggestions": "Review detected metadata",
+    "metadataSuggestionsHint": "Suggestions never overwrite confirmed source metadata automatically.",
+    "metadataSuggestionFields": {
+      "title": "Title",
+      "author": "Author",
+      "date": "Date",
+      "language": "Language",
+      "doi": "DOI",
+      "isbn": "ISBN"
+    },
+    "noPdfDocuments": "No PDF has been added yet.",
+    "primaryPdf": "Primary document",
+    "supplementaryPdf": "Supplementary document",
+    "readPdf": "Read PDF",
+    "pdfStatuses": {
+      "queued": "Waiting for processing",
+      "extracting": "Extracting text",
+      "ocr": "Recognizing scan locally",
+      "ready": "Ready",
+      "failed": "Processing failed"
+    },
+    "retry": "Retry",
+    "pagesCount": "pages",
+    "pdfLoadFailed": "The PDF could not be loaded.",
+    "backToSource": "Back to source",
+    "fitWidth": "Fit to width",
+    "annotationColor": "Annotation color",
+    "annotationColors": {
+      "yellow": "Yellow",
+      "green": "Green",
+      "blue": "Blue",
+      "pink": "Pink",
+      "purple": "Purple"
+    },
+    "captureRegion": "Capture region",
+    "bookmarkPage": "Bookmark page",
+    "viewMode": "View",
+    "continuousView": "All pages",
+    "singlePageView": "Single page",
+    "doublePageView": "Two pages",
+    "searchInPdf": "Search in PDF…",
+    "pageNumber": "Page {page}",
+    "annotationNotePrompt": "Optional note for this evidence",
+    "replyToAnnotation": "Write a reply",
+    "sendReply": "Send reply",
+    "highlightSelection": "Highlight text",
+    "saveRegion": "Save region",
+    "cancel": "Cancel",
+    "annotations": "Annotations and evidence",
+    "noAnnotations": "No annotations yet. Select text or drag a region on the page.",
+    "annotationKinds": {
+      "text": "Text excerpt",
+      "region": "Image/region",
+      "bookmark": "Page bookmark"
+    },
+    "linkedEvidence": "Linked evidence",
+    "addEvidence": "Add evidence",
+    "chooseEvidence": "Choose evidence",
+    "searchEvidence": "Search annotations, notes, or sources…",
+    "search": "Search",
+    "noLinkedEvidence": "No PDF evidence linked yet.",
+    "removedEvidence": "This evidence is no longer available.",
+    "insertPdfEvidence": "Insert PDF evidence",
+    "findEvidence": "Search PDF annotations…",
+    "noEvidenceAvailable": "No reusable PDF annotations are available yet.",
+    "loading": "Loading…",
     "exportPage": "Export page"
   },
   "settings": {
@@ -682,6 +1083,7 @@
       "description": "Only administrators can create users.",
       "addUser": "Add user",
       "name": "Name",
+      "username": "Username",
       "email": "Email",
       "role": "Role",
       "password": "Initial password",

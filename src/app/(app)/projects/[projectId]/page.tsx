@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import { requireUser } from "@/lib/auth";
 import { getBoard, getProject, listMembers } from "@/modules/projects/queries";
 import { BoardClient } from "@/modules/projects/components/board-client";
+import { EvidencePanel } from "@/modules/wiki/components/evidence-panel";
 
 export default async function ProjectBoardPage({
   params,
@@ -17,11 +18,14 @@ export default async function ProjectBoardPage({
   const members = listMembers();
 
   return (
-    <BoardClient
-      project={project}
-      columns={columns}
-      tasksByColumn={tasksByColumn}
-      members={members}
-    />
+    <div className="grid gap-6">
+      <BoardClient
+        project={project}
+        columns={columns}
+        tasksByColumn={tasksByColumn}
+        members={members}
+      />
+      <EvidencePanel targetType="project" targetId={projectId} />
+    </div>
   );
 }

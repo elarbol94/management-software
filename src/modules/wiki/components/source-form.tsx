@@ -12,7 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { saveSource } from "../research-actions";
 
 type InitialSource = Partial<{
-  id: string; type: "journalArticle" | "book" | "bookChapter" | "report" | "webPage" | "document";
+  id: string; documentType?: string; type: "journalArticle" | "book" | "bookChapter" | "report" | "webPage" | "document";
   title: string; subtitle: string; issuedDate: string; containerTitle: string; publisher: string; institution: string;
   edition: string; volume: string; issue: string; pages: string; doi: string; isbn: string; url: string; accessedAt: string;
   language: string; abstract: string; notes: string; readingStatus: "toRead" | "reading" | "read";
@@ -24,7 +24,7 @@ function contributorLines(initial?: InitialSource) {
   return (initial?.contributors ?? []).map((person) => person.literal ? `@${person.literal}` : `${person.family}, ${person.given}`).join("\n");
 }
 
-export function SourceForm({ initial, compact = false, onSaved }: { initial?: InitialSource; compact?: boolean; onSaved?: () => void }) {
+export function SourceForm({ initial, documentTypes = [], compact = false, redirectTo, onSaved }: { initial?: InitialSource; documentTypes?: string[]; compact?: boolean; redirectTo?: string; onSaved?: () => void }) {
   const t = useTranslations("wiki"); const router = useRouter();
   const [pending, setPending] = useState(false); const [error, setError] = useState("");
   const [type, setType] = useState(initial?.type ?? "document");
@@ -39,22 +39,23 @@ export function SourceForm({ initial, compact = false, onSaved }: { initial?: In
       return { role: "author" as const, family: family.trim(), given: given.join(",").trim(), literal: "" };
     });
     try {
-      const result = await saveSource({ id: initial?.id, type, readingStatus, contributors,
+      const result = await saveSource({ id: initial?.id, type, documentType: value("documentType"), readingStatus, contributors,
         title: value("title"), subtitle: value("subtitle"), issuedDate: value("issuedDate"), containerTitle: value("containerTitle"),
         publisher: value("publisher"), institution: value("institution"), edition: value("edition"), volume: value("volume"), issue: value("issue"), pages: value("pages"),
         doi: value("doi"), isbn: value("isbn"), url: value("url"), accessedAt: value("accessedAt"), language: value("language"), abstract: value("abstract"), notes: value("notes"),
         tagNames: value("tags").split(",").map((tag) => tag.trim()).filter(Boolean),
       });
       if (!result.ok) { setError(t("duplicateSource", { title: result.duplicate.title })); return; }
-      onSaved?.(); router.push(`/wiki/sources/${result.id}`); router.refresh();
+      onSaved?.(); router.push(redirectTo ?? `/wiki/sources/${result.id}`); router.refresh();
     } catch (reason) { setError(reason instanceof Error ? reason.message : t("saveFailed")); }
     finally { setPending(false); }
   }
 
-  return <form action={submit} className="space-y-5">
+  return <form action={submit} onKeyDown={(event) => { if ((event.ctrlKey || event.metaKey) && event.key === "Enter") { event.preventDefault(); event.currentTarget.requestSubmit(); } }} className="space-y-5">
     {error && <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">{error}</div>}
-    <div className="grid gap-4 md:grid-cols-3">
+    <div className="grid gap-4 md:grid-cols-4">
       <div className="space-y-1.5"><Label>{t("sourceType")}</Label><Select value={type} onValueChange={(value) => setType(value as typeof type)}><SelectTrigger className="w-full"><SelectValue /></SelectTrigger><SelectContent>{["journalArticle","book","bookChapter","report","webPage","document"].map((item) => <SelectItem key={item} value={item}>{t(`sourceTypes.${item}`)}</SelectItem>)}</SelectContent></Select></div>
+      <div className="space-y-1.5"><Label htmlFor="documentType">{t("documentType")}</Label><Input id="documentType" name="documentType" list="document-types" defaultValue={initial?.documentType} placeholder={t("documentTypePlaceholder")} /><datalist id="document-types">{documentTypes.map((item) => <option key={item} value={item} />)}</datalist></div>
       <div className="space-y-1.5"><Label>{t("readingStatus")}</Label><Select value={readingStatus} onValueChange={(value) => setReadingStatus(value as typeof readingStatus)}><SelectTrigger className="w-full"><SelectValue /></SelectTrigger><SelectContent>{["toRead","reading","read"].map((item) => <SelectItem key={item} value={item}>{t(`readingStatuses.${item}`)}</SelectItem>)}</SelectContent></Select></div>
       <div className="space-y-1.5"><Label htmlFor="issuedDate">{t("issuedDate")}</Label><Input id="issuedDate" name="issuedDate" defaultValue={initial?.issuedDate} placeholder="2026 or 2026-07-20" /></div>
     </div>

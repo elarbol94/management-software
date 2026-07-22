@@ -4,7 +4,7 @@ test.describe.configure({ mode: "serial" });
 
 async function login(page: Page) {
   await page.goto("/login");
-  await page.locator("#email").fill("admin@example.com");
+  await page.locator("#username").fill("admin");
   await page.locator("#password").fill("super-secret-1");
   await page.getByRole("button", { name: "Anmelden" }).click();
   await expect(page.getByText("Willkommen, E2E Admin!")).toBeVisible();
@@ -81,4 +81,124 @@ test("subpages remain nested and deletion is recoverable", async ({ page }) => {
   await expect(page.getByText("Tag Eins")).toBeVisible();
   await page.getByRole("button", { name: "Wiederherstellen" }).click();
   await expect(page.getByText("Tag Eins")).toHaveCount(0);
+});
+
+test("slash palette filters commands and applies a block command from the keyboard", async ({ page }) => {
+  await login(page);
+  await quickNote(page, "Slash Palette", "Start");
+  const editor = page.locator(".ProseMirror");
+  await editor.click();
+  await page.keyboard.press("ControlOrMeta+End");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("/uberschrift 2");
+  await expect(page.getByRole("listbox", { name: "Slash-Befehle" })).toBeVisible();
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("A useful heading");
+  await expect(editor.getByRole("heading", { level: 2, name: "A useful heading" })).toBeVisible();
+  await expect(editor).not.toContainText("/uberschrift 2");
+
+  await page.keyboard.press("End");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("/trennlinie");
+  await page.getByRole("option", { name: /Trennlinie/ }).click();
+  await expect(editor.locator("hr")).toHaveCount(1);
+});
+
+test("slash wiki actions open the existing attachment, source, and comment controls", async ({ page }) => {
+  await login(page);
+  await quickNote(page, "Slash Actions", "Action start");
+  const editor = page.locator(".ProseMirror");
+
+  await editor.click();
+  await page.keyboard.press("ControlOrMeta+End");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("/datei");
+  const chooserPromise = page.waitForEvent("filechooser");
+  await page.keyboard.press("Enter");
+  const chooser = await chooserPromise;
+  await chooser.setFiles({ name: "slash-note.txt", mimeType: "text/plain", buffer: Buffer.from("slash upload") });
+  await expect(page.getByText("slash-note.txt")).toBeVisible();
+
+  await editor.click();
+  await page.keyboard.press("ControlOrMeta+End");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("/kommentar");
+  await page.keyboard.press("Enter");
+  await expect(page.getByTestId("page-comment-input")).toBeFocused();
+
+  await editor.click();
+  await page.keyboard.press("ControlOrMeta+End");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("/quelle verknupfen");
+  await page.keyboard.press("Enter");
+  await expect(page.getByTestId("supporting-source-picker")).toBeFocused();
+});
+
+test("slash palette dismisses without deleting text and stays closed in URLs and code blocks", async ({ page }) => {
+  await login(page);
+  await quickNote(page, "Slash Guardrails", "Guardrail start");
+  const editor = page.locator(".ProseMirror");
+  await editor.click();
+  await page.keyboard.press("ControlOrMeta+End");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("https://");
+  await expect(page.getByRole("listbox", { name: "Slash-Befehle" })).toHaveCount(0);
+
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("/");
+  await expect(page.getByRole("listbox", { name: "Slash-Befehle" })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("listbox", { name: "Slash-Befehle" })).toHaveCount(0);
+  await expect(editor).toContainText("/");
+
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("/code");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("/");
+  await expect(page.getByRole("listbox", { name: "Slash-Befehle" })).toHaveCount(0);
+});
+
+test("slash wiki insert commands open the shared page, citation, and PDF evidence pickers", async ({ page }) => {
+  await login(page);
+  await quickNote(page, "Slash Pickers", "Picker start");
+  const editor = page.locator(".ProseMirror");
+  const openCommand = async (query: string) => {
+    await editor.click();
+    await page.keyboard.press("ControlOrMeta+End");
+    await page.keyboard.press("Enter");
+    await page.keyboard.type("/" + query);
+    await page.keyboard.press("Enter");
+  };
+
+  await openCommand("seite verknupfen");
+  await expect(page.getByPlaceholder("Seiten filtern…")).toBeVisible();
+  await page.keyboard.press("Escape");
+
+  await openCommand("zitat einfugen");
+  await expect(page.getByPlaceholder("Quelle suchen…")).toBeVisible();
+  await page.keyboard.press("Escape");
+
+  await openCommand("pdf");
+  await expect(page.getByPlaceholder("PDF-Markierungen durchsuchen…")).toBeVisible();
+});
+
+test("workspace groups notes and applies local filters", async ({ page }) => {
+  await login(page);
+  await quickNote(page, "Arbeitsansicht", "Diese Notiz wird in der Übersicht sortiert.");
+  await page.goto("/wiki/inbox");
+
+  const inbox = page.getByTestId("workspace-group-inbox");
+  await expect(inbox).toContainText("Arbeitsansicht");
+  const note = inbox.getByTestId("workspace-note").filter({ hasText: "Arbeitsansicht" });
+  await note.getByTestId("workspace-note-status").click();
+  await page.getByRole("option", { name: "In Arbeit" }).click();
+
+  const working = page.getByTestId("workspace-group-working");
+  await expect(working).toContainText("Arbeitsansicht");
+  const workingNote = working.getByTestId("workspace-note").filter({ hasText: "Arbeitsansicht" });
+  await workingNote.getByTestId("workspace-note-favorite").click();
+  await page.getByRole("button", { name: "Nur Favoriten" }).click();
+  await expect(working).toContainText("Arbeitsansicht");
+  await page.getByPlaceholder("Notizen durchsuchen…").fill("sortiert");
+  await expect(working).toContainText("Arbeitsansicht");
 });

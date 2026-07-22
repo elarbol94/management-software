@@ -1,0 +1,1 @@
+ALTER TABLE `wiki_sources` ADD `document_type` text DEFAULT '' NOT NULL;

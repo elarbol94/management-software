@@ -41,6 +41,7 @@ export default async function UsersSettingsPage() {
           <TableHeader>
             <TableRow>
               <TableHead>{t("name")}</TableHead>
+              <TableHead>{t("username")}</TableHead>
               <TableHead>{t("email")}</TableHead>
               <TableHead>{t("role")}</TableHead>
             </TableRow>
@@ -49,6 +50,7 @@ export default async function UsersSettingsPage() {
             {users.map((user) => (
               <TableRow key={user.id}>
                 <TableCell className="font-medium">{user.name}</TableCell>
+                <TableCell>{user.displayUsername ?? user.username}</TableCell>
                 <TableCell>{user.email}</TableCell>
                 <TableCell>
                   <div className="flex gap-2">

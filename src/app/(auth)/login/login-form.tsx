@@ -15,11 +15,10 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 
-export function LoginForm({ mode }: { mode: "login" | "setup" }) {
+export function LoginForm() {
   const t = useTranslations("auth");
   const router = useRouter();
-  const [name, setName] = useState("");
-  const [email, setEmail] = useState("");
+  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
@@ -29,13 +28,10 @@ export function LoginForm({ mode }: { mode: "login" | "setup" }) {
     setPending(true);
     setError(null);
 
-    const result =
-      mode === "setup"
-        ? await authClient.signUp.email({ name, email, password })
-        : await authClient.signIn.email({ email, password });
+    const result = await authClient.signIn.username({ username, password });
 
     if (result.error) {
-      setError(mode === "setup" ? t("genericError") : t("invalidCredentials"));
+      setError(t("invalidCredentials"));
       setPending(false);
       return;
     }
@@ -47,34 +43,19 @@ export function LoginForm({ mode }: { mode: "login" | "setup" }) {
   return (
     <Card className="w-full max-w-sm">
       <CardHeader>
-        <CardTitle>{mode === "setup" ? t("setupTitle") : t("loginTitle")}</CardTitle>
-        <CardDescription>
-          {mode === "setup" ? t("setupSubtitle") : t("loginSubtitle")}
-        </CardDescription>
+        <CardTitle>{t("loginTitle")}</CardTitle>
+        <CardDescription>{t("loginSubtitle")}</CardDescription>
       </CardHeader>
       <CardContent>
         <form onSubmit={onSubmit} className="flex flex-col gap-4">
-          {mode === "setup" && (
-            <div className="flex flex-col gap-2">
-              <Label htmlFor="name">{t("name")}</Label>
-              <Input
-                id="name"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                required
-                autoComplete="name"
-              />
-            </div>
-          )}
           <div className="flex flex-col gap-2">
-            <Label htmlFor="email">{t("email")}</Label>
+            <Label htmlFor="username">{t("username")}</Label>
             <Input
-              id="email"
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
+              id="username"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
               required
-              autoComplete="email"
+              autoComplete="username"
             />
           </div>
           <div className="flex flex-col gap-2">
@@ -86,12 +67,12 @@ export function LoginForm({ mode }: { mode: "login" | "setup" }) {
               onChange={(e) => setPassword(e.target.value)}
               required
               minLength={8}
-              autoComplete={mode === "setup" ? "new-password" : "current-password"}
+              autoComplete="current-password"
             />
           </div>
           {error && <p className="text-sm text-destructive">{error}</p>}
           <Button type="submit" disabled={pending}>
-            {mode === "setup" ? t("createAdmin") : t("signIn")}
+            {t("signIn")}
           </Button>
         </form>
       </CardContent>

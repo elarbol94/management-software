@@ -32,6 +32,7 @@ export function CreateUserDialog() {
   const [pending, setPending] = useState(false);
   const [form, setForm] = useState({
     name: "",
+    username: "",
     email: "",
     password: "",
     role: "member" as "member" | "personnel" | "admin",
@@ -45,6 +46,10 @@ export function CreateUserDialog() {
       name: form.name,
       email: form.email,
       password: form.password,
+      data: {
+        username: form.username,
+        displayUsername: form.username,
+      },
       // Better Auth's client types only know the built-in "user" | "admin"
       // union; the server is configured with defaultRole "member".
       role: form.role as "admin",
@@ -58,7 +63,13 @@ export function CreateUserDialog() {
 
     toast.success(t("created"));
     setOpen(false);
-    setForm({ name: "", email: "", password: "", role: "member" });
+    setForm({
+      name: "",
+      username: "",
+      email: "",
+      password: "",
+      role: "member",
+    });
     router.refresh();
   }
 
@@ -80,6 +91,19 @@ export function CreateUserDialog() {
               value={form.name}
               onChange={(e) => setForm({ ...form, name: e.target.value })}
               required
+            />
+          </div>
+          <div className="flex flex-col gap-2">
+            <Label htmlFor="new-user-username">{t("username")}</Label>
+            <Input
+              id="new-user-username"
+              value={form.username}
+              onChange={(e) => setForm({ ...form, username: e.target.value })}
+              required
+              minLength={3}
+              maxLength={254}
+              pattern="[A-Za-z0-9_.@+-]+"
+              autoComplete="username"
             />
           </div>
           <div className="flex flex-col gap-2">

@@ -1,29 +1,29 @@
 import { test, expect } from "@playwright/test";
 
-// Runs against a fresh database (see global-setup.ts): the first visit to
-// /login shows the initial-setup form, which creates the admin account.
+// Bootstrap the first account through the guarded API, then verify the
+// username/password login page.
 
-test.describe.configure({ mode: "serial" });
+ test.describe.configure({ mode: "serial" });
 
-test("initial setup creates the admin account", async ({ page }) => {
+ test("username and password sign-in", async ({ page }) => {
+  const response = await page.request.post("/api/auth/sign-up/email", {
+    data: { name: "E2E Admin", username: "admin", displayUsername: "admin", email: "admin@example.com", password: "super-secret-1" },
+  });
+  expect(response.ok()).toBe(true);
+  await page.context().clearCookies();
   await page.goto("/login");
-  await expect(page.getByText("Erste Einrichtung")).toBeVisible();
-
-  await page.locator("#name").fill("E2E Admin");
-  await page.locator("#email").fill("admin@example.com");
+  await expect(page.locator("#username")).toBeVisible();
+  await expect(page.locator("#username")).toHaveCount(0);
+  await page.locator("#username").fill("admin");
   await page.locator("#password").fill("super-secret-1");
-  const signupResponsePromise = page.waitForResponse((response) => response.url().includes("/api/auth/sign-up"));
-  await page.getByRole("button", { name: "Administratorkonto erstellen" }).click();
-  const signupResponse = await signupResponsePromise;
-  expect(signupResponse.ok(), await signupResponse.text()).toBe(true);
-
-  await expect(page.getByText("Willkommen, E2E Admin!")).toBeVisible({ timeout: 30_000 });
+  await page.getByRole("button", { name: "Anmelden" }).click();
+  await expect(page.getByText("Willkommen, E2E Admin!")).toBeVisible();
 });
 
 test("create an entry and see it in ledger, report and CSV", async ({ page }) => {
   // Sign in (session cookies are not shared between tests).
   await page.goto("/login");
-  await page.locator("#email").fill("admin@example.com");
+  await page.locator("#username").fill("admin");
   await page.locator("#password").fill("super-secret-1");
   await page.getByRole("button", { name: "Anmelden" }).click();
   await expect(page.getByText("Willkommen, E2E Admin!")).toBeVisible();
@@ -72,7 +72,7 @@ test("create an entry and see it in ledger, report and CSV", async ({ page }) =>
 
 test("plan a category and compare it with actual journal entries", async ({ page }) => {
   await page.goto("/login");
-  await page.locator("#email").fill("admin@example.com");
+  await page.locator("#username").fill("admin");
   await page.locator("#password").fill("super-secret-1");
   await page.getByRole("button", { name: "Anmelden" }).click();
   await expect(page.getByText("Willkommen, E2E Admin!")).toBeVisible();
@@ -96,7 +96,7 @@ test("plan a category and compare it with actual journal entries", async ({ page
 
 test("edit and delete the entry", async ({ page }) => {
   await page.goto("/login");
-  await page.locator("#email").fill("admin@example.com");
+  await page.locator("#username").fill("admin");
   await page.locator("#password").fill("super-secret-1");
   await page.getByRole("button", { name: "Anmelden" }).click();
   await expect(page.getByText("Willkommen, E2E Admin!")).toBeVisible();
@@ -127,7 +127,7 @@ test("edit and delete the entry", async ({ page }) => {
 
 test("calculate, save, and duplicate automatic personnel costs", async ({ page }) => {
   await page.goto("/login");
-  await page.locator("#email").fill("admin@example.com");
+  await page.locator("#username").fill("admin");
   await page.locator("#password").fill("super-secret-1");
   await page.getByRole("button", { name: "Anmelden" }).click();
   await expect(page.getByText("Willkommen, E2E Admin!")).toBeVisible();
@@ -178,7 +178,7 @@ test("calculate, save, and duplicate automatic personnel costs", async ({ page }
 
 test("language switcher changes the UI to English and back", async ({ page }) => {
   await page.goto("/login");
-  await page.locator("#email").fill("admin@example.com");
+  await page.locator("#username").fill("admin");
   await page.locator("#password").fill("super-secret-1");
   await page.getByRole("button", { name: "Anmelden" }).click();
   await expect(page.getByText("Willkommen, E2E Admin!")).toBeVisible();

@@ -1,16 +1,40 @@
+name: management-platform
+
 services:
   app:
     build: .
     ports:
-      - "3000:3000"
+      # Loopback-only by default prevents bypassing Cloudflare Access through
+      # the host's public IP. Override only for a trusted local-network setup.
+      - "${APP_BIND_ADDRESS:-127.0.0.1}:${APP_HOST_PORT:-3007}:3000"
     environment:
       # Set BETTER_AUTH_SECRET in a .env file next to this compose file.
       BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET}
       # Public URL of the app (behind your reverse proxy).
-      BETTER_AUTH_URL: ${BETTER_AUTH_URL:-http://localhost:3000}
+      BETTER_AUTH_URL: ${BETTER_AUTH_URL:-https://startup.elarbol.me}
     volumes:
       - app_data:/data
     restart: unless-stopped
+
+  # Opt in with: docker compose --profile cloudflare up --build -d
+  # The remotely managed tunnel route is http://localhost:3007. Host network
+  # mode makes that address resolve to the host from inside this container.
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    profiles: ["cloudflare"]
+    command: tunnel --no-autoupdate run
+    environment:
+      # Using the environment avoids exposing the token in the process list.
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:-}
+    depends_on:
+      - app
+    network_mode: host
+    restart: unless-stopped
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
 
 volumes:
   app_data:

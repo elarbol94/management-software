@@ -134,12 +134,39 @@
   }
 
   .wiki-comment-anchor {
-    @apply rounded-sm bg-amber-100 decoration-amber-500 decoration-2 underline-offset-2 dark:bg-amber-950/60;
+    @apply cursor-pointer rounded-sm bg-amber-50/70 decoration-amber-500 decoration-2 underline-offset-2 transition dark:bg-amber-950/30;
+    border: 1px solid rgb(252 211 77);
     text-decoration-line: underline;
+  }
+
+  .wiki-comment-anchor.is-resolved {
+    background-color: rgb(236 253 245) !important;
+    text-decoration-color: rgb(5 150 105) !important;
+    border-color: rgb(110 231 183) !important;
+  }
+
+  .wiki-comment-anchor.is-active {
+    @apply bg-amber-200 ring-2 ring-amber-400 ring-offset-1 dark:bg-amber-900/80;
   }
 
   .wiki-highlight {
     @apply rounded-sm bg-yellow-200/80 px-0.5 dark:bg-yellow-700/50;
+  }
+
+  .wiki-commentable-media {
+    @apply relative cursor-pointer rounded-lg transition;
+  }
+
+  .wiki-commentable-media.ProseMirror-selectednode {
+    @apply ring-2 ring-indigo-500 ring-offset-2;
+  }
+
+  .wiki-commentable-media.is-comment-resolved {
+    @apply ring-2 ring-emerald-500 ring-offset-2;
+  }
+
+  .wiki-commentable-media.is-comment-active {
+    @apply ring-2 ring-amber-500 ring-offset-2;
   }
 
   .ProseMirror > *:first-child {

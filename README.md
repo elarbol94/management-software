@@ -1,4 +1,4 @@
-# Firmenzentrale
+# management-platform
 
 Self-hosted all-in-one management app for a small Austrian start-up:
 
@@ -26,9 +26,12 @@ npm install
 npm run dev            # http://localhost:3000
 ```
 
-- The first visit shows the **initial setup** form; the first account created
-  becomes the administrator. Afterwards public signup is disabled — admins
-  create accounts under *Einstellungen → Benutzer*.
+- The sign-in page accepts only a username and password. The first account
+  created through the guarded `/api/auth/sign-up/email` bootstrap endpoint
+  becomes the administrator.
+  Afterwards public signup is disabled — admins create accounts and assign
+  usernames under *Einstellungen → Benutzer*. Existing accounts receive their
+  email address as their initial username during migration.
 - Migrations and default categories are applied automatically on server boot
   (`src/instrumentation.ts`). Manual commands: `npm run db:migrate`,
   `npm run db:seed`, `npx drizzle-kit studio`.
@@ -60,9 +63,12 @@ allows only one dev server per project.
 ```bash
 # .env next to docker-compose.yml:
 #   BETTER_AUTH_SECRET=<node -e "console.log(require('crypto').randomBytes(32).toString('hex'))">
-#   BETTER_AUTH_URL=https://intern.example.at
+#   BETTER_AUTH_URL=https://startup.elarbol.me
 docker compose up --build -d
 ```
+
+To put the application behind Cloudflare Access using the opt-in Tunnel
+sidecar, follow [docs/cloudflare-access.md](docs/cloudflare-access.md).
 
 The container stores everything under the `app_data` volume (`/data`):
 `app.db` (SQLite) + `uploads/`. Put Caddy or Traefik in front for TLS.

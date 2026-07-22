@@ -4,6 +4,9 @@ import {
   extractInternalSlugs,
   extractCitations,
   extractCommentAnchors,
+  extractCommentNodeIds,
+  extractEmbeddedAttachmentIds,
+  parseStoredDocument,
   extractText,
   slugify,
   type TiptapNode,
@@ -104,6 +107,29 @@ describe("research nodes", () => {
     };
     expect(extractCitations(researchDoc)).toEqual([{ sourceId: "source-1", locator: "12" }]);
     expect(extractCommentAnchors(researchDoc)).toEqual(["thread-1"]);
+  });
+
+  it("extracts overlapping text threads and stable image node ids", () => {
+    const anchoredDoc: TiptapNode = {
+      type: "doc",
+      content: [
+        { type: "paragraph", content: [{ type: "text", text: "overlap", marks: [{ type: "comment", attrs: { threadIds: ["thread-1", "thread-2"] } }] }] },
+        { type: "commentableImage", attrs: { nodeId: "image-node-1", attachmentId: "file-1" } },
+        { type: "pdfEvidence", attrs: { nodeId: "pdf-node-1", annotationId: "annotation-1" } },
+      ],
+    };
+    expect(extractCommentAnchors(anchoredDoc)).toEqual(["thread-1", "thread-2"]);
+    expect(extractCommentNodeIds(anchoredDoc)).toEqual(["image-node-1", "pdf-node-1"]);
+    expect(extractEmbeddedAttachmentIds(anchoredDoc)).toEqual(["file-1"]);
+  });
+});
+
+describe("parseStoredDocument", () => {
+  it("keeps current JSON and recovers empty and plain-text legacy revisions", () => {
+    const current = { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "Current" }] }] };
+    expect(parseStoredDocument(JSON.stringify(current))).toEqual(current);
+    expect(parseStoredDocument("")).toEqual({ type: "doc", content: [{ type: "paragraph" }] });
+    expect(extractText(parseStoredDocument("Legacy\nrevision"))).toBe("Legacy\nrevision");
   });
 });
 

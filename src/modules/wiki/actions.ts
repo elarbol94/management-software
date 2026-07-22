@@ -5,16 +5,21 @@ import { and, eq, inArray, isNull } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { db, sqlite } from "@/db";
 import {
+  evidenceLinks,
   wikiCommentThreads,
   wikiLinks,
   wikiPageRevisions,
   wikiPageSources,
   wikiPages,
+  wikiPdfAnnotations,
 } from "@/db/schema";
 import { requireUserOrThrow } from "@/lib/auth";
+import { isCommentAnchorOrphaned, type CommentAnchor } from "./lib/comment-anchors";
 import {
   extractCitations,
   extractCommentAnchors,
+  extractCommentNodeIds,
+  extractEvidenceAnnotationIds,
   extractInternalSlugs,
   extractText,
   slugify,
@@ -97,6 +102,7 @@ export async function renamePage(id: string, title: string) {
 const saveSchema = z.object({
   id: z.string().min(1),
   contentJson: z.string().max(2_000_000),
+  baseContentJson: z.string().max(2_000_000).optional(),
   expectedVersion: z.number().int().positive().optional(),
 });
 
@@ -129,8 +135,10 @@ export async function savePageContent(input: z.infer<typeof saveSchema>) {
   const citations = extractCitations(doc);
   const citationSourceIds = [...new Set(citations.map((item) => item.sourceId))];
   const commentAnchors = new Set(extractCommentAnchors(doc));
+  const commentNodeIds = new Set(extractCommentNodeIds(doc));
+  const evidenceAnnotationIds = extractEvidenceAnnotationIds(doc);
 
-  if (data.expectedVersion !== undefined && data.expectedVersion !== page.version) {
+  if (data.expectedVersion !== undefined && data.expectedVersion !== page.version && data.baseContentJson !== page.contentJson) {
     const revision = db
       .insert(wikiPageRevisions)
       .values({
@@ -145,7 +153,7 @@ export async function savePageContent(input: z.infer<typeof saveSchema>) {
       })
       .returning({ id: wikiPageRevisions.id })
       .get();
-    return { saved: false as const, conflict: true as const, version: page.version, revisionId: revision.id };
+    return { saved: false as const, conflict: true as const, version: page.version, revisionId: revision.id, contentJson: page.contentJson };
   }
 
   const nextVersion = page.version + 1;
@@ -196,14 +204,38 @@ export async function savePageContent(input: z.infer<typeof saveSchema>) {
         .run();
     }
 
+    db.delete(evidenceLinks)
+      .where(and(eq(evidenceLinks.targetType, "wikiPage"), eq(evidenceLinks.targetId, data.id)))
+      .run();
+    if (evidenceAnnotationIds.length > 0) {
+      const annotations = db.select({ id: wikiPdfAnnotations.id }).from(wikiPdfAnnotations)
+        .where(inArray(wikiPdfAnnotations.id, evidenceAnnotationIds)).all();
+      if (annotations.length > 0) {
+        db.insert(evidenceLinks).values(annotations.map((annotation) => ({
+          annotationId: annotation.id, targetType: "wikiPage" as const, targetId: data.id, createdBy: user.id,
+        }))).onConflictDoNothing().run();
+      }
+    }
+
     const threads = db
-      .select({ id: wikiCommentThreads.id, anchorQuote: wikiCommentThreads.anchorQuote })
+      .select({
+        id: wikiCommentThreads.id,
+        anchorQuote: wikiCommentThreads.anchorQuote,
+        anchorType: wikiCommentThreads.anchorType,
+        anchorNodeId: wikiCommentThreads.anchorNodeId,
+      })
       .from(wikiCommentThreads)
       .where(eq(wikiCommentThreads.pageId, data.id))
       .all();
     for (const thread of threads) {
+      const anchor: CommentAnchor = thread.anchorType === "image"
+        ? { type: "image", nodeId: thread.anchorNodeId ?? "", mode: "whole", label: thread.anchorQuote }
+        : thread.anchorType === "text"
+          ? { type: "text", quote: thread.anchorQuote }
+          : { type: "page" };
+      const orphaned = isCommentAnchorOrphaned(thread.id, anchor, { threadIds: commentAnchors, nodeIds: commentNodeIds, text: contentText });
       db.update(wikiCommentThreads)
-        .set({ orphaned: thread.anchorQuote ? !commentAnchors.has(thread.id) && !contentText.includes(thread.anchorQuote) : false })
+        .set({ orphaned })
         .where(eq(wikiCommentThreads.id, thread.id))
         .run();
     }

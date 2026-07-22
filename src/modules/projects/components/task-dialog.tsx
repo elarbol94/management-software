@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { EvidencePanel } from "@/modules/wiki/components/evidence-panel";
 import {
   Dialog,
   DialogContent,
@@ -226,6 +227,8 @@ export function TaskDialog({
               />
             </div>
           </div>
+
+          {task && <EvidencePanel targetType="task" targetId={task.id} compact />}
 
           <div className="flex items-center justify-between gap-2">
             {task ? (

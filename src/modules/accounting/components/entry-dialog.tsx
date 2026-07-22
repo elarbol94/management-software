@@ -42,6 +42,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { EvidencePanel } from "@/modules/wiki/components/evidence-panel";
 
 type Category = typeof categoriesTable.$inferSelect;
 type AttachmentDto = { id: string; fileName: string };
@@ -704,6 +705,8 @@ export function EntryDialog({
                   <div><FieldLabel htmlFor="entry-notes">{t("notes")}</FieldLabel><Textarea id="entry-notes" rows={4} value={notes} onChange={(e) => setNotes(e.target.value)} maxLength={2000} /></div>
                   <div><FieldLabel>{t("receipts")}</FieldLabel><div className="mt-1 flex flex-col gap-1">{existingAttachments.map((attachment) => <div key={attachment.id} className="flex items-center gap-2 text-sm"><Paperclip className="size-3.5" /><a className="min-w-0 flex-1 truncate hover:underline" href={`/api/files/${attachment.id}`} target="_blank" rel="noreferrer">{attachment.fileName}</a><Button type="button" variant="ghost" size="icon-xs" onClick={() => void removeExistingAttachment(attachment.id)}><X className="size-3.5" /></Button></div>)}{pendingFiles.map((file, index) => <div key={`${file.name}-${index}`} className="flex items-center gap-2 text-sm text-[#73817c]"><Upload className="size-3.5" /><span className="min-w-0 flex-1 truncate">{file.name}</span><Button type="button" variant="ghost" size="icon-xs" onClick={() => setPendingFiles((current) => current.filter((_, itemIndex) => itemIndex !== index))}><X className="size-3.5" /></Button></div>)}</div><input ref={fileInputRef} type="file" accept="application/pdf,image/png,image/jpeg,image/webp,image/heic" multiple className="hidden" onChange={(event) => { const files = Array.from(event.currentTarget.files ?? []); setPendingFiles((current) => [...current, ...files]); event.currentTarget.value = ""; }} /><Button type="button" variant="outline" size="sm" className="mt-2" onClick={() => fileInputRef.current?.click()}><Upload className="size-4" />{t("uploadReceipt")}</Button></div>
                 </FormSection>
+
+                {entry && !isDuplicate && <EvidencePanel targetType="accountingEntry" targetId={entry.id} />}
 
                 {warnings.length > 0 && <section className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-amber-950"><h3 className="font-medium">{tf("warnings.title")}</h3><ul className="mt-2 list-disc space-y-1 pl-5 text-sm">{warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul><div className="mt-3"><FieldLabel htmlFor="warning-reason">{tf("warnings.overrideReason")}</FieldLabel><Textarea id="warning-reason" rows={2} value={warningOverrideReason} onChange={(e) => setWarningOverrideReason(e.target.value)} placeholder={tf("warnings.overridePlaceholder")} /></div></section>}
               </div>

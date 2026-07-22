@@ -6,7 +6,7 @@ test.describe.configure({ mode: "serial" });
 
 async function login(page: Page) {
   await page.goto("/login");
-  await page.locator("#email").fill("admin@example.com");
+  await page.locator("#username").fill("admin");
   await page.locator("#password").fill("super-secret-1");
   await page.getByRole("button", { name: "Anmelden" }).click();
   await expect(page.getByText("Willkommen, E2E Admin!")).toBeVisible();

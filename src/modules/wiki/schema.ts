@@ -9,6 +9,7 @@ import {
 } from "drizzle-orm/sqlite-core";
 import { createId } from "@paralleldrive/cuid2";
 import { user } from "@/db/core-schema";
+import type { StoredCommentAnchorData } from "./lib/comment-anchors";
 
 export const wikiPageStatuses = ["inbox", "working", "evergreen"] as const;
 export const wikiSourceTypes = [
@@ -59,6 +60,7 @@ export const wikiSources = sqliteTable(
   {
     id: text("id").primaryKey().$defaultFn(() => createId()),
     type: text("type", { enum: wikiSourceTypes }).notNull().default("document"),
+    documentType: text("document_type").notNull().default(""),
     title: text("title").notNull(),
     subtitle: text("subtitle").notNull().default(""),
     issuedDate: text("issued_date").notNull().default(""),
@@ -199,6 +201,9 @@ export const wikiCommentThreads = sqliteTable(
     id: text("id").primaryKey().$defaultFn(() => createId()),
     pageId: text("page_id").notNull().references(() => wikiPages.id, { onDelete: "cascade" }),
     anchorQuote: text("anchor_quote").notNull().default(""),
+    anchorType: text("anchor_type", { enum: ["page", "text", "image"] }).notNull().default("text"),
+    anchorNodeId: text("anchor_node_id"),
+    anchorData: text("anchor_data", { mode: "json" }).$type<StoredCommentAnchorData>().notNull().default({}),
     orphaned: integer("orphaned", { mode: "boolean" }).notNull().default(false),
     resolvedAt: integer("resolved_at", { mode: "timestamp_ms" }),
     resolvedBy: text("resolved_by").references(() => user.id),

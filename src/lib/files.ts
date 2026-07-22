@@ -6,7 +6,8 @@ import { db } from "@/db";
 import { attachments, attachmentEntityTypes } from "@/db/schema";
 
 export const UPLOADS_PATH =
-  process.env.UPLOADS_PATH ?? path.join(process.cwd(), "data", "uploads");
+  process.env.UPLOADS_PATH ??
+  path.join(/* turbopackIgnore: true */ process.cwd(), "data", "uploads");
 
 export const MAX_UPLOAD_BYTES = 50 * 1024 * 1024; // 50 MB
 
@@ -53,9 +54,9 @@ export async function saveAttachment(options: {
   // Shard by hash prefix so a single directory never grows unbounded.
   const storedName = `${sha256.slice(0, 2)}/${crypto.randomUUID()}${ext}`;
 
-  const absolute = path.join(UPLOADS_PATH, storedName);
-  fs.mkdirSync(path.dirname(absolute), { recursive: true });
-  fs.writeFileSync(absolute, buffer);
+  const absolute = path.join(/* turbopackIgnore: true */ UPLOADS_PATH, storedName);
+  fs.mkdirSync(/* turbopackIgnore: true */ path.dirname(absolute), { recursive: true });
+  fs.writeFileSync(/* turbopackIgnore: true */ absolute, buffer);
 
   const row = db
     .insert(attachments)
@@ -80,7 +81,7 @@ export function getAttachment(id: string) {
 }
 
 export function getAttachmentAbsolutePath(storedName: string) {
-  return path.join(UPLOADS_PATH, storedName);
+  return path.join(/* turbopackIgnore: true */ UPLOADS_PATH, storedName);
 }
 
 export function listAttachmentsFor(
@@ -104,7 +105,7 @@ export function deleteAttachment(id: string) {
   if (!row) return;
   db.delete(attachments).where(eq(attachments.id, id)).run();
   const absolute = getAttachmentAbsolutePath(row.storedName);
-  if (fs.existsSync(absolute)) fs.unlinkSync(absolute);
+  if (fs.existsSync(/* turbopackIgnore: true */ absolute)) fs.unlinkSync(/* turbopackIgnore: true */ absolute);
 }
 
 /** Removes all attachments (rows + files) for an entity, e.g. when it is deleted. */

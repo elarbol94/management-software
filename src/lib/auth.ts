@@ -1,7 +1,7 @@
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { createAuthMiddleware, APIError } from "better-auth/api";
-import { admin } from "better-auth/plugins";
+import { admin, username } from "better-auth/plugins";
 import { nextCookies } from "better-auth/next-js";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
@@ -44,6 +44,10 @@ export const auth = betterAuth({
     },
   },
   plugins: [
+    username({
+      maxUsernameLength: 254,
+      usernameValidator: (value) => /^[a-zA-Z0-9_.@+-]+$/.test(value),
+    }),
     admin({ defaultRole: "member", adminRoles: ["admin"] }),
     nextCookies(),
   ],
@@ -73,8 +77,4 @@ export async function requireAdmin(): Promise<SessionUser> {
   const user = await requireUserOrThrow();
   if (user.role !== "admin") throw new Error("Forbidden: admin only");
   return user;
-}
-
-export function hasUsers(): boolean {
-  return userCount() > 0;
 }

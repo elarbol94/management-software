@@ -16,7 +16,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Firmenzentrale",
+  title: "management-platform",
   description: "Wiki, Buchhaltung und Projektkoordination in einer App",
 };
 
