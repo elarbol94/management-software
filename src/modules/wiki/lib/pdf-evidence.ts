@@ -75,3 +75,22 @@ export function extractPdfMetadataSuggestions(info: string, firstPages: string, 
     suggestedIsbn: isbn,
   };
 }
+
+
+export function calculateAnnotationSpotlightTop({
+  anchorTop,
+  containerTop,
+  containerHeight,
+  panelHeight,
+  gutter = 12,
+}: {
+  anchorTop: number;
+  containerTop: number;
+  containerHeight: number;
+  panelHeight: number;
+  gutter?: number;
+}) {
+  const desiredTop = anchorTop - containerTop;
+  const maximumTop = Math.max(gutter, containerHeight - panelHeight - gutter);
+  return Math.min(Math.max(gutter, desiredTop), maximumTop);
+}

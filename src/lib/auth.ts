@@ -55,7 +55,37 @@ export const auth = betterAuth({
 
 export type SessionUser = typeof auth.$Infer.Session.user;
 
+function getLocalDevelopmentSession(): typeof auth.$Infer.Session | null {
+  if (
+    process.env.NODE_ENV === "production" ||
+    process.env.LOCAL_AUTH_BYPASS !== "true"
+  ) {
+    return null;
+  }
+
+  const localUser = db.select().from(schema.user).get();
+  if (!localUser) return null;
+
+  const now = new Date();
+  return {
+    user: localUser,
+    session: {
+      id: "local-development-session",
+      token: "local-development-session",
+      userId: localUser.id,
+      expiresAt: new Date(now.getTime() + 60 * 60 * 24 * 365 * 1000),
+      createdAt: now,
+      updatedAt: now,
+      ipAddress: null,
+      userAgent: "local-development",
+      impersonatedBy: null,
+    },
+  };
+}
+
 export async function getSession() {
+  const localSession = getLocalDevelopmentSession();
+  if (localSession) return localSession;
   return auth.api.getSession({ headers: await headers() });
 }
 

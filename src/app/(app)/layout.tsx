@@ -1,6 +1,5 @@
 import { requireUser } from "@/lib/auth";
 import { AppSidebar } from "@/components/app-sidebar";
-import { UserMenu } from "@/components/user-menu";
 
 export default async function AppLayout({
   children,
@@ -8,9 +7,9 @@ export default async function AppLayout({
   const user = await requireUser();
 
   return (
-    <div className="flex min-h-screen flex-1">
-      <AppSidebar userMenu={<UserMenu name={user.name} email={user.email} />} />
-      <main className="flex-1 overflow-x-hidden p-6">{children}</main>
+    <div className="flex min-h-screen flex-1 flex-col md:flex-row">
+      <AppSidebar userName={user.name} userEmail={user.email} />
+      <main className="min-w-0 flex-1 overflow-x-hidden p-6">{children}</main>
     </div>
   );
 }

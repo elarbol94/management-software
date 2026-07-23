@@ -21,7 +21,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 
-export function UserMenu({ name, email }: { name: string; email: string }) {
+export function UserMenu({ name, email, compact = false }: { name: string; email: string; compact?: boolean }) {
   const t = useTranslations("nav");
   const tLang = useTranslations("settings.language");
   const locale = useLocale();
@@ -43,11 +43,14 @@ export function UserMenu({ name, email }: { name: string; email: string }) {
 
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger className="flex w-full items-center gap-3 rounded-md px-2 py-1.5 text-left hover:bg-accent/50">
+      <DropdownMenuTrigger
+        aria-label={compact ? `${name} (${email})` : undefined}
+        className={`flex items-center rounded-md text-left hover:bg-accent/50 ${compact ? "size-10 justify-center p-1" : "w-full gap-3 px-2 py-1.5"}`}
+      >
         <Avatar className="size-8">
           <AvatarFallback className="text-xs">{initials}</AvatarFallback>
         </Avatar>
-        <div className="min-w-0 flex-1">
+        <div className={compact ? "hidden" : "min-w-0 flex-1"}>
           <p className="truncate text-sm font-medium">{name}</p>
           <p className="truncate text-xs text-muted-foreground">{email}</p>
         </div>

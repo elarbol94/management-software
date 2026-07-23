@@ -43,3 +43,17 @@
 
 .textLayer :global(.markedContent) { display: contents; }
 .textLayer ::selection { background: rgb(79 70 229 / 0.28); }
+
+
+@media (min-width: 48rem) {
+  .spotlightGrid,
+  .spotlightGridWithThumbnails {
+    grid-template-columns: minmax(0, 1fr) clamp(16rem, 22vw, 19rem);
+  }
+}
+
+@media (min-width: 64rem) {
+  .spotlightGridWithThumbnails {
+    grid-template-columns: 11rem minmax(0, 1fr) clamp(16rem, 22vw, 19rem);
+  }
+}

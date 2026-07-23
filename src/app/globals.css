@@ -146,7 +146,7 @@
   }
 
   .wiki-comment-anchor.is-active {
-    @apply bg-amber-200 ring-2 ring-amber-400 ring-offset-1 dark:bg-amber-900/80;
+    @apply bg-amber-50/70 ring-1 ring-amber-300 ring-offset-0 dark:bg-amber-950/30;
   }
 
   .wiki-highlight {

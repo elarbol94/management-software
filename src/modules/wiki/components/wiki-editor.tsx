@@ -315,11 +315,11 @@ function openExternalLink(editor: Editor) {
   else editor.chain().focus().setLink({ href: url }).run();
 }
 
-export function WikiEditor({ pageId, pageVersion, initialContent, allPages, sources, users, citationLocale, comments, pageActions }: { pageId: string; pageVersion: number; initialContent: string; allPages: PageRef[]; sources: SourceRef[]; users: Array<{ id: string; name: string }>; citationLocale: string; comments: CommentThread[]; pageActions: WikiEditorPageActions }) {
+export function WikiEditor({ focused = false, pageId, pageVersion, initialContent, allPages, sources, users, citationLocale, comments, pageActions }: { focused?: boolean; pageId: string; pageVersion: number; initialContent: string; allPages: PageRef[]; sources: SourceRef[]; users: Array<{ id: string; name: string }>; citationLocale: string; comments: CommentThread[]; pageActions: WikiEditorPageActions }) {
   const t = useTranslations("wiki"); const router = useRouter(); const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "conflict">("idle");
   const [conflictRevision, setConflictRevision] = useState<string | null>(null); const [activeThreadId, setActiveThreadId] = useState<string | null>(null); const [commentFocusRequest, setCommentFocusRequest] = useState(0); const [imagePickerRequest, setImagePickerRequest] = useState(0); const [commentOpen, setCommentOpen] = useState(false); const [commentBody, setCommentBody] = useState(""); const [pendingAnchor, setPendingAnchor] = useState<CommentAnchor | null>(null); const [composerPosition, setComposerPosition] = useState<{ left: number; top: number; above: boolean } | null>(null); const [regionTarget, setRegionTarget] = useState<{ nodeId: string; label: string } | null>(null); const [imageError, setImageError] = useState(""); const [imageUploading, setImageUploading] = useState(false); const [assigneeId, setAssigneeId] = useState("none");
   const [pageLinkOpen, setPageLinkOpen] = useState(false); const [citationOpen, setCitationOpen] = useState(false); const [evidenceOpen, setEvidenceOpen] = useState(false);
-  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null); const version = useRef(pageVersion); const lastServerContent = useRef(initialContent); const conflictBlocked = useRef(false); const selection = useRef<{ from: number; to: number } | null>(null); const imageInputRef = useRef<HTMLInputElement>(null); const editorRootRef = useRef<HTMLDivElement>(null); const commentRailRef = useRef<CommentRailHandle>(null); const [commentsVisible, setCommentsVisible] = useState(true); const storageKey = `wiki-draft:${pageId}`;
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null); const version = useRef(pageVersion); const lastServerContent = useRef(initialContent); const conflictBlocked = useRef(false); const selection = useRef<{ from: number; to: number } | null>(null); const imageInputRef = useRef<HTMLInputElement>(null); const editorRootRef = useRef<HTMLDivElement>(null); const commentRailRef = useRef<CommentRailHandle>(null); const [commentsVisible, setCommentsVisible] = useState(!focused); const previousFocused = useRef(focused); const storageKey = `wiki-draft:${pageId}`;
   let content: object | undefined; try { content = initialContent ? JSON.parse(initialContent) : undefined; } catch { content = undefined; }
   if (typeof window !== "undefined") { const draft = window.localStorage.getItem(storageKey); if (draft && draft !== initialContent) { try { content = JSON.parse(draft); } catch { /* ignore damaged recovery */ } } }
 
@@ -417,6 +417,11 @@ export function WikiEditor({ pageId, pageVersion, initialContent, allPages, sour
   });
 
   useEffect(() => () => { if (saveTimer.current) clearTimeout(saveTimer.current); }, []);
+  useEffect(() => {
+    if (previousFocused.current === focused) return;
+    previousFocused.current = focused;
+    setCommentsVisible(!focused);
+  }, [focused]);
   useEffect(() => { if (!conflictBlocked.current && pageVersion > version.current) version.current = pageVersion; }, [pageVersion]);
   useEffect(() => { if (commentFocusRequest > 0) commentRailRef.current?.focusGeneralComment(); }, [commentFocusRequest]);
   useEffect(() => { if (imagePickerRequest > 0) imageInputRef.current?.click(); }, [imagePickerRequest]);
@@ -516,7 +521,7 @@ export function WikiEditor({ pageId, pageVersion, initialContent, allPages, sour
   {imageUploading && <p className="text-xs text-muted-foreground">{t("uploadingImage")}</p>}
   {imageError && <p className="text-xs text-destructive">{imageError}</p>}
   {saveState === "conflict" && conflictRevision && <div className="flex flex-wrap items-center gap-3 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950 dark:bg-amber-950/30 dark:text-amber-100"><RotateCcw className="size-4" /><span className="flex-1">{t("editConflictDescription")}</span><Button size="sm" variant="outline" onClick={discardDraftAndReload}>{t("loadCurrent")}</Button><Button size="sm" onClick={() => void restoreConflictDraft()}>{t("restoreMine")}</Button></div>}
-  <div className={commentsVisible ? "grid items-start gap-8 xl:grid-cols-[minmax(0,1fr)_18rem]" : "block"}>
+  <div className={commentsVisible ? focused ? "grid items-start justify-center gap-8 xl:grid-cols-[minmax(0,56rem)_18rem]" : "grid items-start gap-8 xl:grid-cols-[minmax(0,1fr)_18rem]" : focused ? "mx-auto max-w-4xl" : "block"}>
     <div ref={editorRootRef} className="relative min-w-0">
       <BubbleMenu editor={editor} pluginKey="wikiTextCommentMenu" options={{ strategy: "fixed", flip: true, shift: true, offset: 8 }} shouldShow={({ state }) => !state.selection.empty && !(state.selection instanceof NodeSelection)} className="z-40 flex items-center gap-1 rounded-lg border bg-background p-1 shadow-lg">
         <Button type="button" size="sm" variant={activeEditor.isActive("highlight") ? "secondary" : "ghost"} onClick={() => activeEditor.chain().focus().toggleMark("highlight").run()}><Highlighter className="size-4" />{t("highlightSelection")}</Button>

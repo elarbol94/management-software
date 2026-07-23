@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  calculateAnnotationSpotlightTop,
   chooseExtractionMethod,
   hasPdfSignature,
   isEvidenceTargetType,
@@ -41,4 +42,13 @@ describe("PDF evidence contracts", () => {
     expect(isEvidenceTargetType("fundingBookingAllocation")).toBe(true);
     expect(isEvidenceTargetType("customer")).toBe(false);
   });
+
+  it("keeps a zoom-aware annotation popup aligned and inside its viewport", () => {
+    expect(calculateAnnotationSpotlightTop({ anchorTop: 260, containerTop: 80, containerHeight: 700, panelHeight: 220 })).toBe(180);
+    expect(calculateAnnotationSpotlightTop({ anchorTop: 62, containerTop: 80, containerHeight: 700, panelHeight: 220 })).toBe(12);
+    expect(calculateAnnotationSpotlightTop({ anchorTop: 690, containerTop: 80, containerHeight: 700, panelHeight: 220 })).toBe(468);
+    expect(calculateAnnotationSpotlightTop({ anchorTop: 500, containerTop: 80, containerHeight: 500, panelHeight: 300 })).toBe(188);
+    expect(calculateAnnotationSpotlightTop({ anchorTop: 500, containerTop: 80, containerHeight: 200, panelHeight: 300 })).toBe(12);
+  });
+
 });

@@ -288,7 +288,7 @@ export const CommentRail = forwardRef<CommentRailHandle, {
         {layouts.map((layout) => {
           const anchor = anchors[layout.id];
           if (!anchor) return null;
-          return <path key={layout.id} data-comment-thread={layout.id} d={`M ${anchor.x} ${anchor.top} C ${anchor.x + 18} ${anchor.top}, -18 ${layout.top + 24}, 0 ${layout.top + 24}`} fill="none" stroke="currentColor" strokeWidth="0.35" className={cn(partitioned.anchored.find((item) => item.id === layout.id)?.resolvedAt ? "text-emerald-500" : "text-amber-500", activeThreadId === layout.id && "[stroke-width:2.5]")} />;
+          return <path key={layout.id} data-comment-thread={layout.id} d={`M ${anchor.x} ${anchor.top} C ${anchor.x + 18} ${anchor.top}, -18 ${layout.top + 24}, 0 ${layout.top + 24}`} fill="none" stroke="currentColor" strokeWidth="0.5" className={cn(partitioned.anchored.find((item) => item.id === layout.id)?.resolvedAt ? "text-emerald-500" : "text-amber-500")} />;
         })}
       </svg>
       {layouts.map((layout) => {

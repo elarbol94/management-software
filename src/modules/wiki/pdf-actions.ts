@@ -70,6 +70,19 @@ export async function createPdfAnnotation(input: z.input<typeof annotationSchema
   return { id };
 }
 
+export async function extendPdfAnnotation(input: { id: string; geometry: z.input<typeof rectSchema>[]; selectedText: string }) {
+  const currentUser = await requireUserOrThrow();
+  const data = z.object({ id: z.string().min(1), geometry: z.array(rectSchema).min(1).max(200), selectedText: z.string().max(20_000) }).parse(input);
+  const annotation = db.select().from(wikiPdfAnnotations).where(and(eq(wikiPdfAnnotations.id, data.id), isNull(wikiPdfAnnotations.deletedAt))).get();
+  if (!annotation) throw new Error("Annotation not found");
+  if (annotation.createdBy !== currentUser.id && currentUser.role !== "admin") throw new Error("Forbidden");
+  if (annotation.kind === "bookmark") throw new Error("Bookmarks cannot be extended");
+  if (annotation.kind === "text" && !data.selectedText.trim()) throw new Error("Selected text is required");
+  db.update(wikiPdfAnnotations).set({ geometryJson: JSON.stringify(data.geometry), selectedText: data.selectedText.trim(), updatedBy: currentUser.id, updatedAt: new Date() })
+    .where(eq(wikiPdfAnnotations.id, data.id)).run();
+  revalidatePath("/wiki/sources/" + annotation.sourceId, "page");
+}
+
 export async function updatePdfAnnotation(input: { id: string; note: string; label: string; color: string }) {
   const currentUser = await requireUserOrThrow();
   const data = z.object({ id: z.string().min(1), note: z.string().max(10_000), label: z.string().max(200), color: z.enum(["yellow", "green", "blue", "pink", "purple"]) }).parse(input);
@@ -101,6 +114,19 @@ export async function createPdfAnnotationComment(input: { annotationId: string; 
   db.insert(wikiPdfAnnotationComments).values({ id, annotationId: annotation.id, body: data.body, createdBy: currentUser.id, createdAt }).run();
   revalidatePath(`/wiki/sources/${annotation.sourceId}`, "page");
   return { id, createdAt: createdAt.toISOString(), createdBy: currentUser.id, createdByName: currentUser.name, body: data.body };
+}
+
+export async function updatePdfAnnotationComment(input: { id: string; body: string }) {
+  const currentUser = await requireUserOrThrow();
+  const data = z.object({ id: z.string().min(1), body: z.string().trim().min(1).max(10_000) }).parse(input);
+  const comment = db.select({ id: wikiPdfAnnotationComments.id, createdBy: wikiPdfAnnotationComments.createdBy, sourceId: wikiPdfAnnotations.sourceId })
+    .from(wikiPdfAnnotationComments).innerJoin(wikiPdfAnnotations, eq(wikiPdfAnnotationComments.annotationId, wikiPdfAnnotations.id))
+    .where(and(eq(wikiPdfAnnotationComments.id, data.id), isNull(wikiPdfAnnotations.deletedAt))).get();
+  if (!comment) throw new Error("Comment not found");
+  if (comment.createdBy !== currentUser.id && currentUser.role !== "admin") throw new Error("Forbidden");
+  db.update(wikiPdfAnnotationComments).set({ body: data.body }).where(eq(wikiPdfAnnotationComments.id, comment.id)).run();
+  revalidatePath(`/wiki/sources/${comment.sourceId}`, "page");
+  return { id: comment.id, body: data.body };
 }
 
 export async function linkPdfEvidence(input: { annotationId: string; targetType: (typeof evidenceTargetTypes)[number]; targetId: string }) {

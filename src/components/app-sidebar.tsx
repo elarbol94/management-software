@@ -1,74 +1,234 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useTranslations } from "next-intl";
-import { Settings } from "lucide-react";
-import { moduleNav } from "@/modules/registry";
+import {
+  LayoutDashboard,
+  Menu,
+  ChevronLeft,
+  ChevronRight,
+  Settings,
+  X,
+} from "lucide-react";
+import { useFocusMode } from "@/components/focus-mode";
+import { UserMenu } from "@/components/user-menu";
+import { Button } from "@/components/ui/button";
+import {
+  Sheet,
+  SheetClose,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
+import { moduleNav } from "@/modules/registry";
 
 function NavLink({
   href,
   label,
   icon: Icon,
   active,
+  compact,
+  onNavigate,
 }: {
   href: string;
   label: string;
   icon: React.ComponentType<{ className?: string }>;
   active: boolean;
+  compact: boolean;
+  onNavigate?: () => void;
 }) {
-  return (
+  const link = (
     <Link
       href={href}
+      aria-label={compact ? label : undefined}
+      onClick={onNavigate}
       className={cn(
-        "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
+        "flex h-10 items-center rounded-md text-sm font-medium transition-colors",
+        compact ? "justify-center px-0" : "gap-3 px-3",
         active
           ? "bg-accent text-accent-foreground"
           : "text-muted-foreground hover:bg-accent/50 hover:text-accent-foreground",
       )}
     >
-      <Icon className="size-4" />
-      {label}
+      <Icon className="size-5" />
+      {!compact && <span className="truncate">{label}</span>}
     </Link>
+  );
+
+  if (!compact) return link;
+  return (
+    <Tooltip>
+      <TooltipTrigger render={link} />
+      <TooltipContent side="right" sideOffset={8}>{label}</TooltipContent>
+    </Tooltip>
   );
 }
 
-export function AppSidebar({ userMenu }: { userMenu: React.ReactNode }) {
+function AppNavigation({
+  compact,
+  pathname,
+  userName,
+  userEmail,
+  onNavigate,
+  navigationId,
+}: {
+  compact: boolean;
+  pathname: string;
+  userName: string;
+  userEmail: string;
+  onNavigate?: () => void;
+  navigationId: string;
+}) {
   const t = useTranslations("nav");
-  const tCommon = useTranslations("common");
-  const pathname = usePathname();
-
   const isActive = (href: string) =>
     href === "/" ? pathname === "/" : pathname.startsWith(href);
 
   return (
-    <aside className="flex w-60 shrink-0 flex-col border-r bg-sidebar">
-      <div className="flex h-14 items-center border-b px-4">
-        <Link href="/" className="text-base font-semibold tracking-tight">
+    <TooltipProvider>
+      <div className="flex min-h-0 flex-1 flex-col">
+        <nav
+          id={navigationId}
+          aria-label={t("navigationLabel")}
+          className={cn("flex flex-1 flex-col gap-1 overflow-y-auto", compact ? "px-2 py-3" : "p-3")}
+        >
+          {moduleNav.map((item) => (
+            <NavLink
+              key={item.key}
+              href={item.href}
+              label={t(item.key)}
+              icon={item.icon}
+              active={isActive(item.href)}
+              compact={compact}
+              onNavigate={onNavigate}
+            />
+          ))}
+          <div className="mt-auto flex flex-col gap-1">
+            <NavLink
+              href="/settings"
+              label={t("settings")}
+              icon={Settings}
+              active={isActive("/settings")}
+              compact={compact}
+              onNavigate={onNavigate}
+            />
+          </div>
+        </nav>
+        <div className={cn("border-t", compact ? "px-2 py-3" : "p-3")}>
+          <UserMenu name={userName} email={userEmail} compact={compact} />
+        </div>
+      </div>
+    </TooltipProvider>
+  );
+}
+
+export function AppSidebar({ userName, userEmail }: { userName: string; userEmail: string }) {
+  const t = useTranslations("nav");
+  const tCommon = useTranslations("common");
+  const pathname = usePathname();
+  const { isFocused } = useFocusMode();
+  const [expanded, setExpanded] = useState(false);
+  const [mobileOpen, setMobileOpen] = useState(false);
+  const toggleExpanded = () => setExpanded((value) => !value);
+
+  if (isFocused) return null;
+
+  return (
+    <>
+      <header data-testid="app-mobile-header" className="flex h-14 shrink-0 items-center gap-2 border-b bg-sidebar px-3 md:hidden">
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          aria-label={t("openNavigation")}
+          aria-expanded={mobileOpen}
+          onClick={() => setMobileOpen(true)}
+        >
+          <Menu className="size-5" />
+        </Button>
+        <Link href="/" className="min-w-0 flex-1 truncate text-sm font-semibold tracking-tight">
           {tCommon("appName")}
         </Link>
-      </div>
-      <nav className="flex flex-1 flex-col gap-1 overflow-y-auto p-3">
-        {moduleNav.map((item) => (
-          <NavLink
-            key={item.key}
-            href={item.href}
-            label={t(item.key)}
-            icon={item.icon}
-            active={isActive(item.href)}
+        <UserMenu name={userName} email={userEmail} compact />
+      </header>
+
+      <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
+        <SheetContent
+          data-testid="app-navigation-sheet"
+          side="left"
+          showCloseButton={false}
+          className="w-[min(20rem,88vw)] gap-0 p-0 md:hidden"
+        >
+          <SheetHeader className="flex-row items-center gap-2 border-b p-3 pr-2">
+            <LayoutDashboard className="size-5 text-muted-foreground" />
+            <div className="min-w-0 flex-1">
+              <SheetTitle className="truncate">{tCommon("appName")}</SheetTitle>
+              <SheetDescription className="sr-only">{t("navigationDescription")}</SheetDescription>
+            </div>
+            <SheetClose render={<Button type="button" variant="ghost" size="icon-sm" aria-label={t("closeNavigation")} />}>
+              <X className="size-4" />
+            </SheetClose>
+          </SheetHeader>
+          <AppNavigation
+            compact={false}
+            navigationId="app-mobile-navigation"
+            pathname={pathname}
+            userName={userName}
+            userEmail={userEmail}
+            onNavigate={() => setMobileOpen(false)}
           />
-        ))}
-        <div className="mt-auto flex flex-col gap-1">
-          <NavLink
-            href="/settings"
-            label={t("settings")}
-            icon={Settings}
-            active={isActive("/settings")}
-          />
-        </div>
-      </nav>
-      <div className="border-t p-3">{userMenu}</div>
-    </aside>
+        </SheetContent>
+      </Sheet>
+
+      <aside
+        data-testid="app-sidebar"
+        data-expanded={expanded}
+        className={cn(
+          "relative hidden shrink-0 flex-col border-r bg-sidebar transition-[width] duration-200 ease-out motion-reduce:transition-none md:flex",
+          expanded ? "w-60" : "w-14",
+        )}
+      >
+        {expanded ? (
+          <div className="flex h-14 items-center border-b px-4">
+            <Link href="/" className="truncate text-base font-semibold tracking-tight">
+              {tCommon("appName")}
+            </Link>
+          </div>
+        ) : (
+          <div aria-hidden="true" className="h-14 shrink-0 border-b" />
+        )}
+        <AppNavigation
+          compact={!expanded}
+          navigationId="app-primary-navigation"
+          pathname={pathname}
+          userName={userName}
+          userEmail={userEmail}
+        />
+        <Button
+          type="button"
+          data-testid="app-sidebar-toggle"
+          variant="ghost"
+          size="icon-xs"
+          aria-label={expanded ? t("collapseNavigation") : t("expandNavigation")}
+          aria-expanded={expanded}
+          aria-controls="app-primary-navigation"
+          title={expanded ? t("collapseNavigation") : t("expandNavigation")}
+          className="absolute top-[50dvh] -right-2.5 z-30 h-8 w-5 -translate-y-1/2 rounded-md border border-transparent bg-sidebar p-0 text-muted-foreground shadow-none transition-[color,background-color,border-color] motion-reduce:transition-none hover:border-sidebar-border hover:bg-accent hover:text-foreground aria-expanded:!border-transparent aria-expanded:!bg-sidebar aria-expanded:!text-muted-foreground active:!-translate-y-1/2 active:[&_svg]:scale-110 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-0"
+          onPointerUp={(event) => { if (event.button === 0) toggleExpanded(); }}
+          onClick={(event) => { if (event.detail === 0) toggleExpanded(); }}
+        >
+          {expanded ? <ChevronLeft className="size-4" /> : <ChevronRight className="size-4" />}
+        </Button>
+      </aside>
+    </>
   );
 }
