@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
+import dynamic from "next/dynamic";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useFormatter, useLocale, useTranslations } from "next-intl";
 import {
@@ -36,7 +37,9 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { EntryDialog } from "./entry-dialog";
+const EntryDialog = dynamic(() =>
+  import("./entry-dialog").then((module) => module.EntryDialog),
+);
 
 type Category = typeof categoriesTable.$inferSelect;
 
@@ -499,7 +502,7 @@ export function AccountingOverview({
         </Table>
       </section>
 
-      <EntryDialog
+      {dialogOpen && <EntryDialog
         open={dialogOpen}
         onOpenChange={setDialogOpen}
         entry={dialogEntry}
@@ -510,7 +513,7 @@ export function AccountingOverview({
         personnelEmployees={personnelEmployees}
         personnelLocations={personnelLocations}
         payrollMonthContexts={payrollMonthContexts}
-      />
+      />}
     </div>
   );
 }

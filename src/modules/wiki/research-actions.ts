@@ -33,6 +33,7 @@ import { sourceInputSchema } from "./lib/source-input";
 import { normalizeDoi, normalizeIsbn, normalizeUrl } from "./lib/citations";
 import type { CommentAnchor } from "./lib/comment-anchors";
 import { buildFtsQuery, extractText, parseStoredDocument, slugify } from "./lib/tiptap";
+import { getPageComments } from "./research-queries";
 import { searchPdfPageText } from "./pdf-queries";
 
 function revalidateWiki() {
@@ -290,7 +291,9 @@ export async function addComment(input: z.infer<typeof commentSchema>) {
     for (const person of mentioned) db.insert(wikiNotifications).values({ userId: person.id, actorId: currentUser.id, type: "mention", pageId: data.pageId, threadId }).run();
   });
   revalidateWiki();
-  return { threadId: threadId! };
+  const thread = getPageComments(data.pageId).find((item) => item.id === threadId);
+  if (!thread) throw new Error("Created comment thread could not be loaded");
+  return { threadId: threadId!, thread };
 }
 
 const commentIdSchema = z.string().min(1);

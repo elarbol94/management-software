@@ -59,10 +59,10 @@ test("document mode persists page layout, document blocks, templates, and PDF ex
 
   await panel.getByLabel("Ausrichtung").click();
   await page.getByRole("option", { name: "Querformat" }).click();
+  await panel.getByRole("tab", { name: "Inhalt" }).click();
   await panel.getByRole("button", { name: "Seitenumbruch" }).click();
   await expect(page.locator(".wiki-document-page-break")).toHaveCount(1);
 
-  await panel.getByRole("tab", { name: "Inhalt" }).click();
   await panel.getByPlaceholder("applicant").fill("Example Applicant");
   await panel.getByRole("button", { name: "Feld applicant einfügen" }).click();
   await expect(page.locator("[data-document-variable='applicant']")).toHaveCount(1);
@@ -113,7 +113,8 @@ test("editor productivity tools support links, Markdown paste, search, outline, 
   await search.getByPlaceholder("Ersetzen durch…").fill("Gamma");
   await search.getByRole("button", { name: "Alle ersetzen" }).click();
   await expect(editor).toContainText("Gamma beta Gamma");
-  await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "Suchen und ersetzen" }).click();
+  await expect(search).toBeHidden();
 
   await page.getByRole("button", { name: "Dokumentgliederung" }).click();
   const outline = page.getByTestId("editor-outline");
@@ -123,6 +124,7 @@ test("editor productivity tools support links, Markdown paste, search, outline, 
   await editor.click();
   await page.keyboard.press("ControlOrMeta+End");
   await page.keyboard.type(" Link text");
+  await page.keyboard.press("Shift+ControlOrMeta+ArrowLeft");
   await page.keyboard.press("Shift+ControlOrMeta+ArrowLeft");
   await page.getByRole("button", { name: "Link bearbeiten" }).click();
   await page.getByLabel("Webadresse").fill("example.com");

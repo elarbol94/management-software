@@ -14,7 +14,8 @@
     "confirmDeleteDescription": "This action cannot be undone.",
     "saved": "Saved",
     "error": "Something went wrong",
-    "noResults": "No entries found"
+    "noResults": "No entries found",
+    "nextPage": "Next page"
   },
   "nav": {
     "dashboard": "Dashboard",

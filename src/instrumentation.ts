@@ -6,6 +6,8 @@ export async function register() {
     runMigrations();
     const { seedDefaults } = await import("./db/seed");
     seedDefaults();
+    const { cleanupPerformanceEvents } = await import("./lib/performance");
+    cleanupPerformanceEvents();
     const { startPdfProcessingWorker } = await import("./modules/wiki/pdf-processing");
     startPdfProcessingWorker();
   }

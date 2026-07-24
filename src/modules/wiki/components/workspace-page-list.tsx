@@ -11,7 +11,6 @@ import {
   UserRound,
   X,
 } from "lucide-react";
-import { useRouter } from "next/navigation";
 import { updatePageResearchMeta, toggleFavorite } from "../research-actions";
 import type { WorkspacePage } from "../research-queries";
 import { Button } from "@/components/ui/button";
@@ -39,7 +38,6 @@ export function WorkspacePageList({
   const t = useTranslations("wiki");
   const format = useFormatter();
   const locale = useLocale();
-  const router = useRouter();
   const [pages, setPages] = useState(initialPages);
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<Status | "all">("all");
@@ -88,7 +86,6 @@ export function WorkspacePageList({
         citationLocale: page.citationLocale,
         tagNames: tagsFor(page),
       });
-      router.refresh();
     } catch {
       setPages(previous);
     } finally {
@@ -105,7 +102,6 @@ export function WorkspacePageList({
     );
     try {
       await toggleFavorite("page", page.id);
-      router.refresh();
     } catch {
       setPages(previous);
     } finally {

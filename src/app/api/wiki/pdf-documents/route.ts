@@ -4,8 +4,6 @@ import { getSession } from "@/lib/auth";
 import { PdfUploadStreamError } from "@/modules/wiki/lib/pdf-upload-stream";
 import { ingestPdfStream } from "@/modules/wiki/pdf-storage";
 
-export const runtime = "nodejs";
-
 export async function POST(request: Request) {
   const session = await getSession();
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });

@@ -4,7 +4,7 @@ import {
   entryTotals,
   listBusinessLocations,
   listCategories,
-  listEntries,
+  listEntriesPage,
   listPersonnelEmployees,
   listPayrollMonthContexts,
   yearsWithEntries,
@@ -44,16 +44,19 @@ export default async function BookingsPage({
     month?: string;
     kind?: string;
     category?: string;
+    cursor?: string;
   }>;
 }) {
-  const user = await requireUser();
+  const [user, params, t] = await Promise.all([
+    requireUser(),
+    searchParams,
+    getTranslations("accountingBookings"),
+  ]);
   const filters = {
-    ...parseFilters(await searchParams),
+    ...parseFilters(params),
     includePersonnelDetails: user.role === "admin" || user.role === "personnel",
   };
-  const t = await getTranslations("accountingBookings");
-
-  const entries = listEntries(filters);
+  const entryPage = listEntriesPage(filters, { cursor: params.cursor, limit: 50 });
   const totals = entryTotals(filters);
   const categories = listCategories();
   const years = yearsWithEntries();
@@ -81,7 +84,8 @@ export default async function BookingsPage({
         </p>
       </div>
       <LedgerClient
-        entries={entries}
+        entries={entryPage.items}
+        nextCursor={entryPage.nextCursor}
         totals={totals}
         categories={categories}
         years={years}

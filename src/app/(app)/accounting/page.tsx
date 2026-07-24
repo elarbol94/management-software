@@ -3,7 +3,7 @@ import {
   entryTotals,
   listCategories,
   listBusinessLocations,
-  listEntries,
+  listEntriesPage,
   listPayrollMonthContexts,
   listPersonnelEmployees,
   monthlySummary,
@@ -25,11 +25,11 @@ export default async function AccountingPage({
 }: {
   searchParams: Promise<{ year?: string }>;
 }) {
-  const user = await requireUser();
-  const year = parseYear((await searchParams).year);
+  const [user, params] = await Promise.all([requireUser(), searchParams]);
+  const year = parseYear(params.year);
   const canManagePersonnel = user.role === "admin" || user.role === "personnel";
   const filters = { year, includePersonnelDetails: canManagePersonnel };
-  const entries = listEntries(filters);
+  const entries = listEntriesPage(filters, { limit: 5 }).items;
   const totals = entryTotals(filters);
   const months = monthlySummary(year);
   const categories = listCategories();

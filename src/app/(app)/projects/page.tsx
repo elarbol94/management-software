@@ -4,8 +4,10 @@ import { listProjects } from "@/modules/projects/queries";
 import { ProjectsClient } from "@/modules/projects/components/projects-client";
 
 export default async function ProjectsPage() {
-  await requireUser();
-  const t = await getTranslations("projects");
+  const [, t] = await Promise.all([
+    requireUser(),
+    getTranslations("projects"),
+  ]);
   const projects = listProjects({ includeArchived: true });
 
   return (

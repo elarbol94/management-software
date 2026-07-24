@@ -4,9 +4,6 @@ import { parseDocumentSettings } from "@/modules/wiki/lib/document-settings";
 import { renderDocumentMarkdown } from "@/modules/wiki/lib/document-renderer";
 import { parseStoredDocument } from "@/modules/wiki/lib/tiptap";
 
-export const runtime = "nodejs";
-export const dynamic = "force-dynamic";
-
 function disposition(slug: string, extension: string, inline: boolean) {
   const safe = slug.replace(/[^a-z0-9_-]+/gi, "-") || "document";
   return `${inline ? "inline" : "attachment"}; filename="${safe}.${extension}"`;

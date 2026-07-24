@@ -74,7 +74,14 @@ export const wikiPages = sqliteTable(
       .$defaultFn(() => new Date()),
     deletedAt: integer("deleted_at", { mode: "timestamp_ms" }),
   },
-  (table) => [index("wiki_pages_parent_idx").on(table.parentId)],
+  (table) => [
+    index("wiki_pages_parent_idx").on(table.parentId),
+    index("wiki_pages_deleted_status_updated_idx").on(
+      table.deletedAt,
+      table.status,
+      table.updatedAt,
+    ),
+  ],
 );
 
 export const wikiSources = sqliteTable(
@@ -115,6 +122,10 @@ export const wikiSources = sqliteTable(
     index("wiki_sources_status_idx").on(table.readingStatus),
     index("wiki_sources_doi_idx").on(table.doi),
     index("wiki_sources_isbn_idx").on(table.isbn),
+    index("wiki_sources_deleted_updated_idx").on(
+      table.deletedAt,
+      table.updatedAt,
+    ),
   ],
 );
 
@@ -236,7 +247,13 @@ export const wikiCommentThreads = sqliteTable(
     createdBy: text("created_by").notNull().references(() => user.id),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
   },
-  (table) => [index("wiki_comment_threads_page_idx").on(table.pageId)],
+  (table) => [
+    index("wiki_comment_threads_page_idx").on(table.pageId),
+    index("wiki_comment_threads_page_created_idx").on(
+      table.pageId,
+      table.createdAt,
+    ),
+  ],
 );
 
 export const wikiComments = sqliteTable(
@@ -249,7 +266,14 @@ export const wikiComments = sqliteTable(
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
     deletedAt: integer("deleted_at", { mode: "timestamp_ms" }),
   },
-  (table) => [index("wiki_comments_thread_idx").on(table.threadId)],
+  (table) => [
+    index("wiki_comments_thread_idx").on(table.threadId),
+    index("wiki_comments_thread_deleted_created_idx").on(
+      table.threadId,
+      table.deletedAt,
+      table.createdAt,
+    ),
+  ],
 );
 
 export const wikiNotifications = sqliteTable(

@@ -5,6 +5,7 @@ import { admin, username } from "better-auth/plugins";
 import { nextCookies } from "better-auth/next-js";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
+import { cache } from "react";
 import { count } from "drizzle-orm";
 import { db } from "@/db";
 import * as schema from "@/db/schema";
@@ -17,6 +18,12 @@ function userCount(): number {
 export const auth = betterAuth({
   baseURL: process.env.BETTER_AUTH_URL ?? "http://localhost:3000",
   database: drizzleAdapter(db, { provider: "sqlite", schema }),
+  // Production enables Better Auth's in-memory limiter by default. The
+  // production-mode browser suite deliberately performs many logins from one
+  // loopback address, so disable only for that isolated test process.
+  rateLimit: {
+    enabled: process.env.E2E_TEST !== "true",
+  },
   emailAndPassword: {
     enabled: true,
   },
@@ -87,11 +94,11 @@ function getLocalDevelopmentSession(): typeof auth.$Infer.Session | null {
   };
 }
 
-export async function getSession() {
+export const getSession = cache(async function getSession() {
   const localSession = getLocalDevelopmentSession();
   if (localSession) return localSession;
   return auth.api.getSession({ headers: await headers() });
-}
+});
 
 /** Redirects to /login when unauthenticated. Use in pages/layouts. */
 export async function requireUser(): Promise<SessionUser> {

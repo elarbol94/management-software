@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "build:verified": "next build && npm run perf:budget",
     "start": "next start",
     "lint": "eslint",
     "test": "vitest run",
@@ -15,7 +16,8 @@
     "db:migrate": "tsx src/db/migrate.ts",
     "db:seed": "tsx src/db/seed.ts",
     "db:studio": "drizzle-kit studio",
-    "e2e": "playwright test"
+    "e2e": "playwright test",
+    "perf:budget": "node scripts/check-performance-budget.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.6.0",

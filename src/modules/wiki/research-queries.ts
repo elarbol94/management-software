@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, isNotNull, isNull } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNotNull, isNull } from "drizzle-orm";
 import { db, sqlite } from "@/db";
 import {
   user,
@@ -20,6 +20,7 @@ import {
 import { getPageTree } from "./queries";
 import type { CitationSource, Contributor } from "./lib/citations";
 import { resolveStoredUserMarkColor } from "@/lib/user-mark-colors.server";
+import { measureServerOperation } from "@/lib/performance-server";
 
 export type TagDto = { id: string; name: string; color: string };
 
@@ -87,6 +88,24 @@ export type SourceListItem = {
   attachmentCount: number;
 };
 
+function decodeSourceCursor(cursor?: string) {
+  if (!cursor) return null;
+  try {
+    const [updatedAt, id] = Buffer.from(cursor, "base64url")
+      .toString("utf8")
+      .split(":");
+    const timestamp = Number(updatedAt);
+    if (!Number.isSafeInteger(timestamp) || !id) return null;
+    return { updatedAt: timestamp, id };
+  } catch {
+    return null;
+  }
+}
+
+function encodeSourceCursor(source: SourceListItem) {
+  return Buffer.from(`${source.updatedAt}:${source.id}`).toString("base64url");
+}
+
 export function listSources(
   options: {
     query?: string;
@@ -94,6 +113,7 @@ export function listSources(
     tagId?: string;
     limit?: number;
     offset?: number;
+    cursor?: string;
   } = {},
 ) {
   const where = ["s.deleted_at IS NULL"];
@@ -115,6 +135,11 @@ export function listSources(
     );
     params.push(options.tagId);
   }
+  const cursor = decodeSourceCursor(options.cursor);
+  if (cursor) {
+    where.push("(s.updated_at < ? OR (s.updated_at = ? AND s.id < ?))");
+    params.push(cursor.updatedAt, cursor.updatedAt, cursor.id);
+  }
   params.push(options.limit ?? 50, options.offset ?? 0);
   return sqlite
     .prepare(
@@ -130,10 +155,33 @@ export function listSources(
     LEFT JOIN wiki_source_tags st ON st.source_id = s.id
     LEFT JOIN wiki_tags t ON t.id = st.tag_id
     WHERE ${where.join(" AND ")}
-    GROUP BY s.id ORDER BY s.updated_at DESC LIMIT ? OFFSET ?
+    GROUP BY s.id ORDER BY s.updated_at DESC, s.id DESC LIMIT ? OFFSET ?
   `,
     )
     .all(...params) as SourceListItem[];
+}
+
+export function listSourcesPage(
+  options: {
+    query?: string;
+    status?: string;
+    tagId?: string;
+    cursor?: string;
+    limit?: number;
+  } = {},
+) {
+  return measureServerOperation("/wiki/sources", "list-sources-page", () => {
+    const limit = Math.min(100, Math.max(1, options.limit ?? 50));
+    const rows = listSources({ ...options, limit: limit + 1, offset: 0 });
+    const hasMore = rows.length > limit;
+    const items = hasMore ? rows.slice(0, limit) : rows;
+    return {
+      items,
+      nextCursor: hasMore
+        ? encodeSourceCursor(items[items.length - 1])
+        : null,
+    };
+  });
 }
 
 export function listDocumentTypes() {
@@ -296,6 +344,42 @@ export function getPageComments(pageId: string) {
     .where(eq(wikiCommentThreads.pageId, pageId))
     .orderBy(desc(wikiCommentThreads.createdAt))
     .all();
+  if (threads.length === 0) return [];
+
+  const commentRows = db
+    .select({
+      id: wikiComments.id,
+      threadId: wikiComments.threadId,
+      body: wikiComments.body,
+      createdBy: wikiComments.createdBy,
+      createdAt: wikiComments.createdAt,
+      createdByName: user.name,
+      createdByMarkColor: userProfilePreferences.markColor,
+    })
+    .from(wikiComments)
+    .innerJoin(user, eq(wikiComments.createdBy, user.id))
+    .leftJoin(
+      userProfilePreferences,
+      eq(wikiComments.createdBy, userProfilePreferences.userId),
+    )
+    .where(
+      and(
+        inArray(
+          wikiComments.threadId,
+          threads.map((thread) => thread.id),
+        ),
+        isNull(wikiComments.deletedAt),
+      ),
+    )
+    .orderBy(asc(wikiComments.createdAt))
+    .all();
+  const commentsByThread = new Map<string, typeof commentRows>();
+  for (const comment of commentRows) {
+    const current = commentsByThread.get(comment.threadId) ?? [];
+    current.push(comment);
+    commentsByThread.set(comment.threadId, current);
+  }
+
   return threads.map((thread) => ({
     ...thread,
     createdByMarkColor: resolveStoredUserMarkColor(thread.createdByMarkColor),
@@ -304,21 +388,7 @@ export function getPageComments(pageId: string) {
       : thread.anchorType === "text"
         ? { type: "text" as const, quote: thread.anchorQuote }
         : { type: "page" as const },
-    comments: db
-      .select({
-        id: wikiComments.id,
-        body: wikiComments.body,
-        createdBy: wikiComments.createdBy,
-        createdAt: wikiComments.createdAt,
-        createdByName: user.name,
-        createdByMarkColor: userProfilePreferences.markColor,
-      })
-      .from(wikiComments)
-      .innerJoin(user, eq(wikiComments.createdBy, user.id))
-      .leftJoin(userProfilePreferences, eq(wikiComments.createdBy, userProfilePreferences.userId))
-      .where(and(eq(wikiComments.threadId, thread.id), isNull(wikiComments.deletedAt)))
-      .orderBy(asc(wikiComments.createdAt))
-      .all()
+    comments: (commentsByThread.get(thread.id) ?? [])
       .map((comment) => ({
         ...comment,
         createdByMarkColor: resolveStoredUserMarkColor(comment.createdByMarkColor),

@@ -14,7 +14,8 @@
     "confirmDeleteDescription": "Diese Aktion kann nicht rückgängig gemacht werden.",
     "saved": "Gespeichert",
     "error": "Etwas ist schiefgelaufen",
-    "noResults": "Keine Einträge gefunden"
+    "noResults": "Keine Einträge gefunden",
+    "nextPage": "Nächste Seite"
   },
   "nav": {
     "dashboard": "Übersicht",

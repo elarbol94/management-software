@@ -28,7 +28,11 @@ test("inline images accept whole-image comments and keep their anchor after relo
   const image = page.locator("figure[data-commentable-image]");
   await expect(image).toBeVisible();
   await image.click();
-  await page.getByRole("button", { name: "Ganzes Bild kommentieren" }).click();
+  const imageComment = page.getByRole("button", { name: "Ganzes Bild kommentieren" });
+  await expect(imageComment).toBeVisible();
+  // Floating UI positions the fixed bubble relative to the editor canvas,
+  // which may be outside Playwright's layout viewport after the upload scroll.
+  await imageComment.evaluate((button: HTMLButtonElement) => button.click());
   const dialog = page.getByRole("dialog", { name: "Bild kommentieren" });
   await dialog.getByPlaceholder("Kommentar oder @Name-Erwähnung schreiben…").fill("Diagramm prüfen");
   await dialog.getByRole("button", { name: "Kommentieren", exact: true }).click();

@@ -1,15 +1,23 @@
+import { Suspense } from "react";
 import { getTranslations } from "next-intl/server";
 import { Landmark } from "@/components/server-safe-icons";
 import { AccountingNav } from "@/modules/accounting/components/accounting-nav";
 
-export default async function AccountingLayout({
-  children,
-}: Readonly<{ children: React.ReactNode }>) {
-  const t = await getTranslations("accountingShell");
+export const unstable_instant = {
+  prefetch: "runtime",
+  samples: [
+    {
+      cookies: [{ name: "locale", value: "de" }],
+      headers: [["rsc", "1"], ["next-action", null]],
+      params: { id: "sample", projectId: "sample" },
+    },
+  ],
+};
 
+async function AccountingHeader() {
+  const t = await getTranslations("accountingShell");
   return (
-    <div className="-m-6 min-h-screen bg-[#f3f5f2] text-[#17342d]">
-      <header className="border-b border-[#dfe5e1] bg-white">
+    <header className="border-b border-[#dfe5e1] bg-white">
         <div className="mx-auto max-w-[1480px] px-4 pt-5 sm:px-6 lg:px-8">
           <div className="flex items-center gap-3 pb-3">
             <span className="flex size-9 items-center justify-center rounded-xl bg-[#e7efeb] text-[#315c73] ring-1 ring-[#d5e1dc]">
@@ -26,7 +34,18 @@ export default async function AccountingLayout({
           </div>
           <AccountingNav />
         </div>
-      </header>
+    </header>
+  );
+}
+
+export default function AccountingLayout({
+  children,
+}: Readonly<{ children: React.ReactNode }>) {
+  return (
+    <div className="-m-6 min-h-screen bg-[#f3f5f2] text-[#17342d]">
+      <Suspense fallback={<div className="h-[105px] border-b bg-white" />}>
+        <AccountingHeader />
+      </Suspense>
       <div className="mx-auto max-w-[1480px] px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
         {children}
       </div>

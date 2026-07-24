@@ -37,12 +37,14 @@ export function CommentAnchorOverlay({
   editor,
   rootRef,
   activeThreadId,
+  onActiveThreadChange,
   visible = true,
 }: {
   comments: CommentThread[];
   editor: Editor;
   rootRef: React.RefObject<HTMLDivElement | null>;
   activeThreadId: string | null;
+  onActiveThreadChange: (threadId: string) => void;
   visible?: boolean;
 }) {
   const [geometry, setGeometry] = useState<AnchorGeometry[]>([]);
@@ -124,6 +126,14 @@ export function CommentAnchorOverlay({
       data-testid={"image-comment-highlight-" + item.id}
       className={cn("absolute rounded border-2 transition", item.resolved && "opacity-60", activeThreadId === item.id && "ring-2")}
       style={{ ...item.imageRect, ...userMarkColorStyle(item.markColor), borderColor: "var(--user-mark-solid)", backgroundColor: activeThreadId === item.id ? "var(--user-mark-hover)" : "var(--user-mark-highlight)", boxShadow: activeThreadId === item.id ? "0 0 0 2px var(--user-mark-highlight)" : undefined }}
+    />)}
+    {geometry.map((item) => <button
+      key={"anchor-" + item.id}
+      type="button"
+      aria-label="Open comment"
+      className={cn("pointer-events-auto absolute size-4 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-background shadow-sm", item.resolved && "opacity-60")}
+      style={{ left: item.x, top: item.y, ...userMarkColorStyle(item.markColor), backgroundColor: "var(--user-mark-solid)" }}
+      onClick={() => onActiveThreadChange(item.id)}
     />)}
   </div>;
 }

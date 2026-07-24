@@ -159,6 +159,11 @@ export const entries = sqliteTable(
   (table) => [
     index("entries_date_idx").on(table.date),
     index("entries_category_idx").on(table.categoryId),
+    index("entries_status_date_created_idx").on(
+      table.status,
+      table.date,
+      table.createdAt,
+    ),
   ],
 );
 

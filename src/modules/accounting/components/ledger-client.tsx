@@ -1,6 +1,8 @@
 "use client";
 
 import { Fragment, useState } from "react";
+import Link from "next/link";
+import dynamic from "next/dynamic";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useFormatter, useLocale, useTranslations } from "next-intl";
 import { ChevronDown, ChevronRight, Download, Filter, Paperclip, Plus } from "lucide-react";
@@ -24,12 +26,15 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { EntryDialog } from "./entry-dialog";
+const EntryDialog = dynamic(() =>
+  import("./entry-dialog").then((module) => module.EntryDialog),
+);
 
 type Category = typeof categoriesTable.$inferSelect;
 
 export function LedgerClient({
   entries,
+  nextCursor,
   totals,
   categories,
   years,
@@ -42,6 +47,7 @@ export function LedgerClient({
   payrollMonthContexts,
 }: {
   entries: EntryRow[];
+  nextCursor: string | null;
   totals: { incomeGross: number; expenseGross: number; balance: number };
   categories: Category[];
   years: number[];
@@ -55,6 +61,7 @@ export function LedgerClient({
 }) {
   const t = useTranslations("accounting");
   const tBookings = useTranslations("accountingBookings");
+  const tCommon = useTranslations("common");
   const locale = useLocale();
   const format = useFormatter();
   const router = useRouter();
@@ -67,6 +74,7 @@ export function LedgerClient({
     const params = new URLSearchParams(searchParams.toString());
     if (value) params.set(key, value);
     else params.delete(key);
+    params.delete("cursor");
     router.push(`/accounting/bookings?${params.toString()}`);
   }
 
@@ -381,6 +389,26 @@ export function LedgerClient({
         </Table>
       </section>
 
+      {nextCursor && (
+        <div className="flex justify-end">
+          <Button
+            variant="outline"
+            nativeButton={false}
+            render={
+              <Link
+                href={`/accounting/bookings?${new URLSearchParams({
+                  ...Object.fromEntries(searchParams.entries()),
+                  cursor: nextCursor,
+                }).toString()}`}
+              />
+            }
+          >
+            {tCommon("nextPage")}
+            <ChevronRight className="size-4" />
+          </Button>
+        </div>
+      )}
+
       <section
         aria-label={tBookings("periodTotals")}
         className="grid overflow-hidden rounded-2xl border border-[#dfe5e1] bg-white shadow-[0_1px_2px_rgba(20,47,39,0.03)] sm:grid-cols-3"
@@ -418,7 +446,7 @@ export function LedgerClient({
         </div>
       </section>
 
-      <EntryDialog
+      {dialogOpen && <EntryDialog
         open={dialogOpen}
         onOpenChange={setDialogOpen}
         entry={dialogEntry}
@@ -429,7 +457,7 @@ export function LedgerClient({
         personnelEmployees={personnelEmployees}
         personnelLocations={personnelLocations}
         payrollMonthContexts={payrollMonthContexts}
-      />
+      />}
     </div>
   );
 }

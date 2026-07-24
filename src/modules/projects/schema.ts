@@ -25,7 +25,9 @@ export const projects = sqliteTable("projects", {
   updatedAt: integer("updated_at", { mode: "timestamp_ms" })
     .notNull()
     .$defaultFn(() => new Date()),
-});
+}, (table) => [
+  index("projects_status_updated_idx").on(table.status, table.updatedAt),
+]);
 
 export const projectColumns = sqliteTable(
   "project_columns",
@@ -78,5 +80,7 @@ export const tasks = sqliteTable(
     index("tasks_project_idx").on(table.projectId),
     index("tasks_column_idx").on(table.columnId),
     index("tasks_assignee_idx").on(table.assigneeId),
+    index("tasks_column_sort_idx").on(table.columnId, table.sortOrder),
+    index("tasks_assignee_due_idx").on(table.assigneeId, table.dueDate),
   ],
 );

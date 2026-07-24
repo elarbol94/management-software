@@ -1,4 +1,4 @@
-import { sqliteTable, text, integer, index } from "drizzle-orm/sqlite-core";
+import { sqliteTable, text, integer, real, index } from "drizzle-orm/sqlite-core";
 import { createId } from "@paralleldrive/cuid2";
 
 // --- Better Auth tables (camelCase columns to match Better Auth conventions) ---
@@ -130,4 +130,31 @@ export const attachments = sqliteTable(
       .$defaultFn(() => new Date()),
   },
   (table) => [index("attachments_entity_idx").on(table.entityType, table.entityId)],
+);
+
+export const performanceEvents = sqliteTable(
+  "performance_events",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => createId()),
+    kind: text("kind", { enum: ["web-vital", "operation"] }).notNull(),
+    name: text("name").notNull(),
+    value: real("value").notNull(),
+    rating: text("rating", { enum: ["good", "needs-improvement", "poor"] }),
+    route: text("route").notNull(),
+    navigationType: text("navigation_type"),
+    buildId: text("build_id").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("performance_events_created_idx").on(table.createdAt),
+    index("performance_events_metric_idx").on(
+      table.kind,
+      table.name,
+      table.createdAt,
+    ),
+  ],
 );

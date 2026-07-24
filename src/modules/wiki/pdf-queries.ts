@@ -36,6 +36,44 @@ export function listPdfDocumentsForSource(sourceId: string) {
     .orderBy(asc(wikiPdfDocuments.version)).all();
 }
 
+export type PdfDocumentListItem = ReturnType<
+  typeof listPdfDocumentsForSource
+>[number];
+
+export function listPdfDocumentsForSources(sourceIds: string[]) {
+  const result = new Map<string, PdfDocumentListItem[]>();
+  if (sourceIds.length === 0) return result;
+
+  const rows = db
+    .select({
+      sourceId: wikiPdfDocuments.sourceId,
+      id: wikiPdfDocuments.id,
+      attachmentId: wikiPdfDocuments.attachmentId,
+      role: wikiPdfDocuments.role,
+      version: wikiPdfDocuments.version,
+      status: wikiPdfDocuments.status,
+      pageCount: wikiPdfDocuments.pageCount,
+      progressPage: wikiPdfDocuments.progressPage,
+      metadataJson: wikiPdfDocuments.metadataJson,
+      error: wikiPdfDocuments.error,
+      fileName: attachments.fileName,
+      sizeBytes: attachments.sizeBytes,
+      createdAt: wikiPdfDocuments.createdAt,
+    })
+    .from(wikiPdfDocuments)
+    .innerJoin(attachments, eq(wikiPdfDocuments.attachmentId, attachments.id))
+    .where(inArray(wikiPdfDocuments.sourceId, sourceIds))
+    .orderBy(asc(wikiPdfDocuments.sourceId), asc(wikiPdfDocuments.version))
+    .all();
+
+  for (const { sourceId, ...document } of rows) {
+    const current = result.get(sourceId) ?? [];
+    current.push(document);
+    result.set(sourceId, current);
+  }
+  return result;
+}
+
 export function getPdfReaderData(sourceId: string, documentId: string) {
   const document = db.select({
     id: wikiPdfDocuments.id,

@@ -134,6 +134,20 @@
       "when": 1784885229186,
       "tag": "0018_small_jasper_sitwell",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "6",
+      "when": 1784897484119,
+      "tag": "0019_performance_events",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "6",
+      "when": 1784897808459,
+      "tag": "0020_performance_indexes",
+      "breakpoints": true
     }
   ]
 }

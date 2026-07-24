@@ -76,7 +76,7 @@ export function EditorLinkPopover({ editor, pages, request = 0 }: { editor: Edit
   }, [label, pages, url]);
 
   return <Popover open={open} onOpenChange={setOpen}>
-    <PopoverTrigger render={<Button type="button" variant={editor.isActive("link") ? "secondary" : "ghost"} size="icon-sm" aria-label={t("link.button")} aria-pressed={editor.isActive("link")} onMouseDown={(event) => { event.preventDefault(); prepare(); }} />}>
+    <PopoverTrigger render={<Button type="button" variant={editor.isActive("link") ? "secondary" : "ghost"} size="icon-sm" aria-label={t("link.button")} aria-pressed={editor.isActive("link")} onMouseDown={(event) => event.preventDefault()} onClick={prepare} />}>
       <Link2 className="size-4 rotate-45" />
     </PopoverTrigger>
     <PopoverContent className="w-[min(24rem,calc(100vw-2rem))] space-y-3 p-3">

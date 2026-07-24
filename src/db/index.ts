@@ -19,6 +19,12 @@ const sqlite =
     conn.pragma("journal_mode = WAL");
     conn.pragma("foreign_keys = ON");
     conn.pragma("busy_timeout = 5000");
+    conn.pragma("synchronous = NORMAL");
+    conn.pragma("temp_store = MEMORY");
+    conn.pragma("cache_size = -32768");
+    conn.pragma("mmap_size = 268435456");
+    conn.pragma("wal_autocheckpoint = 1000");
+    conn.pragma("optimize");
     return conn;
   })();
 

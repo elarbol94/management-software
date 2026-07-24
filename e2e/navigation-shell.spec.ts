@@ -18,11 +18,7 @@ async function login(page: Page) {
     await expect(page.getByText("Willkommen, E2E Admin!")).toBeVisible();
     return;
   }
-  await page.goto("/");
-  if (!page.url().endsWith("/login")) {
-    await expect(page.getByText("Willkommen, E2E Admin!")).toBeVisible();
-    return;
-  }
+  await page.goto("/login");
   await page.locator("#username").fill("admin");
   await page.locator("#password").fill("super-secret-1");
   await page.getByRole("button", { name: "Anmelden" }).click();
@@ -42,8 +38,8 @@ test("desktop navigation rails expand independently, reset on reload, and surviv
   const researchSidebar = page.getByTestId("research-sidebar");
   await expect(appSidebar).toBeVisible();
   await expect(researchSidebar).toBeVisible();
-  await expectWidth(appSidebar, 64);
-  await expectWidth(researchSidebar, 64);
+  await expectWidth(appSidebar, 56);
+  await expectWidth(researchSidebar, 56);
 
   await expect(appSidebar.getByRole("link", { name: "Wiki" })).toBeVisible();
   await expect(researchSidebar.getByRole("link", { name: /Eingang/ })).toBeVisible();
@@ -51,14 +47,14 @@ test("desktop navigation rails expand independently, reset on reload, and surviv
 
   await page.getByRole("button", { name: "Hauptnavigation ausklappen" }).click();
   await expectWidth(appSidebar, 240);
-  await expectWidth(researchSidebar, 64);
+  await expectWidth(researchSidebar, 56);
 
   await page.getByRole("button", { name: "Wissensnavigation ausklappen" }).click();
   await expectWidth(appSidebar, 240);
   await expectWidth(researchSidebar, 256);
 
   await page.getByRole("button", { name: "Hauptnavigation einklappen" }).click();
-  await expectWidth(appSidebar, 64);
+  await expectWidth(appSidebar, 56);
   await expectWidth(researchSidebar, 256);
 
   await page.getByRole("button", { name: "Wissensnavigation einklappen" }).click();
@@ -71,8 +67,8 @@ test("desktop navigation rails expand independently, reset on reload, and surviv
   await expectWidth(researchSidebar, 256);
 
   await page.reload();
-  await expectWidth(appSidebar, 64);
-  await expectWidth(researchSidebar, 64);
+  await expectWidth(appSidebar, 56);
+  await expectWidth(researchSidebar, 56);
 
   await page.getByRole("button", { name: "Hauptnavigation ausklappen" }).click();
   await expectWidth(appSidebar, 240);
@@ -84,7 +80,7 @@ test("desktop navigation rails expand independently, reset on reload, and surviv
 
   await page.getByRole("button", { name: "Fokusmodus beenden" }).click();
   await expectWidth(page.getByTestId("app-sidebar"), 240);
-  await expectWidth(page.getByTestId("research-sidebar"), 64);
+  await expectWidth(page.getByTestId("research-sidebar"), 56);
 });
 
 test("mobile navigation uses full-width content with dismissible app and research sheets", async ({ page }) => {
@@ -121,5 +117,5 @@ test("mobile navigation uses full-width content with dismissible app and researc
   await appSheet.getByRole("link", { name: "Projekte" }).click();
   await expect(page).toHaveURL(/\/projects$/);
   await expect(appSheet).not.toBeVisible();
-  await expect(page.getByTestId("research-mobile-header")).toHaveCount(0);
+  await expect(page.getByTestId("research-mobile-header")).toBeHidden();
 });

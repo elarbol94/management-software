@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { Archive, ArchiveRestore, MoreHorizontal, Pencil, Plus, Trash2 } from "lucide-react";
@@ -43,7 +42,7 @@ type Project = typeof projectsTable.$inferSelect & { openTasks: number };
 export function ProjectsClient({ projects }: { projects: Project[] }) {
   const t = useTranslations("projects");
   const tCommon = useTranslations("common");
-  const router = useRouter();
+  const [items, setItems] = useState(projects);
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<Project | null>(null);
@@ -70,10 +69,23 @@ export function ProjectsClient({ projects }: { projects: Project[] }) {
         description,
         color,
       };
-      await upsertProject(input, [t("colOpen"), t("colInProgress"), t("colDone")]);
+      const saved = await upsertProject(input, [
+        t("colOpen"),
+        t("colInProgress"),
+        t("colDone"),
+      ]);
+      setItems((current) => {
+        const existing = current.find((project) => project.id === saved.id);
+        const next = {
+          ...saved,
+          openTasks: existing?.openTasks ?? 0,
+        };
+        return existing
+          ? current.map((project) => (project.id === saved.id ? next : project))
+          : [next, ...current];
+      });
       toast.success(tCommon("saved"));
       setDialogOpen(false);
-      router.refresh();
     } catch {
       toast.error(tCommon("error"));
     } finally {
@@ -83,20 +95,34 @@ export function ProjectsClient({ projects }: { projects: Project[] }) {
 
   async function onDelete(project: Project) {
     if (!window.confirm(tCommon("confirmDeleteTitle"))) return;
-    await deleteProject(project.id);
-    router.refresh();
+    const previous = items;
+    setItems((current) => current.filter((item) => item.id !== project.id));
+    try {
+      await deleteProject(project.id);
+    } catch {
+      setItems(previous);
+      toast.error(tCommon("error"));
+    }
   }
 
   async function toggleArchived(project: Project) {
-    await setProjectStatus(
-      project.id,
-      project.status === "archived" ? "active" : "archived",
+    const previous = items;
+    const status = project.status === "archived" ? "active" : "archived";
+    setItems((current) =>
+      current.map((item) =>
+        item.id === project.id ? { ...item, status } : item,
+      ),
     );
-    router.refresh();
+    try {
+      await setProjectStatus(project.id, status);
+    } catch {
+      setItems(previous);
+      toast.error(tCommon("error"));
+    }
   }
 
-  const active = projects.filter((p) => p.status === "active");
-  const archived = projects.filter((p) => p.status === "archived");
+  const active = items.filter((p) => p.status === "active");
+  const archived = items.filter((p) => p.status === "archived");
 
   return (
     <div className="flex flex-col gap-6">

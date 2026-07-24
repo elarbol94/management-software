@@ -1,7 +1,7 @@
 "use server";
 
 import { z } from "zod";
-import { and, asc, eq, gt, sql } from "drizzle-orm";
+import { and, asc, eq, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { db } from "@/db";
 import { projectColumns, projects, tasks } from "@/db/schema";
@@ -27,7 +27,7 @@ export type ProjectInput = z.infer<typeof projectSchema>;
 export async function upsertProject(
   input: ProjectInput,
   defaultColumns?: string[],
-): Promise<{ id: string }> {
+): Promise<typeof projects.$inferSelect> {
   const user = await requireUserOrThrow();
   const data = projectSchema.parse(input);
 
@@ -42,7 +42,7 @@ export async function upsertProject(
       .where(eq(projects.id, data.id))
       .run();
     revalidatePath("/projects");
-    return { id: data.id };
+    return db.select().from(projects).where(eq(projects.id, data.id)).get()!;
   }
 
   const row = db
@@ -70,7 +70,7 @@ export async function upsertProject(
     .run();
 
   revalidatePath("/projects");
-  return { id: row.id };
+  return db.select().from(projects).where(eq(projects.id, row.id)).get()!;
 }
 
 export async function setProjectStatus(id: string, status: "active" | "archived") {

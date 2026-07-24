@@ -6,8 +6,7 @@ async function login(page: Page) {
   const signup = await page.request.post("/api/auth/sign-up/email", { data: { name: "E2E Admin", username: "admin", displayUsername: "admin", email: "admin" + String.fromCharCode(64) + "example.com", password: "super-secret-1" } });
   if (!signup.ok() && signup.status() !== 422 && signup.status() !== 403) throw new Error("Signup failed " + signup.status() + ": " + await signup.text());
   if (signup.ok()) { await page.goto("/"); await expect(page.getByText("Willkommen, E2E Admin!")).toBeVisible(); return; }
-  await page.goto("/");
-  if (!page.url().endsWith("/login")) { await expect(page.getByText("Willkommen, E2E Admin!")).toBeVisible(); return; }
+  await page.goto("/login");
   await page.locator("#username").fill("admin");
   await page.locator("#password").fill("super-secret-1");
   await page.getByRole("button", { name: "Anmelden" }).click();
@@ -40,11 +39,13 @@ function nativeTextPdf(text: string): Buffer {
 test("upload, read, search, annotate, reload, and insert traceable PDF evidence", async ({ page }) => {
   await login(page);
   await page.goto("/wiki/sources");
-  await page.locator('input[type="file"][accept*="pdf"]').first().setInputFiles({
-    name: "local-evidence.pdf",
-    mimeType: "application/pdf",
-    buffer: nativeTextPdf("Local PDF evidence supports traceable research"),
-  });
+  const chooser = page.waitForEvent("filechooser");
+  await page.getByRole("button", { name: "PDFs auswählen" }).click();
+  await (await chooser).setFiles({
+      name: "local-evidence.pdf",
+      mimeType: "application/pdf",
+      buffer: nativeTextPdf("Local PDF evidence supports traceable research"),
+    });
 
   await expect(page).toHaveURL(/\/wiki\/sources\//, { timeout: 15_000 });
   await expect(page.getByText("local-evidence.pdf")).toBeVisible();

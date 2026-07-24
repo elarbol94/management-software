@@ -1,7 +1,8 @@
-import { and, asc, desc, eq, like, ne, sql, inArray } from "drizzle-orm";
+import { and, asc, desc, eq, like, lt, ne, or, sql, inArray } from "drizzle-orm";
 import { db } from "@/db";
 import { attachments, budgetPlans, businessLocations, categories, employees, entries, entryAuditLog, entryPaymentLines, entryTaxLines, payrollMonthContexts, user } from "@/db/schema";
 import type { EntryKind } from "./schema";
+import { measureServerOperation } from "@/lib/performance-server";
 
 export type EntryFilters = {
   year: number;
@@ -19,8 +20,82 @@ export type EntryRow = Awaited<ReturnType<typeof listEntries>>[number];
 
 export type ReceiptDocumentRow = ReturnType<typeof listReceiptDocuments>[number];
 
+export type EntryCursor = string;
+
+function decodeEntryCursor(cursor?: EntryCursor) {
+  if (!cursor) return null;
+  try {
+    const [date, createdAt, id] = Buffer.from(cursor, "base64url")
+      .toString("utf8")
+      .split("|");
+    const timestamp = Number(createdAt);
+    if (
+      !/^\d{4}-\d{2}-\d{2}$/.test(date) ||
+      !Number.isSafeInteger(timestamp) ||
+      !id
+    ) {
+      return null;
+    }
+    return { date, createdAt: new Date(timestamp), id };
+  } catch {
+    return null;
+  }
+}
+
+function encodeEntryCursor(entry: {
+  date: string;
+  createdAt: Date;
+  id: string;
+}) {
+  return Buffer.from(
+    `${entry.date}|${entry.createdAt.getTime()}|${entry.id}`,
+  ).toString("base64url");
+}
+
 /** Receipt files attached to ledger entries, with the context needed for a document inbox. */
-export function listReceiptDocuments() {
+function decodeReceiptCursor(cursor?: string) {
+  if (!cursor) return null;
+  try {
+    const [entryDate, createdAt, id] = Buffer.from(cursor, "base64url")
+      .toString("utf8")
+      .split("|");
+    const timestamp = Number(createdAt);
+    if (
+      !/^\d{4}-\d{2}-\d{2}$/.test(entryDate) ||
+      !Number.isSafeInteger(timestamp) ||
+      !id
+    ) {
+      return null;
+    }
+    return { entryDate, createdAt: new Date(timestamp), id };
+  } catch {
+    return null;
+  }
+}
+
+export function listReceiptDocuments(paging?: {
+  cursor?: string;
+  limit?: number;
+}) {
+  const cursor = decodeReceiptCursor(paging?.cursor);
+  const conditions = [eq(attachments.entityType, "entry")];
+  if (cursor) {
+    conditions.push(
+      or(
+        lt(entries.date, cursor.entryDate),
+        and(
+          eq(entries.date, cursor.entryDate),
+          or(
+            lt(attachments.createdAt, cursor.createdAt),
+            and(
+              eq(attachments.createdAt, cursor.createdAt),
+              lt(attachments.id, cursor.id),
+            ),
+          ),
+        ),
+      )!,
+    );
+  }
   return db
     .select({
       id: attachments.id,
@@ -39,18 +114,73 @@ export function listReceiptDocuments() {
     .from(attachments)
     .innerJoin(entries, eq(attachments.entityId, entries.id))
     .innerJoin(categories, eq(entries.categoryId, categories.id))
-    .where(eq(attachments.entityType, "entry"))
-    .orderBy(desc(entries.date), desc(attachments.createdAt))
+    .where(and(...conditions))
+    .orderBy(
+      desc(entries.date),
+      desc(attachments.createdAt),
+      desc(attachments.id),
+    )
+    .limit(paging?.limit ? Math.min(101, Math.max(1, paging.limit)) : -1)
     .all();
 }
 
-export function listEntries(filters: EntryFilters) {
+export function listReceiptDocumentsPage(
+  paging: { cursor?: string; limit?: number } = {},
+) {
+  const limit = Math.min(100, Math.max(1, paging.limit ?? 50));
+  const rows = listReceiptDocuments({ ...paging, limit: limit + 1 });
+  const hasMore = rows.length > limit;
+  const items = hasMore ? rows.slice(0, limit) : rows;
+  const last = items.at(-1);
+  return {
+    items,
+    nextCursor:
+      hasMore && last
+        ? Buffer.from(
+            `${last.entryDate}|${last.uploadedAt.getTime()}|${last.id}`,
+          ).toString("base64url")
+        : null,
+  };
+}
+
+export function receiptDocumentCount() {
+  return (
+    db
+      .select({ value: sql<number>`count(*)` })
+      .from(attachments)
+      .where(eq(attachments.entityType, "entry"))
+      .get()?.value ?? 0
+  );
+}
+
+export function listEntries(
+  filters: EntryFilters,
+  paging?: { cursor?: EntryCursor; limit?: number },
+) {
   const conditions = [
     like(entries.date, periodPrefix(filters.year, filters.month)),
     ne(entries.status, "voided"),
   ];
   if (filters.kind) conditions.push(eq(entries.kind, filters.kind));
   if (filters.categoryId) conditions.push(eq(entries.categoryId, filters.categoryId));
+  const cursor = decodeEntryCursor(paging?.cursor);
+  if (cursor) {
+    conditions.push(
+      or(
+        lt(entries.date, cursor.date),
+        and(
+          eq(entries.date, cursor.date),
+          or(
+            lt(entries.createdAt, cursor.createdAt),
+            and(
+              eq(entries.createdAt, cursor.createdAt),
+              lt(entries.id, cursor.id),
+            ),
+          ),
+        ),
+      )!,
+    );
+  }
 
   const rows = db
     .select({
@@ -77,11 +207,13 @@ export function listEntries(filters: EntryFilters) {
       deductiblePercent: entries.deductiblePercent,
       warningOverrideReason: entries.warningOverrideReason,
       specialFields: entries.specialFields,
+      createdAt: entries.createdAt,
     })
     .from(entries)
     .innerJoin(categories, eq(entries.categoryId, categories.id))
     .where(and(...conditions))
-    .orderBy(desc(entries.date), desc(entries.createdAt))
+    .orderBy(desc(entries.date), desc(entries.createdAt), desc(entries.id))
+    .limit(paging?.limit ? Math.min(101, Math.max(1, paging.limit)) : -1)
     .all();
 
   if (rows.length === 0) {
@@ -178,14 +310,45 @@ export function listEntries(filters: EntryFilters) {
   }));
 }
 
+export function listEntriesPage(
+  filters: EntryFilters,
+  paging: { cursor?: EntryCursor; limit?: number } = {},
+) {
+  return measureServerOperation(
+    "/accounting/bookings",
+    "list-entries-page",
+    () => {
+      const limit = Math.min(100, Math.max(1, paging.limit ?? 50));
+      const rows = listEntries(filters, { ...paging, limit: limit + 1 });
+      const hasMore = rows.length > limit;
+      const items = hasMore ? rows.slice(0, limit) : rows;
+      return {
+        items,
+        nextCursor: hasMore
+          ? encodeEntryCursor(items[items.length - 1])
+          : null,
+      };
+    },
+  );
+}
+
 export function entryTotals(filters: EntryFilters) {
-  const rows = listEntries(filters);
-  let incomeGross = 0;
-  let expenseGross = 0;
-  for (const row of rows.filter((entry) => entry.status === "finalized")) {
-    if (row.kind === "income") incomeGross += row.grossAmountCents;
-    else expenseGross += row.grossAmountCents;
-  }
+  const conditions = [
+    like(entries.date, periodPrefix(filters.year, filters.month)),
+    eq(entries.status, "finalized" as const),
+  ];
+  if (filters.kind) conditions.push(eq(entries.kind, filters.kind));
+  if (filters.categoryId) conditions.push(eq(entries.categoryId, filters.categoryId));
+  const row = db
+    .select({
+      incomeGross: sql<number>`coalesce(sum(case when ${entries.kind} = 'income' then ${entries.grossAmountCents} else 0 end), 0)`,
+      expenseGross: sql<number>`coalesce(sum(case when ${entries.kind} = 'expense' then ${entries.grossAmountCents} else 0 end), 0)`,
+    })
+    .from(entries)
+    .where(and(...conditions))
+    .get();
+  const incomeGross = row?.incomeGross ?? 0;
+  const expenseGross = row?.expenseGross ?? 0;
   return { incomeGross, expenseGross, balance: incomeGross - expenseGross };
 }
 

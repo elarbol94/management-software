@@ -1,5 +1,12 @@
 @import "tailwindcss";
 @import "tw-animate-css";
+
+:root {
+  --font-geist-sans: "Segoe UI Variable", "Segoe UI", system-ui, -apple-system,
+    BlinkMacSystemFont, sans-serif;
+  --font-geist-mono: "Cascadia Code", "SFMono-Regular", Consolas,
+    "Liberation Mono", monospace;
+}
 @import "shadcn/tailwind.css";
 @plugin "@tailwindcss/typography";
 

@@ -54,10 +54,10 @@ test("status flow draft → sent → paid books the income", async ({ page }) =>
   await page.getByRole("link", { name: "2026-0001" }).click();
 
   await page.getByRole("button", { name: "Als versendet markieren" }).click();
-  await expect(page.getByText("Versendet")).toBeVisible();
+  await expect(page.getByText("Versendet", { exact: true })).toBeVisible();
 
   await page.getByRole("button", { name: "Als bezahlt markieren" }).click();
-  await expect(page.getByText("Bezahlt")).toBeVisible();
+  await expect(page.getByText("Bezahlt", { exact: true })).toBeVisible();
 
   // Ledger now contains the automatically booked income entry.
   await page.goto("/accounting");

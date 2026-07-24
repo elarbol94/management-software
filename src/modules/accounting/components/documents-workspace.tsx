@@ -9,8 +9,14 @@ import {
   Users,
 } from "@/components/server-safe-icons";
 import { formatCents } from "@/lib/money";
-import { listInvoices } from "@/modules/accounting/invoice-queries";
-import { listReceiptDocuments } from "@/modules/accounting/queries";
+import {
+  invoiceStatusSummary,
+  listInvoicesPage,
+} from "@/modules/accounting/invoice-queries";
+import {
+  listReceiptDocumentsPage,
+  receiptDocumentCount,
+} from "@/modules/accounting/queries";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -35,27 +41,33 @@ function formatFileSize(bytes: number, locale: string) {
   return `${new Intl.NumberFormat(locale, { maximumFractionDigits: 1 }).format(value)} ${unit}`;
 }
 
-export async function DocumentsWorkspace() {
-  const [t, tInvoices, tAccounting] = await Promise.all([
+export async function DocumentsWorkspace({
+  cursor,
+  receiptCursor,
+  basePath = "/documents",
+}: {
+  cursor?: string;
+  receiptCursor?: string;
+  basePath?: string;
+} = {}) {
+  const [t, tInvoices, tAccounting, tCommon] = await Promise.all([
     getTranslations("documents"),
     getTranslations("invoices"),
     getTranslations("accounting"),
+    getTranslations("common"),
   ]);
   const locale = await getLocale();
   const format = await getFormatter();
-  const invoices = listInvoices();
-  const receipts = listReceiptDocuments();
+  const invoicePage = listInvoicesPage({ cursor, limit: 50 });
+  const invoices = invoicePage.items;
+  const receiptPage = listReceiptDocumentsPage({
+    cursor: receiptCursor,
+    limit: 50,
+  });
+  const receipts = receiptPage.items;
+  const totalReceipts = receiptDocumentCount();
   const today = new Date().toISOString().slice(0, 10);
-
-  const drafts = invoices.filter((invoice) => invoice.status === "draft");
-  const openInvoices = invoices.filter((invoice) => invoice.status === "sent");
-  const overdue = openInvoices.filter(
-    (invoice) => invoice.dueDate && invoice.dueDate < today,
-  );
-  const outstandingCents = openInvoices.reduce(
-    (sum, invoice) => sum + invoice.grossCents,
-    0,
-  );
+  const summary = invoiceStatusSummary(today);
 
   return (
     <div className="flex flex-col gap-6">
@@ -95,34 +107,34 @@ export async function DocumentsWorkspace() {
       >
         <div className="border-b p-4 sm:border-r xl:border-b-0">
           <p className="text-xs font-medium text-muted-foreground">{t("drafts")}</p>
-          <p className="mt-2 text-2xl font-semibold tabular-nums">{drafts.length}</p>
+          <p className="mt-2 text-2xl font-semibold tabular-nums">{summary.draftCount}</p>
         </div>
         <div className="border-b p-4 xl:border-b-0 xl:border-r">
           <p className="text-xs font-medium text-muted-foreground">
             {t("openInvoices")}
           </p>
           <p className="mt-2 text-2xl font-semibold tabular-nums">
-            {formatCents(outstandingCents, locale)}
+            {formatCents(summary.outstandingCents, locale)}
           </p>
           <p className="mt-1 text-xs text-muted-foreground">
-            {t("outstanding", { count: openInvoices.length })}
+            {t("outstanding", { count: summary.openCount })}
           </p>
         </div>
         <div className="border-b p-4 sm:border-b-0 sm:border-r">
           <p className="text-xs font-medium text-muted-foreground">{t("overdue")}</p>
           <p
             className={`mt-2 text-2xl font-semibold tabular-nums ${
-              overdue.length > 0 ? "text-destructive" : ""
+              summary.overdueCount > 0 ? "text-destructive" : ""
             }`}
           >
-            {overdue.length}
+            {summary.overdueCount}
           </p>
         </div>
         <div className="p-4">
           <p className="text-xs font-medium text-muted-foreground">
             {t("receiptCount")}
           </p>
-          <p className="mt-2 text-2xl font-semibold tabular-nums">{receipts.length}</p>
+          <p className="mt-2 text-2xl font-semibold tabular-nums">{totalReceipts}</p>
         </div>
       </section>
 
@@ -208,6 +220,23 @@ export async function DocumentsWorkspace() {
               </TableBody>
             </Table>
           </div>
+          {invoicePage.nextCursor && (
+            <div className="flex justify-end border-t p-3">
+              <Button
+                variant="outline"
+                size="sm"
+                nativeButton={false}
+                render={
+                  <Link
+                    href={`${basePath}?cursor=${encodeURIComponent(invoicePage.nextCursor)}${receiptCursor ? `&receiptCursor=${encodeURIComponent(receiptCursor)}` : ""}`}
+                  />
+                }
+              >
+                {tCommon("nextPage")}
+                <ArrowRight className="size-4" />
+              </Button>
+            </div>
+          )}
         </section>
 
         <section className="min-w-0 overflow-hidden rounded-xl border bg-card">
@@ -288,6 +317,23 @@ export async function DocumentsWorkspace() {
                 </li>
               ))}
             </ul>
+          )}
+          {receiptPage.nextCursor && (
+            <div className="flex justify-end border-t p-3">
+              <Button
+                variant="outline"
+                size="sm"
+                nativeButton={false}
+                render={
+                  <Link
+                    href={`${basePath}?receiptCursor=${encodeURIComponent(receiptPage.nextCursor)}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`}
+                  />
+                }
+              >
+                {tCommon("nextPage")}
+                <ArrowRight className="size-4" />
+              </Button>
+            </div>
           )}
         </section>
       </div>

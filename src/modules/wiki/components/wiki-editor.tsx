@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { EditorContent, useEditor, type Editor } from "@tiptap/react";
@@ -174,7 +174,7 @@ const Highlight = Mark.create({
 
 function ToolbarButton({ active, onClick, title, shortcut, children }: { active?: boolean; onClick: () => void; title: string; shortcut?: string; children: React.ReactNode }) {
   return <Tooltip>
-    <TooltipTrigger render={<Button type="button" variant={active ? "secondary" : "ghost"} size="icon-sm" aria-label={title} aria-pressed={active} onMouseDown={(event) => { event.preventDefault(); onClick(); }} />}>{children}</TooltipTrigger>
+    <TooltipTrigger render={<Button type="button" variant={active ? "secondary" : "ghost"} size="icon-sm" aria-label={title} aria-pressed={active} onMouseDown={(event) => event.preventDefault()} onClick={onClick} />}>{children}</TooltipTrigger>
     <TooltipContent>{title}{shortcut && <kbd className="ml-1 rounded bg-background/15 px-1 py-0.5 font-mono">{shortcut}</kbd>}</TooltipContent>
   </Tooltip>;
 }
@@ -409,7 +409,11 @@ export function WikiEditor({
   pageActions,
 }: WikiEditorProps) {
   const t = useTranslations("wiki"); const router = useRouter(); const [saveState, setSaveState] = useState<"idle" | "unsaved" | "saving" | "saved" | "offline" | "error" | "conflict">("idle");
-  const [conflictRevision, setConflictRevision] = useState<string | null>(null); const [activeThreadId, setActiveThreadId] = useState<string | null>(null); const [commentFocusRequest, setCommentFocusRequest] = useState(0); const [imagePickerRequest, setImagePickerRequest] = useState(0); const [commentOpen, setCommentOpen] = useState(false); const [commentBody, setCommentBody] = useState(""); const [pendingAnchor, setPendingAnchor] = useState<CommentAnchor | null>(null); const [composerPosition, setComposerPosition] = useState<{ left: number; top: number; above: boolean } | null>(null); const [regionTarget, setRegionTarget] = useState<{ nodeId: string; label: string } | null>(null); const [imageError, setImageError] = useState(""); const [imageUploading, setImageUploading] = useState(false); const [assigneeId, setAssigneeId] = useState("none");
+  const [conflictRevision, setConflictRevision] = useState<string | null>(null); const [activeThreadId, setActiveThreadId] = useState<string | null>(null); const [optimisticCommentThreads, setOptimisticCommentThreads] = useState<CommentThread[]>([]); const [commentFocusRequest, setCommentFocusRequest] = useState(0); const [imagePickerRequest, setImagePickerRequest] = useState(0); const [commentOpen, setCommentOpen] = useState(false); const [commentBody, setCommentBody] = useState(""); const [pendingAnchor, setPendingAnchor] = useState<CommentAnchor | null>(null); const [regionTarget, setRegionTarget] = useState<{ nodeId: string; label: string } | null>(null); const [imageError, setImageError] = useState(""); const [imageUploading, setImageUploading] = useState(false); const [assigneeId, setAssigneeId] = useState("none");
+  const commentThreads = useMemo(
+    () => [...optimisticCommentThreads.filter((thread) => !comments.some((item) => item.id === thread.id)), ...comments],
+    [comments, optimisticCommentThreads],
+  );
   const [pageLinkOpen, setPageLinkOpen] = useState(false); const [citationOpen, setCitationOpen] = useState(false); const [evidenceOpen, setEvidenceOpen] = useState(false); const [markdownHelpOpen, setMarkdownHelpOpen] = useState(false); const [linkEditorRequest, setLinkEditorRequest] = useState(0);
   const [searchOpen, setSearchOpen] = useState(false); const [outlineOpen, setOutlineOpen] = useState(false); const [outline, setOutline] = useState<OutlineItem[]>([]); const [activeHeadingPosition, setActiveHeadingPosition] = useState<number | null>(null);
   const [writingStats, setWritingStats] = useState<WritingStats>({ words: 0, characters: 0, selectedWords: 0, readingMinutes: 0 });
@@ -673,28 +677,8 @@ export function WikiEditor({
     "--document-body-font": documentSettings.theme.bodyFont === "serif" ? "Georgia, 'Times New Roman', serif" : documentSettings.theme.bodyFont === "humanist" ? "'Segoe UI', Arial, sans-serif" : "system-ui, sans-serif",
     "--document-heading-font": documentSettings.theme.headingFont === "serif" ? "Georgia, 'Times New Roman', serif" : documentSettings.theme.headingFont === "humanist" ? "'Segoe UI', Arial, sans-serif" : "system-ui, sans-serif",
   } as React.CSSProperties;
-  function commentPosition(anchor: CommentAnchor) {
-    if (window.innerWidth < 640) return null;
-    let rect: { left: number; right: number; top: number; bottom: number } | null = null;
-    if (anchor.type === "text" && selection.current) {
-      const start = activeEditor.view.coordsAtPos(selection.current.from);
-      const end = activeEditor.view.coordsAtPos(selection.current.to);
-      rect = { left: Math.min(start.left, end.left), right: Math.max(start.right, end.right), top: Math.min(start.top, end.top), bottom: Math.max(start.bottom, end.bottom) };
-    } else if (anchor.type === "image") {
-      const container = [...(editorRootRef.current?.querySelectorAll<HTMLElement>("[data-comment-node-id]") ?? [])].find((element) => element.dataset.commentNodeId === anchor.nodeId);
-      rect = (container?.querySelector("img") ?? container)?.getBoundingClientRect() ?? null;
-    }
-    if (!rect) return null;
-    const above = rect.top > 340;
-    return {
-      left: Math.min(window.innerWidth - 224, Math.max(224, (rect.left + rect.right) / 2)),
-      top: above ? rect.top - 12 : rect.bottom + 12,
-      above,
-    };
-  }
   function openCommentComposer(anchor: CommentAnchor) {
     setPendingAnchor(anchor);
-    setComposerPosition(commentPosition(anchor));
     requestAnimationFrame(() => setCommentOpen(true));
   }
   function prepareComment() {
@@ -734,6 +718,7 @@ export function WikiEditor({
     if (!pendingAnchor || !commentBody.trim()) return;
     const result = await addComment({ pageId, body: commentBody, anchor: pendingAnchor, assigneeId: assigneeId === "none" ? null : assigneeId });
     if (pendingAnchor.type === "text" && selection.current) addThreadMark(activeEditor, selection.current, result.threadId);
+    setOptimisticCommentThreads((current) => [result.thread, ...current.filter((thread) => thread.id !== result.threadId)]);
     setActiveThreadId(result.threadId);
     commentRailRef.current?.openMobile();
     setCommentOpen(false);
@@ -876,9 +861,9 @@ export function WikiEditor({
       <div className={documentMode ? "wiki-document-canvas" : undefined} style={documentMode ? documentCanvasStyle : undefined}>
         <EditorContent editor={editor} data-testid="wiki-editor" data-document-mode={documentMode ? "true" : "false"} />
       </div>
-      <CommentAnchorOverlay visible={commentsVisible} comments={comments} editor={editor} rootRef={editorRootRef} activeThreadId={activeThreadId} />
+      <CommentAnchorOverlay visible={commentsVisible} comments={commentThreads} editor={editor} rootRef={editorRootRef} activeThreadId={activeThreadId} onActiveThreadChange={setActiveThreadId} />
     </div>
-    <CommentRail ref={commentRailRef} visible={commentsVisible} onVisibleChange={setCommentsVisible} pageId={pageId} comments={comments} currentUserId={currentUserId} editor={editor} editorRootRef={editorRootRef} activeThreadId={activeThreadId} onActiveThreadChange={setActiveThreadId} />
+    <CommentRail ref={commentRailRef} visible={commentsVisible} onVisibleChange={setCommentsVisible} pageId={pageId} comments={commentThreads} currentUserId={currentUserId} editor={editor} editorRootRef={editorRootRef} activeThreadId={activeThreadId} onActiveThreadChange={setActiveThreadId} />
     {documentMode && <DocumentLayoutPanel
       pageId={pageId}
       editor={activeEditor}
@@ -897,7 +882,7 @@ export function WikiEditor({
     <span className="ml-auto">{t("editor.stats.block", { type: activeEditor.state.selection.$from.parent.type.name })}</span>
   </footer>}
   {regionTarget && <ImageRegionSelector rootRef={editorRootRef} {...regionTarget} onCancel={() => setRegionTarget(null)} onSelect={(anchor) => { setRegionTarget(null); openCommentComposer(anchor); }} />}
-  <Dialog open={commentOpen} onOpenChange={(open) => { setCommentOpen(open); if (!open) { setPendingAnchor(null); setComposerPosition(null); } }}><DialogContent className="w-[min(26rem,calc(100vw-2rem))]" style={composerPosition ? { left: composerPosition.left, top: composerPosition.top, transform: `translate(-50%, ${composerPosition.above ? "-100%" : "0"})` } : undefined}><DialogHeader><DialogTitle>{pendingAnchor?.type === "image" ? t("imageComment") : t("inlineComment")}</DialogTitle></DialogHeader>{pendingAnchor?.type !== "page" && pendingAnchor && <blockquote className="border-l-2 border-amber-400 pl-3 text-sm italic text-muted-foreground">{pendingAnchor.type === "text" ? pendingAnchor.quote : pendingAnchor.label}</blockquote>}<Textarea autoFocus value={commentBody} onChange={(event) => setCommentBody(event.target.value)} placeholder={t("commentPlaceholder")} /><Select value={assigneeId} onValueChange={(value) => setAssigneeId(value ?? "none")}><SelectTrigger className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="none">{t("unassigned")}</SelectItem>{users.map((person) => <SelectItem key={person.id} value={person.id}>{person.name}</SelectItem>)}</SelectContent></Select><Button onClick={submitComment} disabled={!commentBody.trim()}>{t("addComment")}</Button></DialogContent></Dialog>
+  <Dialog open={commentOpen} onOpenChange={(open) => { setCommentOpen(open); if (!open) setPendingAnchor(null); }}><DialogContent className="w-[min(26rem,calc(100vw-2rem))]"><DialogHeader><DialogTitle>{pendingAnchor?.type === "image" ? t("imageComment") : t("inlineComment")}</DialogTitle></DialogHeader>{pendingAnchor?.type !== "page" && pendingAnchor && <blockquote className="border-l-2 border-amber-400 pl-3 text-sm italic text-muted-foreground">{pendingAnchor.type === "text" ? pendingAnchor.quote : pendingAnchor.label}</blockquote>}<Textarea autoFocus value={commentBody} onChange={(event) => setCommentBody(event.target.value)} placeholder={t("commentPlaceholder")} /><Select value={assigneeId} onValueChange={(value) => setAssigneeId(value ?? "none")}><SelectTrigger className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="none">{t("unassigned")}</SelectItem>{users.map((person) => <SelectItem key={person.id} value={person.id}>{person.name}</SelectItem>)}</SelectContent></Select><Button onClick={submitComment} disabled={!commentBody.trim()}>{t("addComment")}</Button></DialogContent></Dialog>
   <MarkdownReferenceDialog open={markdownHelpOpen} onOpenChange={setMarkdownHelpOpen} />
   <EditorOutlineSheet editor={activeEditor} items={outline} activePosition={activeHeadingPosition} open={outlineOpen} onOpenChange={setOutlineOpen} />
   </div>;

@@ -12,10 +12,12 @@ import {
 } from "@/components/ui/card";
 
 export default async function DashboardPage() {
-  const user = await requireUser();
-  const t = await getTranslations("dashboard");
-  const tProjects = await getTranslations("projects");
-  const format = await getFormatter();
+  const [user, t, tProjects, format] = await Promise.all([
+    requireUser(),
+    getTranslations("dashboard"),
+    getTranslations("projects"),
+    getFormatter(),
+  ]);
 
   const myTasks = listMyTasks(user.id);
   const today = new Date().toISOString().slice(0, 10);
