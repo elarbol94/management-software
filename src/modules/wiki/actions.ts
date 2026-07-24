@@ -25,6 +25,7 @@ import {
   slugify,
 } from "./lib/tiptap";
 import type { TiptapNode } from "./lib/tiptap";
+import { normalizeDocumentSettings, serializeDocumentSettings } from "./lib/document-settings";
 
 function uniqueSlug(title: string): string {
   const base = slugify(title);
@@ -89,7 +90,7 @@ export async function renamePage(id: string, title: string) {
   if (!page) throw new Error("Page not found");
 
   db.transaction(() => {
-    db.insert(wikiPageRevisions).values({ pageId: page.id, version: page.version, title: page.title, contentJson: page.contentJson, status: page.status, citationLocale: page.citationLocale, kind: "autosave", createdBy: user.id }).run();
+    db.insert(wikiPageRevisions).values({ pageId: page.id, version: page.version, title: page.title, contentJson: page.contentJson, status: page.status, citationLocale: page.citationLocale, documentMode: page.documentMode, documentSettingsJson: page.documentSettingsJson, documentTemplateId: page.documentTemplateId, kind: "autosave", createdBy: user.id }).run();
     db.update(wikiPages)
       .set({ title: cleanTitle, updatedBy: user.id, updatedAt: new Date(), version: page.version + 1 })
       .where(eq(wikiPages.id, id))
@@ -103,6 +104,10 @@ const saveSchema = z.object({
   id: z.string().min(1),
   contentJson: z.string().max(2_000_000),
   baseContentJson: z.string().max(2_000_000).optional(),
+  documentMode: z.boolean().optional(),
+  documentSettingsJson: z.string().max(200_000).optional(),
+  baseDocumentMode: z.boolean().optional(),
+  baseDocumentSettingsJson: z.string().max(200_000).optional(),
   expectedVersion: z.number().int().positive().optional(),
 });
 
@@ -137,8 +142,21 @@ export async function savePageContent(input: z.infer<typeof saveSchema>) {
   const commentAnchors = new Set(extractCommentAnchors(doc));
   const commentNodeIds = new Set(extractCommentNodeIds(doc));
   const evidenceAnnotationIds = extractEvidenceAnnotationIds(doc);
+  const nextDocumentMode = data.documentMode ?? page.documentMode;
+  let nextDocumentSettingsJson = page.documentSettingsJson;
+  if (data.documentSettingsJson !== undefined) {
+    try {
+      nextDocumentSettingsJson = serializeDocumentSettings(normalizeDocumentSettings(JSON.parse(data.documentSettingsJson)));
+    } catch {
+      throw new Error("Invalid document settings");
+    }
+  }
 
-  if (data.expectedVersion !== undefined && data.expectedVersion !== page.version && data.baseContentJson !== page.contentJson) {
+  const baseChanged =
+    data.baseContentJson !== undefined && data.baseContentJson !== page.contentJson
+    || data.baseDocumentMode !== undefined && data.baseDocumentMode !== page.documentMode
+    || data.baseDocumentSettingsJson !== undefined && data.baseDocumentSettingsJson !== page.documentSettingsJson;
+  if (data.expectedVersion !== undefined && data.expectedVersion !== page.version && baseChanged) {
     const revision = db
       .insert(wikiPageRevisions)
       .values({
@@ -148,12 +166,23 @@ export async function savePageContent(input: z.infer<typeof saveSchema>) {
         contentJson: data.contentJson,
         status: page.status,
         citationLocale: page.citationLocale,
+        documentMode: nextDocumentMode,
+        documentSettingsJson: nextDocumentSettingsJson,
+        documentTemplateId: page.documentTemplateId,
         kind: "conflict",
         createdBy: user.id,
       })
       .returning({ id: wikiPageRevisions.id })
       .get();
-    return { saved: false as const, conflict: true as const, version: page.version, revisionId: revision.id, contentJson: page.contentJson };
+    return {
+      saved: false as const,
+      conflict: true as const,
+      version: page.version,
+      revisionId: revision.id,
+      contentJson: page.contentJson,
+      documentMode: page.documentMode,
+      documentSettingsJson: page.documentSettingsJson,
+    };
   }
 
   const nextVersion = page.version + 1;
@@ -163,6 +192,8 @@ export async function savePageContent(input: z.infer<typeof saveSchema>) {
       .set({
         contentJson: data.contentJson,
         contentText,
+        documentMode: nextDocumentMode,
+        documentSettingsJson: nextDocumentSettingsJson,
         updatedBy: user.id,
         updatedAt: new Date(),
         version: nextVersion,
@@ -252,6 +283,9 @@ export async function savePageContent(input: z.infer<typeof saveSchema>) {
           contentJson: page.contentJson,
           status: page.status,
           citationLocale: page.citationLocale,
+          documentMode: page.documentMode,
+          documentSettingsJson: page.documentSettingsJson,
+          documentTemplateId: page.documentTemplateId,
           kind: "autosave",
           createdBy: user.id,
         })

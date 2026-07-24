@@ -3,10 +3,12 @@
 import { z } from "zod";
 import { revalidatePath } from "next/cache";
 import { db } from "@/db";
-import { appSettings, businessLocations } from "@/db/schema";
+import { appSettings, businessLocations, userProfilePreferences } from "@/db/schema";
 import { eq } from "drizzle-orm";
-import { requireAdmin } from "@/lib/auth";
+import { requireAdmin, requireUserOrThrow } from "@/lib/auth";
 import { payrollStates } from "@/modules/accounting/lib/payroll-at-2026";
+import { USER_MARK_COLORS, type UserMarkColor } from "@/lib/user-mark-colors";
+import { ensureUserMarkColor } from "@/lib/user-mark-colors.server";
 
 const settingsSchema = z.object({
   companyName: z.string().max(200),
@@ -68,4 +70,30 @@ export async function setBusinessLocationActive(id: string, active: boolean) {
   db.update(businessLocations).set({ active }).where(eq(businessLocations.id, id)).run();
   revalidatePath("/settings/locations");
   revalidatePath("/accounting");
+}
+
+const markColorSchema = z.enum(USER_MARK_COLORS.map((color) => color.key) as [
+  UserMarkColor,
+  ...UserMarkColor[],
+]);
+
+export async function updateMyMarkColor(input: UserMarkColor) {
+  const currentUser = await requireUserOrThrow();
+  const markColor = markColorSchema.parse(input);
+  ensureUserMarkColor(currentUser.id);
+  try {
+    db.update(userProfilePreferences)
+      .set({ markColor, updatedAt: new Date() })
+      .where(eq(userProfilePreferences.userId, currentUser.id))
+      .run();
+  } catch (error) {
+    if (error instanceof Error && /unique/i.test(error.message)) {
+      return { ok: false as const, reason: "conflict" as const };
+    }
+    throw error;
+  }
+  revalidatePath("/settings/profile");
+  revalidatePath("/wiki", "layout");
+  revalidatePath("/", "layout");
+  return { ok: true as const, markColor };
 }

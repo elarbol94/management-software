@@ -41,10 +41,12 @@ async function serveAttachment(request: Request, { params }: Params, headOnly = 
   const start = range?.start ?? 0;
   const end = range?.end ?? stat.size - 1;
   const length = Math.max(0, end - start + 1);
+  const download = new URL(request.url).searchParams.get("download") === "1";
+  const disposition = download ? "attachment" : "inline";
   const headers = new Headers({
     "Content-Type": attachment.mimeType,
     "Content-Length": String(length),
-    "Content-Disposition": `inline; filename*=UTF-8''${encodeURIComponent(attachment.fileName)}`,
+    "Content-Disposition": `${disposition}; filename*=UTF-8''${encodeURIComponent(attachment.fileName)}`,
     "Cache-Control": "private, max-age=3600",
     "Accept-Ranges": "bytes",
     "X-Content-Type-Options": "nosniff",

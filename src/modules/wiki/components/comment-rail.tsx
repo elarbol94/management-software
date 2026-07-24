@@ -3,15 +3,16 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import type { Editor } from "@tiptap/react";
 import { useFormatter, useTranslations } from "next-intl";
-import { CheckCircle2, Circle, CornerDownRight, MessageSquareText } from "lucide-react";
+import { CheckCircle2, Circle, CornerDownRight, MessageSquareText, Pencil, Trash2, Undo2 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { addComment, setCommentResolved } from "../research-actions";
+import { addComment, deleteComment, restoreComment, setCommentResolved, updateComment } from "../research-actions";
 import { filterCommentThreads, layoutCommentCards, partitionCommentThreads, type CommentCardLayout } from "../lib/comment-layout";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
 import type { CommentAnchor } from "../lib/comment-anchors";
+import { userMarkColorStyle, type UserMarkColor } from "@/lib/user-mark-colors";
 
 export type CommentThread = {
   id: string;
@@ -22,8 +23,10 @@ export type CommentThread = {
   resolvedAt: Date | null;
   assigneeId: string | null;
   createdAt: Date;
+  createdBy: string;
   createdByName: string;
-  comments: Array<{ id: string; body: string; createdAt: Date; createdByName: string }>;
+  createdByMarkColor: UserMarkColor;
+  comments: Array<{ id: string; body: string; createdBy: string; createdAt: Date; createdByName: string; createdByMarkColor: UserMarkColor }>;
 };
 
 export type CommentRailHandle = {
@@ -55,25 +58,31 @@ function findAnchor(root: HTMLElement | null, thread: Pick<CommentThread, "id" |
   return null;
 }
 
-function CommentCard({ thread, active, orphaned, onActivate, onReply, onResolve, cardRef }: {
+function CommentCard({ thread, active, orphaned, currentUserId, onActivate, onReply, onResolve, onEditComment, onDeleteComment, cardRef }: {
   thread: CommentThread;
   active: boolean;
   orphaned: boolean;
+  currentUserId: string;
   onActivate: () => void;
   onReply: (body: string) => Promise<void>;
   onResolve: () => Promise<void>;
+  onEditComment: (commentId: string, body: string) => Promise<void>;
+  onDeleteComment: (commentId: string) => Promise<void>;
   cardRef?: (element: HTMLDivElement | null) => void;
 }) {
   const t = useTranslations("wiki");
   const format = useFormatter();
   const [reply, setReply] = useState("");
   const [pending, setPending] = useState(false);
+  const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
+  const [editBody, setEditBody] = useState("");
 
   return <div
     ref={cardRef}
     data-testid={`comment-card-${thread.id}`}
     data-comment-thread={thread.id}
-    className={cn("rounded-lg border p-3 text-xs shadow-sm transition", thread.resolvedAt ? "border-emerald-300 bg-emerald-50/70 dark:border-emerald-800 dark:bg-emerald-950/30" : "border-amber-300 bg-amber-50/70 dark:border-amber-800 dark:bg-amber-950/30", active && (thread.resolvedAt ? "ring-2 ring-emerald-300" : "ring-2 ring-amber-300"))}
+    className={cn("rounded-lg border p-3 text-xs shadow-sm transition", thread.resolvedAt && "opacity-75", active && "ring-2")}
+    style={{ ...userMarkColorStyle(thread.createdByMarkColor), borderColor: "var(--user-mark-solid)", backgroundColor: "var(--user-mark-highlight)", boxShadow: active ? "0 0 0 2px var(--user-mark-highlight)" : undefined }}
     onClick={onActivate}
   >
     <div className="mb-2 flex items-center justify-between gap-2">
@@ -83,12 +92,15 @@ function CommentCard({ thread, active, orphaned, onActivate, onReply, onResolve,
         {thread.resolvedAt ? t("commentRail.resolved") : t("commentRail.open")}
       </span>
     </div>
-    {thread.anchor.type !== "page" && <blockquote className={cn("mb-2 line-clamp-3 border-l-2 pl-2 italic text-muted-foreground", thread.resolvedAt ? "border-emerald-400" : "border-amber-400")}>“{thread.anchor.type === "text" ? thread.anchor.quote : thread.anchor.label}”</blockquote>}
+    {thread.anchor.type !== "page" && <blockquote className="mb-2 line-clamp-3 border-l-2 pl-2 italic text-muted-foreground" style={{ borderColor: "var(--user-mark-solid)" }}>“{thread.anchor.type === "text" ? thread.anchor.quote : thread.anchor.label}”</blockquote>}
     {orphaned && <p className="mb-2 rounded bg-amber-50 px-2 py-1 font-medium text-amber-800 dark:bg-amber-950/50 dark:text-amber-200">{t("orphaned")}</p>}
     <div className="space-y-2">
-      {thread.comments.map((comment, index) => <div key={comment.id} className={cn(index > 0 && "border-l pl-2")}>
-        <p className="whitespace-pre-wrap text-foreground">{comment.body}</p>
-        <p className="mt-1 text-[10px] text-muted-foreground">{comment.createdByName} · {format.dateTime(new Date(comment.createdAt), { dateStyle: "medium", timeStyle: "short" })}</p>
+      {thread.comments.map((comment, index) => <div key={comment.id} className={cn(index > 0 && "border-l-2 pl-2")} style={index > 0 ? { ...userMarkColorStyle(comment.createdByMarkColor), borderColor: "var(--user-mark-solid)" } : undefined}>
+        {editingCommentId === comment.id ? <div className="space-y-2" onClick={(event) => event.stopPropagation()}>
+          <Textarea value={editBody} onChange={(event) => setEditBody(event.target.value)} rows={3} aria-label={t("commentRail.editComment")} />
+          <div className="flex justify-end gap-1"><Button type="button" size="xs" variant="ghost" disabled={pending} onClick={() => { setEditingCommentId(null); setEditBody(""); }}>{t("commentRail.cancel")}</Button><Button type="button" size="xs" disabled={!editBody.trim() || pending} onClick={async () => { setPending(true); try { await onEditComment(comment.id, editBody.trim()); setEditingCommentId(null); setEditBody(""); } finally { setPending(false); } }}>{t("commentRail.save")}</Button></div>
+        </div> : <p className="whitespace-pre-wrap text-foreground">{comment.body}</p>}
+        <div className="mt-1 flex items-center justify-between gap-1"><p className="text-[10px] text-muted-foreground">{comment.createdByName} · {format.dateTime(new Date(comment.createdAt), { dateStyle: "medium", timeStyle: "short" })}</p>{comment.createdBy === currentUserId && editingCommentId !== comment.id && <span className="flex shrink-0"><Button type="button" size="icon-xs" variant="ghost" title={t("commentRail.editComment")} aria-label={t("commentRail.editComment")} disabled={pending} onClick={(event) => { event.stopPropagation(); setEditingCommentId(comment.id); setEditBody(comment.body); }}><Pencil className="size-3" /></Button><Button type="button" size="icon-xs" variant="ghost" title={t("commentRail.deleteComment")} aria-label={t("commentRail.deleteComment")} disabled={pending} onClick={async (event) => { event.stopPropagation(); setPending(true); try { await onDeleteComment(comment.id); } finally { setPending(false); } }}><Trash2 className="size-3 text-destructive" /></Button></span>}</div>
       </div>)}
     </div>
     {active && <div className="mt-3 border-t pt-3" onClick={(event) => event.stopPropagation()}>
@@ -104,13 +116,14 @@ function CommentCard({ thread, active, orphaned, onActivate, onReply, onResolve,
 export const CommentRail = forwardRef<CommentRailHandle, {
   pageId: string;
   comments: CommentThread[];
+  currentUserId: string;
   editor: Editor;
   editorRootRef: React.RefObject<HTMLDivElement | null>;
   activeThreadId: string | null;
   onActiveThreadChange: (threadId: string) => void;
   visible: boolean;
   onVisibleChange: (visible: boolean) => void;
-}>(({ pageId, comments, editor, editorRootRef, activeThreadId, onActiveThreadChange, visible: commentsVisible, onVisibleChange }, ref) => {
+}>(({ pageId, comments, currentUserId, editor, editorRootRef, activeThreadId, onActiveThreadChange, visible: commentsVisible, onVisibleChange }, ref) => {
   const t = useTranslations("wiki");
   const router = useRouter();
   const [includeResolved, setIncludeResolved] = useState(false);
@@ -120,6 +133,7 @@ export const CommentRail = forwardRef<CommentRailHandle, {
   const [layouts, setLayouts] = useState<CommentCardLayout[]>([]);
   const [railHeight, setRailHeight] = useState(448);
   const [pendingGeneral, setPendingGeneral] = useState(false);
+  const [deletedCommentId, setDeletedCommentId] = useState<string | null>(null);
   const railRef = useRef<HTMLDivElement>(null);
   const pinnedRef = useRef<HTMLDivElement>(null);
   const desktopGeneralRef = useRef<HTMLTextAreaElement>(null);
@@ -215,6 +229,10 @@ export const CommentRail = forwardRef<CommentRailHandle, {
     const media = root.querySelectorAll<HTMLElement>("[data-comment-node-id]");
     marks.forEach((mark) => {
       const ids = markThreadIds(mark);
+      const activeId = activeThreadId && ids.includes(activeThreadId) ? activeThreadId : ids[0];
+      const thread = comments.find((item) => item.id === activeId);
+      const color = userMarkColorStyle(thread?.createdByMarkColor);
+      for (const [property, value] of Object.entries(color)) mark.style.setProperty(property, String(value));
       mark.classList.toggle("is-active", !!activeThreadId && ids.includes(activeThreadId));
       mark.classList.toggle("is-resolved", ids.some((id) => comments.find((item) => item.id === id)?.resolvedAt));
     });
@@ -223,7 +241,7 @@ export const CommentRail = forwardRef<CommentRailHandle, {
       element.classList.toggle("is-comment-active", thread?.anchor.type === "image" && element.dataset.commentNodeId === thread.anchor.nodeId);
       element.classList.toggle("is-comment-resolved", comments.some((item) => item.resolvedAt && item.anchor.type === "image" && item.anchor.nodeId === element.dataset.commentNodeId));
     });
-    return () => { marks.forEach((mark) => mark.classList.remove("is-active", "is-resolved")); media.forEach((element) => element.classList.remove("is-comment-active", "is-comment-resolved")); };
+    return () => { marks.forEach((mark) => { mark.classList.remove("is-active", "is-resolved"); mark.style.removeProperty("--user-mark-solid"); mark.style.removeProperty("--user-mark-highlight"); mark.style.removeProperty("--user-mark-hover"); mark.style.removeProperty("--user-mark-dark"); }); media.forEach((element) => element.classList.remove("is-comment-active", "is-comment-resolved")); };
   }, [activeThreadId, comments, editorRootRef, editor.state.doc.content.size, commentsVisible]);
 
   useImperativeHandle(ref, () => ({
@@ -250,6 +268,9 @@ export const CommentRail = forwardRef<CommentRailHandle, {
   };
   const reply = async (threadId: string, body: string) => { await addComment({ pageId, threadId, body }); router.refresh(); };
   const resolve = async (thread: CommentThread) => { await setCommentResolved(thread.id, !thread.resolvedAt); router.refresh(); };
+  const editComment = async (commentId: string, body: string) => { await updateComment({ commentId, body }); router.refresh(); };
+  const removeComment = async (commentId: string) => { await deleteComment(commentId); setDeletedCommentId(commentId); router.refresh(); };
+  const undoDelete = async () => { if (!deletedCommentId) return; await restoreComment(deletedCommentId); setDeletedCommentId(null); router.refresh(); };
   const submitGeneral = async () => {
     if (!generalBody.trim()) return;
     setPendingGeneral(true);
@@ -264,6 +285,7 @@ export const CommentRail = forwardRef<CommentRailHandle, {
     </div>
     <Textarea data-testid={testId} ref={textareaRef} value={generalBody} onChange={(event) => setGeneralBody(event.target.value)} rows={3} placeholder={t("pageCommentPlaceholder")} />
     <Button type="button" size="sm" disabled={!generalBody.trim() || pendingGeneral} onClick={submitGeneral}>{t("addComment")}</Button>
+    {deletedCommentId && <div role="status" className="flex items-center justify-between gap-2 rounded-md border border-indigo-200 bg-indigo-50 px-2 py-1.5 text-xs text-indigo-950 dark:border-indigo-900 dark:bg-indigo-950/40 dark:text-indigo-100"><span>{t("commentRail.commentDeleted")}</span><Button type="button" size="xs" variant="ghost" onClick={undoDelete}><Undo2 className="size-3" />{t("commentRail.undo")}</Button></div>}
   </>;
 
   const renderCard = (thread: CommentThread, desktop: boolean, missingAnchor = false) => <CommentCard
@@ -274,6 +296,9 @@ export const CommentRail = forwardRef<CommentRailHandle, {
     onActivate={() => activate(thread.id)}
     onReply={(body) => reply(thread.id, body)}
     onResolve={() => resolve(thread)}
+    currentUserId={currentUserId}
+    onEditComment={editComment}
+    onDeleteComment={removeComment}
     cardRef={desktop ? (element) => { const previous = cardRefs.current.get(thread.id); if (previous && previous !== element) cardObserverRef.current?.unobserve(previous); if (element) { cardRefs.current.set(thread.id, element); cardObserverRef.current?.observe(element); } else cardRefs.current.delete(thread.id); } : undefined}
   />;
 
@@ -288,7 +313,8 @@ export const CommentRail = forwardRef<CommentRailHandle, {
         {layouts.map((layout) => {
           const anchor = anchors[layout.id];
           if (!anchor) return null;
-          return <path key={layout.id} data-comment-thread={layout.id} d={`M ${anchor.x} ${anchor.top} C ${anchor.x + 18} ${anchor.top}, -18 ${layout.top + 24}, 0 ${layout.top + 24}`} fill="none" stroke="currentColor" strokeWidth="0.5" className={cn(partitioned.anchored.find((item) => item.id === layout.id)?.resolvedAt ? "text-emerald-500" : "text-amber-500")} />;
+          const thread = partitioned.anchored.find((item) => item.id === layout.id);
+          return <path key={layout.id} data-comment-thread={layout.id} d={`M ${anchor.x} ${anchor.top} C ${anchor.x + 18} ${anchor.top}, -18 ${layout.top + 24}, 0 ${layout.top + 24}`} fill="none" strokeWidth="0.75" style={{ ...userMarkColorStyle(thread?.createdByMarkColor), stroke: "var(--user-mark-solid)" }} />;
         })}
       </svg>
       {layouts.map((layout) => {

@@ -22,7 +22,7 @@ const annotationSchema = z.object({
   documentId: z.string().min(1), pageNumber: z.number().int().positive(),
   kind: z.enum(["text", "region", "bookmark"]),
   selectedText: z.string().max(20_000).default(""), note: z.string().max(10_000).default(""),
-  label: z.string().max(200).default(""), color: z.enum(["yellow", "green", "blue", "pink", "purple"]).default("yellow"),
+  label: z.string().max(200).default(""),
   geometry: z.array(rectSchema).max(200).default([]), previewDataUrl: z.string().max(8_000_000).optional(),
 }).superRefine((value, context) => {
   if (value.kind !== "bookmark" && value.geometry.length === 0) context.addIssue({ code: "custom", message: "Annotation geometry is required" });
@@ -63,7 +63,7 @@ export async function createPdfAnnotation(input: z.input<typeof annotationSchema
   db.insert(wikiPdfAnnotations).values({
     id, sourceId: document.sourceId, documentId: data.documentId, pageNumber: data.pageNumber,
     kind: data.kind, selectedText: data.selectedText.trim(), note: data.note.trim(), label: data.label.trim(),
-    color: data.color, geometryJson: JSON.stringify(data.geometry), previewStoredName,
+    color: "yellow", geometryJson: JSON.stringify(data.geometry), previewStoredName,
     createdBy: currentUser.id, updatedBy: currentUser.id,
   }).run();
   revalidatePath(`/wiki/sources/${document.sourceId}`, "page");
@@ -83,13 +83,13 @@ export async function extendPdfAnnotation(input: { id: string; geometry: z.input
   revalidatePath("/wiki/sources/" + annotation.sourceId, "page");
 }
 
-export async function updatePdfAnnotation(input: { id: string; note: string; label: string; color: string }) {
+export async function updatePdfAnnotation(input: { id: string; note: string; label: string }) {
   const currentUser = await requireUserOrThrow();
-  const data = z.object({ id: z.string().min(1), note: z.string().max(10_000), label: z.string().max(200), color: z.enum(["yellow", "green", "blue", "pink", "purple"]) }).parse(input);
+  const data = z.object({ id: z.string().min(1), note: z.string().max(10_000), label: z.string().max(200) }).parse(input);
   const annotation = db.select().from(wikiPdfAnnotations).where(and(eq(wikiPdfAnnotations.id, data.id), isNull(wikiPdfAnnotations.deletedAt))).get();
   if (!annotation) throw new Error("Annotation not found");
   if (annotation.createdBy !== currentUser.id && currentUser.role !== "admin") throw new Error("Forbidden");
-  db.update(wikiPdfAnnotations).set({ note: data.note.trim(), label: data.label.trim(), color: data.color, updatedBy: currentUser.id, updatedAt: new Date() })
+  db.update(wikiPdfAnnotations).set({ note: data.note.trim(), label: data.label.trim(), updatedBy: currentUser.id, updatedAt: new Date() })
     .where(eq(wikiPdfAnnotations.id, data.id)).run();
   revalidatePath(`/wiki/sources/${annotation.sourceId}`, "page");
 }
@@ -104,6 +104,16 @@ export async function deletePdfAnnotation(id: string) {
   revalidatePath(`/wiki/sources/${annotation.sourceId}`, "page");
 }
 
+export async function restorePdfAnnotation(id: string) {
+  const currentUser = await requireUserOrThrow();
+  const annotation = db.select().from(wikiPdfAnnotations).where(eq(wikiPdfAnnotations.id, z.string().min(1).parse(id))).get();
+  if (!annotation?.deletedAt) return;
+  if (annotation.createdBy !== currentUser.id && currentUser.role !== "admin") throw new Error("Forbidden");
+  db.update(wikiPdfAnnotations).set({ deletedAt: null, updatedBy: currentUser.id, updatedAt: new Date() })
+    .where(eq(wikiPdfAnnotations.id, annotation.id)).run();
+  revalidatePath(`/wiki/sources/${annotation.sourceId}`, "page");
+}
+
 export async function createPdfAnnotationComment(input: { annotationId: string; body: string }) {
   const currentUser = await requireUserOrThrow();
   const data = z.object({ annotationId: z.string().min(1), body: z.string().trim().min(1).max(10_000) }).parse(input);
@@ -113,7 +123,8 @@ export async function createPdfAnnotationComment(input: { annotationId: string; 
   const id = createId(); const createdAt = new Date();
   db.insert(wikiPdfAnnotationComments).values({ id, annotationId: annotation.id, body: data.body, createdBy: currentUser.id, createdAt }).run();
   revalidatePath(`/wiki/sources/${annotation.sourceId}`, "page");
-  return { id, createdAt: createdAt.toISOString(), createdBy: currentUser.id, createdByName: currentUser.name, body: data.body };
+  const { ensureUserMarkColor } = await import("@/lib/user-mark-colors.server");
+  return { id, createdAt: createdAt.toISOString(), createdBy: currentUser.id, createdByName: currentUser.name, createdByMarkColor: ensureUserMarkColor(currentUser.id), body: data.body };
 }
 
 export async function updatePdfAnnotationComment(input: { id: string; body: string }) {

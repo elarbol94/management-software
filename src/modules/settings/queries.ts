@@ -1,5 +1,8 @@
 import { db } from "@/db";
-import { appSettings, businessLocations, user } from "@/db/schema";
+import { eq } from "drizzle-orm";
+import { appSettings, businessLocations, user, userProfilePreferences } from "@/db/schema";
+import { USER_MARK_COLORS } from "@/lib/user-mark-colors";
+import { ensureUserMarkColor } from "@/lib/user-mark-colors.server";
 
 export type AppSettings = typeof appSettings.$inferSelect;
 
@@ -39,4 +42,31 @@ export function listUsers() {
 
 export function listAllBusinessLocations() {
   return db.select().from(businessLocations).orderBy(businessLocations.name).all();
+}
+
+export function getMyProfilePreferences(userId: string) {
+  const markColor = ensureUserMarkColor(userId);
+  return db.select().from(userProfilePreferences)
+    .where(eq(userProfilePreferences.userId, userId)).get()
+    ?? { userId, markColor, updatedAt: new Date() };
+}
+
+export function listMarkColorAvailability(userId: string) {
+  ensureUserMarkColor(userId);
+  const owners = new Map(db.select({
+    markColor: userProfilePreferences.markColor,
+    userId: userProfilePreferences.userId,
+    userName: user.name,
+  }).from(userProfilePreferences)
+    .innerJoin(user, eq(userProfilePreferences.userId, user.id))
+    .all().map((row) => [row.markColor, row]));
+  return USER_MARK_COLORS.map((color) => {
+    const owner = owners.get(color.key);
+    return {
+      key: color.key,
+      available: !owner || owner.userId === userId,
+      mine: owner?.userId === userId,
+      ownerName: owner?.userName ?? null,
+    };
+  });
 }

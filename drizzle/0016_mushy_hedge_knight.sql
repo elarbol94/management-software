@@ -1,0 +1,1 @@
+ALTER TABLE `wiki_comments` ADD `deleted_at` integer;

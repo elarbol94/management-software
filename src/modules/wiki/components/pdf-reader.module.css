@@ -43,17 +43,23 @@
 
 .textLayer :global(.markedContent) { display: contents; }
 .textLayer ::selection { background: rgb(79 70 229 / 0.28); }
+.textLayer :global(span[data-search-match]) {
+  color: transparent;
+  background: rgb(250 204 21 / 0.42);
+  border-radius: 2px;
+  box-shadow: 0 0 0 1px rgb(202 138 4 / 0.2);
+}
+.textLayer :global(span[data-search-active]) {
+  background: rgb(249 115 22 / 0.5);
+  box-shadow: 0 0 0 2px rgb(234 88 12 / 0.35);
+}
+
+.readerGrid,
+.gridOnlyReader { grid-template-columns: minmax(0, 1fr); }
 
 
 @media (min-width: 48rem) {
-  .spotlightGrid,
-  .spotlightGridWithThumbnails {
-    grid-template-columns: minmax(0, 1fr) clamp(16rem, 22vw, 19rem);
-  }
-}
-
-@media (min-width: 64rem) {
-  .spotlightGridWithThumbnails {
-    grid-template-columns: 11rem minmax(0, 1fr) clamp(16rem, 22vw, 19rem);
-  }
+  .gridWithThumbnailsAndAnnotations { grid-template-columns: var(--pdf-thumbnail-width, 8.25rem) minmax(0, 1fr) var(--pdf-comment-width, 19rem); }
+  .gridWithThumbnails { grid-template-columns: var(--pdf-thumbnail-width, 8.25rem) minmax(0, 1fr); }
+  .gridWithAnnotations { grid-template-columns: minmax(0, 1fr) var(--pdf-comment-width, 19rem); }
 }

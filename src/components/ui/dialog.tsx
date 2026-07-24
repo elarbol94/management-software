@@ -43,13 +43,19 @@ function DialogContent({
   className,
   children,
   showCloseButton = true,
+  onOverlayClick,
+  onOverlayPointerDown,
+  onOverlayPointerDownCapture,
   ...props
 }: DialogPrimitive.Popup.Props & {
   showCloseButton?: boolean
+  onOverlayClick?: React.MouseEventHandler<HTMLDivElement>
+  onOverlayPointerDown?: React.PointerEventHandler<HTMLDivElement>
+  onOverlayPointerDownCapture?: React.PointerEventHandler<HTMLDivElement>
 }) {
   return (
     <DialogPortal>
-      <DialogOverlay />
+      <DialogOverlay onClick={onOverlayClick} onPointerDown={onOverlayPointerDown} onPointerDownCapture={onOverlayPointerDownCapture} />
       <DialogPrimitive.Popup
         data-slot="dialog-content"
         className={cn(

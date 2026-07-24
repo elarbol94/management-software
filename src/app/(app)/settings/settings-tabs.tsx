@@ -10,9 +10,10 @@ export function SettingsTabs({ isAdmin }: { isAdmin: boolean }) {
   const pathname = usePathname();
 
   const tabs = [
-    { href: "/settings/company", label: t("company") },
+    { href: "/settings/profile", label: t("profile") },
     ...(isAdmin
       ? [
+          { href: "/settings/company", label: t("company") },
           { href: "/settings/categories", label: t("categories") },
           { href: "/settings/locations", label: t("locations") },
           { href: "/settings/users", label: t("users") },

@@ -8,6 +8,7 @@ import { redirect } from "next/navigation";
 import { count } from "drizzle-orm";
 import { db } from "@/db";
 import * as schema from "@/db/schema";
+import { ensureUserMarkColor } from "@/lib/user-mark-colors.server";
 
 function userCount(): number {
   return db.select({ value: count() }).from(schema.user).get()?.value ?? 0;
@@ -40,6 +41,9 @@ export const auth = betterAuth({
         before: async (user) => ({
           data: { ...user, role: userCount() === 0 ? "admin" : "member" },
         }),
+        after: async (createdUser) => {
+          ensureUserMarkColor(createdUser.id);
+        },
       },
     },
   },

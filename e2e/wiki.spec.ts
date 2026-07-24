@@ -30,6 +30,239 @@ test("capture an inbox note and retain autosaved content", async ({ page }) => {
   await expect(page.getByText("Willkommen im Team! Erste Schritte für neue Kollegen.")).toBeVisible();
 });
 
+test("Markdown reference dialog opens from the editor toolbar and closes on Escape or outside click", async ({ page }) => {
+  await login(page);
+  await page.goto("/wiki/pages/unbenannte-notiz");
+
+  await page.getByTestId("markdown-help-button").click();
+  const dialog = page.getByTestId("markdown-reference-dialog");
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toContainText("**fett**");
+  await expect(dialog).toContainText(/Syntax\s*\|\s*Beschreibung/);
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+
+  await page.getByTestId("markdown-help-button").click();
+  await expect(dialog).toBeVisible();
+  await page.locator('[data-slot="dialog-overlay"]').click({ position: { x: 4, y: 4 } });
+  await expect(dialog).toBeHidden();
+});
+
+test("document mode persists page layout, document blocks, templates, and PDF export", async ({ page }) => {
+  await login(page);
+  await quickNote(page, "Funding application", "A structured project description.");
+
+  await page.getByTestId("document-mode-toggle").click();
+  const panel = page.getByTestId("document-layout-panel");
+  await expect(panel).toBeVisible();
+  await expect(page.getByTestId("wiki-editor")).toHaveAttribute("data-document-mode", "true");
+
+  await panel.getByLabel("Ausrichtung").click();
+  await page.getByRole("option", { name: "Querformat" }).click();
+  await panel.getByRole("button", { name: "Seitenumbruch" }).click();
+  await expect(page.locator(".wiki-document-page-break")).toHaveCount(1);
+
+  await panel.getByRole("tab", { name: "Inhalt" }).click();
+  await panel.getByPlaceholder("applicant").fill("Example Applicant");
+  await panel.getByRole("button", { name: "Feld applicant einfügen" }).click();
+  await expect(page.locator("[data-document-variable='applicant']")).toHaveCount(1);
+
+  await panel.getByLabel("Name der neuen Vorlage").fill("E2E application profile");
+  await panel.getByRole("button", { name: "Als Vorlage speichern" }).click();
+  await expect(page.getByText("Gespeichert", { exact: true })).toBeVisible({ timeout: 10_000 });
+
+  await page.reload();
+  await expect(page.getByTestId("document-layout-panel")).toBeVisible();
+  await expect(page.locator(".wiki-document-page-break")).toHaveCount(1);
+  await expect(page.locator("[data-document-variable='applicant']")).toContainText("applicant");
+
+  await page.getByTestId("document-layout-panel").getByRole("tab", { name: "Prüfung" }).click();
+  const href = await page.getByTestId("document-layout-panel").locator('a[href*="format=pdf"]').getAttribute("href");
+  expect(href).toBeTruthy();
+  const response = await page.request.get(href!);
+  expect(response.status()).toBe(200);
+  expect(response.headers()["content-type"]).toContain("application/pdf");
+  expect((await response.body()).length).toBeGreaterThan(1_000);
+});
+
+test("editor productivity tools support links, Markdown paste, search, outline, and writing statistics", async ({ page, context }) => {
+  await login(page);
+  await quickNote(page, "Editor tools", "Alpha beta alpha");
+  const editor = page.locator(".ProseMirror");
+
+  await expect(page.getByRole("button", { name: "Fett" })).toHaveAttribute("aria-pressed", "false");
+  await expect(page.getByTestId("editor-writing-status")).toContainText("Wörter");
+
+  await editor.click();
+  await page.keyboard.press("ControlOrMeta+End");
+  await page.keyboard.press("Enter");
+  await page.evaluate(() => {
+    const target = document.querySelector(".ProseMirror");
+    const data = new DataTransfer();
+    data.setData("text/plain", "## Imported heading\n\n- First\n- Second");
+    target?.dispatchEvent(new ClipboardEvent("paste", { bubbles: true, cancelable: true, clipboardData: data }));
+  });
+  await expect(editor.getByRole("heading", { level: 2, name: "Imported heading" })).toBeVisible();
+  await expect(editor.locator("ul li")).toHaveCount(2);
+
+  await page.keyboard.press("ControlOrMeta+f");
+  const search = page.getByTestId("editor-search-panel");
+  await expect(search).toBeVisible();
+  await search.getByPlaceholder("In dieser Notiz suchen…").fill("alpha");
+  await expect(search).toContainText("1 von 2");
+  await search.getByPlaceholder("Ersetzen durch…").fill("Gamma");
+  await search.getByRole("button", { name: "Alle ersetzen" }).click();
+  await expect(editor).toContainText("Gamma beta Gamma");
+  await page.keyboard.press("Escape");
+
+  await page.getByRole("button", { name: "Dokumentgliederung" }).click();
+  const outline = page.getByTestId("editor-outline");
+  await expect(outline.getByRole("button", { name: "Imported heading" })).toBeVisible();
+  await outline.getByRole("button", { name: "Imported heading" }).click();
+
+  await editor.click();
+  await page.keyboard.press("ControlOrMeta+End");
+  await page.keyboard.type(" Link text");
+  await page.keyboard.press("Shift+ControlOrMeta+ArrowLeft");
+  await page.getByRole("button", { name: "Link bearbeiten" }).click();
+  await page.getByLabel("Webadresse").fill("example.com");
+  await page.getByRole("button", { name: "Übernehmen" }).click();
+  await expect(editor.locator('a[href="https://example.com"]')).toContainText("Link text");
+
+  await context.setOffline(true);
+  await editor.click();
+  await page.keyboard.press("ControlOrMeta+End");
+  await page.keyboard.type(" offline");
+  await expect(page.getByText("Offline · lokal gesichert")).toBeVisible({ timeout: 10_000 });
+  await context.setOffline(false);
+});
+
+test("markdown shortcuts render on a boundary, undo cleanly, and persist", async ({ page }) => {
+  await login(page);
+  await quickNote(page, "Markdown Shortcuts", "Start");
+  const editor = page.locator(".ProseMirror");
+
+  await editor.click();
+  await page.keyboard.press("ControlOrMeta+End");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("**delayed**");
+  await expect(editor).toContainText("**delayed**");
+  await expect(editor.locator("strong", { hasText: "delayed" })).toHaveCount(0);
+
+  await page.keyboard.press("Space");
+  await expect(editor).not.toContainText("**delayed**");
+  await expect(editor.locator("strong", { hasText: "delayed" })).toHaveCount(1);
+
+  await page.keyboard.press("ControlOrMeta+z");
+  await expect(editor).toContainText("**delayed**");
+  await expect(editor.locator("strong", { hasText: "delayed" })).toHaveCount(0);
+
+  await page.keyboard.press("Space");
+  await page.keyboard.type("plain");
+  await expect(editor.locator("strong", { hasText: "delayed" })).toHaveText("delayed");
+  await expect(editor.locator("strong")).not.toContainText("plain");
+
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("*next line*");
+  await expect(editor).toContainText("*next line*");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("unformatted");
+  await expect(editor.locator("em", { hasText: "next line" })).toHaveText("next line");
+  await expect(editor.locator("em")).not.toContainText("unformatted");
+
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("# ");
+  await page.keyboard.type("Markdown heading");
+  await expect(editor.getByRole("heading", { level: 1, name: "Markdown heading" })).toBeVisible();
+
+  await expect(page.getByText("Gespeichert", { exact: true })).toBeVisible({ timeout: 10_000 });
+  await page.reload();
+  await expect(editor.locator("strong", { hasText: "delayed" })).toHaveText("delayed");
+  await expect(editor.locator("em", { hasText: "next line" })).toHaveText("next line");
+  await expect(editor.getByRole("heading", { level: 1, name: "Markdown heading" })).toBeVisible();
+});
+
+test("extended Markdown syntax creates editable semantic content", async ({ page }) => {
+  await login(page);
+  await quickNote(page, "Extended Markdown", "Start");
+  const editor = page.locator(".ProseMirror");
+
+  await editor.click();
+  await page.keyboard.press("ControlOrMeta+End");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("==important==");
+  await expect(editor.locator("mark.wiki-highlight")).toHaveCount(0);
+  await page.keyboard.press("Space");
+  await page.keyboard.type("H~2~O");
+  await page.keyboard.press("Space");
+  await page.keyboard.type("X^2^");
+  await page.keyboard.press("Space");
+  await page.keyboard.type(":joy:");
+  await page.keyboard.press("Space");
+  await page.keyboard.type("[^1]");
+  await page.keyboard.press("Space");
+  await expect(editor.locator("mark.wiki-highlight")).toHaveText("important");
+  await expect(editor.locator("sub")).toHaveText("2");
+  await expect(editor.locator("sup:not([data-footnote-reference])")).toHaveText("2");
+  await expect(editor.locator("sup[data-footnote-reference]")).toHaveText("1");
+  await expect(editor).toContainText("😂");
+
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("[^1]: Footnote text");
+  await page.keyboard.press("Enter");
+  await expect(editor.locator("aside[data-footnote-definition='1']")).toContainText("Footnote text");
+
+  await page.keyboard.type("term");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type(": definition");
+  await page.keyboard.press("Enter");
+  await expect(editor.locator("dl[data-markdown-definition-list] dt")).toHaveText("term");
+  await expect(editor.locator("dl[data-markdown-definition-list] dd")).toHaveText("definition");
+
+  await page.keyboard.type("| Syntax | Description |");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("| --- | --- |");
+  await page.keyboard.press("Enter");
+  const table = editor.locator("table[data-markdown-table]");
+  await expect(table.locator("th")).toHaveCount(2);
+  await expect(table.locator("td")).toHaveCount(2);
+  await table.locator("td").nth(0).click();
+  await page.keyboard.type("Header");
+  await table.locator("td").nth(1).click();
+  await page.keyboard.type("Title");
+  await expect(table.locator("td").nth(0)).toHaveText("Header");
+  await expect(table.locator("td").nth(1)).toHaveText("Title");
+
+  await page.keyboard.type("### ");
+  await page.keyboard.type("My Great Heading {#custom-id}");
+  await page.keyboard.press("Enter");
+  await expect(editor.locator("h3#custom-id")).toHaveText("My Great Heading");
+
+  await page.keyboard.type("![diagram](/window.svg)");
+  await page.keyboard.press("Enter");
+  await expect(editor.locator("figure[data-commentable-image] img")).toHaveAttribute("alt", "diagram");
+
+  await page.keyboard.type("```");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("const x = 1");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("```");
+  await page.keyboard.press("Enter");
+  await expect(editor.locator("pre code")).toHaveText("const x = 1");
+
+  await page.keyboard.type("---");
+  await expect(editor.locator("hr")).toHaveCount(0);
+  await page.keyboard.press("Enter");
+  await expect(editor.locator("hr")).toHaveCount(1);
+
+  await expect(page.getByText("Gespeichert", { exact: true })).toBeVisible({ timeout: 10_000 });
+  await page.reload();
+  await expect(editor.locator("table[data-markdown-table]")).toHaveCount(1);
+  await expect(editor.locator("aside[data-footnote-definition='1']")).toContainText("Footnote text");
+  await expect(editor.locator("h3#custom-id")).toHaveText("My Great Heading");
+  await expect(editor.locator("pre code")).toHaveText("const x = 1");
+});
+
 test("internal links create backlinks and unified search finds content", async ({ page }) => {
   await login(page);
   await quickNote(page, "IT-Setup", "Laptop einrichten. Siehe auch: ");

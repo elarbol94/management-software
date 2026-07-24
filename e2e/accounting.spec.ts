@@ -94,6 +94,54 @@ test("plan a category and compare it with actual journal entries", async ({ page
   await expect(page.getByLabel(/Software & Hosting.*Jul$/i)).toHaveValue("100,00");
 });
 
+test("keeps planning section headings fixed during horizontal scrolling", async ({ page }) => {
+  await page.goto("/accounting/planning?year=2026");
+  await expect(page.getByRole("heading", { name: "Planung 2026" })).toBeVisible();
+
+  const tableContainer = page.locator('div[data-slot="table-container"]');
+  await expect(tableContainer).toBeVisible();
+
+  const expenseHeading = page.getByRole("row", { name: "Ausgaben" });
+  await expect(expenseHeading).toHaveCount(1);
+  const expenseLabel = expenseHeading.locator("td").first();
+  const monthInput = page.getByLabel("Miete Jan");
+
+  const before = await page.evaluate(() => {
+    const container = document.querySelector('[data-slot="table-container"]');
+    const heading = document.querySelector('tr:has(td.sticky)');
+    const input = document.querySelector('input[aria-label="Miete Jan"]');
+    if (!container || !heading || !input) throw new Error("Planning table elements missing");
+    return {
+      maxScroll: container.scrollWidth - container.clientWidth,
+      headingLeft: heading.getBoundingClientRect().left,
+      inputLeft: input.getBoundingClientRect().left,
+    };
+  });
+  expect(before.maxScroll).toBeGreaterThan(0);
+
+  await tableContainer.evaluate((element) => {
+    element.scrollLeft = Math.min(400, element.scrollWidth - element.clientWidth);
+  });
+
+  const after = await page.evaluate(() => {
+    const container = document.querySelector('[data-slot="table-container"]');
+    const heading = document.querySelector('tr:has(td.sticky)');
+    const input = document.querySelector('input[aria-label="Miete Jan"]');
+    if (!container || !heading || !input) throw new Error("Planning table elements missing");
+    return {
+      scrollLeft: container.scrollLeft,
+      headingLeft: heading.getBoundingClientRect().left,
+      inputLeft: input.getBoundingClientRect().left,
+    };
+  });
+
+  expect(after.scrollLeft).toBeGreaterThan(0);
+  expect(Math.abs(after.headingLeft - before.headingLeft)).toBeLessThan(2);
+  expect(after.inputLeft).toBeLessThan(before.inputLeft);
+  await expect(expenseLabel).toContainText("Ausgaben");
+  await expect(monthInput).toBeVisible();
+});
+
 test("edit and delete the entry", async ({ page }) => {
   await page.goto("/login");
   await page.locator("#username").fill("admin");

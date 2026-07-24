@@ -24,6 +24,10 @@ function runCommand(command: string, args: string[], timeout = 120_000) {
   return new Promise<string>((resolve, reject) => {
     execFile(command, args, { encoding: "utf8", timeout, maxBuffer: 32 * 1024 * 1024 }, (error, stdout, stderr) => {
       if (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+          reject(new Error(`Required PDF tool \"${command}\" was not found. Install it or set ${command === "tesseract" ? "TESSERACT_PATH" : "PATH"}.`));
+          return;
+        }
         reject(new Error(String(stderr || error.message).trim()));
         return;
       }
@@ -110,7 +114,7 @@ export async function ensurePdfThumbnail(filePath: string, documentId: string, p
 async function extractOcrPage(filePath: string, pageNumber: number, temporary: string) {
   const prefix = path.join(temporary, `ocr-${pageNumber}`);
   await runCommand("pdftoppm", ["-f", String(pageNumber), "-l", String(pageNumber), "-singlefile", "-r", "150", "-png", filePath, prefix]);
-  const tsv = await runCommand("tesseract", [`${prefix}.png`, "stdout", "-l", process.env.PDF_OCR_LANGUAGES || "deu+eng", "tsv"], 180_000);
+  const tsv = await runCommand(process.env.TESSERACT_PATH || "tesseract", [`${prefix}.png`, "stdout", "-l", process.env.PDF_OCR_LANGUAGES || "deu+eng", "tsv"], 180_000);
   return parseOcrTsv(tsv);
 }
 

@@ -6,6 +6,7 @@ import {
   attachments,
   evidenceLinks,
   user,
+  userProfilePreferences,
   wikiPdfAnnotationComments,
   wikiPdfAnnotations,
   wikiPdfDocuments,
@@ -13,6 +14,7 @@ import {
   wikiSources,
 } from "@/db/schema";
 import type { EvidenceTargetType } from "./lib/pdf-evidence";
+import { resolveStoredUserMarkColor } from "@/lib/user-mark-colors.server";
 
 export function listPdfDocumentsForSource(sourceId: string) {
   return db.select({
@@ -78,12 +80,18 @@ export function getPdfReaderData(sourceId: string, documentId: string) {
     hasPreview: wikiPdfAnnotations.previewStoredName,
     createdBy: wikiPdfAnnotations.createdBy,
     createdByName: user.name,
+    createdByMarkColor: userProfilePreferences.markColor,
     createdAt: wikiPdfAnnotations.createdAt,
     updatedAt: wikiPdfAnnotations.updatedAt,
   }).from(wikiPdfAnnotations).innerJoin(user, eq(wikiPdfAnnotations.createdBy, user.id))
+    .leftJoin(userProfilePreferences, eq(wikiPdfAnnotations.createdBy, userProfilePreferences.userId))
     .where(and(eq(wikiPdfAnnotations.documentId, documentId), isNull(wikiPdfAnnotations.deletedAt)))
     .orderBy(asc(wikiPdfAnnotations.pageNumber), asc(wikiPdfAnnotations.createdAt)).all()
-    .map((annotation) => ({ ...annotation, hasPreview: Boolean(annotation.hasPreview) }));
+    .map((annotation) => ({
+      ...annotation,
+      hasPreview: Boolean(annotation.hasPreview),
+      createdByMarkColor: resolveStoredUserMarkColor(annotation.createdByMarkColor),
+    }));
   const annotationIds = annotations.map((annotation) => annotation.id);
   const comments = annotationIds.length ? db.select({
     id: wikiPdfAnnotationComments.id,
@@ -91,11 +99,17 @@ export function getPdfReaderData(sourceId: string, documentId: string) {
     body: wikiPdfAnnotationComments.body,
     createdBy: wikiPdfAnnotationComments.createdBy,
     createdByName: user.name,
+    createdByMarkColor: userProfilePreferences.markColor,
     createdAt: wikiPdfAnnotationComments.createdAt,
   }).from(wikiPdfAnnotationComments).innerJoin(user, eq(wikiPdfAnnotationComments.createdBy, user.id))
+    .leftJoin(userProfilePreferences, eq(wikiPdfAnnotationComments.createdBy, userProfilePreferences.userId))
     .where(inArray(wikiPdfAnnotationComments.annotationId, annotationIds)).orderBy(asc(wikiPdfAnnotationComments.createdAt)).all() : [];
-  const commentsByAnnotation = new Map<string, typeof comments>();
-  for (const comment of comments) commentsByAnnotation.set(comment.annotationId, [...(commentsByAnnotation.get(comment.annotationId) ?? []), comment]);
+  const resolvedComments = comments.map((comment) => ({
+    ...comment,
+    createdByMarkColor: resolveStoredUserMarkColor(comment.createdByMarkColor),
+  }));
+  const commentsByAnnotation = new Map<string, typeof resolvedComments>();
+  for (const comment of resolvedComments) commentsByAnnotation.set(comment.annotationId, [...(commentsByAnnotation.get(comment.annotationId) ?? []), comment]);
   return { document, pages, annotations: annotations.map((annotation) => ({ ...annotation, comments: commentsByAnnotation.get(annotation.id) ?? [] })) };
 }
 
@@ -111,13 +125,19 @@ export function listEvidenceForTarget(targetType: EvidenceTargetType, targetId: 
     note: wikiPdfAnnotations.note,
     label: wikiPdfAnnotations.label,
     color: wikiPdfAnnotations.color,
+    createdByMarkColor: userProfilePreferences.markColor,
     deletedAt: wikiPdfAnnotations.deletedAt,
     sourceTitle: wikiSources.title,
   }).from(evidenceLinks)
     .innerJoin(wikiPdfAnnotations, eq(evidenceLinks.annotationId, wikiPdfAnnotations.id))
     .innerJoin(wikiSources, eq(wikiPdfAnnotations.sourceId, wikiSources.id))
+    .leftJoin(userProfilePreferences, eq(wikiPdfAnnotations.createdBy, userProfilePreferences.userId))
     .where(and(eq(evidenceLinks.targetType, targetType), eq(evidenceLinks.targetId, targetId)))
-    .orderBy(desc(evidenceLinks.createdAt)).all();
+    .orderBy(desc(evidenceLinks.createdAt)).all()
+    .map((item) => ({
+      ...item,
+      createdByMarkColor: resolveStoredUserMarkColor(item.createdByMarkColor),
+    }));
 }
 
 export function searchEvidenceAnnotations(query = "", limit = 100) {
@@ -125,15 +145,17 @@ export function searchEvidenceAnnotations(query = "", limit = 100) {
   return sqlite.prepare(`
     SELECT a.id, a.source_id AS sourceId, a.document_id AS documentId,
            a.page_number AS pageNumber, a.kind, a.selected_text AS selectedText,
-           a.note, a.label, a.color, s.title AS sourceTitle
+           a.note, a.label, COALESCE(p.mark_color, 'amber') AS createdByMarkColor,
+           s.title AS sourceTitle
     FROM wiki_pdf_annotations a
     JOIN wiki_sources s ON s.id = a.source_id
+    LEFT JOIN user_profile_preferences p ON p.user_id = a.created_by
     WHERE a.deleted_at IS NULL AND s.deleted_at IS NULL
       AND (? = '%%' OR s.title LIKE ? OR a.selected_text LIKE ? OR a.note LIKE ? OR a.label LIKE ?)
     ORDER BY a.updated_at DESC LIMIT ?
   `).all(like, like, like, like, like, limit) as Array<{
     id: string; sourceId: string; documentId: string; pageNumber: number; kind: string;
-    selectedText: string; note: string; label: string; color: string; sourceTitle: string;
+    selectedText: string; note: string; label: string; createdByMarkColor: string; sourceTitle: string;
   }>;
 }
 

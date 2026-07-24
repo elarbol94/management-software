@@ -1,9 +1,58 @@
 import { getSession } from "@/lib/auth";
-import { db } from "@/db";
-import { eq } from "drizzle-orm";
-import { wikiPages } from "@/db/schema";
-import { extractText, type TiptapNode } from "@/modules/wiki/lib/tiptap";
-import { getCitationSourcesForPage } from "@/modules/wiki/research-queries";
-import { formatBibliographyEntry } from "@/modules/wiki/lib/citations";
-function escape(value: string) { return value.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
-export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) { if (!await getSession()) return new Response("Unauthorized", { status: 401 }); const { id } = await params; const page = db.select().from(wikiPages).where(eq(wikiPages.id, id)).get(); if (!page) return new Response("Not found", { status: 404 }); const format = new URL(request.url).searchParams.get("format") === "html" ? "html" : "markdown"; let doc: TiptapNode | null = null; try { doc = JSON.parse(page.contentJson); } catch { /* empty */ } const body = extractText(doc); const references = getCitationSourcesForPage(id).map(formatBibliographyEntry); const text = format === "html" ? `<!doctype html><html><head><meta charset="utf-8"><title>${escape(page.title)}</title></head><body><h1>${escape(page.title)}</h1><article>${escape(body).replace(/\n/g,"<br>\n")}</article>${references.length ? `<h2>References</h2><ol>${references.map((item) => `<li>${escape(item)}</li>`).join("")}</ol>` : ""}</body></html>` : `# ${page.title}\n\n${body}${references.length ? `\n\n## References\n\n${references.map((item) => `- ${item}`).join("\n")}` : ""}\n`; const ext = format === "html" ? "html" : "md"; return new Response(text, { headers: { "Content-Type": `${format === "html" ? "text/html" : "text/markdown"}; charset=utf-8`, "Content-Disposition": `attachment; filename="${page.slug}.${ext}"` } }); }
+import { generateWikiDocumentPdf, renderStoredWikiDocument } from "@/modules/wiki/lib/document-pdf";
+import { parseDocumentSettings } from "@/modules/wiki/lib/document-settings";
+import { renderDocumentMarkdown } from "@/modules/wiki/lib/document-renderer";
+import { parseStoredDocument } from "@/modules/wiki/lib/tiptap";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+function disposition(slug: string, extension: string, inline: boolean) {
+  const safe = slug.replace(/[^a-z0-9_-]+/gi, "-") || "document";
+  return `${inline ? "inline" : "attachment"}; filename="${safe}.${extension}"`;
+}
+
+export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
+  if (!await getSession()) return new Response("Unauthorized", { status: 401 });
+  const { id } = await params;
+  const url = new URL(request.url);
+  const format = url.searchParams.get("format") ?? "markdown";
+  const inline = url.searchParams.get("disposition") === "inline";
+  try {
+    if (format === "pdf") {
+      const { pdf, page, rendered } = await generateWikiDocumentPdf(id);
+      return new Response(new Uint8Array(pdf), {
+        headers: {
+          "Content-Type": "application/pdf",
+          "Content-Disposition": disposition(page.slug, "pdf", inline),
+          "Cache-Control": "no-store",
+          "X-Document-Issues": String(rendered.issues.length),
+        },
+      });
+    }
+
+    const { page, rendered } = await renderStoredWikiDocument(id);
+    if (format === "html") {
+      return new Response(rendered.html, {
+        headers: {
+          "Content-Type": "text/html; charset=utf-8",
+          "Content-Disposition": disposition(page.slug, "html", inline),
+        },
+      });
+    }
+    const markdown = `# ${page.title}\n\n${renderDocumentMarkdown(
+      parseStoredDocument(page.contentJson),
+      parseDocumentSettings(page.documentSettingsJson),
+    )}`;
+    return new Response(markdown, {
+      headers: {
+        "Content-Type": "text/markdown; charset=utf-8",
+        "Content-Disposition": disposition(page.slug, "md", inline),
+      },
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Document export failed";
+    const status = message === "Page not found" ? 404 : 500;
+    return Response.json({ error: message }, { status });
+  }
+}

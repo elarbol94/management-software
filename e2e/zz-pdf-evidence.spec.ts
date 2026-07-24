@@ -52,6 +52,7 @@ test("upload, read, search, annotate, reload, and insert traceable PDF evidence"
   await expect(read).toBeVisible({ timeout: 30_000 });
   await read.click();
 
+  await page.getByRole("tab", { name: "Suchen" }).click();
   await expect(page.getByPlaceholder("In der PDF suchen…")).toBeVisible({ timeout: 15_000 });
   await page.getByPlaceholder("In der PDF suchen…").fill("traceable");
   await expect(page.getByText("Local PDF evidence supports traceable research").first()).toBeVisible();
@@ -97,32 +98,24 @@ test("upload, read, search, annotate, reload, and insert traceable PDF evidence"
   const annotationMarker = page.getByTestId("pdf-annotation-marker").first();
   await expect(annotationMarker).toBeVisible();
   await annotationMarker.click();
-  const spotlight = page.getByTestId("pdf-annotation-spotlight");
-  const card = page.getByTestId("pdf-annotation-card");
+  const card = page.getByTestId("pdf-comments-panel");
   await expect(card).toBeVisible();
-  await expect(spotlight).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+  await expect(page).toHaveURL(/annotation=/);
 
   const cardBeforeZoom = await card.boundingBox();
-  const markerBeforeZoom = await annotationMarker.boundingBox();
   const closeButton = card.getByRole("button", { name: "Abbrechen" });
   const closeBounds = await closeButton.boundingBox();
-  if (!cardBeforeZoom || !markerBeforeZoom || !closeBounds) throw new Error("Annotation popup geometry unavailable");
-  expect(cardBeforeZoom.width).toBeGreaterThanOrEqual(230);
-  expect(cardBeforeZoom.width).toBeLessThanOrEqual(305);
+  if (!cardBeforeZoom || !closeBounds) throw new Error("Comment panel geometry unavailable");
+  expect(cardBeforeZoom.width).toBeGreaterThanOrEqual(260);
+  expect(cardBeforeZoom.width).toBeLessThanOrEqual(420);
   expect(closeBounds.x).toBeGreaterThanOrEqual(cardBeforeZoom.x);
   expect(closeBounds.x + closeBounds.width).toBeLessThanOrEqual(cardBeforeZoom.x + cardBeforeZoom.width);
-  expect(Math.abs(cardBeforeZoom.y - markerBeforeZoom.y)).toBeLessThan(28);
 
   const reply = card.getByTestId("pdf-annotation-reply");
   await reply.fill("Draft survives zoom");
   const zoomIn = page.getByTestId("pdf-zoom-in");
   await zoomIn.click();
   await expect(reply).toHaveValue("Draft survives zoom");
-  await expect.poll(async () => {
-    const popupBounds = await card.boundingBox();
-    const markerBounds = await annotationMarker.boundingBox();
-    return popupBounds && markerBounds ? Math.abs(popupBounds.y - markerBounds.y) : 999;
-  }).toBeLessThan(28);
   const cardAfterZoom = await card.boundingBox();
   expect(Math.abs((cardAfterZoom?.width ?? 0) - cardBeforeZoom.width)).toBeLessThan(3);
 
@@ -137,13 +130,27 @@ test("upload, read, search, annotate, reload, and insert traceable PDF evidence"
   await page.setViewportSize({ width: 997, height: 514 });
   await expect(card).toBeVisible();
   const compactViewport = page.getByTestId("pdf-reader-viewport");
-  await expect.poll(async () => (await compactViewport.boundingBox())?.width ?? 0).toBeGreaterThan(600);
-  await expect.poll(async () => (await card.boundingBox())?.width ?? 999).toBeLessThanOrEqual(305);
-  await expect.poll(async () => {
-    const popupBounds = await card.boundingBox();
-    const markerBounds = await annotationMarker.boundingBox();
-    return popupBounds && markerBounds ? Math.abs(popupBounds.y - markerBounds.y) : 999;
-  }).toBeLessThan(28);
+  await expect.poll(async () => (await compactViewport.boundingBox())?.width ?? 0).toBeGreaterThan(250);
+  const resizeHandle = page.getByRole("button", { name: "Breite der Kommentarleiste anpassen" });
+  const resizeBounds = await resizeHandle.boundingBox();
+  if (!resizeBounds) throw new Error("Comment panel resize handle unavailable");
+  await page.mouse.move(resizeBounds.x + resizeBounds.width / 2, resizeBounds.y + 40);
+  await page.mouse.down();
+  await page.mouse.move(resizeBounds.x - 40, resizeBounds.y + 40);
+  await page.mouse.up();
+  await expect.poll(async () => Number(await page.evaluate(() => localStorage.getItem("wiki:pdf-comment-panel-width")))).toBeGreaterThan(304);
+  const resizedWidth = (await card.boundingBox())?.width ?? 0;
+  await page.reload();
+  await expect(page.getByTestId("pdf-comments-panel")).toBeVisible();
+  await expect.poll(async () => (await page.getByTestId("pdf-comments-panel").boundingBox())?.width ?? 0).toBeGreaterThanOrEqual(resizedWidth - 2);
+  await page.getByTestId("pdf-comments-panel").getByRole("button", { name: "Zurück zu den Kommentaren" }).click();
+  const commentList = page.getByTestId("pdf-comment-list");
+  await expect(commentList).toBeVisible();
+  await commentList.getByPlaceholder("Kommentare durchsuchen…").fill("Key quotation");
+  await expect(commentList.getByText("Key quotation")).toBeVisible();
+  await commentList.getByRole("button", { name: "Alle Kommentare" }).click();
+  await expect(commentList.getByRole("button", { name: "Nur aktuelle Seite" })).toBeVisible();
+  await commentList.getByText("Key quotation").click();
 
   await page.setViewportSize({ width: 700, height: 700 });
   await expect(page.getByTestId("pdf-annotation-mobile-sheet")).toBeVisible();
@@ -181,27 +188,21 @@ test("PDF and note focus modes expand their workspaces and persist independently
   await expect(page.getByTestId("app-sidebar")).toHaveCount(0);
   await expect(page.getByTestId("research-sidebar")).toHaveCount(0);
   await expect(page.getByTestId("pdf-thumbnails-panel")).toHaveCount(0);
-  await expect(page.getByTestId("pdf-annotations-panel")).toHaveCount(0);
+  await expect(page.getByTestId("pdf-comments-panel")).toHaveCount(0);
   await expect.poll(async () => (await viewport.boundingBox())?.width ?? 0).toBeGreaterThan(standardWidth + 400);
-  await page.getByRole("button", { name: /^\d+%$/ }).click();
+  await page.getByRole("button", { name: "Zoomoptionen" }).click();
+  await page.getByRole("menuitem", { name: "An Breite anpassen" }).click();
   await expect.poll(async () => viewport.evaluate((element) => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
 
-  await page.getByRole("button", { name: "Seitenvorschau anzeigen" }).click();
-  await expect(page.getByTestId("pdf-thumbnails-panel")).toBeVisible();
-  await page.getByRole("button", { name: "Seitenvorschau ausblenden" }).click();
   await page.getByRole("button", { name: "Markierungen anzeigen" }).click();
-  await expect(page.getByTestId("pdf-annotations-panel")).toBeVisible();
+  await expect(page.getByTestId("pdf-comments-panel")).toBeVisible();
 
   await page.reload();
   await expect(page.getByRole("button", { name: "Fokusmodus beenden" })).toBeVisible();
   await expect(page.getByTestId("app-sidebar")).toHaveCount(0);
   await expect(page.getByTestId("pdf-thumbnails-panel")).toHaveCount(0);
-  await expect(page.getByTestId("pdf-annotations-panel")).toHaveCount(0);
+  await expect(page.getByTestId("pdf-comments-panel")).toHaveCount(0);
 
-  await page.setViewportSize({ width: 900, height: 900 });
-  await page.getByRole("button", { name: "Seitenvorschau anzeigen" }).click();
-  await expect(page.getByRole("dialog").getByRole("heading", { name: "Seitenvorschau" })).toBeVisible();
-  await page.keyboard.press("Escape");
   await page.setViewportSize({ width: 1280, height: 900 });
 
   await page.goto("/wiki/inbox");
@@ -236,5 +237,5 @@ test("PDF and note focus modes expand their workspaces and persist independently
   await expect(page.getByTestId("app-sidebar")).toBeVisible();
   await expect(page.getByTestId("research-sidebar")).toBeVisible();
   await expect(page.getByTestId("pdf-thumbnails-panel")).toBeVisible();
-  await expect(page.getByTestId("pdf-annotations-panel")).toBeVisible();
+  await expect(page.getByTestId("pdf-comments-panel")).toBeVisible();
 });

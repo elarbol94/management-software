@@ -88,7 +88,7 @@ export async function updatePageResearchMeta(input: z.infer<typeof pageMetaSchem
   if (!page) throw new Error("Page not found");
   const tags = ensureTags(data.tagNames, currentUser.id);
   db.transaction(() => {
-    db.insert(wikiPageRevisions).values({ pageId: page.id, version: page.version, title: page.title, contentJson: page.contentJson, status: page.status, citationLocale: page.citationLocale, kind: "autosave", createdBy: currentUser.id }).run();
+    db.insert(wikiPageRevisions).values({ pageId: page.id, version: page.version, title: page.title, contentJson: page.contentJson, status: page.status, citationLocale: page.citationLocale, documentMode: page.documentMode, documentSettingsJson: page.documentSettingsJson, documentTemplateId: page.documentTemplateId, kind: "autosave", createdBy: currentUser.id }).run();
     db.update(wikiPages).set({ status: data.status, citationLocale: data.citationLocale, updatedBy: currentUser.id, updatedAt: new Date(), version: page.version + 1 }).where(eq(wikiPages.id, page.id)).run();
     db.delete(wikiPageTags).where(eq(wikiPageTags.pageId, page.id)).run();
     if (tags.length) db.insert(wikiPageTags).values(tags.map((tag) => ({ pageId: page.id, tagId: tag.id }))).run();
@@ -293,6 +293,44 @@ export async function addComment(input: z.infer<typeof commentSchema>) {
   return { threadId: threadId! };
 }
 
+const commentIdSchema = z.string().min(1);
+const commentUpdateSchema = z.object({
+  commentId: commentIdSchema,
+  body: z.string().trim().min(1).max(10_000),
+});
+
+async function requireCommentAuthor(commentId: string, includeDeleted = false) {
+  const currentUser = await requireUserOrThrow();
+  const comment = db.select({ id: wikiComments.id, createdBy: wikiComments.createdBy, deletedAt: wikiComments.deletedAt })
+    .from(wikiComments)
+    .where(and(eq(wikiComments.id, commentId), ...(includeDeleted ? [] : [isNull(wikiComments.deletedAt)])))
+    .get();
+  if (!comment) throw new Error("Comment not found");
+  if (comment.createdBy !== currentUser.id) throw new Error("You can only change your own comments");
+  return comment;
+}
+
+export async function updateComment(input: z.infer<typeof commentUpdateSchema>) {
+  const data = commentUpdateSchema.parse(input);
+  await requireCommentAuthor(data.commentId);
+  db.update(wikiComments).set({ body: data.body }).where(eq(wikiComments.id, data.commentId)).run();
+  revalidateWiki();
+}
+
+export async function deleteComment(commentId: string) {
+  const id = commentIdSchema.parse(commentId);
+  await requireCommentAuthor(id);
+  db.update(wikiComments).set({ deletedAt: new Date() }).where(eq(wikiComments.id, id)).run();
+  revalidateWiki();
+}
+
+export async function restoreComment(commentId: string) {
+  const id = commentIdSchema.parse(commentId);
+  await requireCommentAuthor(id, true);
+  db.update(wikiComments).set({ deletedAt: null }).where(eq(wikiComments.id, id)).run();
+  revalidateWiki();
+}
+
 export async function setCommentResolved(threadId: string, resolved: boolean) {
   const currentUser = await requireUserOrThrow();
   const thread = db.select().from(wikiCommentThreads).where(eq(wikiCommentThreads.id, threadId)).get();
@@ -319,8 +357,8 @@ export async function restorePageRevision(revisionId: string) {
   const restoredContentJson = JSON.stringify(restoredDocument);
   const contentText = extractText(restoredDocument);
   db.transaction(() => {
-    db.insert(wikiPageRevisions).values({ pageId: page.id, version: page.version, title: page.title, contentJson: page.contentJson, status: page.status, citationLocale: page.citationLocale, kind: "restore", createdBy: currentUser.id }).run();
-    db.update(wikiPages).set({ title: revision.title, contentJson: restoredContentJson, contentText, status: revision.status, citationLocale: revision.citationLocale, version: page.version + 1, updatedBy: currentUser.id, updatedAt: new Date() }).where(eq(wikiPages.id, page.id)).run();
+    db.insert(wikiPageRevisions).values({ pageId: page.id, version: page.version, title: page.title, contentJson: page.contentJson, status: page.status, citationLocale: page.citationLocale, documentMode: page.documentMode, documentSettingsJson: page.documentSettingsJson, documentTemplateId: page.documentTemplateId, kind: "restore", createdBy: currentUser.id }).run();
+    db.update(wikiPages).set({ title: revision.title, contentJson: restoredContentJson, contentText, status: revision.status, citationLocale: revision.citationLocale, documentMode: revision.documentMode, documentSettingsJson: revision.documentSettingsJson, documentTemplateId: revision.documentTemplateId, version: page.version + 1, updatedBy: currentUser.id, updatedAt: new Date() }).where(eq(wikiPages.id, page.id)).run();
     sqlite.prepare("DELETE FROM wiki_pages_fts WHERE page_id = ?").run(page.id);
     sqlite.prepare("INSERT INTO wiki_pages_fts (page_id, title, content_text) VALUES (?, ?, ?)").run(page.id, revision.title, contentText);
   });

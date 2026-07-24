@@ -26,6 +26,13 @@ npm install
 npm run dev            # http://localhost:3000
 ```
 
+PDF uploads that need OCR require Poppler (`pdfinfo`, `pdftotext`, and
+`pdftoppm`) and Tesseract to be installed locally. On Windows, install them
+with your preferred package manager and restart the dev server afterwards. If
+Tesseract is not on `PATH`, set `TESSERACT_PATH` in `.env.local` to its
+executable (for example `C:\\Program Files\\Tesseract-OCR\\tesseract.exe`). The
+Docker image already includes both tools and the German/English OCR packs.
+
 - The sign-in page accepts only a username and password. The first account
   created through the guarded `/api/auth/sign-up/email` bootstrap endpoint
   becomes the administrator.

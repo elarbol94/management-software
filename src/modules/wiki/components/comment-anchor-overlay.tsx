@@ -5,10 +5,12 @@ import type { Editor } from "@tiptap/react";
 import { type NormalizedRect } from "../lib/comment-anchors";
 import type { CommentThread } from "./comment-rail";
 import { cn } from "@/lib/utils";
+import { userMarkColorStyle, type UserMarkColor } from "@/lib/user-mark-colors";
 
 type AnchorGeometry = {
   id: string;
   resolved: boolean;
+  markColor: UserMarkColor;
   x: number;
   y: number;
   imageRect?: { left: number; top: number; width: number; height: number };
@@ -61,7 +63,7 @@ export function CommentAnchorOverlay({
         if (!last) continue;
         const clientRects = [...last.getClientRects()];
         const rect = clientRects.at(-1) ?? last.getBoundingClientRect();
-        next.push({ id: thread.id, resolved: !!thread.resolvedAt, x: rect.right - rootRect.left + 8, y: rect.top - rootRect.top - 8 });
+        next.push({ id: thread.id, resolved: !!thread.resolvedAt, markColor: thread.createdByMarkColor, x: rect.right - rootRect.left + 8, y: rect.top - rootRect.top - 8 });
         continue;
       }
       if (anchor.type !== "image") continue;
@@ -77,6 +79,7 @@ export function CommentAnchorOverlay({
       next.push({
         id: thread.id,
         resolved: !!thread.resolvedAt,
+        markColor: thread.createdByMarkColor,
         x: absolute.left + absolute.width - rootRect.left + 8,
         y: absolute.top - rootRect.top - 8,
         imageRect: {
@@ -119,8 +122,8 @@ export function CommentAnchorOverlay({
     {geometry.filter((item) => item.imageRect).map((item) => <div
       key={"region-" + item.id}
       data-testid={"image-comment-highlight-" + item.id}
-      className={cn(item.resolved ? "absolute rounded border-2 border-emerald-500 bg-emerald-300/20 transition" : "absolute rounded border-2 border-amber-500 bg-amber-300/20 transition", activeThreadId === item.id && (item.resolved ? "border-emerald-600 bg-emerald-300/35 ring-2 ring-emerald-300" : "border-amber-600 bg-amber-300/35 ring-2 ring-amber-300"))}
-      style={item.imageRect}
+      className={cn("absolute rounded border-2 transition", item.resolved && "opacity-60", activeThreadId === item.id && "ring-2")}
+      style={{ ...item.imageRect, ...userMarkColorStyle(item.markColor), borderColor: "var(--user-mark-solid)", backgroundColor: activeThreadId === item.id ? "var(--user-mark-hover)" : "var(--user-mark-highlight)", boxShadow: activeThreadId === item.id ? "0 0 0 2px var(--user-mark-highlight)" : undefined }}
     />)}
   </div>;
 }

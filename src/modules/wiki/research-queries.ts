@@ -2,6 +2,7 @@ import { and, asc, desc, eq, isNotNull, isNull } from "drizzle-orm";
 import { db, sqlite } from "@/db";
 import {
   user,
+  userProfilePreferences,
   wikiCommentThreads,
   wikiComments,
   wikiFavorites,
@@ -18,6 +19,7 @@ import {
 } from "@/db/schema";
 import { getPageTree } from "./queries";
 import type { CitationSource, Contributor } from "./lib/citations";
+import { resolveStoredUserMarkColor } from "@/lib/user-mark-colors.server";
 
 export type TagDto = { id: string; name: string; color: string };
 
@@ -284,15 +286,19 @@ export function getPageComments(pageId: string) {
       resolvedAt: wikiCommentThreads.resolvedAt,
       assigneeId: wikiCommentThreads.assigneeId,
       createdAt: wikiCommentThreads.createdAt,
+      createdBy: wikiCommentThreads.createdBy,
       createdByName: user.name,
+      createdByMarkColor: userProfilePreferences.markColor,
     })
     .from(wikiCommentThreads)
     .innerJoin(user, eq(wikiCommentThreads.createdBy, user.id))
+    .leftJoin(userProfilePreferences, eq(wikiCommentThreads.createdBy, userProfilePreferences.userId))
     .where(eq(wikiCommentThreads.pageId, pageId))
     .orderBy(desc(wikiCommentThreads.createdAt))
     .all();
   return threads.map((thread) => ({
     ...thread,
+    createdByMarkColor: resolveStoredUserMarkColor(thread.createdByMarkColor),
     anchor: thread.anchorType === "image"
       ? { type: "image" as const, nodeId: thread.anchorNodeId ?? "", mode: thread.anchorData.mode ?? "whole", rect: thread.anchorData.rect, label: thread.anchorData.label ?? thread.anchorQuote }
       : thread.anchorType === "text"
@@ -302,15 +308,22 @@ export function getPageComments(pageId: string) {
       .select({
         id: wikiComments.id,
         body: wikiComments.body,
+        createdBy: wikiComments.createdBy,
         createdAt: wikiComments.createdAt,
         createdByName: user.name,
+        createdByMarkColor: userProfilePreferences.markColor,
       })
       .from(wikiComments)
       .innerJoin(user, eq(wikiComments.createdBy, user.id))
-      .where(eq(wikiComments.threadId, thread.id))
+      .leftJoin(userProfilePreferences, eq(wikiComments.createdBy, userProfilePreferences.userId))
+      .where(and(eq(wikiComments.threadId, thread.id), isNull(wikiComments.deletedAt)))
       .orderBy(asc(wikiComments.createdAt))
-      .all(),
-  }));
+      .all()
+      .map((comment) => ({
+        ...comment,
+        createdByMarkColor: resolveStoredUserMarkColor(comment.createdByMarkColor),
+      })),
+  })).filter((thread) => thread.comments.length > 0);
 }
 
 export function listFavorites(userId: string) {
@@ -347,16 +360,22 @@ export function listNotifications(userId: string) {
       pageId: wikiNotifications.pageId,
       threadId: wikiNotifications.threadId,
       actorName: user.name,
+      actorMarkColor: userProfilePreferences.markColor,
       pageTitle: wikiPages.title,
       pageSlug: wikiPages.slug,
     })
     .from(wikiNotifications)
     .innerJoin(user, eq(wikiNotifications.actorId, user.id))
+    .leftJoin(userProfilePreferences, eq(wikiNotifications.actorId, userProfilePreferences.userId))
     .leftJoin(wikiPages, eq(wikiNotifications.pageId, wikiPages.id))
     .where(eq(wikiNotifications.userId, userId))
     .orderBy(desc(wikiNotifications.createdAt))
     .limit(100)
-    .all();
+    .all()
+    .map((notification) => ({
+      ...notification,
+      actorMarkColor: resolveStoredUserMarkColor(notification.actorMarkColor),
+    }));
 }
 
 export function listTrash() {
@@ -414,10 +433,12 @@ export function listByTag(tagId: string) {
 
 export function listUsers() {
   return db
-    .select({ id: user.id, name: user.name })
+    .select({ id: user.id, name: user.name, markColor: userProfilePreferences.markColor })
     .from(user)
+    .leftJoin(userProfilePreferences, eq(user.id, userProfilePreferences.userId))
     .orderBy(asc(user.name))
-    .all();
+    .all()
+    .map((person) => ({ ...person, markColor: resolveStoredUserMarkColor(person.markColor) }));
 }
 export type WorkspacePage = {
   id: string;

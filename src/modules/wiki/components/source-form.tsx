@@ -24,8 +24,10 @@ function contributorLines(initial?: InitialSource) {
   return (initial?.contributors ?? []).map((person) => person.literal ? `@${person.literal}` : `${person.family}, ${person.given}`).join("\n");
 }
 
-export function SourceForm({ initial, documentTypes = [], compact = false, redirectTo, onSaved }: { initial?: InitialSource; documentTypes?: string[]; compact?: boolean; redirectTo?: string; onSaved?: () => void }) {
+export function SourceForm({ initial: initialSource, documentTypes = [], compact = false, redirectTo, onSaved }: { initial?: InitialSource; documentTypes?: string[]; compact?: boolean; redirectTo?: string; onSaved?: () => void }) {
   const t = useTranslations("wiki"); const router = useRouter();
+  // Base UI inputs are uncontrolled. Keep their defaults stable when a server refresh updates PDF-derived metadata.
+  const [initial] = useState(initialSource);
   const [pending, setPending] = useState(false); const [error, setError] = useState("");
   const [type, setType] = useState(initial?.type ?? "document");
   const [readingStatus, setReadingStatus] = useState(initial?.readingStatus ?? "toRead");

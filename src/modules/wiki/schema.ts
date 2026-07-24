@@ -22,6 +22,25 @@ export const wikiSourceTypes = [
 ] as const;
 export const wikiReadingStatuses = ["toRead", "reading", "read"] as const;
 
+export const wikiDocumentTemplates = sqliteTable(
+  "wiki_document_templates",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => createId()),
+    name: text("name").notNull(),
+    description: text("description").notNull().default(""),
+    settingsJson: text("settings_json").notNull(),
+    contentJson: text("content_json").notNull().default(""),
+    constraintsJson: text("constraints_json").notNull().default("[]"),
+    createdBy: text("created_by").notNull().references(() => user.id),
+    updatedBy: text("updated_by").notNull().references(() => user.id),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [index("wiki_document_templates_name_idx").on(table.name)],
+);
+
 export const wikiPages = sqliteTable(
   "wiki_pages",
   {
@@ -37,6 +56,9 @@ export const wikiPages = sqliteTable(
     icon: text("icon"),
     status: text("status", { enum: wikiPageStatuses }).notNull().default("inbox"),
     citationLocale: text("citation_locale").notNull().default("de-DE"),
+    documentMode: integer("document_mode", { mode: "boolean" }).notNull().default(false),
+    documentSettingsJson: text("document_settings_json").notNull().default(""),
+    documentTemplateId: text("document_template_id").references(() => wikiDocumentTemplates.id, { onDelete: "set null" }),
     version: integer("version").notNull().default(1),
     createdBy: text("created_by")
       .notNull()
@@ -175,6 +197,9 @@ export const wikiPageRevisions = sqliteTable(
     contentJson: text("content_json").notNull(),
     status: text("status", { enum: wikiPageStatuses }).notNull(),
     citationLocale: text("citation_locale").notNull(),
+    documentMode: integer("document_mode", { mode: "boolean" }).notNull().default(false),
+    documentSettingsJson: text("document_settings_json").notNull().default(""),
+    documentTemplateId: text("document_template_id").references(() => wikiDocumentTemplates.id, { onDelete: "set null" }),
     kind: text("kind", { enum: ["autosave", "conflict", "restore"] }).notNull().default("autosave"),
     createdBy: text("created_by").notNull().references(() => user.id),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
@@ -222,6 +247,7 @@ export const wikiComments = sqliteTable(
     body: text("body").notNull(),
     createdBy: text("created_by").notNull().references(() => user.id),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+    deletedAt: integer("deleted_at", { mode: "timestamp_ms" }),
   },
   (table) => [index("wiki_comments_thread_idx").on(table.threadId)],
 );

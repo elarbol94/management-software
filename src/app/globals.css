@@ -134,23 +134,63 @@
   }
 
   .wiki-comment-anchor {
-    @apply cursor-pointer rounded-sm bg-amber-50/70 decoration-amber-500 decoration-2 underline-offset-2 transition dark:bg-amber-950/30;
-    border: 1px solid rgb(252 211 77);
+    @apply cursor-pointer rounded-sm decoration-2 underline-offset-2 transition;
+    background-color: var(--user-mark-highlight, rgb(245 158 11 / 0.3));
+    border: 1px solid var(--user-mark-solid, rgb(180 83 9));
     text-decoration-line: underline;
+    text-decoration-color: var(--user-mark-solid, rgb(180 83 9));
   }
 
   .wiki-comment-anchor.is-resolved {
-    background-color: rgb(236 253 245) !important;
-    text-decoration-color: rgb(5 150 105) !important;
-    border-color: rgb(110 231 183) !important;
+    opacity: 0.62;
   }
 
   .wiki-comment-anchor.is-active {
-    @apply bg-amber-50/70 ring-1 ring-amber-300 ring-offset-0 dark:bg-amber-950/30;
+    background-color: var(--user-mark-hover, rgb(245 158 11 / 0.42));
+    box-shadow: 0 0 0 2px var(--user-mark-highlight, rgb(245 158 11 / 0.3));
   }
 
   .wiki-highlight {
-    @apply rounded-sm bg-yellow-200/80 px-0.5 dark:bg-yellow-700/50;
+    @apply rounded-sm px-0.5;
+    background-color: var(--user-mark-highlight, rgb(250 204 21 / 0.34));
+    box-shadow: inset 0 -2px var(--user-mark-solid, rgb(180 83 9));
+  }
+
+  .wiki-markdown-table {
+    @apply my-5 w-full border-collapse overflow-hidden rounded-lg;
+  }
+
+  .wiki-markdown-table th,
+  .wiki-markdown-table td {
+    @apply border border-border px-3 py-2 align-top;
+  }
+
+  .wiki-markdown-table th {
+    @apply bg-muted/70 font-semibold;
+  }
+
+  .wiki-markdown-table p {
+    @apply m-0;
+  }
+
+  .wiki-definition-list {
+    @apply my-4 grid grid-cols-[minmax(7rem,0.35fr)_1fr] gap-x-5 gap-y-2;
+  }
+
+  .wiki-definition-list dt {
+    @apply font-semibold;
+  }
+
+  .wiki-definition-list dd {
+    @apply m-0 text-muted-foreground;
+  }
+
+  .wiki-footnote-reference {
+    @apply mx-0.5 text-xs font-semibold text-indigo-700 dark:text-indigo-300;
+  }
+
+  .wiki-footnote-definition {
+    @apply my-3 flex gap-2 border-l-2 border-indigo-300 pl-3 text-sm text-muted-foreground;
   }
 
   .wiki-commentable-media {
@@ -175,5 +215,153 @@
 
   .ProseMirror:focus-visible {
     outline: none;
+  }
+
+  .ProseMirror .is-editor-empty:first-child::before,
+  .ProseMirror .is-empty[data-placeholder]::before {
+    color: var(--muted-foreground);
+    content: attr(data-placeholder);
+    float: left;
+    height: 0;
+    pointer-events: none;
+    opacity: 0.58;
+  }
+
+  .wiki-search-match {
+    border-radius: 0.2rem;
+    background: color-mix(in oklab, var(--chart-4) 36%, transparent);
+    box-shadow: 0 0 0 1px color-mix(in oklab, var(--chart-4) 24%, transparent);
+  }
+
+  .wiki-search-match-current {
+    background: color-mix(in oklab, var(--chart-4) 68%, transparent);
+    box-shadow: 0 0 0 2px color-mix(in oklab, var(--chart-4) 48%, transparent);
+  }
+
+  .wiki-document-workspace {
+    overflow-x: auto;
+    border: 1px solid color-mix(in oklab, var(--border) 78%, #64748b);
+    border-radius: 0.9rem;
+    padding: clamp(0.75rem, 2.5vw, 2rem);
+    background: #e9edf2;
+  }
+
+  .dark .wiki-document-workspace {
+    background: #20252d;
+  }
+
+  .wiki-document-canvas {
+    box-sizing: border-box;
+    width: min(var(--document-paper-width), 100%);
+    min-width: min(var(--document-paper-width), 44rem);
+    min-height: var(--document-paper-height);
+    margin-inline: auto;
+    padding:
+      var(--document-margin-top)
+      var(--document-margin-right)
+      var(--document-margin-bottom)
+      var(--document-margin-left);
+    color: var(--document-text-color);
+    background: white;
+    box-shadow: 0 1px 2px rgb(15 23 42 / 0.12), 0 12px 36px rgb(15 23 42 / 0.14);
+  }
+
+  .wiki-document-canvas .ProseMirror {
+    min-height: calc(
+      var(--document-paper-height)
+      - var(--document-margin-top)
+      - var(--document-margin-bottom)
+    );
+    color: var(--document-text-color);
+    font-family: var(--document-body-font);
+    font-size: var(--document-body-size);
+    line-height: var(--document-line-height);
+  }
+
+  .wiki-document-canvas .ProseMirror :is(h1, h2, h3) {
+    color: var(--document-text-color);
+    font-family: var(--document-heading-font);
+    letter-spacing: -0.018em;
+  }
+
+  .wiki-document-canvas .ProseMirror :is(a, .wiki-footnote-reference) {
+    color: var(--document-accent-color);
+  }
+
+  .wiki-document-page-break {
+    position: relative;
+    height: 2.5rem;
+    margin: 2rem calc(-1 * var(--document-margin-right)) 2rem calc(-1 * var(--document-margin-left));
+    border-top: 1px dashed #94a3b8;
+    color: #64748b;
+    font-family: ui-sans-serif, system-ui, sans-serif;
+    font-size: 0.68rem;
+    text-align: center;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+  }
+
+  .wiki-document-page-break span {
+    position: relative;
+    top: -0.65rem;
+    display: inline-block;
+    padding-inline: 0.6rem;
+    background: white;
+  }
+
+  .wiki-document-toc {
+    margin-block: 1.75rem;
+    border-block: 1px solid color-mix(in srgb, var(--document-muted-color) 45%, transparent);
+    padding-block: 1rem;
+  }
+
+  .wiki-document-toc p {
+    margin: 0.25rem 0 0;
+    color: var(--document-muted-color);
+    font-size: 0.78rem;
+  }
+
+  .wiki-document-variable {
+    display: inline-flex;
+    border-radius: 0.25rem;
+    padding-inline: 0.25rem;
+    color: color-mix(in srgb, var(--document-accent-color) 88%, black);
+    background: color-mix(in srgb, var(--document-accent-color) 10%, white);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--document-accent-color) 25%, transparent);
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.86em;
+  }
+
+  .wiki-document-columns {
+    column-count: var(--document-columns, 2);
+    column-gap: var(--document-column-gap, 8mm);
+    margin-block: 1.25rem;
+    border-inline: 2px solid color-mix(in srgb, var(--document-accent-color) 25%, transparent);
+    padding-inline: 0.75rem;
+  }
+
+  .wiki-document-canvas [data-keep-with-next] {
+    margin-bottom: 0.2em;
+    border-left: 2px solid color-mix(in srgb, var(--document-accent-color) 35%, transparent);
+    padding-left: 0.5rem;
+  }
+
+  .wiki-document-canvas [data-keep-together] {
+    outline: 1px dashed color-mix(in srgb, var(--document-muted-color) 42%, transparent);
+    outline-offset: 0.3rem;
+  }
+
+  @media (max-width: 720px) {
+    .wiki-document-workspace {
+      border-inline: 0;
+      border-radius: 0;
+      padding: 0.5rem;
+    }
+
+    .wiki-document-canvas {
+      min-width: 100%;
+      min-height: 70vh;
+      padding: 2rem 1.25rem;
+    }
   }
 }

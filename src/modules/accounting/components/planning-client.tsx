@@ -331,10 +331,16 @@ export function PlanningClient({
                   const kindRows = categoryRows(kind);
                   if (kindRows.length === 0) return null;
                   return [
-                    <TableRow key={`${kind}-heading`} className="bg-muted/60 hover:bg-muted/60">
-                      <TableCell colSpan={16} className="font-semibold">
+                    <TableRow
+                      key={`${kind}-heading`}
+                      className="bg-muted/60 hover:bg-muted/60"
+                    >
+                      <TableCell
+                        className="sticky left-0 z-10 min-w-52 bg-muted/60 font-semibold shadow-[1px_0_0_var(--border)]"
+                      >
                         {t(kind === "income" ? "incomePlural" : "expensePlural")}
                       </TableCell>
+                      <TableCell colSpan={15} className="bg-muted/60 p-0" />
                     </TableRow>,
                     ...kindRows.map(renderCategory),
                   ];

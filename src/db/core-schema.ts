@@ -22,6 +22,16 @@ export const user = sqliteTable("user", {
   updatedAt: integer("updatedAt", { mode: "timestamp_ms" }).notNull(),
 });
 
+export const userProfilePreferences = sqliteTable("user_profile_preferences", {
+  userId: text("user_id")
+    .primaryKey()
+    .references(() => user.id, { onDelete: "cascade" }),
+  markColor: text("mark_color").notNull().unique(),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+});
+
 export const session = sqliteTable("session", {
   id: text("id").primaryKey(),
   expiresAt: integer("expiresAt", { mode: "timestamp_ms" }).notNull(),
