@@ -13,19 +13,29 @@ async function login(page: Page) {
   await expect(page.getByText("Willkommen, E2E Admin!")).toBeVisible();
 }
 
+async function openProjectBoard(page: Page, projectName: string) {
+  const projectRow = page.locator('[data-row-kind="project"]').filter({
+    hasText: projectName,
+  });
+  await projectRow
+    .getByRole("button", { name: `Aktionen für ${projectName}` })
+    .click();
+  await page.getByRole("menuitem", { name: "Kanban-Board öffnen" }).click();
+}
+
 test("create a project with default kanban columns", async ({ page }) => {
   await login(page);
 
   await page.goto("/projects");
   await page.getByRole("button", { name: "Neues Projekt" }).click();
-  await page.locator("#project-name").fill("Website Relaunch");
-  await page.locator("#project-description").fill("Neue Firmenwebsite");
+  await page.locator("#portfolio-project-name").fill("Website Relaunch");
+  await page.locator("#portfolio-project-description").fill("Neue Firmenwebsite");
   await page.getByRole("button", { name: "Speichern" }).click();
 
   await expect(page.getByText("Website Relaunch")).toBeVisible();
 
   // Open the board: the three default columns exist.
-  await page.getByRole("link", { name: /Website Relaunch/ }).click();
+  await openProjectBoard(page, "Website Relaunch");
   await expect(page.locator('[data-column-name="Offen"]')).toBeVisible();
   await expect(page.locator('[data-column-name="In Arbeit"]')).toBeVisible();
   await expect(page.locator('[data-column-name="Erledigt"]')).toBeVisible();
@@ -34,7 +44,7 @@ test("create a project with default kanban columns", async ({ page }) => {
 test("create, move (via dialog) and complete a task", async ({ page }) => {
   await login(page);
   await page.goto("/projects");
-  await page.getByRole("link", { name: /Website Relaunch/ }).click();
+  await openProjectBoard(page, "Website Relaunch");
 
   // Create a task with assignee, due date and high priority.
   await page.getByRole("button", { name: "Neue Aufgabe" }).first().click();
@@ -56,7 +66,7 @@ test("create, move (via dialog) and complete a task", async ({ page }) => {
 
   // Move it to "In Arbeit" via the dialog's column select.
   await page.goto("/projects");
-  await page.getByRole("link", { name: /Website Relaunch/ }).click();
+  await openProjectBoard(page, "Website Relaunch");
   await page.getByText("Landingpage bauen").click();
   await expect(page.getByText("Aufgabe bearbeiten")).toBeVisible();
   await page.locator("#task-column").click();
@@ -71,7 +81,7 @@ test("create, move (via dialog) and complete a task", async ({ page }) => {
 test("drag a task between columns", async ({ page }) => {
   await login(page);
   await page.goto("/projects");
-  await page.getByRole("link", { name: /Website Relaunch/ }).click();
+  await openProjectBoard(page, "Website Relaunch");
 
   const card = page
     .locator('[data-column-name="In Arbeit"]')
@@ -160,7 +170,7 @@ test("move the project tree on drop and restore it with undo", async ({ page }) 
   ).toBeVisible();
 });
 
-test("indent a task and let the new parent derive its dates", async ({ page }) => {
+test("indent a task and expose its parent as a schedule container", async ({ page }) => {
   await login(page);
   await page.goto("/projects");
 
@@ -168,16 +178,17 @@ test("indent a task and let the new parent derive its dates", async ({ page }) =
   const target = gantt.locator('[data-row-kind="task"]').nth(1);
   await expect(target).toBeVisible();
 
-  await target.getByRole("button", { name: /Einrücken/ }).click();
+  await target.getByRole("button", { name: /^Aktionen für / }).click();
+  await page.getByRole("menuitem", { name: "Einrücken" }).click();
 
-  // The indented row is now a subtask, and its new parent renders as a derived
-  // summary bracket rather than an editable bar.
+  // The indented row is now a subtask. Its parent is a minimum schedule
+  // container with editable edges.
   await expect(gantt.locator('[data-row-kind="subtask"]')).toHaveCount(1);
   const bracket = gantt.locator("[data-summary-bracket]").first();
   await expect(bracket).toBeVisible();
   await expect(
     bracket.locator('[title="Startdatum ändern"], [title="Enddatum ändern"]'),
-  ).toHaveCount(0);
+  ).toHaveCount(2);
 });
 
 test("create and expand a scheduled subtask in Kanban and Gantt", async ({
@@ -185,7 +196,7 @@ test("create and expand a scheduled subtask in Kanban and Gantt", async ({
 }) => {
   await login(page);
   await page.goto("/projects");
-  await page.getByRole("link", { name: /Website Relaunch/ }).click();
+  await openProjectBoard(page, "Website Relaunch");
 
   const openColumn = page.locator('[data-column-name="Offen"]');
   await openColumn.getByRole("button", { name: "Neue Aufgabe" }).click();
@@ -240,18 +251,58 @@ test("create and expand a scheduled subtask in Kanban and Gantt", async ({
   });
   await expect(parentRow).toBeVisible();
   await parentRow
-    .getByRole("button", { name: "Aufgabe ein- oder ausklappen" })
+    .getByRole("button", { name: "Unteraufgaben ein- oder ausklappen" })
     .click();
   const childTimelineRow = page.locator('[data-row-kind="subtask"]').filter({
     hasText: "API integrieren",
   });
   await expect(childTimelineRow).toBeVisible();
   await childTimelineRow
-    .getByRole("button", { name: "Aufgabe ein- oder ausklappen" })
+    .getByRole("button", { name: "Unteraufgaben ein- oder ausklappen" })
     .click();
   await expect(
     page.locator('[data-row-kind="subtask"]').filter({
       hasText: "Vertragstests schreiben",
     }),
   ).toBeVisible();
+});
+
+test("focus a task subtree and exit through portfolio history", async ({ page }) => {
+  await login(page);
+  await page.goto("/projects");
+
+  const taskRow = page.locator('[data-row-kind="task"]').filter({
+    hasText: "Release vorbereiten",
+  });
+  await expect(taskRow).toBeVisible();
+  await taskRow
+    .getByRole("button", { name: "Aktionen für Release vorbereiten" })
+    .click();
+  await page.getByRole("menuitem", { name: "Auf Aufgabe fokussieren" }).click();
+
+  await expect(page).toHaveURL(/\/projects\?focus=[^&]+$/);
+  const focusUrl = page.url();
+  const focusRail = page.getByTestId("gantt-focus-rail");
+  await expect(focusRail).toBeVisible();
+  await expect(focusRail).toContainText("Release vorbereiten");
+  await expect(page.getByTestId("schedule-inspector-dock")).toBeVisible();
+  await expect(page.locator('[data-row-kind="project"]')).toHaveCount(0);
+
+  await focusRail
+    .getByRole("button", { name: "Fokusansicht verlassen" })
+    .click();
+  await expect(page).toHaveURL(/\/projects$/);
+  await expect(page.getByTestId("gantt-focus-rail")).toHaveCount(0);
+  await expect(taskRow).toBeVisible();
+
+  // A copied/shared focus URL opens the same immersive subtree directly.
+  await page.goto(focusUrl);
+  await expect(page.getByTestId("gantt-focus-rail")).toContainText(
+    "Release vorbereiten",
+  );
+  await page
+    .getByTestId("gantt-focus-rail")
+    .getByRole("button", { name: "Fokusansicht verlassen" })
+    .click();
+  await expect(page).toHaveURL(/\/projects$/);
 });

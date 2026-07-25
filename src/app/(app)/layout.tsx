@@ -41,11 +41,32 @@ export default function AppLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <div className="flex min-h-screen flex-1 flex-col md:flex-row">
-      <Suspense fallback={<SidebarFallback />}>
-        <AuthenticatedSidebar />
-      </Suspense>
-      <main className="min-w-0 flex-1 overflow-x-hidden p-6">{children}</main>
-    </div>
+    <>
+      <style>{`
+        [data-app-shell]:has([data-project-focus-root="true"]) > [data-app-chrome] {
+          display: none;
+        }
+        [data-app-shell]:has([data-project-focus-root="true"]) > [data-app-main] {
+          overflow: hidden;
+          padding: 0;
+        }
+      `}</style>
+      <div
+        className="flex min-h-screen flex-1 flex-col md:flex-row"
+        data-app-shell
+      >
+        <div className="contents" data-app-chrome>
+          <Suspense fallback={<SidebarFallback />}>
+            <AuthenticatedSidebar />
+          </Suspense>
+        </div>
+        <main
+          className="min-w-0 flex-1 overflow-x-hidden p-6"
+          data-app-main
+        >
+          {children}
+        </main>
+      </div>
+    </>
   );
 }

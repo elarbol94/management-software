@@ -46,6 +46,86 @@ export type ScheduleChange = {
   afterDueDate: string | null;
 };
 
+export type ScheduleEntityType = "task" | "project";
+
+export type ScheduleOperation =
+  | "move"
+  | "resize-start"
+  | "resize-end"
+  | "place"
+  | "fit";
+
+/**
+ * A user-authored scheduling intent. Dates are omitted for `fit`, where the
+ * descendant envelope is the requested result.
+ */
+export type ScheduleEdit = {
+  entityType: ScheduleEntityType;
+  entityId: string;
+  operation: ScheduleOperation;
+  startDate?: string | null;
+  dueDate?: string | null;
+};
+
+export type SchedulePortfolioTask = ScheduleTask & {
+  projectId: string;
+};
+
+export type ScheduleProject = {
+  id: string;
+  startDate: string | null;
+  dueDate: string | null;
+};
+
+export type ScheduleChangeCause =
+  | "direct"
+  | "fit"
+  | "subtree"
+  | "dependency"
+  | "ancestor-expansion";
+
+export type ScheduleEntityChange = {
+  entityType: ScheduleEntityType;
+  entityId: string;
+  beforeStartDate: string | null;
+  beforeDueDate: string | null;
+  afterStartDate: string | null;
+  afterDueDate: string | null;
+  cause: ScheduleChangeCause;
+  title?: string;
+};
+
+export type ScheduleImpact = {
+  workdayDelta: number;
+  affectedTaskCount: number;
+  affectedProjectCount: number;
+  expandedTaskCount: number;
+  expandedProjectCount: number;
+  conflictTaskIds: string[];
+};
+
+export type SchedulePreview = {
+  edit: ScheduleEdit;
+  changes: ScheduleEntityChange[];
+  impact: ScheduleImpact;
+  constraints: ScheduleConstraint[];
+};
+
+export type SchedulePlanInput = {
+  tasks: SchedulePortfolioTask[];
+  projects: ScheduleProject[];
+  dependencies: ScheduleDependency[];
+  edit: ScheduleEdit;
+};
+
+export type ScheduleContainmentViolation = {
+  entityType: ScheduleEntityType;
+  entityId: string;
+  violatesStart: boolean;
+  violatesEnd: boolean;
+  constrainingTaskIds: string[];
+};
+
 export type TaskTreeNode<T> = T & {
   depth: number;
   children: TaskTreeNode<T>[];
@@ -73,10 +153,15 @@ export type PlacementSuggestion = {
 };
 
 export type ScheduleConstraint = {
+  entityType?: ScheduleEntityType;
+  entityId?: string;
   startDate: string | null;
   dueDate: string | null;
   clampedStart: boolean;
   clampedEnd: boolean;
+  requestedStartDate?: string | null;
+  requestedDueDate?: string | null;
+  constrainingTaskIds?: string[];
 };
 
 const DAY_MS = 86_400_000;
@@ -151,6 +236,25 @@ export function workdayDistance(fromDate: string, toDate: string): number {
     distance += direction;
   }
   return distance;
+}
+
+/**
+ * Interprets an exact-date form edit as the equivalent timeline gesture.
+ * Moving both edges by the same workday offset is a subtree move; changing one
+ * edge is a resize; all other edits author both container bounds.
+ */
+export function inferScheduleEditOperation(
+  before: Pick<ScheduleTask, "startDate" | "dueDate">,
+  after: { startDate: string; dueDate: string },
+): Exclude<ScheduleOperation, "fit"> {
+  if (before.startDate && before.dueDate) {
+    const startDelta = workdayDistance(before.startDate, after.startDate);
+    const dueDelta = workdayDistance(before.dueDate, after.dueDate);
+    if (startDelta === dueDelta && startDelta !== 0) return "move";
+    if (before.startDate === after.startDate) return "resize-end";
+    if (before.dueDate === after.dueDate) return "resize-start";
+  }
+  return "place";
 }
 
 export function dependencyStartDate(
@@ -358,9 +462,8 @@ function dependencyOrder(
 }
 
 /**
- * Recomputes every summary that sits above a changed task, deepest first, so a
- * parent always spans exactly its direct children (R1). Parents whose children
- * are all unscheduled become unscheduled themselves.
+ * Expands every summary above changed work, deepest first. Existing slack is
+ * deliberately preserved: moving descendants inward never shrinks a container.
  */
 function rollupAncestorsInPlace(
   working: Map<string, ScheduleTask>,
@@ -388,11 +491,11 @@ function rollupAncestorsInPlace(
       (child) => working.get(child.id) ?? child,
     );
     if (children.length === 0) continue;
-    const envelope = descendantEnvelope(children);
+    const expansion = expandContainerEnvelope(parent, children);
     working.set(parentId, {
       ...parent,
-      startDate: envelope.startDate,
-      dueDate: envelope.dueDate,
+      startDate: expansion.startDate,
+      dueDate: expansion.dueDate,
     });
   }
 }
@@ -411,8 +514,10 @@ export function previewScheduleCascade(
   dependencies: ScheduleDependency[],
   rootChange: {
     taskId: string;
-    startDate: string;
-    dueDate: string;
+    startDate?: string | null;
+    dueDate?: string | null;
+    operation?: ScheduleOperation;
+    rigidTaskIds?: string[];
   },
 ): ScheduleChange[] {
   if (hasScheduleCycle(sourceTasks, dependencies)) {
@@ -433,16 +538,26 @@ export function previewScheduleCascade(
       .map((task) => [task.id, taskDescendants(sourceTasks, task.id)]),
   );
   const touched = new Set<string>();
+  // A moved summary is a rigid schedule block for this edit. Dependencies may
+  // move work downstream of it, but may not snap one of its descendants back to
+  // an old constraint anchor and deform the subtree.
+  const rigidTaskIds = new Set(rootChange.rigidTaskIds ?? []);
 
   const moveTask = (taskId: string, startDate: string): void => {
     const task = working.get(taskId);
     if (!task) return;
     const descendants = descendantsById.get(taskId);
     if (descendants && descendants.length > 0) {
-      if (!task.startDate) return;
-      const offset = workdayDistance(task.startDate, startDate);
+      const envelope = descendantEnvelope(descendants);
+      const currentStart = task.startDate ?? envelope.startDate;
+      if (!currentStart) return;
+      const offset = workdayDistance(currentStart, startDate);
       if (offset === 0) return;
-      for (const member of [task, ...descendants.map((child) => working.get(child.id)!)]) {
+      for (const member of [
+        task,
+        ...descendants.map((child) => working.get(child.id)!),
+      ]) {
+        rigidTaskIds.add(member.id);
         if (!member.startDate || !member.dueDate) continue;
         working.set(member.id, {
           ...member,
@@ -465,21 +580,76 @@ export function previewScheduleCascade(
     touched.add(taskId);
   };
 
-  const normalizedStart = normalizeToWorkday(rootChange.startDate);
-  const normalizedDue = root.isMilestone
-    ? normalizedStart
-    : normalizeToWorkday(rootChange.dueDate, "backward");
-  if (normalizedDue < normalizedStart) throw new Error("Due date precedes start date");
   const rootDescendants = descendantsById.get(root.id);
-  if (rootDescendants && rootDescendants.length > 0) {
-    moveTask(root.id, normalizedStart);
-  } else {
+  const operation = rootChange.operation ?? "move";
+  if (operation === "fit") {
+    if (!rootDescendants || rootDescendants.length === 0) {
+      throw new Error("Only a task with children can be fitted");
+    }
+    const envelope = descendantEnvelope(
+      rootDescendants.map((task) => working.get(task.id)!),
+    );
+    if (!envelope.startDate || !envelope.dueDate) {
+      throw new Error("Schedule at least one child before fitting the task");
+    }
     working.set(root.id, {
       ...root,
-      startDate: normalizedStart,
-      dueDate: normalizedDue,
+      startDate: envelope.startDate,
+      dueDate: envelope.dueDate,
     });
     touched.add(root.id);
+  } else {
+    if (!rootChange.startDate || !rootChange.dueDate) {
+      throw new Error("Schedule dates are required");
+    }
+    const normalizedStart = normalizeToWorkday(rootChange.startDate);
+    const normalizedDue = root.isMilestone
+      ? normalizedStart
+      : normalizeToWorkday(rootChange.dueDate, "backward");
+    if (normalizedDue < normalizedStart) {
+      throw new Error("Due date precedes start date");
+    }
+    if (
+      operation === "move" &&
+      rootDescendants &&
+      rootDescendants.length > 0
+    ) {
+      moveTask(root.id, normalizedStart);
+    } else if (rootDescendants && rootDescendants.length > 0) {
+      const descendants = rootDescendants.map(
+        (task) => working.get(task.id)!,
+      );
+      const envelope = descendantEnvelope(descendants);
+      const requestedStart =
+        operation === "resize-end"
+          ? root.startDate ?? normalizedStart
+          : normalizedStart;
+      const requestedDue =
+        operation === "resize-start"
+          ? root.dueDate ?? normalizedDue
+          : normalizedDue;
+      const clampedStart =
+        envelope.startDate && requestedStart > envelope.startDate
+          ? envelope.startDate
+          : requestedStart;
+      const clampedDue =
+        envelope.dueDate && requestedDue < envelope.dueDate
+          ? envelope.dueDate
+          : requestedDue;
+      working.set(root.id, {
+        ...root,
+        startDate: clampedStart,
+        dueDate: clampedDue,
+      });
+      touched.add(root.id);
+    } else {
+      working.set(root.id, {
+        ...root,
+        startDate: normalizedStart,
+        dueDate: normalizedDue,
+      });
+      touched.add(root.id);
+    }
   }
 
   const order = dependencyOrder(sourceTasks, dependencies);
@@ -491,6 +661,7 @@ export function previewScheduleCascade(
     rollupAncestorsInPlace(working, childrenByParent, depthById, touched);
     for (const taskId of order) {
       if (!successorIds.has(taskId)) continue;
+      if (rigidTaskIds.has(taskId)) continue;
       const task = working.get(taskId);
       if (!task?.startDate) continue;
       const desired = constrainedStart(
@@ -522,6 +693,358 @@ export function previewScheduleCascade(
   return changes;
 }
 
+function normalizedEditDates(
+  edit: ScheduleEdit,
+  milestone = false,
+): { startDate: string; dueDate: string } {
+  if (!edit.startDate || !edit.dueDate) {
+    throw new Error("Schedule dates are required");
+  }
+  const startDate = normalizeToWorkday(edit.startDate);
+  const dueDate = milestone
+    ? startDate
+    : normalizeToWorkday(edit.dueDate, "backward");
+  if (dueDate < startDate) throw new Error("Due date precedes start date");
+  return { startDate, dueDate };
+}
+
+function isOutwardExpansion(
+  before: Pick<ScheduleTask, "startDate" | "dueDate">,
+  after: Pick<ScheduleTask, "startDate" | "dueDate">,
+): boolean {
+  return Boolean(
+    (after.startDate &&
+      (!before.startDate || after.startDate < before.startDate)) ||
+      (after.dueDate && (!before.dueDate || after.dueDate > before.dueDate)),
+  );
+}
+
+function constrainingTaskIds(
+  tasks: SchedulePortfolioTask[],
+  envelope: { startDate: string | null; dueDate: string | null },
+): string[] {
+  return tasks
+    .filter(
+      (task) =>
+        (envelope.startDate && task.startDate === envelope.startDate) ||
+        (envelope.dueDate && task.dueDate === envelope.dueDate),
+    )
+    .map((task) => task.id);
+}
+
+/**
+ * Pure portfolio planner shared by the browser's fluent drag preview and the
+ * server's authoritative apply. It is intentionally data-only: callers supply
+ * the complete dependency-connected scope and receive a canonical change set.
+ */
+export function previewScheduleEdit(input: SchedulePlanInput): SchedulePreview {
+  const edit = { ...input.edit };
+  if (hasScheduleCycle(input.tasks, input.dependencies)) {
+    throw new Error("Dependency cycle");
+  }
+
+  const originalTasks = new Map(
+    input.tasks.map((task) => [task.id, { ...task }]),
+  );
+  const workingTasks = new Map(
+    input.tasks.map((task) => [task.id, { ...task }]),
+  );
+  const originalProjects = new Map(
+    input.projects.map((project) => [project.id, { ...project }]),
+  );
+  const workingProjects = new Map(
+    input.projects.map((project) => [project.id, { ...project }]),
+  );
+  const constraints: ScheduleConstraint[] = [];
+  const subtreeTaskIds = new Set<string>();
+
+  const taskList = () =>
+    input.tasks.map((task) => workingTasks.get(task.id)!);
+
+  const applyCascade = (
+    taskId: string,
+    operation: ScheduleOperation,
+    dates?: { startDate: string; dueDate: string },
+    rigidTaskIds?: string[],
+  ): void => {
+    for (const change of previewScheduleCascade(
+      taskList(),
+      input.dependencies,
+      {
+        taskId,
+        operation,
+        startDate: dates?.startDate,
+        dueDate: dates?.dueDate,
+        rigidTaskIds,
+      },
+    )) {
+      const task = workingTasks.get(change.taskId)!;
+      workingTasks.set(change.taskId, {
+        ...task,
+        startDate: change.afterStartDate,
+        dueDate: change.afterDueDate,
+      });
+    }
+  };
+
+  if (edit.entityType === "task") {
+    const target = workingTasks.get(edit.entityId);
+    if (!target) throw new Error("Task not found");
+    const descendants = taskDescendants(taskList(), target.id);
+    if (edit.operation === "move") {
+      descendants.forEach((task) => subtreeTaskIds.add(task.id));
+    }
+    if (
+      descendants.length > 0 &&
+      (edit.operation === "resize-start" ||
+        edit.operation === "resize-end" ||
+        edit.operation === "place")
+    ) {
+      const dates = normalizedEditDates(edit, target.isMilestone);
+      const envelope = descendantEnvelope(descendants);
+      const clampedStart = Boolean(
+        envelope.startDate && dates.startDate > envelope.startDate,
+      );
+      const clampedEnd = Boolean(
+        envelope.dueDate && dates.dueDate < envelope.dueDate,
+      );
+      if (clampedStart || clampedEnd) {
+        constraints.push({
+          entityType: "task",
+          entityId: target.id,
+          startDate: envelope.startDate,
+          dueDate: envelope.dueDate,
+          requestedStartDate: dates.startDate,
+          requestedDueDate: dates.dueDate,
+          clampedStart,
+          clampedEnd,
+          constrainingTaskIds: constrainingTaskIds(descendants, envelope),
+        });
+      }
+    }
+    applyCascade(
+      target.id,
+      edit.operation,
+      edit.operation === "fit"
+        ? undefined
+        : normalizedEditDates(edit, target.isMilestone),
+    );
+  } else {
+    const project = workingProjects.get(edit.entityId);
+    if (!project) throw new Error("Project not found");
+    const members = taskList().filter(
+      (task) => task.projectId === project.id,
+    );
+    const envelope = descendantEnvelope(members);
+
+    if (edit.operation === "fit") {
+      if (!envelope.startDate || !envelope.dueDate) {
+        throw new Error("Schedule at least one task before fitting the project");
+      }
+      workingProjects.set(project.id, {
+        ...project,
+        startDate: envelope.startDate,
+        dueDate: envelope.dueDate,
+      });
+    } else {
+      const dates = normalizedEditDates(edit);
+      if (edit.operation === "move") {
+        const currentStart = project.startDate ?? envelope.startDate;
+        if (!currentStart) {
+          throw new Error("Place the project before moving it");
+        }
+        const offset = workdayDistance(currentStart, dates.startDate);
+        for (const shifted of shiftScheduledTasks(members, offset)) {
+          const task = workingTasks.get(shifted.id)!;
+          workingTasks.set(shifted.id, { ...task, ...shifted });
+          if (
+            task.startDate !== shifted.startDate ||
+            task.dueDate !== shifted.dueDate
+          ) {
+            subtreeTaskIds.add(task.id);
+          }
+        }
+        const currentDue = project.dueDate ?? envelope.dueDate;
+        workingProjects.set(project.id, {
+          ...project,
+          startDate: dates.startDate,
+          dueDate: currentDue
+            ? addWorkdays(currentDue, offset)
+            : dates.dueDate,
+        });
+
+        // A no-op root edit runs the dependency fixed point over the shifted
+        // graph, including cross-project successor subtrees.
+        const anchor = taskList().find(
+          (task) =>
+            task.projectId === project.id && task.startDate && task.dueDate,
+        );
+        if (anchor) {
+          applyCascade(anchor.id, "place", {
+            startDate: anchor.startDate!,
+            dueDate: anchor.dueDate!,
+          }, members.map((task) => task.id));
+        }
+      } else {
+        const requestedStart =
+          edit.operation === "resize-end"
+            ? project.startDate ?? dates.startDate
+            : dates.startDate;
+        const requestedDue =
+          edit.operation === "resize-start"
+            ? project.dueDate ?? dates.dueDate
+            : dates.dueDate;
+        const clampedStart = Boolean(
+          envelope.startDate && requestedStart > envelope.startDate,
+        );
+        const clampedEnd = Boolean(
+          envelope.dueDate && requestedDue < envelope.dueDate,
+        );
+        if (clampedStart || clampedEnd) {
+          constraints.push({
+            entityType: "project",
+            entityId: project.id,
+            startDate: envelope.startDate,
+            dueDate: envelope.dueDate,
+            requestedStartDate: requestedStart,
+            requestedDueDate: requestedDue,
+            clampedStart,
+            clampedEnd,
+            constrainingTaskIds: constrainingTaskIds(members, envelope),
+          });
+        }
+        workingProjects.set(project.id, {
+          ...project,
+          startDate:
+            envelope.startDate && requestedStart > envelope.startDate
+              ? envelope.startDate
+              : requestedStart,
+          dueDate:
+            envelope.dueDate && requestedDue < envelope.dueDate
+              ? envelope.dueDate
+              : requestedDue,
+        });
+      }
+    }
+  }
+
+  // Every project is a minimum container. This also catches tasks moved by
+  // cross-project dependency cascades.
+  for (const project of workingProjects.values()) {
+    const members = taskList().filter(
+      (task) => task.projectId === project.id,
+    );
+    const expansion = expandContainerEnvelope(
+      {
+        id: project.id,
+        startDate: project.startDate,
+        dueDate: project.dueDate,
+      },
+      members,
+    );
+    workingProjects.set(project.id, {
+      ...project,
+      startDate: expansion.startDate,
+      dueDate: expansion.dueDate,
+    });
+  }
+
+  const parentIds = new Set(
+    input.tasks
+      .map((task) => task.parentTaskId)
+      .filter((id): id is string => Boolean(id)),
+  );
+  const taskChanges: ScheduleEntityChange[] = input.tasks.flatMap((task) => {
+    const before = originalTasks.get(task.id)!;
+    const after = workingTasks.get(task.id)!;
+    if (
+      before.startDate === after.startDate &&
+      before.dueDate === after.dueDate
+    ) {
+      return [];
+    }
+    const cause: ScheduleChangeCause =
+      task.id === edit.entityId && edit.entityType === "task"
+        ? edit.operation === "fit"
+          ? "fit"
+          : "direct"
+        : subtreeTaskIds.has(task.id)
+          ? "subtree"
+          : parentIds.has(task.id) && isOutwardExpansion(before, after)
+            ? "ancestor-expansion"
+            : "dependency";
+    return [{
+      entityType: "task" as const,
+      entityId: task.id,
+      beforeStartDate: before.startDate,
+      beforeDueDate: before.dueDate,
+      afterStartDate: after.startDate,
+      afterDueDate: after.dueDate,
+      cause,
+    }];
+  });
+  const projectChanges: ScheduleEntityChange[] = input.projects.flatMap(
+    (project) => {
+      const before = originalProjects.get(project.id)!;
+      const after = workingProjects.get(project.id)!;
+      if (
+        before.startDate === after.startDate &&
+        before.dueDate === after.dueDate
+      ) {
+        return [];
+      }
+      return [{
+        entityType: "project" as const,
+        entityId: project.id,
+        beforeStartDate: before.startDate,
+        beforeDueDate: before.dueDate,
+        afterStartDate: after.startDate,
+        afterDueDate: after.dueDate,
+        cause:
+          edit.entityType === "project" && edit.entityId === project.id
+            ? edit.operation === "fit"
+              ? "fit" as const
+              : "direct" as const
+            : "ancestor-expansion" as const,
+      }];
+    },
+  );
+  const changes = [...taskChanges, ...projectChanges];
+
+  const directBefore =
+    edit.entityType === "task"
+      ? originalTasks.get(edit.entityId)
+      : originalProjects.get(edit.entityId);
+  const directAfter =
+    edit.entityType === "task"
+      ? workingTasks.get(edit.entityId)
+      : workingProjects.get(edit.entityId);
+  const workdayDelta =
+    directBefore?.startDate && directAfter?.startDate
+      ? workdayDistance(directBefore.startDate, directAfter.startDate)
+      : directBefore?.dueDate && directAfter?.dueDate
+        ? workdayDistance(directBefore.dueDate, directAfter.dueDate)
+        : 0;
+
+  return {
+    edit,
+    changes,
+    constraints,
+    impact: {
+      workdayDelta,
+      affectedTaskCount: taskChanges.length,
+      affectedProjectCount: projectChanges.length,
+      expandedTaskCount: taskChanges.filter(
+        (change) => change.cause === "ancestor-expansion",
+      ).length,
+      expandedProjectCount: projectChanges.filter(
+        (change) => change.cause === "ancestor-expansion",
+      ).length,
+      conflictTaskIds: [...dependencyConflicts(taskList(), input.dependencies)],
+    },
+  };
+}
+
 export function dependencyConflicts(
   tasks: ScheduleTask[],
   dependencies: ScheduleDependency[],
@@ -537,6 +1060,29 @@ export function dependencyConflicts(
       dependencyStartDate(predecessor.dueDate, dependency.lagWorkdays)
     ) {
       conflicts.add(successor.id);
+    }
+  }
+  return conflicts;
+}
+
+export function dependencyConflictEdgeKeys(
+  tasks: ScheduleTask[],
+  dependencies: ScheduleDependency[],
+): Set<string> {
+  const byId = new Map(tasks.map((task) => [task.id, task]));
+  const conflicts = new Set<string>();
+  for (const dependency of dependencies) {
+    const predecessor = byId.get(dependency.predecessorTaskId);
+    const successor = byId.get(dependency.successorTaskId);
+    if (!predecessor?.dueDate || !successor?.startDate) continue;
+    if (
+      successor.startDate <
+      dependencyStartDate(predecessor.dueDate, dependency.lagWorkdays)
+    ) {
+      conflicts.add(
+        dependency.id ??
+          `${dependency.predecessorTaskId}:${dependency.successorTaskId}:${dependency.lagWorkdays}`,
+      );
     }
   }
   return conflicts;
@@ -742,27 +1288,101 @@ export function descendantEnvelope(
 }
 
 /**
- * A summary task's dates (R1). Unlike the container helpers this replaced, the
- * result is derived purely from the children — it shrinks as readily as it
- * grows, and a summary whose children are all unscheduled is unscheduled too.
+ * Validates the minimum-container invariant for an already-materialized
+ * portfolio. It is used before undo so a historic date snapshot cannot be
+ * restored into a tree that gained new descendants in the meantime.
  */
-export function rollupEnvelope(
+export function scheduleContainmentViolations(
+  tasks: SchedulePortfolioTask[],
+  projects: ScheduleProject[],
+): ScheduleContainmentViolation[] {
+  const violations: ScheduleContainmentViolation[] = [];
+  const parentIds = new Set(
+    tasks
+      .map((task) => task.parentTaskId)
+      .filter((id): id is string => Boolean(id)),
+  );
+  for (const parentId of parentIds) {
+    const parent = tasks.find((task) => task.id === parentId);
+    if (!parent) continue;
+    const descendants = taskDescendants(tasks, parent.id);
+    const envelope = descendantEnvelope(descendants);
+    const violatesStart = Boolean(
+      envelope.startDate &&
+        (!parent.startDate || parent.startDate > envelope.startDate),
+    );
+    const violatesEnd = Boolean(
+      envelope.dueDate &&
+        (!parent.dueDate || parent.dueDate < envelope.dueDate),
+    );
+    if (violatesStart || violatesEnd) {
+      violations.push({
+        entityType: "task",
+        entityId: parent.id,
+        violatesStart,
+        violatesEnd,
+        constrainingTaskIds: constrainingTaskIds(descendants, envelope),
+      });
+    }
+  }
+  for (const project of projects) {
+    const members = tasks.filter((task) => task.projectId === project.id);
+    const envelope = descendantEnvelope(members);
+    const violatesStart = Boolean(
+      envelope.startDate &&
+        (!project.startDate || project.startDate > envelope.startDate),
+    );
+    const violatesEnd = Boolean(
+      envelope.dueDate &&
+        (!project.dueDate || project.dueDate < envelope.dueDate),
+    );
+    if (violatesStart || violatesEnd) {
+      violations.push({
+        entityType: "project",
+        entityId: project.id,
+        violatesStart,
+        violatesEnd,
+        constrainingTaskIds: constrainingTaskIds(members, envelope),
+      });
+    }
+  }
+  return violations;
+}
+
+/**
+ * Widens a container just enough to contain its scheduled children. Authored
+ * slack is retained and unscheduled children do not constrain either edge.
+ */
+export function expandContainerEnvelope(
   container: Pick<ScheduleTask, "id" | "startDate" | "dueDate">,
   children: Pick<ScheduleTask, "startDate" | "dueDate">[],
 ): AncestorExpansion {
   const envelope = descendantEnvelope(children);
+  const startDate =
+    envelope.startDate &&
+    (!container.startDate || envelope.startDate < container.startDate)
+      ? envelope.startDate
+      : container.startDate;
+  const dueDate =
+    envelope.dueDate &&
+    (!container.dueDate || envelope.dueDate > container.dueDate)
+      ? envelope.dueDate
+      : container.dueDate;
   return {
     taskId: container.id,
-    startDate: envelope.startDate,
-    dueDate: envelope.dueDate,
-    expandedStart: envelope.startDate !== container.startDate,
-    expandedEnd: envelope.dueDate !== container.dueDate,
+    startDate,
+    dueDate,
+    expandedStart: startDate !== container.startDate,
+    expandedEnd: dueDate !== container.dueDate,
   };
 }
 
+/** @deprecated Use `expandContainerEnvelope`; retained for existing callers. */
+export const rollupEnvelope = expandContainerEnvelope;
+
 /**
- * How far a project's tasks spill outside its authored window (R3/R4). Projects
- * keep dates the user authored, so overflow is reported rather than absorbed.
+ * How far work reaches outside a container. The same envelope powers resize
+ * clamping and the UI's explanatory constraint indicator.
  */
 export function containerOverflow(
   container: Pick<ScheduleTask, "startDate" | "dueDate">,
