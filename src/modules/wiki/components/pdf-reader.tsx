@@ -1,16 +1,16 @@
 /* eslint-disable @next/next/no-img-element -- Authenticated PDF thumbnails and annotation crops are served by private routes. */
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useDeferredValue, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useFormatter, useTranslations } from "next-intl";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import {
-  ArrowLeft, ArrowUp, Bookmark, Check, ChevronDown, ChevronLeft, ChevronRight, Clock3, Copy,
+  ArrowLeft, ArrowUp, Bookmark, CaseSensitive, Check, ChevronDown, ChevronLeft, ChevronRight, Clock3, Copy,
   Download, ExternalLink, FileSearch, Highlighter, Keyboard, ListTree, Loader2, Menu, MessageCircle,
   Minus, MoreHorizontal, Pencil, Plus, Printer, RotateCw, Search, Trash2, X,
-  SquareDashedMousePointer,
+  SquareDashedMousePointer, WholeWord,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -21,7 +21,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator,
-  DropdownMenuTrigger,
+  DropdownMenuShortcut, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { FocusModeToggle, useFocusMode } from "@/components/focus-mode";
 import {
@@ -31,9 +31,13 @@ import {
 import type { PdfRect } from "../lib/pdf-evidence";
 import {
   calculateFitScale, findSearchOccurrences, formatPdfCitation,
-  parsePdfReaderPreferences, PDF_READER_PREFERENCES_KEY, resolveInitialPage, type FitMode,
+  normalizePdfSearchText, parsePdfReaderPreferences, PDF_READER_PREFERENCES_KEY, resolveInitialPage, type FitMode,
   type NavigatorTab, type PdfReaderPreferences,
 } from "../lib/pdf-reader-utils";
+import {
+  DEFAULT_PDF_SHORTCUT_BINDINGS, displayPdfShortcut, isReservedPdfShortcut, normalizePdfShortcut, PDF_SHORTCUT_ACTIONS, PDF_SHORTCUT_GROUPS,
+  PDF_SHORTCUT_LABELS, shortcutConflicts, type PdfShortcutAction, type PdfShortcutBindings,
+} from "../lib/pdf-shortcuts";
 import styles from "./pdf-reader.module.css";
 import {
   USER_MARK_COLORS,
@@ -75,6 +79,39 @@ function isPdfRenderCancellation(reason: unknown) {
   return reason instanceof Error && reason.name === "RenderingCancelledException";
 }
 
+function searchRangeInTextLayer(
+  layer: HTMLDivElement,
+  query: string,
+  caseSensitive: boolean,
+  wholeWord: boolean,
+  occurrenceIndex: number,
+) {
+  const nodes: Text[] = [];
+  const walker = document.createTreeWalker(layer, NodeFilter.SHOW_TEXT);
+  while (walker.nextNode()) {
+    if (walker.currentNode.textContent) nodes.push(walker.currentNode as Text);
+  }
+  const offsets: Array<{ node: Text; start: number; end: number }> = [];
+  let text = "";
+  for (const node of nodes) {
+    const start = text.length;
+    text += node.data;
+    offsets.push({ node, start, end: text.length });
+  }
+  const occurrence = findSearchOccurrences(
+    [{ pageNumber: Number(layer.parentElement?.dataset.pageNumber) || 1, text }],
+    { query, caseSensitive, wholeWord },
+  )[occurrenceIndex];
+  if (!occurrence) return null;
+  const startNode = offsets.find((item) => occurrence.start >= item.start && occurrence.start < item.end);
+  const endNode = offsets.find((item) => occurrence.end > item.start && occurrence.end <= item.end);
+  if (!startNode || !endNode) return null;
+  const range = document.createRange();
+  range.setStart(startNode.node, occurrence.start - startNode.start);
+  range.setEnd(endNode.node, occurrence.end - endNode.start);
+  return range;
+}
+
 export function PdfReader({
   sourceId, sourceTitle, attachmentId, documentId, fileName, pages, initialAnnotations,
   initialPage, initialAnnotationId, user,
@@ -87,7 +124,7 @@ export function PdfReader({
 }) {
   const t = useTranslations("wiki"); const tMarkColor = useTranslations("settings.profile.colors"); const format = useFormatter(); const router = useRouter();
   const pdfLoadFailedMessage = t("pdfLoadFailed");
-  const { isFocused } = useFocusMode();
+  const { isFocused, toggleFocused } = useFocusMode();
   const [showThumbnails, setShowThumbnails] = useState(true);
   const [thumbnailWidth, setThumbnailWidth] = useState(132);
   const [navigatorTab, setNavigatorTab] = useState<NavigatorTab>("pages");
@@ -103,11 +140,19 @@ export function PdfReader({
   const [scale, setScale] = useState(1.25); const [rotation, setRotation] = useState(0);
   const [fitMode, setFitMode] = useState<FitMode>("custom");
   const [preferencesLoaded, setPreferencesLoaded] = useState(false);
+  const [shortcuts, setShortcuts] = useState<PdfShortcutBindings>(DEFAULT_PDF_SHORTCUT_BINDINGS);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [recordingShortcut, setRecordingShortcut] = useState<PdfShortcutAction | null>(null);
+  const [shortcutError, setShortcutError] = useState("");
   const [outline, setOutline] = useState<Array<{ title: string; pageNumber?: number; depth: number }>>([]);
   const [outlineLoaded, setOutlineLoaded] = useState(false);
   const [activeSearchIndex, setActiveSearchIndex] = useState(-1);
+  const [caseSensitiveSearch, setCaseSensitiveSearch] = useState(false);
+  const [wholeWordSearch, setWholeWordSearch] = useState(false);
+  const [textLayerVersion, setTextLayerVersion] = useState(0);
   const [continuousRenderPages, setContinuousRenderPages] = useState<number[]>([pageNumber]);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const readerRef = useRef<HTMLElement>(null);
   const [liveMessage, setLiveMessage] = useState("");
   const [annotationKindFilter, setAnnotationKindFilter] = useState("all");
   const [annotationColorFilter, setAnnotationColorFilter] = useState("all");
@@ -142,7 +187,22 @@ export function PdfReader({
   const restoreContinuousPage = useRef<number | null>(null);
   const initialContinuousScroll = useRef(true);
   const [query, setQuery] = useState("");
-  const searchOccurrences = useMemo(() => findSearchOccurrences(pages, query), [pages, query]);
+  const deferredQuery = useDeferredValue(query);
+  const searchPending = deferredQuery !== query;
+  const searchOccurrences = useMemo(() => searchPending ? [] : findSearchOccurrences(pages, {
+    query: deferredQuery,
+    caseSensitive: caseSensitiveSearch,
+    wholeWord: wholeWordSearch,
+  }), [caseSensitiveSearch, deferredQuery, pages, searchPending, wholeWordSearch]);
+  const hasSearchableText = useMemo(() => pages.some((page) => normalizePdfSearchText(page.text).text.length > 0), [pages]);
+  const searchResultRefs = useRef(new Map<number, HTMLButtonElement>());
+  const visibleSearchOccurrences = useMemo(() => {
+    if (!searchOccurrences.length || activeSearchIndex <= 0 || activeSearchIndex >= searchOccurrences.length) {
+      return searchOccurrences.map((occurrence, originalIndex) => ({ occurrence, originalIndex }));
+    }
+    return [...searchOccurrences.slice(activeSearchIndex), ...searchOccurrences.slice(0, activeSearchIndex)]
+      .map((occurrence, offset) => ({ occurrence, originalIndex: (activeSearchIndex + offset) % searchOccurrences.length }));
+  }, [activeSearchIndex, searchOccurrences]);
   const canvasRef = useRef<HTMLCanvasElement>(null); const textLayerRef = useRef<HTMLDivElement>(null);
   const pageShellRef = useRef<HTMLDivElement>(null); const secondaryPageShellRef = useRef<HTMLDivElement>(null); const secondaryCanvasRef = useRef<HTMLCanvasElement>(null); const secondaryTextLayerRef = useRef<HTMLDivElement>(null); const continuousCanvasRefs = useRef(new Map<number, HTMLCanvasElement>()); const continuousTextLayerRefs = useRef(new Map<number, HTMLDivElement>()); const continuousPageRefs = useRef(new Map<number, HTMLDivElement>()); const continuousRenderTasksRef = useRef(new Map<number, { cancel: () => void; promise: Promise<unknown> }>()); const continuousLoadingPagesRef = useRef(new Set<number>()); const continuousRenderedPagesRef = useRef(new Set<number>()); const continuousRenderGenerationRef = useRef(0); const continuousActivePageRef = useRef(pageNumber); const viewportRef = useRef<HTMLDivElement>(null);
   const currentPage = pages.find((page) => page.pageNumber === pageNumber);
@@ -158,7 +218,7 @@ export function PdfReader({
     const media = window.matchMedia("(max-width: 767px)");
     const updateCompactViewport = () => setCompactViewport(media.matches);
     const frame = window.requestAnimationFrame(() => {
-      const preferences = parsePdfReaderPreferences(window.localStorage.getItem(PDF_READER_PREFERENCES_KEY));
+      const preferences = parsePdfReaderPreferences(window.localStorage.getItem(PDF_READER_PREFERENCES_KEY) ?? window.localStorage.getItem("wiki:pdf-reader-preferences:v2") ?? window.localStorage.getItem("wiki:pdf-reader-preferences:v1"));
       const legacyCommentWidth = Number(window.localStorage.getItem(COMMENT_PANEL_WIDTH_KEY));
       const nextCommentWidth = Number.isFinite(legacyCommentWidth)
         ? Math.min(420, Math.max(260, legacyCommentWidth))
@@ -166,12 +226,15 @@ export function PdfReader({
       commentPanelWidthRef.current = nextCommentWidth;
       setCommentPanelWidth(nextCommentWidth);
       setThumbnailWidth(preferences.navigatorWidth);
-      setShowThumbnails(preferences.navigatorVisible);
+      // Focus mode starts with an uncluttered canvas, but the navigator can be
+      // explicitly opened again from the toolbar (including its outline tab).
+      setShowThumbnails(isFocused ? false : preferences.navigatorVisible);
       setNavigatorTab(preferences.navigatorTab);
       setViewMode(preferences.viewMode);
       setFitMode(preferences.fitMode);
       setScale(preferences.scale);
       setRotation(preferences.rotation);
+      setShortcuts(preferences.shortcuts);
       reducedMotion.current = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
       if (!hasExplicitPage) {
         const storedPage = Number(window.localStorage.getItem(LAST_PAGE_KEY_PREFIX + documentId));
@@ -182,17 +245,18 @@ export function PdfReader({
     });
     media.addEventListener("change", updateCompactViewport);
     return () => { window.cancelAnimationFrame(frame); media.removeEventListener("change", updateCompactViewport); };
-  }, [documentId, hasExplicitPage, pages.length]);
+  }, [documentId, hasExplicitPage, isFocused, pages.length]);
 
   useEffect(() => {
     if (!preferencesLoaded) return;
     const preferences: PdfReaderPreferences = {
-      version: 1, viewMode, fitMode, scale, rotation,
+       version: 3, viewMode, fitMode, scale, rotation,
       navigatorTab, navigatorVisible: showThumbnails, navigatorWidth: thumbnailWidth,
       commentPanelWidth,
+      shortcuts,
     };
     window.localStorage.setItem(PDF_READER_PREFERENCES_KEY, JSON.stringify(preferences));
-  }, [commentPanelWidth, fitMode, navigatorTab, preferencesLoaded, rotation, scale, showThumbnails, thumbnailWidth, viewMode]);
+  }, [commentPanelWidth, fitMode, navigatorTab, preferencesLoaded, rotation, scale, shortcuts, showThumbnails, thumbnailWidth, viewMode]);
 
   useEffect(() => {
     if (!preferencesLoaded) return;
@@ -311,11 +375,12 @@ export function PdfReader({
         let words: Array<{ text: string; x: number; y: number; width: number; height: number }> = [];
         try { words = JSON.parse(currentPage.textLayerJson) as typeof words; } catch { /* ignore */ }
         for (const word of words) {
-          const span = document.createElement("span"); span.textContent = word.text;
+          const span = document.createElement("span"); span.textContent = `${word.text} `;
           Object.assign(span.style, { left: `${word.x * 100}%`, top: `${word.y * 100}%`, width: `${word.width * 100}%`, height: `${word.height * 100}%`, fontSize: `${Math.max(8, word.height * viewport.height)}px` });
           layer.appendChild(span);
         }
       }
+      setTextLayerVersion((value) => value + 1);
       setRendering(false);
       }).catch((reason) => { if (!cancelled && !isPdfRenderCancellation(reason)) { setError(reason instanceof Error ? reason.message : pdfLoadFailedMessage); setRendering(false); } });
     return () => { cancelled = true; renderTask?.cancel(); };
@@ -340,6 +405,7 @@ export function PdfReader({
         const textContent = await pdfPage.getTextContent();
         secondaryTextLayerRef.current.replaceChildren();
         await new pdfjsRef.current.TextLayer({ textContentSource: textContent, container: secondaryTextLayerRef.current, viewport }).render();
+        setTextLayerVersion((value) => value + 1);
       }).catch((reason) => { if (!cancelled && !isPdfRenderCancellation(reason)) setError(reason instanceof Error ? reason.message : pdfLoadFailedMessage); });
     });
     return () => { cancelled = true; renderTask?.cancel(); };
@@ -420,7 +486,10 @@ export function PdfReader({
           if (textContent.items.length) {
             await new pdfjsRef.current.TextLayer({ textContentSource: textContent, container: layer, viewport }).render();
           }
-          if (continuousRenderGenerationRef.current === generation) continuousRenderedPagesRef.current.add(page.pageNumber);
+          if (continuousRenderGenerationRef.current === generation) {
+            continuousRenderedPagesRef.current.add(page.pageNumber);
+            setTextLayerVersion((value) => value + 1);
+          }
         }).finally(() => { if (continuousRenderTasksRef.current.get(page.pageNumber) === renderTask) continuousRenderTasksRef.current.delete(page.pageNumber); });
       }).catch((reason) => { if (continuousRenderGenerationRef.current === generation && !isPdfRenderCancellation(reason)) setError(reason instanceof Error ? reason.message : pdfLoadFailedMessage); }).finally(() => { continuousLoadingPagesRef.current.delete(page.pageNumber); });
     }
@@ -458,16 +527,62 @@ export function PdfReader({
   }, [query, searchOccurrences.length]);
 
   useEffect(() => {
-    const needle = query.trim().toLocaleLowerCase();
-    const activePage = searchOccurrences[activeSearchIndex]?.pageNumber;
-    const layers = [textLayerRef.current, secondaryTextLayerRef.current, ...continuousTextLayerRefs.current.values()];
-    layers.forEach((layer) => layer?.querySelectorAll("span").forEach((span) => {
-      const matches = Boolean(needle && span.textContent?.toLocaleLowerCase().includes(needle));
+    const layers = [textLayerRef.current, secondaryTextLayerRef.current, ...continuousTextLayerRefs.current.values()].filter((layer): layer is HTMLDivElement => Boolean(layer));
+    const clearOverlays = () => layers.forEach((layer) => layer.parentElement?.querySelector("[data-pdf-search-overlay]")?.replaceChildren());
+    clearOverlays();
+    if (!query.trim() || searchPending) return;
+    let activeMarker: HTMLDivElement | null = null;
+    for (const layer of layers) {
       const layerPage = Number(layer.parentElement?.dataset.pageNumber) || pageNumber;
-      span.toggleAttribute("data-search-match", matches);
-      span.toggleAttribute("data-search-active", matches && layerPage === activePage);
-    }));
-  }, [activeSearchIndex, pageNumber, query, rendering, scale, searchOccurrences, viewMode]);
+      const shell = layer.parentElement;
+      const overlay = shell?.querySelector<HTMLDivElement>("[data-pdf-search-overlay]");
+      if (!shell || !overlay) continue;
+      const shellBounds = shell.getBoundingClientRect();
+      const pageOccurrences = searchOccurrences.filter((occurrence) => occurrence.pageNumber === layerPage);
+      for (const occurrence of pageOccurrences) {
+        const range = searchRangeInTextLayer(layer, query, caseSensitiveSearch, wholeWordSearch, occurrence.pageOccurrenceIndex);
+        if (!range) continue;
+        const active = searchOccurrences[activeSearchIndex]?.id === occurrence.id;
+        for (const rect of Array.from(range.getClientRects()).filter((item) => item.width > 0 && item.height > 0)) {
+          const marker = document.createElement("div");
+          marker.dataset.pdfSearchMatch = occurrence.id;
+          if (active) marker.dataset.pdfSearchActive = "true";
+          marker.className = active ? `${styles.searchMatch} ${styles.searchMatchActive}` : styles.searchMatch;
+          Object.assign(marker.style, {
+            left: `${rect.left - shellBounds.left}px`,
+            top: `${rect.top - shellBounds.top}px`,
+            width: `${rect.width}px`,
+            height: `${rect.height}px`,
+          });
+          overlay.appendChild(marker);
+          if (active && !activeMarker) activeMarker = marker;
+        }
+      }
+    }
+    if (activeMarker) {
+      const marker = activeMarker;
+      window.requestAnimationFrame(() => marker.scrollIntoView({
+        behavior: reducedMotion.current ? "auto" : "smooth",
+        block: "center",
+        inline: "center",
+      }));
+    }
+    return clearOverlays;
+  }, [activeSearchIndex, caseSensitiveSearch, pageNumber, query, searchOccurrences, searchPending, textLayerVersion, viewMode, wholeWordSearch]);
+
+  useEffect(() => {
+    if (!showThumbnails || navigatorTab !== "search") return;
+    let secondFrame: number | null = null;
+    const frame = window.requestAnimationFrame(() => {
+      secondFrame = window.requestAnimationFrame(() => {
+        searchInputRef.current?.scrollIntoView({ block: "start", inline: "nearest", behavior: "auto" });
+      });
+    });
+    return () => {
+      window.cancelAnimationFrame(frame);
+      if (secondFrame !== null) window.cancelAnimationFrame(secondFrame);
+    };
+  }, [navigatorTab, showThumbnails]);
   useEffect(() => {
     if (viewMode !== "continuous" || !viewportRef.current) return;
     const viewport = viewportRef.current;
@@ -541,15 +656,99 @@ export function PdfReader({
     if (viewMode === "continuous") scrollToPage(nextPage);
   }
 
-  useEffect(() => {
-    function keyboard(event: KeyboardEvent) {
-      if ((event.ctrlKey || event.metaKey) && event.key.toLocaleLowerCase() === "f") {
-        event.preventDefault();
-        setShowThumbnails(true);
-        setNavigatorTab("search");
-        window.requestAnimationFrame(() => searchInputRef.current?.focus());
-        return;
-      }
+  const openPdfSearch = useCallback(() => {
+    setShowThumbnails(true);
+    setNavigatorTab("search");
+    window.requestAnimationFrame(() => {
+      setShowThumbnails(true);
+      setNavigatorTab("search");
+      window.requestAnimationFrame(() => searchInputRef.current?.focus());
+    });
+  }, []);
+
+  function shortcutTitle(action: PdfShortcutAction, label: string) {
+    return `${label} · ${displayPdfShortcut(shortcuts[action])}`;
+  }
+
+  function runPdfShortcut(action: PdfShortcutAction) {
+    switch (action) {
+      case "previousPage": updateUrl(Math.max(1, pageNumber - 1)); break;
+      case "nextPage": updateUrl(Math.min(pages.length, pageNumber + 1)); break;
+      case "zoomOut": setCustomScale(scale - 0.15); break;
+      case "zoomIn": setCustomScale(scale + 0.15); break;
+      case "fitWidth": void applyFitMode("width"); break;
+      case "fitPage": void applyFitMode("page"); break;
+      case "actualSize": void applyFitMode("actual"); break;
+      case "continuousView": changeViewMode("continuous"); break;
+      case "singlePageView": changeViewMode("single"); break;
+      case "doublePageView": changeViewMode("double"); break;
+      case "search": openPdfSearch(); break;
+      case "previousMatch": navigateSearch(-1); break;
+      case "nextMatch": navigateSearch(1); break;
+      case "caseSensitive": setCaseSensitiveSearch((value) => !value); setActiveSearchIndex(-1); break;
+      case "wholeWord": setWholeWordSearch((value) => !value); setActiveSearchIndex(-1); break;
+      case "navigatorPages": setShowThumbnails(true); setNavigatorTab("pages"); break;
+      case "navigatorSearch": openPdfSearch(); break;
+      case "outline": setShowThumbnails(true); setNavigatorTab("outline"); break;
+      case "captureRegion": if (viewMode === "continuous") setViewMode("single"); setRegionMode((value) => !value); break;
+      case "bookmarkPage": requestAnnotation({ kind: "bookmark", geometry: [], selectedText: "", pageNumber }); break;
+      case "comments": if (commentsVisible) closeCommentPanel(); else showCommentList(); break;
+      case "previousAnnotation": if (selectedAnnotation) moveAnnotation(-1); break;
+      case "nextAnnotation": if (selectedAnnotation) moveAnnotation(1); break;
+      case "backToComments": showCommentList(); break;
+      case "copyCitation": if (selectedAnnotation) void copyAnnotationCitation(selectedAnnotation); break;
+      case "editAnnotation": if (selectedAnnotation) beginEditingAnnotation(selectedAnnotation); break;
+      case "deleteAnnotation": if (selectedAnnotation) void removeAnnotation(selectedAnnotation); break;
+      case "rotate": setRotation((value) => (value + 90) % 360); break;
+      case "toggleNavigator": setShowThumbnails((value) => !value); break;
+      case "openOriginal": window.open(`/api/files/${attachmentId}`, "_blank", "noopener,noreferrer"); break;
+      case "download": window.location.assign(`/api/files/${attachmentId}?download=1`); break;
+      case "printPdf": window.open(`/api/files/${attachmentId}#toolbar=1`, "_blank", "noopener,noreferrer"); break;
+      case "focusMode": toggleFocused(); break;
+      case "shortcuts": setShortcutsOpen(true); break;
+    }
+  }
+
+  function handlePdfShortcut(event: KeyboardEvent | React.KeyboardEvent<HTMLElement>) {
+    const target = event.target as HTMLElement | null;
+    const activeElement = document.activeElement as HTMLElement | null;
+    const documentHasReaderFocus = target === document.body || target === document.documentElement;
+    const eventTarget = readerRef.current?.contains(target)
+      ? target
+      : readerRef.current?.contains(activeElement)
+        ? activeElement
+        : documentHasReaderFocus
+          ? readerRef.current
+          : null;
+    if (!readerRef.current?.contains(eventTarget) || event.defaultPrevented || ("nativeEvent" in event ? event.nativeEvent.isComposing : event.isComposing)) return false;
+    const shortcut = normalizePdfShortcut(event);
+    if (!shortcut) return false;
+    const action = PDF_SHORTCUT_ACTIONS.find((candidate) => shortcuts[candidate] === shortcut);
+    if (!action) return false;
+    if (eventTarget?.closest("input, textarea, select, [contenteditable=true], [role=dialog], [role=menu], [data-shortcut-recorder]") && action !== "search") return false;
+    event.preventDefault();
+    event.stopPropagation();
+    runPdfShortcut(action);
+    return true;
+  }
+
+  function captureShortcut(action: PdfShortcutAction, event: React.KeyboardEvent<HTMLButtonElement>) {
+    event.preventDefault();
+    event.stopPropagation();
+    const shortcut = event.key === "Tab" && (action === "previousMatch" || action === "nextMatch")
+      ? `${event.shiftKey ? "Shift+" : ""}Tab`
+      : normalizePdfShortcut(event);
+    if (!shortcut) { setShortcutError(t("shortcutRequiresCtrl")); return; }
+    if (isReservedPdfShortcut(shortcut)) { setShortcutError(t("shortcutReserved")); return; }
+    const conflict = shortcutConflicts(shortcuts, action, shortcut);
+    if (conflict) { setShortcutError(t("shortcutConflict", { action: PDF_SHORTCUT_LABELS[conflict] })); return; }
+    setShortcuts((current) => ({ ...current, [action]: shortcut }));
+    setRecordingShortcut(null);
+    setShortcutError("");
+  }
+
+  const handleWindowKeyDown = useEffectEvent((event: KeyboardEvent) => {
+      if (handlePdfShortcut(event)) return;
       const typing = event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement;
       if (typing) {
         if (event.key === "Escape" && event.target === searchInputRef.current) {
@@ -572,9 +771,13 @@ export function PdfReader({
       if (event.key === "ArrowRight" || event.key === "PageDown") goToPage(Math.min(pages.length, pageNumber + 1));
       if (event.key === "+" || event.key === "=") { setFitMode("custom"); setScale(Math.min(3, scale + 0.15)); }
       if (event.key === "-") { setFitMode("custom"); setScale(Math.max(0.5, scale - 0.15)); }
-    }
-    window.addEventListener("keydown", keyboard); return () => window.removeEventListener("keydown", keyboard);
-  }, [documentId, pageNumber, pages.length, query, router, scale, sourceId, viewMode]);
+  });
+
+  useEffect(() => {
+    const keyboard = (event: KeyboardEvent) => handleWindowKeyDown(event);
+    window.addEventListener("keydown", keyboard, true);
+    return () => window.removeEventListener("keydown", keyboard, true);
+  }, []);
 
   function captureSelection() {
     const browserSelection = window.getSelection();
@@ -755,7 +958,10 @@ export function PdfReader({
     const occurrence = searchOccurrences[next];
     setActiveSearchIndex(next);
     setLiveMessage(t("searchResultStatus", { current: next + 1, total: searchOccurrences.length, page: occurrence.pageNumber }));
+    setShowThumbnails(true);
+    setNavigatorTab("search");
     updateUrl(occurrence.pageNumber);
+    window.requestAnimationFrame(() => searchInputRef.current?.focus());
   }
 
   function scrollToPage(targetPage: number, block: ScrollLogicalPosition = "start") {
@@ -905,23 +1111,36 @@ export function PdfReader({
     if (!occurrence) return;
     setActiveSearchIndex(index);
     setLiveMessage(t("searchResultStatus", { current: index + 1, total: searchOccurrences.length, page: occurrence.pageNumber }));
+    setShowThumbnails(true);
+    setNavigatorTab("search");
     updateUrl(occurrence.pageNumber);
+    window.requestAnimationFrame(() => searchInputRef.current?.focus());
   }
 
   const thumbnailTools = <div className="flex h-full min-h-0 flex-col">
     <div className="grid grid-cols-3 gap-1 border-b p-2" role="tablist" aria-label={t("documentNavigator")}>
       {([
-        ["pages", Menu, t("pages")],
-        ["search", Search, t("search")],
-        ["outline", ListTree, t("outline")],
-      ] as const).map(([tab, Icon, label]) => <button key={tab} type="button" role="tab" aria-selected={navigatorTab === tab} title={label} className={`grid h-8 place-items-center rounded-md transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 ${navigatorTab === tab ? "bg-indigo-50 text-indigo-700 dark:bg-indigo-950/40 dark:text-indigo-300" : "text-muted-foreground hover:bg-muted"}`} onClick={() => setNavigatorTab(tab)}><Icon className="size-4" /><span className="sr-only">{label}</span></button>)}
+        ["pages", Menu, t("pages"), "navigatorPages"],
+        ["search", Search, t("search"), "navigatorSearch"],
+        ["outline", ListTree, t("outline"), "outline"],
+      ] as const).map(([tab, Icon, label, action]) => <button key={tab} type="button" role="tab" aria-selected={navigatorTab === tab} title={shortcutTitle(action, label)} className={`grid h-8 place-items-center rounded-md transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 ${navigatorTab === tab ? "bg-indigo-50 text-indigo-700 dark:bg-indigo-950/40 dark:text-indigo-300" : "text-muted-foreground hover:bg-muted"}`} onClick={() => setNavigatorTab(tab)}><Icon className="size-4" /><span className="sr-only">{label}</span></button>)}
     </div>
     <div className="min-h-0 flex-1 overflow-y-auto p-2">
       {navigatorTab === "pages" && <div className="space-y-2">{pages.map((page) => <button key={page.pageNumber} className={`w-full rounded border p-1 ${page.pageNumber === pageNumber ? "border-indigo-500 bg-indigo-50 dark:bg-indigo-950/30" : "bg-muted/20"}`} onClick={() => updateUrl(page.pageNumber)}><img src={"/api/wiki/pdf-documents/" + documentId + "/pages/" + page.pageNumber + "/thumbnail"} alt={t("pageNumber", { page: page.pageNumber })} className="mx-auto h-auto max-h-36 w-full object-contain" loading="lazy" /><span className="mt-1 block text-[10px]">{page.pageNumber}</span></button>)}</div>}
       {navigatorTab === "search" && <div>
-        <div className="relative"><Search className="absolute left-2 top-2.5 size-3.5 text-muted-foreground" /><Input ref={searchInputRef} value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); navigateSearch(event.shiftKey ? -1 : 1); } }} className="h-8 pl-7 pr-7 text-xs" placeholder={t("searchInPdf")} />{query && <button type="button" aria-label={t("clearSearch")} className="absolute right-2 top-2 text-muted-foreground hover:text-foreground" onClick={() => setQuery("")}><X className="size-4" /></button>}</div>
-        <div className="my-2 flex items-center justify-between gap-1 text-[10px] text-muted-foreground"><span>{query ? t("searchMatches", { count: searchOccurrences.length }) : t("searchHint")}</span><span className="flex"><Button type="button" variant="ghost" size="icon-xs" disabled={!searchOccurrences.length} aria-label={t("previousMatch")} onClick={() => navigateSearch(-1)}><ChevronLeft /></Button><Button type="button" variant="ghost" size="icon-xs" disabled={!searchOccurrences.length} aria-label={t("nextMatch")} onClick={() => navigateSearch(1)}><ChevronRight /></Button></span></div>
-        <div className="space-y-1">{searchOccurrences.map((occurrence, index) => <button key={occurrence.id} type="button" className={`block w-full rounded border p-2 text-left text-xs ${index === activeSearchIndex ? "border-indigo-500 bg-indigo-50 dark:bg-indigo-950/30" : "hover:bg-accent"}`} onClick={() => selectSearchOccurrence(index)}><strong>{t("pageNumber", { page: occurrence.pageNumber })}</strong><span className="mt-1 line-clamp-3 block text-muted-foreground">{occurrence.snippet}</span></button>)}</div>
+        <div className="relative"><Search className="absolute left-2 top-2.5 size-3.5 text-muted-foreground" /><Input ref={searchInputRef} value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => { const shortcut = event.key === "Tab" ? `${event.shiftKey ? "Shift+" : ""}Tab` : normalizePdfShortcut(event); const action = shortcut && (["previousMatch", "nextMatch"] as const).find((candidate) => shortcuts[candidate] === shortcut); if (action && searchOccurrences.length) { event.preventDefault(); navigateSearch(action === "previousMatch" ? -1 : 1); return; } if (event.key === "Enter" && searchOccurrences.length) { event.preventDefault(); navigateSearch(event.shiftKey ? -1 : 1); } }} className="h-8 pl-7 pr-7 text-xs" placeholder={t("searchInPdf")} />{query && <button type="button" aria-label={t("clearSearch")} className="absolute right-2 top-2 text-muted-foreground hover:text-foreground" onClick={() => setQuery("")}><X className="size-4" /></button>}</div>
+        <div className="my-2 flex items-center justify-between gap-1">
+          <span aria-live="polite" className="text-[10px] text-muted-foreground">{searchPending ? t("searchingPdf") : query && searchOccurrences.length ? t("searchPosition", { current: Math.max(1, activeSearchIndex + 1), total: searchOccurrences.length }) : query ? t("searchMatches", { count: 0 }) : t("searchHint")}</span>
+          <span className="flex">
+            <Button type="button" variant={caseSensitiveSearch ? "secondary" : "ghost"} size="icon-xs" aria-label={t("caseSensitive")} title={shortcutTitle("caseSensitive", t("caseSensitive"))} aria-pressed={caseSensitiveSearch} onClick={() => { setCaseSensitiveSearch((value) => !value); setActiveSearchIndex(-1); }}><CaseSensitive /></Button>
+            <Button type="button" variant={wholeWordSearch ? "secondary" : "ghost"} size="icon-xs" aria-label={t("wholeWord")} title={shortcutTitle("wholeWord", t("wholeWord"))} aria-pressed={wholeWordSearch} onClick={() => { setWholeWordSearch((value) => !value); setActiveSearchIndex(-1); }}><WholeWord /></Button>
+            <Button type="button" variant="ghost" size="icon-xs" disabled={!searchOccurrences.length} aria-label={t("previousMatch")} title={shortcutTitle("previousMatch", t("previousMatch"))} onClick={() => navigateSearch(-1)}><ChevronLeft /></Button>
+            <Button type="button" variant="ghost" size="icon-xs" disabled={!searchOccurrences.length} aria-label={t("nextMatch")} title={shortcutTitle("nextMatch", t("nextMatch"))} onClick={() => navigateSearch(1)}><ChevronRight /></Button>
+          </span>
+        </div>
+        {!hasSearchableText && <p className="rounded-md border border-dashed p-3 text-xs text-muted-foreground">{t("pdfHasNoSearchableText")}</p>}
+        {hasSearchableText && query && !searchPending && !searchOccurrences.length && <p className="rounded-md border border-dashed p-3 text-xs text-muted-foreground">{t("noPdfSearchResults")}</p>}
+        <div className="space-y-1">{visibleSearchOccurrences.map(({ occurrence, originalIndex }) => <button ref={(element) => { if (element) searchResultRefs.current.set(originalIndex, element); else searchResultRefs.current.delete(originalIndex); }} key={occurrence.id} type="button" className={`block w-full rounded border p-2 text-left text-xs ${originalIndex === activeSearchIndex ? "border-indigo-500 bg-indigo-50 dark:bg-indigo-950/30" : "hover:bg-accent"}`} onClick={() => selectSearchOccurrence(originalIndex)}><strong>{t("pageNumber", { page: occurrence.pageNumber })}</strong><span className="mt-1 line-clamp-3 block text-muted-foreground">{occurrence.contextBefore}<mark className="rounded-sm bg-yellow-200 px-0.5 text-foreground dark:bg-yellow-700/60">{occurrence.matchedText}</mark>{occurrence.contextAfter}</span></button>)}</div>
       </div>}
       {navigatorTab === "outline" && <div className="space-y-0.5">{!outlineLoaded && <p className="p-3 text-xs text-muted-foreground">{t("loading")}</p>}{outlineLoaded && !outline.length && <p className="p-3 text-xs text-muted-foreground">{t("noOutline")}</p>}{outline.map((item, index) => <button type="button" key={`${item.title}-${index}`} disabled={!item.pageNumber} className="block w-full rounded px-2 py-1.5 text-left text-xs hover:bg-accent disabled:cursor-default disabled:opacity-60" style={{ paddingLeft: `${8 + Math.min(item.depth, 5) * 12}px` }} onClick={() => item.pageNumber && updateUrl(item.pageNumber)}><span className="line-clamp-2">{item.title}</span>{item.pageNumber && <span className="text-[10px] text-muted-foreground">{t("pageNumber", { page: item.pageNumber })}</span>}</button>)}</div>}
     </div>
@@ -993,7 +1212,9 @@ export function PdfReader({
     return <div data-testid="pdf-comment-list" className="flex h-full min-h-0 flex-col"><header className="flex items-center gap-2 border-b p-3"><MessageCircle className="size-4 text-indigo-600" /><h2 className="min-w-0 flex-1 truncate text-sm font-semibold">{t("comments")}</h2><span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] tabular-nums">{commentThreads.length}</span><Button type="button" variant="ghost" size="icon-sm" aria-label={t("cancel")} onClick={closeCommentPanel}><X className="size-4" /></Button></header><div className="space-y-2 border-b p-2"><div className="relative"><Search className="absolute left-2 top-2.5 size-3.5 text-muted-foreground" /><Input value={commentSearch} onChange={(event) => setCommentSearch(event.target.value)} className="h-8 pl-7 text-xs" placeholder={t("searchComments")} /></div><div className="grid grid-cols-3 gap-1"><select aria-label={t("filterKind")} value={annotationKindFilter} onChange={(event) => setAnnotationKindFilter(event.target.value)} className="h-7 min-w-0 rounded border bg-background px-1 text-[10px]"><option value="all">{t("allKinds")}</option>{(["text", "region", "bookmark"] as const).map((kind) => <option key={kind} value={kind}>{t(`annotationKinds.${kind}`)}</option>)}</select><select aria-label={t("filterColor")} value={annotationColorFilter} onChange={(event) => setAnnotationColorFilter(event.target.value)} className="h-7 min-w-0 rounded border bg-background px-1 text-[10px]"><option value="all">{t("allColors")}</option>{USER_MARK_COLORS.map((item) => <option key={item.key} value={item.key}>{tMarkColor(item.key)}</option>)}</select><select aria-label={t("filterAuthor")} value={annotationAuthorFilter} onChange={(event) => setAnnotationAuthorFilter(event.target.value)} className="h-7 min-w-0 rounded border bg-background px-1 text-[10px]"><option value="all">{t("allAuthors")}</option>{annotationAuthors.map(([id, name]) => <option key={id} value={id}>{name}</option>)}</select></div><Button type="button" size="xs" variant={currentPageCommentsOnly ? "secondary" : "ghost"} onClick={() => setCurrentPageCommentsOnly((value) => !value)}>{currentPageCommentsOnly ? t("currentPageComments") : t("allComments")}</Button></div><div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-2">{filteredCommentThreads.map((annotation) => <button type="button" key={annotation.id} className="w-full rounded-lg border p-2.5 text-left text-xs transition-colors hover:bg-accent" style={{ ...userMarkColorStyle(annotation.createdByMarkColor), borderColor: activeAnnotationId === annotation.id ? "var(--user-mark-solid)" : undefined, backgroundColor: activeAnnotationId === annotation.id ? "var(--user-mark-highlight)" : undefined }} onClick={() => openAnnotation(annotation, true)}><span className="flex items-center justify-between gap-2 font-medium"><span className="truncate">{annotation.label || t(`annotationKinds.${annotation.kind}`)}</span><span className="shrink-0 text-[10px] text-muted-foreground">{t("pageNumber", { page: annotation.pageNumber })}</span></span><span className="mt-1 line-clamp-2 block text-muted-foreground">{annotation.note || annotation.selectedText || t(`annotationKinds.${annotation.kind}`)}</span><span className="mt-2 flex items-center justify-between gap-2 text-[10px] text-muted-foreground"><span className="truncate" style={{ color: "var(--user-mark-solid)" }}>{annotation.createdByName}</span><span className="shrink-0">{annotation.comments.length} · <MessageCircle className="inline size-3" /></span></span></button>)}{filteredCommentThreads.length === 0 && <p className="p-4 text-center text-xs text-muted-foreground">{t("noMatchingComments")}</p>}</div></div>;
   }
 
-  const thumbnailsVisible = showThumbnails && !isFocused;
+  // Focus mode hides side panels initially; it must not prevent users from
+  // reopening navigation, search, or the outline while they are focused.
+  const thumbnailsVisible = showThumbnails;
   const commentsVisible = commentPanel.mode !== "closed";
   const gridColumns = thumbnailsVisible && commentsVisible
       ? styles.gridWithThumbnailsAndAnnotations
@@ -1006,30 +1227,31 @@ export function PdfReader({
 
   if (error) return <div className="grid min-h-screen place-items-center p-8 text-center"><div><p className="text-destructive">{error}</p><Link className={buttonVariants({ className: "mt-3" })} href={"/wiki/sources/" + sourceId}>{t("backToSource")}</Link></div></div>;
 
-  return <main className="flex h-dvh min-h-0 flex-col bg-transparent">
+  return <main ref={readerRef} className="flex h-dvh min-h-0 flex-col bg-transparent" onKeyDownCapture={handlePdfShortcut}>
     <div className="sr-only" aria-live="polite" aria-atomic="true">{liveMessage}</div>
     <header data-testid="pdf-toolbar" className="flex h-12 shrink-0 flex-nowrap items-center gap-1 overflow-hidden border-b bg-background px-2 shadow-sm"><Link aria-label={t("backToSource")} title={t("backToSource")} className={buttonVariants({ variant: "ghost", size: "icon-sm" })} href="/wiki/sources"><ArrowLeft className="size-4" /></Link><div className="hidden min-w-0 max-w-48 flex-1 lg:block"><p className="truncate text-xs font-medium">{sourceTitle}</p><p className="truncate text-[10px] text-muted-foreground">{fileName}</p></div>
-      <div className="flex shrink-0 items-center rounded-lg border bg-muted/20"><Button aria-label={t("previousPage")} title={t("previousPage")} variant="ghost" size="icon-sm" disabled={pageNumber <= 1} onClick={() => updateUrl(pageNumber - 1)}><ChevronLeft className="size-4" /></Button><Input aria-label={t("page")} className="h-7 w-11 border-0 bg-transparent px-1 text-center text-xs shadow-none" inputMode="numeric" value={pageNumber} onChange={(event) => { const page = Number(event.target.value); if (Number.isInteger(page) && page >= 1 && page <= pages.length) updateUrl(page); }} /><span className="pr-1 text-[10px] text-muted-foreground">/ {pages.length}</span><Button aria-label={t("nextPage")} title={t("nextPage")} variant="ghost" size="icon-sm" disabled={pageNumber >= pages.length} onClick={() => updateUrl(pageNumber + 1)}><ChevronRight className="size-4" /></Button></div>
-      <Button aria-label={t("zoomOut")} title={t("zoomOut")} variant="ghost" size="icon-sm" onClick={() => setCustomScale(scale - 0.15)}><Minus className="size-4" /></Button>
-      <DropdownMenu><DropdownMenuTrigger render={<Button ref={zoomLabelRef} variant="ghost" size="sm" className="min-w-14 px-1 text-xs tabular-nums" aria-label={t("zoomOptions")} />}>{Math.round(scale * 100)}%<ChevronDown className="size-3" /></DropdownMenuTrigger><DropdownMenuContent align="center" className="w-48"><div className="px-1.5 py-1 text-xs font-medium text-muted-foreground">{t("zoomOptions")}</div><DropdownMenuItem onClick={() => void applyFitMode("width")}>{fitMode === "width" && <Check />}{t("fitWidth")}</DropdownMenuItem><DropdownMenuItem onClick={() => void applyFitMode("page")}>{fitMode === "page" && <Check />}{t("fitPage")}</DropdownMenuItem><DropdownMenuItem onClick={() => void applyFitMode("actual")}>{fitMode === "actual" && <Check />}{t("actualSize")}</DropdownMenuItem><DropdownMenuSeparator />{[75, 100, 125, 150, 200].map((percentage) => <DropdownMenuItem key={percentage} onClick={() => setCustomScale(percentage / 100)}>{Math.round(scale * 100) === percentage && fitMode === "custom" && <Check />}{percentage}%</DropdownMenuItem>)}<DropdownMenuSeparator /><div className="px-1.5 py-1"><label className="mb-1 block text-xs font-medium text-muted-foreground" htmlFor="pdf-custom-zoom">{t("customZoom")}</label><Input id="pdf-custom-zoom" aria-label={t("customZoom")} className="h-7" type="number" min={50} max={300} defaultValue={Math.round(scale * 100)} onKeyDown={(event) => { event.stopPropagation(); if (event.key === "Enter") setCustomScale(Number(event.currentTarget.value) / 100); }} /></div></DropdownMenuContent></DropdownMenu>
-      <Button data-testid="pdf-zoom-in" aria-label={t("zoomIn")} title={t("zoomIn")} variant="ghost" size="icon-sm" onClick={() => setCustomScale(scale + 0.15)}><Plus className="size-4" /></Button>
-      <Button aria-label={t("captureRegion")} title={t("captureRegion")} variant={regionMode ? "secondary" : "ghost"} size="sm" className="shrink-0 px-2" onClick={() => { if (viewMode === "continuous") setViewMode("single"); setRegionMode((value) => !value); }}><SquareDashedMousePointer className="size-4" /><span className="hidden xl:inline">{t("captureRegion")}</span></Button>
-      <Button aria-label={t("bookmarkPage")} title={t("bookmarkPage")} variant="ghost" size="icon-sm" onClick={() => requestAnnotation({ kind: "bookmark", geometry: [], selectedText: "", pageNumber })}><Bookmark className="size-4" /></Button>
-      <Button className="relative" variant={commentsVisible ? "secondary" : "ghost"} size="icon-sm" aria-label={commentsVisible ? t("hideAnnotations") : t("showAnnotations")} aria-pressed={commentsVisible} title={commentsVisible ? t("hideAnnotations") : t("showAnnotations")} onClick={() => commentsVisible ? closeCommentPanel() : showCommentList()}><MessageCircle className="size-4" />{commentThreads.length > 0 && <span className="absolute -right-1 -top-1 min-w-4 rounded-full bg-indigo-600 px-1 text-[9px] leading-4 text-white tabular-nums">{commentThreads.length}</span>}</Button>
-      <DropdownMenu><DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" aria-label={t("morePdfActions")} title={t("morePdfActions")} />}><MoreHorizontal /></DropdownMenuTrigger><DropdownMenuContent align="end" className="w-56"><div className="px-1.5 py-1 text-xs font-medium text-muted-foreground">{t("viewMode")}</div><DropdownMenuItem onClick={() => changeViewMode("continuous")}>{viewMode === "continuous" && <Check />}{t("continuousView")}</DropdownMenuItem><DropdownMenuItem onClick={() => changeViewMode("single")}>{viewMode === "single" && <Check />}{t("singlePageView")}</DropdownMenuItem><DropdownMenuItem onClick={() => changeViewMode("double")}>{viewMode === "double" && <Check />}{t("doublePageView")}</DropdownMenuItem><DropdownMenuSeparator /><DropdownMenuItem onClick={() => setRotation((value) => (value + 90) % 360)}><RotateCw />{t("rotate")}</DropdownMenuItem><DropdownMenuItem onClick={() => setShowThumbnails((value) => !value)}><FileSearch />{showThumbnails ? t("hideNavigator") : t("showNavigator")}</DropdownMenuItem><DropdownMenuItem onClick={() => { setShowThumbnails(true); setNavigatorTab("outline"); }}><ListTree />{t("outline")}</DropdownMenuItem><DropdownMenuSeparator /><DropdownMenuItem render={<a href={`/api/files/${attachmentId}?download=1`} download />}><Download />{t("download")}</DropdownMenuItem><DropdownMenuItem onClick={() => window.open(`/api/files/${attachmentId}`, "_blank", "noopener,noreferrer")}><ExternalLink />{t("openOriginal")}</DropdownMenuItem><DropdownMenuItem onClick={() => window.open(`/api/files/${attachmentId}#toolbar=1`, "_blank", "noopener,noreferrer")}><Printer />{t("printPdf")}</DropdownMenuItem><DropdownMenuSeparator /><DropdownMenuItem onClick={() => toast(t("keyboardShortcutsDescription"), { duration: 8000 })}><Keyboard />{t("keyboardShortcuts")}</DropdownMenuItem></DropdownMenuContent></DropdownMenu>
+      <div className="flex shrink-0 items-center rounded-lg border bg-muted/20"><Button aria-label={t("previousPage")} title={shortcutTitle("previousPage", t("previousPage"))} variant="ghost" size="icon-sm" disabled={pageNumber <= 1} onClick={() => updateUrl(pageNumber - 1)}><ChevronLeft className="size-4" /></Button><Input aria-label={t("page")} className="h-7 w-11 border-0 bg-transparent px-1 text-center text-xs shadow-none" inputMode="numeric" value={pageNumber} onChange={(event) => { const page = Number(event.target.value); if (Number.isInteger(page) && page >= 1 && page <= pages.length) updateUrl(page); }} /><span className="pr-1 text-[10px] text-muted-foreground">/ {pages.length}</span><Button aria-label={t("nextPage")} title={shortcutTitle("nextPage", t("nextPage"))} variant="ghost" size="icon-sm" disabled={pageNumber >= pages.length} onClick={() => updateUrl(pageNumber + 1)}><ChevronRight className="size-4" /></Button></div>
+      <Button aria-label={t("zoomOut")} title={shortcutTitle("zoomOut", t("zoomOut"))} variant="ghost" size="icon-sm" onClick={() => setCustomScale(scale - 0.15)}><Minus className="size-4" /></Button>
+      <DropdownMenu><DropdownMenuTrigger render={<Button ref={zoomLabelRef} variant="ghost" size="sm" className="min-w-14 px-1 text-xs tabular-nums" aria-label={t("zoomOptions")} />}>{Math.round(scale * 100)}%<ChevronDown className="size-3" /></DropdownMenuTrigger><DropdownMenuContent align="center" className="w-48"><div className="px-1.5 py-1 text-xs font-medium text-muted-foreground">{t("zoomOptions")}</div><DropdownMenuItem onClick={() => void applyFitMode("width")}>{fitMode === "width" && <Check />}{t("fitWidth")}<DropdownMenuShortcut>{displayPdfShortcut(shortcuts.fitWidth)}</DropdownMenuShortcut></DropdownMenuItem><DropdownMenuItem onClick={() => void applyFitMode("page")}>{fitMode === "page" && <Check />}{t("fitPage")}<DropdownMenuShortcut>{displayPdfShortcut(shortcuts.fitPage)}</DropdownMenuShortcut></DropdownMenuItem><DropdownMenuItem onClick={() => void applyFitMode("actual")}>{fitMode === "actual" && <Check />}{t("actualSize")}<DropdownMenuShortcut>{displayPdfShortcut(shortcuts.actualSize)}</DropdownMenuShortcut></DropdownMenuItem><DropdownMenuSeparator />{[75, 100, 125, 150, 200].map((percentage) => <DropdownMenuItem key={percentage} onClick={() => setCustomScale(percentage / 100)}>{Math.round(scale * 100) === percentage && fitMode === "custom" && <Check />}{percentage}%</DropdownMenuItem>)}<DropdownMenuSeparator /><div className="px-1.5 py-1"><label className="mb-1 block text-xs font-medium text-muted-foreground" htmlFor="pdf-custom-zoom">{t("customZoom")}</label><Input id="pdf-custom-zoom" aria-label={t("customZoom")} className="h-7" type="number" min={50} max={300} defaultValue={Math.round(scale * 100)} onKeyDown={(event) => { event.stopPropagation(); if (event.key === "Enter") setCustomScale(Number(event.currentTarget.value) / 100); }} /></div></DropdownMenuContent></DropdownMenu>
+      <Button data-testid="pdf-zoom-in" aria-label={t("zoomIn")} title={shortcutTitle("zoomIn", t("zoomIn"))} variant="ghost" size="icon-sm" onClick={() => setCustomScale(scale + 0.15)}><Plus className="size-4" /></Button>
+      <Button aria-label={t("captureRegion")} title={shortcutTitle("captureRegion", t("captureRegion"))} variant={regionMode ? "secondary" : "ghost"} size="sm" className="shrink-0 px-2" onClick={() => { if (viewMode === "continuous") setViewMode("single"); setRegionMode((value) => !value); }}><SquareDashedMousePointer className="size-4" /><span className="hidden xl:inline">{t("captureRegion")}</span></Button>
+      <Button aria-label={t("bookmarkPage")} title={shortcutTitle("bookmarkPage", t("bookmarkPage"))} variant="ghost" size="icon-sm" onClick={() => requestAnnotation({ kind: "bookmark", geometry: [], selectedText: "", pageNumber })}><Bookmark className="size-4" /></Button>
+      <Button className="relative" variant={commentsVisible ? "secondary" : "ghost"} size="icon-sm" aria-label={commentsVisible ? t("hideAnnotations") : t("showAnnotations")} aria-pressed={commentsVisible} title={shortcutTitle("comments", commentsVisible ? t("hideAnnotations") : t("showAnnotations"))} onClick={() => commentsVisible ? closeCommentPanel() : showCommentList()}><MessageCircle className="size-4" />{commentThreads.length > 0 && <span className="absolute -right-1 -top-1 min-w-4 rounded-full bg-indigo-600 px-1 text-[9px] leading-4 text-white tabular-nums">{commentThreads.length}</span>}</Button>
+      <DropdownMenu><DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" aria-label={t("morePdfActions")} title={t("morePdfActions")} />}><MoreHorizontal /></DropdownMenuTrigger><DropdownMenuContent align="end" className="w-56"><div className="px-1.5 py-1 text-xs font-medium text-muted-foreground">{t("viewMode")}</div><DropdownMenuItem onClick={() => changeViewMode("continuous")}>{viewMode === "continuous" && <Check />}{t("continuousView")}<DropdownMenuShortcut>{displayPdfShortcut(shortcuts.continuousView)}</DropdownMenuShortcut></DropdownMenuItem><DropdownMenuItem onClick={() => changeViewMode("single")}>{viewMode === "single" && <Check />}{t("singlePageView")}<DropdownMenuShortcut>{displayPdfShortcut(shortcuts.singlePageView)}</DropdownMenuShortcut></DropdownMenuItem><DropdownMenuItem onClick={() => changeViewMode("double")}>{viewMode === "double" && <Check />}{t("doublePageView")}<DropdownMenuShortcut>{displayPdfShortcut(shortcuts.doublePageView)}</DropdownMenuShortcut></DropdownMenuItem><DropdownMenuSeparator /><DropdownMenuItem onClick={() => setRotation((value) => (value + 90) % 360)}><RotateCw />{t("rotate")}<DropdownMenuShortcut>{displayPdfShortcut(shortcuts.rotate)}</DropdownMenuShortcut></DropdownMenuItem><DropdownMenuItem onClick={() => setShowThumbnails((value) => !value)}><FileSearch />{showThumbnails ? t("hideNavigator") : t("showNavigator")}<DropdownMenuShortcut>{displayPdfShortcut(shortcuts.toggleNavigator)}</DropdownMenuShortcut></DropdownMenuItem><DropdownMenuItem onClick={() => { setShowThumbnails(true); setNavigatorTab("outline"); }}><ListTree />{t("outline")}<DropdownMenuShortcut>{displayPdfShortcut(shortcuts.outline)}</DropdownMenuShortcut></DropdownMenuItem><DropdownMenuSeparator /><DropdownMenuItem onClick={() => runPdfShortcut("download")}><Download />{t("download")}<DropdownMenuShortcut>{displayPdfShortcut(shortcuts.download)}</DropdownMenuShortcut></DropdownMenuItem><DropdownMenuItem onClick={() => runPdfShortcut("openOriginal")}><ExternalLink />{t("openOriginal")}<DropdownMenuShortcut>{displayPdfShortcut(shortcuts.openOriginal)}</DropdownMenuShortcut></DropdownMenuItem><DropdownMenuItem onClick={() => runPdfShortcut("printPdf")}><Printer />{t("printPdf")}<DropdownMenuShortcut>{displayPdfShortcut(shortcuts.printPdf)}</DropdownMenuShortcut></DropdownMenuItem><DropdownMenuSeparator /><DropdownMenuItem onClick={() => setShortcutsOpen(true)}><Keyboard />{t("keyboardShortcuts")}<DropdownMenuShortcut>{displayPdfShortcut(shortcuts.shortcuts)}</DropdownMenuShortcut></DropdownMenuItem></DropdownMenuContent></DropdownMenu>
       <FocusModeToggle compact />
     </header>
     <div className={`relative grid min-h-0 flex-1 ${styles.readerGrid} ${gridColumns}`} style={{ "--pdf-thumbnail-width": `${thumbnailWidth}px`, "--pdf-comment-width": `${commentPanelWidth}px` } as React.CSSProperties}>
       {thumbnailsVisible && <><aside data-testid="pdf-thumbnails-panel" className="hidden min-h-0 overflow-hidden border-r bg-background md:block">{thumbnailTools}</aside><button type="button" aria-label={t("resizeThumbnails")} title={t("resizeThumbnails")} className="absolute inset-y-0 z-30 hidden w-3 -translate-x-1/2 cursor-col-resize touch-none border-x border-transparent bg-background/50 transition-colors hover:border-indigo-300 hover:bg-indigo-500/15 focus-visible:border-indigo-500 focus-visible:bg-indigo-500/15 md:block" style={{ left: `${thumbnailWidth}px` }} onPointerDown={(event) => { event.currentTarget.setPointerCapture(event.pointerId); beginThumbnailResize(event); }} /></>}
-      <section ref={viewportRef} data-testid="pdf-reader-viewport" className="relative overflow-auto [overflow-anchor:none] p-4" onMouseUp={captureSelection}>{!pdf || (rendering && viewMode !== "continuous") ? <div className="pointer-events-none absolute inset-0 z-20 grid place-items-center"><Loader2 className="size-7 animate-spin text-indigo-500" /></div> : null}{viewMode === "continuous" ? <div ref={zoomContentRef} className="space-y-4">{pages.map((page) => <div key={page.pageNumber} data-page-number={page.pageNumber} ref={(element) => { if (element) continuousPageRefs.current.set(page.pageNumber, element); else continuousPageRefs.current.delete(page.pageNumber); }} className={styles.pageShell}><canvas ref={(element) => { if (element) continuousCanvasRefs.current.set(page.pageNumber, element); else continuousCanvasRefs.current.delete(page.pageNumber); }} className="block" /><div ref={(element) => { if (element) continuousTextLayerRefs.current.set(page.pageNumber, element); else continuousTextLayerRefs.current.delete(page.pageNumber); }} className={styles.textLayer} /><div className="pointer-events-none absolute inset-0 z-[3]">{annotations.filter((annotation) => annotation.pageNumber === page.pageNumber).flatMap((annotation) => displayAnnotationRects(annotation).map((rect, index) => <div data-annotation-rect={annotation.id} key={annotation.id + "-" + index} className="absolute" style={{ ...userMarkColorStyle(annotation.createdByMarkColor), left: `${rect.x * 100}%`, top: `${rect.y * 100}%`, width: `${rect.width * 100}%`, height: `${rect.height * 100}%`, backgroundColor: "var(--user-mark-highlight)", borderBottom: annotation.kind === "region" ? "2px solid var(--user-mark-solid)" : undefined }} />))}{annotations.filter((annotation) => annotation.pageNumber === page.pageNumber).map(annotationMarker)}</div></div>)}</div> : <div ref={zoomContentRef} className="flex items-start justify-center gap-4"><div ref={pageShellRef} data-page-number={pageNumber} className={styles.pageShell}><canvas ref={canvasRef} className="block" /><div ref={textLayerRef} className={styles.textLayer} />
+      <section ref={viewportRef} data-testid="pdf-reader-viewport" className="relative overflow-auto [overflow-anchor:none] p-4" onMouseUp={captureSelection}>{!pdf || (rendering && viewMode !== "continuous") ? <div className="pointer-events-none absolute inset-0 z-20 grid place-items-center"><Loader2 className="size-7 animate-spin text-indigo-500" /></div> : null}{viewMode === "continuous" ? <div ref={zoomContentRef} className="space-y-4">{pages.map((page) => <div key={page.pageNumber} data-page-number={page.pageNumber} ref={(element) => { if (element) continuousPageRefs.current.set(page.pageNumber, element); else continuousPageRefs.current.delete(page.pageNumber); }} className={styles.pageShell}><canvas ref={(element) => { if (element) continuousCanvasRefs.current.set(page.pageNumber, element); else continuousCanvasRefs.current.delete(page.pageNumber); }} className="block" /><div data-pdf-search-overlay className={styles.searchOverlay} /><div ref={(element) => { if (element) continuousTextLayerRefs.current.set(page.pageNumber, element); else continuousTextLayerRefs.current.delete(page.pageNumber); }} className={styles.textLayer} /><div className="pointer-events-none absolute inset-0 z-[3]">{annotations.filter((annotation) => annotation.pageNumber === page.pageNumber).flatMap((annotation) => displayAnnotationRects(annotation).map((rect, index) => <div data-annotation-rect={annotation.id} key={annotation.id + "-" + index} className="absolute" style={{ ...userMarkColorStyle(annotation.createdByMarkColor), left: `${rect.x * 100}%`, top: `${rect.y * 100}%`, width: `${rect.width * 100}%`, height: `${rect.height * 100}%`, backgroundColor: "var(--user-mark-highlight)", borderBottom: annotation.kind === "region" ? "2px solid var(--user-mark-solid)" : undefined }} />))}{annotations.filter((annotation) => annotation.pageNumber === page.pageNumber).map(annotationMarker)}</div></div>)}</div> : <div ref={zoomContentRef} className="flex items-start justify-center gap-4"><div ref={pageShellRef} data-page-number={pageNumber} className={styles.pageShell}><canvas ref={canvasRef} className="block" /><div data-pdf-search-overlay className={styles.searchOverlay} /><div ref={textLayerRef} className={styles.textLayer} />
         <div className="pointer-events-none absolute inset-0 z-[3]">{pageAnnotations.flatMap((annotation) => displayAnnotationRects(annotation).map((rect, index) => <div data-annotation-rect={annotation.id} key={annotation.id + "-" + index} className="absolute" style={{ ...userMarkColorStyle(annotation.createdByMarkColor), left: `${rect.x * 100}%`, top: `${rect.y * 100}%`, width: `${rect.width * 100}%`, height: `${rect.height * 100}%`, backgroundColor: "var(--user-mark-highlight)", borderBottom: annotation.kind === "region" ? "2px solid var(--user-mark-solid)" : undefined }} />))}{pageAnnotations.map(annotationMarker)}{region && <div className="absolute border-2 bg-transparent" style={{ ...userMarkColorStyle(user.markColor), left: `${region.x * 100}%`, top: `${region.y * 100}%`, width: `${region.width * 100}%`, height: `${region.height * 100}%`, borderColor: "var(--user-mark-solid)", backgroundColor: "var(--user-mark-highlight)" }} />}</div>
         {regionMode && <div data-testid="pdf-region-selector" className="absolute inset-0 z-[5] cursor-crosshair" onPointerDown={(event) => { regionStart.current = regionPoint(event); event.currentTarget.setPointerCapture(event.pointerId); }} onPointerMove={(event) => { if (!regionStart.current) return; const end = regionPoint(event); setRegion({ x: Math.min(regionStart.current.x, end.x), y: Math.min(regionStart.current.y, end.y), width: Math.abs(end.x - regionStart.current.x), height: Math.abs(end.y - regionStart.current.y) }); }} onPointerUp={(event) => { const start = regionStart.current; if (start) { const end = regionPoint(event); setRegion({ x: Math.min(start.x, end.x), y: Math.min(start.y, end.y), width: Math.abs(end.x - start.x), height: Math.abs(end.y - start.y) }); const bounds = event.currentTarget.getBoundingClientRect(); setSelectionAnchor({ pageNumber, x: (event.clientX - bounds.left) / bounds.width, y: (event.clientY - bounds.top) / bounds.height, side: "right" }); } if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId); regionStart.current = null; }} />}
-      </div>{viewMode === "double" && pageNumber < pages.length && <div ref={secondaryPageShellRef} data-page-number={pageNumber + 1} className={styles.pageShell}><canvas ref={secondaryCanvasRef} className="block" /><div ref={secondaryTextLayerRef} className={styles.textLayer} /><div className="pointer-events-none absolute inset-0 z-[3]">{annotations.filter((annotation) => annotation.pageNumber === pageNumber + 1).flatMap((annotation) => displayAnnotationRects(annotation).map((rect, index) => <div data-annotation-rect={annotation.id} key={annotation.id + "-secondary-" + index} className="absolute" style={{ ...userMarkColorStyle(annotation.createdByMarkColor), left: `${rect.x * 100}%`, top: `${rect.y * 100}%`, width: `${rect.width * 100}%`, height: `${rect.height * 100}%`, backgroundColor: "var(--user-mark-highlight)", borderBottom: annotation.kind === "region" ? "2px solid var(--user-mark-solid)" : undefined }} />))}{annotations.filter((annotation) => annotation.pageNumber === pageNumber + 1).map(annotationMarker)}</div></div>}</div>}{selection && selectionAnchorPosition && <div data-testid="pdf-selection-actions" className="fixed z-40 flex gap-1 rounded-lg border bg-background p-1 shadow-xl" style={selectionActionsStyle(selectionAnchorPosition)}><Button size="sm" onClick={() => void saveAnnotation("text", selection.rects, selection.text, undefined, selection.pageNumber, "", true)}><Highlighter className="size-4" />{t("highlight")}</Button><Button size="sm" variant="outline" onClick={() => requestAnnotation({ kind: "text", geometry: selection.rects, selectedText: selection.text, pageNumber: selection.pageNumber })}><MessageCircle className="size-4" />{t("note")}</Button></div>}{region && selectionAnchorPosition && <div data-testid="pdf-selection-actions" className="fixed z-40 flex gap-1 rounded-lg border bg-background p-1 shadow-xl" style={selectionActionsStyle(selectionAnchorPosition)}><Button size="sm" onClick={() => void saveAnnotation("region", [region], "", previewForRegion(region), pageNumber, "", true)}><Highlighter className="size-4" />{t("highlight")}</Button><Button size="sm" variant="outline" onClick={() => requestAnnotation({ kind: "region", geometry: [region], selectedText: "", previewDataUrl: previewForRegion(region), pageNumber })}><MessageCircle className="size-4" />{t("note")}</Button><Button size="sm" variant="ghost" onClick={() => { setRegion(null); setSelectionAnchor(null); }}>{t("cancel")}</Button></div>}</section>
+      </div>{viewMode === "double" && pageNumber < pages.length && <div ref={secondaryPageShellRef} data-page-number={pageNumber + 1} className={styles.pageShell}><canvas ref={secondaryCanvasRef} className="block" /><div data-pdf-search-overlay className={styles.searchOverlay} /><div ref={secondaryTextLayerRef} className={styles.textLayer} /><div className="pointer-events-none absolute inset-0 z-[3]">{annotations.filter((annotation) => annotation.pageNumber === pageNumber + 1).flatMap((annotation) => displayAnnotationRects(annotation).map((rect, index) => <div data-annotation-rect={annotation.id} key={annotation.id + "-secondary-" + index} className="absolute" style={{ ...userMarkColorStyle(annotation.createdByMarkColor), left: `${rect.x * 100}%`, top: `${rect.y * 100}%`, width: `${rect.width * 100}%`, height: `${rect.height * 100}%`, backgroundColor: "var(--user-mark-highlight)", borderBottom: annotation.kind === "region" ? "2px solid var(--user-mark-solid)" : undefined }} />))}{annotations.filter((annotation) => annotation.pageNumber === pageNumber + 1).map(annotationMarker)}</div></div>}</div>}{selection && selectionAnchorPosition && <div data-testid="pdf-selection-actions" className="fixed z-40 flex gap-1 rounded-lg border bg-background p-1 shadow-xl" style={selectionActionsStyle(selectionAnchorPosition)}><Button size="sm" onClick={() => void saveAnnotation("text", selection.rects, selection.text, undefined, selection.pageNumber, "", true)}><Highlighter className="size-4" />{t("highlight")}</Button><Button size="sm" variant="outline" onClick={() => requestAnnotation({ kind: "text", geometry: selection.rects, selectedText: selection.text, pageNumber: selection.pageNumber })}><MessageCircle className="size-4" />{t("note")}</Button></div>}{region && selectionAnchorPosition && <div data-testid="pdf-selection-actions" className="fixed z-40 flex gap-1 rounded-lg border bg-background p-1 shadow-xl" style={selectionActionsStyle(selectionAnchorPosition)}><Button size="sm" onClick={() => void saveAnnotation("region", [region], "", previewForRegion(region), pageNumber, "", true)}><Highlighter className="size-4" />{t("highlight")}</Button><Button size="sm" variant="outline" onClick={() => requestAnnotation({ kind: "region", geometry: [region], selectedText: "", previewDataUrl: previewForRegion(region), pageNumber })}><MessageCircle className="size-4" />{t("note")}</Button><Button size="sm" variant="ghost" onClick={() => { setRegion(null); setSelectionAnchor(null); }}>{t("cancel")}</Button></div>}</section>
       {commentsVisible && <><button type="button" aria-label={t("resizeComments")} title={t("resizeComments")} className="absolute inset-y-0 right-[var(--pdf-comment-width)] z-30 hidden w-3 translate-x-1/2 cursor-col-resize touch-none border-x border-transparent bg-background/50 transition-colors hover:border-indigo-300 hover:bg-indigo-500/15 focus-visible:border-indigo-500 focus-visible:bg-indigo-500/15 md:block" onPointerDown={(event) => { event.currentTarget.setPointerCapture(event.pointerId); beginCommentPanelResize(event); }} /><aside data-testid="pdf-comments-panel" className="hidden min-h-0 overflow-hidden border-l bg-background md:block">{renderCommentPanel()}</aside></>}
     </div>
     <Sheet open={compactViewport && commentsVisible} onOpenChange={(open) => { if (!open) closeCommentPanel(); }}>
       <SheetContent side="bottom" showCloseButton={false} className="max-h-[min(76dvh,36rem)] rounded-t-2xl p-0"><div data-testid="pdf-annotation-mobile-sheet" className="min-h-0 flex-1">{renderCommentPanel()}</div></SheetContent>
     </Sheet>
+    <Dialog open={shortcutsOpen} onOpenChange={(open) => { setShortcutsOpen(open); if (!open) { setRecordingShortcut(null); setShortcutError(""); } }}><DialogContent className="max-h-[min(80dvh,44rem)] max-w-2xl overflow-y-auto"><DialogHeader><DialogTitle>{t("keyboardShortcuts")}</DialogTitle></DialogHeader><p className="text-sm text-muted-foreground">{t("shortcutDialogHint")}</p>{shortcutError && <p role="alert" className="rounded-md bg-destructive/10 p-2 text-xs text-destructive">{shortcutError}</p>}<div className="space-y-4">{PDF_SHORTCUT_GROUPS.map((group) => <section key={group.label} className="overflow-hidden rounded-lg border"><h3 className="border-b bg-muted/40 px-3 py-2 text-xs font-semibold">{group.label}</h3><div className="divide-y">{group.actions.map((action) => <div key={action} className="flex items-center justify-between gap-3 p-2"><span className="min-w-0 truncate text-sm">{PDF_SHORTCUT_LABELS[action]}</span><div className="flex shrink-0 items-center gap-1"><Button type="button" variant={recordingShortcut === action ? "secondary" : "outline"} size="sm" className="font-mono text-xs" onClick={() => { setRecordingShortcut(action); setShortcutError(""); }} onKeyDown={(event) => { if (recordingShortcut === action) captureShortcut(action, event); }}>{recordingShortcut === action ? t("shortcutRecording") : displayPdfShortcut(shortcuts[action])}</Button><Button type="button" variant="ghost" size="xs" disabled={shortcuts[action] === DEFAULT_PDF_SHORTCUT_BINDINGS[action]} aria-label={t("resetShortcut", { action: PDF_SHORTCUT_LABELS[action] })} onClick={() => { setShortcuts((current) => ({ ...current, [action]: DEFAULT_PDF_SHORTCUT_BINDINGS[action] })); setRecordingShortcut(null); setShortcutError(""); }}>{t("resetShortcut")}</Button></div></div>)}</div></section>)}</div><DialogFooter><Button type="button" variant="outline" onClick={() => { setShortcuts(DEFAULT_PDF_SHORTCUT_BINDINGS); setRecordingShortcut(null); setShortcutError(""); }}>{t("resetShortcuts")}</Button><Button type="button" onClick={() => setShortcutsOpen(false)}>{t("done")}</Button></DialogFooter></DialogContent></Dialog>
     <Dialog open={Boolean(pendingAnnotation)} onOpenChange={(open) => { if (!open) { setPendingAnnotation(null); setAnnotationAnchor(null); } }}><DialogContent style={annotationAnchor ? annotationPopupStyle(annotationAnchor) : undefined}><DialogHeader><DialogTitle>{t("annotationNotePrompt")}</DialogTitle></DialogHeader><Textarea autoFocus value={annotationNote} onChange={(event) => setAnnotationNote(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) { event.preventDefault(); submitPendingAnnotation(); } }} rows={4} /><DialogFooter><Button variant="outline" onClick={() => setPendingAnnotation(null)}>{t("cancel")}</Button><Button onClick={submitPendingAnnotation}>{t("saveAnnotation")}</Button></DialogFooter></DialogContent></Dialog>
   </main>;
 }

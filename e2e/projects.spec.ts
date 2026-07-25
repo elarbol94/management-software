@@ -42,6 +42,7 @@ test("create, move (via dialog) and complete a task", async ({ page }) => {
   await page.locator("#task-description").fill("Hero, Features, Kontakt");
   await page.locator("#task-assignee").click();
   await page.getByRole("option", { name: "E2E Admin" }).click();
+  await page.locator("#task-start").fill("2026-07-27");
   await page.locator("#task-due").fill("2026-07-31");
   await page.getByRole("button", { name: "Speichern" }).click();
 
@@ -100,5 +101,134 @@ test("drag a task between columns", async ({ page }) => {
   await page.reload();
   await expect(
     page.locator('[data-column-name="Erledigt"]').getByText("Landingpage bauen"),
+  ).toBeVisible();
+});
+
+test("show scheduled Kanban work in the portfolio Gantt", async ({ page }) => {
+  await login(page);
+  await page.goto("/projects");
+
+  await expect(page.getByTestId("portfolio-gantt")).toBeVisible();
+  await expect(page.locator('[data-row-kind="phase"]')).toHaveCount(0);
+  await expect(page.getByText("Allgemein", { exact: true })).toHaveCount(0);
+  const row = page.locator('[data-row-kind="task"]').filter({
+    hasText: "Landingpage bauen",
+  });
+  await expect(row).toBeVisible();
+  await expect(row).toContainText("100%");
+  await expect(
+    row.getByRole("button", {
+      name: "Landingpage bauen, 2026-07-27 – 2026-07-31",
+    }),
+  ).toBeVisible();
+});
+
+test("preview moving the project and its complete task tree", async ({ page }) => {
+  await login(page);
+  await page.goto("/projects");
+
+  const projectRow = page.locator('[data-row-kind="project"]').filter({
+    hasText: "Website Relaunch",
+  });
+  const projectBar = projectRow.getByRole("button", {
+    name: /Website Relaunch, 2026-07-27 – 2026-07-31/,
+  });
+  const box = (await projectBar.boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width / 2 + 32, box.y + box.height / 2, {
+    steps: 8,
+  });
+  await page.mouse.up();
+
+  const preview = page.getByRole("dialog", {
+    name: "Terminänderungen bestätigen",
+  });
+  await expect(preview).toContainText("Website Relaunch");
+  await expect(preview).toContainText("Landingpage bauen");
+  await preview.getByRole("button", { name: "Abbrechen" }).click();
+  await expect(preview).not.toBeVisible();
+
+  await page.reload();
+  await expect(
+    projectRow.getByRole("button", {
+      name: "Website Relaunch, 2026-07-27 – 2026-07-31",
+    }),
+  ).toBeVisible();
+});
+
+test("create and expand a scheduled subtask in Kanban and Gantt", async ({
+  page,
+}) => {
+  await login(page);
+  await page.goto("/projects");
+  await page.getByRole("link", { name: /Website Relaunch/ }).click();
+
+  const openColumn = page.locator('[data-column-name="Offen"]');
+  await openColumn.getByRole("button", { name: "Neue Aufgabe" }).click();
+  await page.locator("#task-title").fill("Release vorbereiten");
+  await page.getByRole("button", { name: "Speichern" }).click();
+
+  const parentCard = page.locator(
+    '[data-task-title="Release vorbereiten"]',
+  );
+  await expect(parentCard).toBeVisible();
+  await parentCard
+    .getByRole("button", { name: "Unteraufgabe hinzufügen" })
+    .click();
+
+  const subtaskDialog = page.getByRole("dialog");
+  await expect(
+    subtaskDialog.getByRole("heading", { name: "Unteraufgabe hinzufügen" }),
+  ).toBeVisible();
+  await subtaskDialog.locator("#task-title").fill("API integrieren");
+  await subtaskDialog.locator("#task-start").fill("2026-08-03");
+  await subtaskDialog.locator("#task-due").fill("2026-08-07");
+  await subtaskDialog.getByRole("button", { name: "Speichern" }).click();
+
+  await expect(parentCard).toContainText("0 von 1 erledigt");
+  await parentCard
+    .getByRole("button", { name: "Unteraufgaben ein- oder ausklappen" })
+    .click();
+  await expect(
+    parentCard.locator('[data-subtask-title="API integrieren"]'),
+  ).toBeVisible();
+  const childRow = parentCard.locator('[data-subtask-title="API integrieren"]');
+  await childRow
+    .getByRole("button", { name: "Unteraufgabe hinzufügen" })
+    .click();
+  await subtaskDialog.locator("#task-title").fill("Vertragstests schreiben");
+  await subtaskDialog.locator("#task-start").fill("2026-08-04");
+  await subtaskDialog.locator("#task-due").fill("2026-08-06");
+  await subtaskDialog.getByRole("button", { name: "Speichern" }).click();
+  await expect(
+    parentCard.locator('[data-subtask-title="Vertragstests schreiben"]'),
+  ).toBeVisible();
+
+  await page.reload();
+  const persistedParent = page.locator(
+    '[data-task-title="Release vorbereiten"]',
+  );
+  await expect(persistedParent).toContainText("0 von 1 erledigt");
+
+  await page.goto("/projects");
+  const parentRow = page.locator('[data-row-kind="task"]').filter({
+    hasText: "Release vorbereiten",
+  });
+  await expect(parentRow).toBeVisible();
+  await parentRow
+    .getByRole("button", { name: "Aufgabe ein- oder ausklappen" })
+    .click();
+  const childTimelineRow = page.locator('[data-row-kind="subtask"]').filter({
+    hasText: "API integrieren",
+  });
+  await expect(childTimelineRow).toBeVisible();
+  await childTimelineRow
+    .getByRole("button", { name: "Aufgabe ein- oder ausklappen" })
+    .click();
+  await expect(
+    page.locator('[data-row-kind="subtask"]').filter({
+      hasText: "Vertragstests schreiben",
+    }),
   ).toBeVisible();
 });

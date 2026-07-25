@@ -36,10 +36,23 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 type Project = typeof projectsTable.$inferSelect & { openTasks: number };
 
-export function ProjectsClient({ projects }: { projects: Project[] }) {
+export function ProjectsClient({
+  projects,
+  members = [],
+}: {
+  projects: Project[];
+  members?: Array<{ id: string; name: string }>;
+}) {
   const t = useTranslations("projects");
   const tCommon = useTranslations("common");
   const [items, setItems] = useState(projects);
@@ -49,6 +62,9 @@ export function ProjectsClient({ projects }: { projects: Project[] }) {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [color, setColor] = useState("#2563eb");
+  const [managerId, setManagerId] = useState("none");
+  const [plannedStartDate, setPlannedStartDate] = useState("");
+  const [targetEndDate, setTargetEndDate] = useState("");
   const [pending, setPending] = useState(false);
 
   function openDialog(project: Project | null) {
@@ -56,6 +72,9 @@ export function ProjectsClient({ projects }: { projects: Project[] }) {
     setName(project?.name ?? "");
     setDescription(project?.description ?? "");
     setColor(project?.color ?? "#2563eb");
+    setManagerId(project?.managerId ?? "none");
+    setPlannedStartDate(project?.plannedStartDate ?? "");
+    setTargetEndDate(project?.targetEndDate ?? "");
     setDialogOpen(true);
   }
 
@@ -68,6 +87,9 @@ export function ProjectsClient({ projects }: { projects: Project[] }) {
         name,
         description,
         color,
+        managerId: managerId === "none" ? null : managerId,
+        plannedStartDate: plannedStartDate || null,
+        targetEndDate: targetEndDate || null,
       };
       const saved = await upsertProject(input, [
         t("colOpen"),
@@ -231,7 +253,7 @@ export function ProjectsClient({ projects }: { projects: Project[] }) {
       )}
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="sm:max-w-sm">
+        <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>
               {editing ? t("editProject") : t("newProject")}
@@ -267,6 +289,50 @@ export function ProjectsClient({ projects }: { projects: Project[] }) {
                 onChange={(e) => setColor(e.target.value)}
                 className="h-9 w-16 cursor-pointer rounded-md border bg-background p-1"
               />
+            </div>
+            <div className="flex flex-col gap-2">
+              <Label>{t("manager")}</Label>
+              <Select
+                value={managerId}
+                onValueChange={(value) => setManagerId(value ?? "none")}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue>
+                    {managerId === "none"
+                      ? t("unassigned")
+                      : (members.find((member) => member.id === managerId)?.name ?? "")}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">{t("unassigned")}</SelectItem>
+                  {members.map((member) => (
+                    <SelectItem key={member.id} value={member.id}>
+                      {member.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="flex flex-col gap-2">
+                <Label htmlFor="project-planned-start">{t("plannedStart")}</Label>
+                <Input
+                  id="project-planned-start"
+                  type="date"
+                  value={plannedStartDate}
+                  onChange={(event) => setPlannedStartDate(event.target.value)}
+                />
+              </div>
+              <div className="flex flex-col gap-2">
+                <Label htmlFor="project-target-end">{t("targetEnd")}</Label>
+                <Input
+                  id="project-target-end"
+                  type="date"
+                  min={plannedStartDate || undefined}
+                  value={targetEndDate}
+                  onChange={(event) => setTargetEndDate(event.target.value)}
+                />
+              </div>
             </div>
             <Button type="submit" disabled={pending}>
               {tCommon("save")}

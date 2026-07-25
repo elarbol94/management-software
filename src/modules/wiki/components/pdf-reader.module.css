@@ -43,13 +43,22 @@
 
 .textLayer :global(.markedContent) { display: contents; }
 .textLayer ::selection { background: rgb(79 70 229 / 0.28); }
-.textLayer :global(span[data-search-match]) {
-  color: transparent;
+.searchOverlay {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.searchMatch {
+  position: absolute;
   background: rgb(250 204 21 / 0.42);
   border-radius: 2px;
   box-shadow: 0 0 0 1px rgb(202 138 4 / 0.2);
 }
-.textLayer :global(span[data-search-active]) {
+
+.searchMatchActive {
   background: rgb(249 115 22 / 0.5);
   box-shadow: 0 0 0 2px rgb(234 88 12 / 0.35);
 }

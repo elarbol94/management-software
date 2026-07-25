@@ -54,9 +54,27 @@ test("upload, read, search, annotate, reload, and insert traceable PDF evidence"
   await read.click();
 
   await page.getByRole("tab", { name: "Suchen" }).click();
-  await expect(page.getByPlaceholder("In der PDF suchen…")).toBeVisible({ timeout: 15_000 });
-  await page.getByPlaceholder("In der PDF suchen…").fill("traceable");
+  const pdfSearch = page.getByPlaceholder("In der PDF suchen…");
+  await expect(pdfSearch).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByRole("button", { name: "Groß-/Kleinschreibung" })).toHaveAttribute("aria-pressed", "false");
+  await expect(page.getByRole("button", { name: "Nur ganze Wörter" })).toHaveAttribute("aria-pressed", "false");
+  await pdfSearch.fill("traceable");
+  await expect(page.getByText("Treffer 1 von 1", { exact: true })).toBeVisible();
   await expect(page.getByText("Local PDF evidence supports traceable research").first()).toBeVisible();
+  await expect(page.locator("[data-pdf-search-active=true]")).toHaveCount(1);
+  await pdfSearch.press("Tab");
+  await expect(page.getByText("Treffer 1 von 1", { exact: true })).toBeVisible();
+  await pdfSearch.press("Shift+Tab");
+  await expect(page.getByText("Treffer 1 von 1", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Nur ganze Wörter" }).click();
+  await expect(page.getByRole("button", { name: "Nur ganze Wörter" })).toHaveAttribute("aria-pressed", "true");
+  await pdfSearch.press("Enter");
+  await expect(page.getByText("Treffer 1 von 1", { exact: true })).toBeVisible();
+  await pdfSearch.press("Escape");
+  await expect(pdfSearch).toHaveValue("");
+  await expect(page.locator("[data-pdf-search-match]")).toHaveCount(0);
+  await pdfSearch.press("Escape");
+  await expect(page.getByRole("tab", { name: "Seiten" })).toHaveAttribute("aria-selected", "true");
 
   await page.waitForFunction(() => Array.from(document.querySelector("canvas")?.parentElement?.querySelectorAll("span") ?? []).some((span) => span.textContent?.includes("Local PDF evidence")));
   await page.evaluate(() => {
@@ -197,6 +215,10 @@ test("PDF and note focus modes expand their workspaces and persist independently
 
   await page.getByRole("button", { name: "Markierungen anzeigen" }).click();
   await expect(page.getByTestId("pdf-comments-panel")).toBeVisible();
+
+  await page.getByRole("button", { name: "Weitere PDF-Aktionen" }).click();
+  await page.getByRole("menuitem", { name: "Gliederung" }).click();
+  await expect(page.getByTestId("pdf-thumbnails-panel")).toBeVisible();
 
   await page.reload();
   await expect(page.getByRole("button", { name: "Fokusmodus beenden" })).toBeVisible();

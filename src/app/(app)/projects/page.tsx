@@ -1,19 +1,16 @@
-import { getTranslations } from "next-intl/server";
 import { requireUser } from "@/lib/auth";
-import { listProjects } from "@/modules/projects/queries";
-import { ProjectsClient } from "@/modules/projects/components/projects-client";
+import {
+  getPortfolioSchedule,
+  listProjects,
+} from "@/modules/projects/queries";
+import { PortfolioClient } from "@/modules/projects/components/portfolio-client";
 
 export default async function ProjectsPage() {
-  const [, t] = await Promise.all([
-    requireUser(),
-    getTranslations("projects"),
-  ]);
+  await requireUser();
   const projects = listProjects({ includeArchived: true });
+  const schedule = getPortfolioSchedule();
 
   return (
-    <div className="flex flex-col gap-6">
-      <h1 className="text-2xl font-semibold tracking-tight">{t("title")}</h1>
-      <ProjectsClient projects={projects} />
-    </div>
+    <PortfolioClient projects={projects} schedule={schedule} />
   );
 }

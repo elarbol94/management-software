@@ -14,15 +14,16 @@ export default async function ProjectBoardPage({
   const project = getProject(projectId);
   if (!project) notFound();
 
-  const { columns, tasksByColumn } = getBoard(projectId);
+  const { columns, tasksByColumn, subtasksByParent } = getBoard(projectId);
   const members = listMembers();
 
   return (
-    <div className="grid gap-6">
+    <div className="grid min-w-0 gap-6">
       <BoardClient
         project={project}
         columns={columns}
         tasksByColumn={tasksByColumn}
+        subtasksByParent={subtasksByParent}
         members={members}
       />
       <EvidencePanel targetType="project" targetId={projectId} />
