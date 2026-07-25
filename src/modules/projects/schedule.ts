@@ -1,3 +1,18 @@
+/**
+ * How a task reacts when one of its predecessors moves.
+ *
+ * - `asap` follows the predecessor in both directions: it is pulled earlier as
+ *   well as pushed later.
+ * - `start_no_earlier_than` treats `constraintDate` as a floor, so the task is
+ *   pushed later but never pulled back before that date.
+ * - `must_start_on` pins the task to `constraintDate` regardless of its
+ *   predecessors; the resulting overlap surfaces as a dependency conflict.
+ */
+export type ScheduleConstraintType =
+  | "asap"
+  | "start_no_earlier_than"
+  | "must_start_on";
+
 export type ScheduleTask = {
   id: string;
   parentTaskId?: string | null;
@@ -5,6 +20,8 @@ export type ScheduleTask = {
   dueDate: string | null;
   progress?: number;
   isMilestone?: boolean;
+  constraintType?: ScheduleConstraintType | null;
+  constraintDate?: string | null;
 };
 
 export type ScheduleRollup = {
@@ -143,41 +160,116 @@ export function dependencyStartDate(
   return addWorkdays(predecessorDueDate, lagWorkdays + 1);
 }
 
-export function hasDependencyCycle(
-  taskIds: Iterable<string>,
+function pushEdge(
+  edges: Map<string, string[]>,
+  from: string,
+  to: string,
+): void {
+  const existing = edges.get(from);
+  if (existing) existing.push(to);
+  else edges.set(from, [to]);
+}
+
+/**
+ * Builds the constraint graph used for cycle detection.
+ *
+ * Each task contributes two nodes — its start and its finish — so that summary
+ * rollup can be expressed as ordinary edges instead of a special case:
+ *
+ * - `start → finish` for every task (a task cannot finish before it starts)
+ * - `child:finish → parent:finish` and `parent:start → child:start`, because a
+ *   parent spans exactly its children
+ * - `predecessor:finish → successor:start` for every dependency
+ *
+ * A cycle in this graph is precisely a set of constraints that cannot all hold.
+ * Linking a summary to one of its own subtasks produces one, and so does the
+ * subtler case where a subtask precedes a task that in turn precedes the
+ * subtask's own parent.
+ */
+function buildConstraintGraph(
+  tasks: { id: string; parentTaskId?: string | null }[],
   dependencies: ScheduleDependency[],
-): boolean {
-  const ids = new Set(taskIds);
-  const outgoing = new Map<string, string[]>();
-  const indegree = new Map<string, number>();
-  ids.forEach((id) => indegree.set(id, 0));
+): { nodes: string[]; edges: Map<string, string[]> } {
+  const ids = new Set(tasks.map((task) => task.id));
+  const nodes: string[] = [];
+  const edges = new Map<string, string[]>();
+  for (const task of tasks) {
+    nodes.push(`${task.id}:start`, `${task.id}:finish`);
+    pushEdge(edges, `${task.id}:start`, `${task.id}:finish`);
+  }
+  for (const task of tasks) {
+    if (!task.parentTaskId || !ids.has(task.parentTaskId)) continue;
+    pushEdge(edges, `${task.id}:finish`, `${task.parentTaskId}:finish`);
+    pushEdge(edges, `${task.parentTaskId}:start`, `${task.id}:start`);
+  }
   for (const dependency of dependencies) {
     if (!ids.has(dependency.predecessorTaskId) || !ids.has(dependency.successorTaskId)) {
       continue;
     }
-    (outgoing.get(dependency.predecessorTaskId) ?? outgoing.set(dependency.predecessorTaskId, []).get(dependency.predecessorTaskId)!).push(
-      dependency.successorTaskId,
-    );
-    indegree.set(
-      dependency.successorTaskId,
-      (indegree.get(dependency.successorTaskId) ?? 0) + 1,
+    pushEdge(
+      edges,
+      `${dependency.predecessorTaskId}:finish`,
+      `${dependency.successorTaskId}:start`,
     );
   }
-  const queue = [...indegree.entries()].filter(([, degree]) => degree === 0).map(([id]) => id);
+  return { nodes, edges };
+}
+
+export function hasScheduleCycle(
+  tasks: { id: string; parentTaskId?: string | null }[],
+  dependencies: ScheduleDependency[],
+): boolean {
+  const { nodes, edges } = buildConstraintGraph(tasks, dependencies);
+  const indegree = new Map(nodes.map((node) => [node, 0]));
+  for (const targets of edges.values()) {
+    for (const target of targets) {
+      indegree.set(target, (indegree.get(target) ?? 0) + 1);
+    }
+  }
+  const queue = [...indegree.entries()]
+    .filter(([, degree]) => degree === 0)
+    .map(([node]) => node);
   let visited = 0;
   while (queue.length > 0) {
-    const id = queue.shift()!;
+    const node = queue.shift()!;
     visited += 1;
-    for (const next of outgoing.get(id) ?? []) {
+    for (const next of edges.get(node) ?? []) {
       const degree = (indegree.get(next) ?? 0) - 1;
       indegree.set(next, degree);
       if (degree === 0) queue.push(next);
     }
   }
-  return visited !== ids.size;
+  return visited !== nodes.length;
 }
 
-function latestConstraint(
+/**
+ * Rejects dependencies whose endpoints sit on the same branch of the tree.
+ * `hasScheduleCycle` catches these too, but only after the fact and with a
+ * generic message; this produces one the user can act on.
+ */
+export function assertDependencyEndpoints<
+  T extends { id: string; parentTaskId?: string | null },
+>(tasks: T[], dependency: Pick<ScheduleDependency, "predecessorTaskId" | "successorTaskId">): void {
+  if (dependency.predecessorTaskId === dependency.successorTaskId) {
+    throw new Error("A task cannot depend on itself");
+  }
+  const relatedByHierarchy =
+    taskAncestors(tasks, dependency.successorTaskId).some(
+      (ancestor) => ancestor.id === dependency.predecessorTaskId,
+    ) ||
+    taskAncestors(tasks, dependency.predecessorTaskId).some(
+      (ancestor) => ancestor.id === dependency.successorTaskId,
+    );
+  if (relatedByHierarchy) {
+    throw new Error("A summary task cannot depend on its own subtasks");
+  }
+}
+
+/**
+ * The earliest start every predecessor allows, or null when the task has no
+ * predecessor with a finish date.
+ */
+function dependencyFloor(
   taskId: string,
   tasks: Map<string, ScheduleTask>,
   dependencies: ScheduleDependency[],
@@ -196,6 +288,124 @@ function latestConstraint(
   return latest;
 }
 
+/**
+ * Where a dependent task wants to start, given what its predecessors allow and
+ * the constraint it carries. Returns null when the task should stay put.
+ */
+function constrainedStart(
+  task: ScheduleTask,
+  floor: string | null,
+  originalStart: string | null,
+): string | null {
+  const constraintType = task.constraintType ?? "asap";
+  if (constraintType === "must_start_on") {
+    return task.constraintDate ? normalizeToWorkday(task.constraintDate) : null;
+  }
+  if (!floor) return null;
+  if (constraintType === "start_no_earlier_than") {
+    const anchor = task.constraintDate ?? originalStart;
+    if (!anchor) return floor;
+    const normalizedAnchor = normalizeToWorkday(anchor);
+    return floor > normalizedAnchor ? floor : normalizedAnchor;
+  }
+  return floor;
+}
+
+function directChildren<T extends { id: string; parentTaskId?: string | null }>(
+  tasks: T[],
+): Map<string, T[]> {
+  const byParent = new Map<string, T[]>();
+  for (const task of tasks) {
+    if (!task.parentTaskId) continue;
+    const siblings = byParent.get(task.parentTaskId);
+    if (siblings) siblings.push(task);
+    else byParent.set(task.parentTaskId, [task]);
+  }
+  return byParent;
+}
+
+function dependencyOrder(
+  tasks: ScheduleTask[],
+  dependencies: ScheduleDependency[],
+): string[] {
+  const ids = new Set(tasks.map((task) => task.id));
+  const outgoing = new Map<string, string[]>();
+  const indegree = new Map(tasks.map((task) => [task.id, 0]));
+  for (const dependency of dependencies) {
+    if (!ids.has(dependency.predecessorTaskId) || !ids.has(dependency.successorTaskId)) {
+      continue;
+    }
+    pushEdge(outgoing, dependency.predecessorTaskId, dependency.successorTaskId);
+    indegree.set(
+      dependency.successorTaskId,
+      (indegree.get(dependency.successorTaskId) ?? 0) + 1,
+    );
+  }
+  const queue = [...indegree.entries()]
+    .filter(([, degree]) => degree === 0)
+    .map(([id]) => id);
+  const order: string[] = [];
+  while (queue.length > 0) {
+    const id = queue.shift()!;
+    order.push(id);
+    for (const next of outgoing.get(id) ?? []) {
+      const degree = (indegree.get(next) ?? 0) - 1;
+      indegree.set(next, degree);
+      if (degree === 0) queue.push(next);
+    }
+  }
+  return order;
+}
+
+/**
+ * Recomputes every summary that sits above a changed task, deepest first, so a
+ * parent always spans exactly its direct children (R1). Parents whose children
+ * are all unscheduled become unscheduled themselves.
+ */
+function rollupAncestorsInPlace(
+  working: Map<string, ScheduleTask>,
+  childrenByParent: Map<string, ScheduleTask[]>,
+  depthById: Map<string, number>,
+  taskIds: Iterable<string>,
+): void {
+  const pending = new Set<string>();
+  for (const taskId of taskIds) {
+    let cursor = working.get(taskId)?.parentTaskId ?? null;
+    const seen = new Set<string>();
+    while (cursor && !seen.has(cursor)) {
+      seen.add(cursor);
+      pending.add(cursor);
+      cursor = working.get(cursor)?.parentTaskId ?? null;
+    }
+  }
+  const deepestFirst = [...pending].sort(
+    (left, right) => (depthById.get(right) ?? 0) - (depthById.get(left) ?? 0),
+  );
+  for (const parentId of deepestFirst) {
+    const parent = working.get(parentId);
+    if (!parent) continue;
+    const children = (childrenByParent.get(parentId) ?? []).map(
+      (child) => working.get(child.id) ?? child,
+    );
+    if (children.length === 0) continue;
+    const envelope = descendantEnvelope(children);
+    working.set(parentId, {
+      ...parent,
+      startDate: envelope.startDate,
+      dueDate: envelope.dueDate,
+    });
+  }
+}
+
+/**
+ * Resolves a schedule edit into the full set of date changes it implies.
+ *
+ * The root edit is applied first — moving a summary shifts its whole subtree
+ * rigidly (R2) — and then dependencies and summary rollups are settled to a
+ * fixed point. Successors are both pushed later and, when they are `asap`,
+ * pulled earlier (R7). Summary tasks may sit at either end of a dependency
+ * (R6); a link into one shifts that subtree and leaves its internals intact.
+ */
 export function previewScheduleCascade(
   sourceTasks: ScheduleTask[],
   dependencies: ScheduleDependency[],
@@ -205,66 +415,99 @@ export function previewScheduleCascade(
     dueDate: string;
   },
 ): ScheduleChange[] {
-  if (hasDependencyCycle(sourceTasks.map((task) => task.id), dependencies)) {
+  if (hasScheduleCycle(sourceTasks, dependencies)) {
     throw new Error("Dependency cycle");
   }
   const original = new Map(sourceTasks.map((task) => [task.id, task]));
-  const tasks = new Map(
-    sourceTasks.map((task) => [task.id, { ...task }]),
-  );
-  const root = tasks.get(rootChange.taskId);
+  const working = new Map(sourceTasks.map((task) => [task.id, { ...task }]));
+  const root = working.get(rootChange.taskId);
   if (!root) throw new Error("Task not found");
+
+  const childrenByParent = directChildren(sourceTasks);
+  const depthById = new Map(
+    sourceTasks.map((task) => [task.id, taskAncestors(sourceTasks, task.id).length]),
+  );
+  const descendantsById = new Map(
+    sourceTasks
+      .filter((task) => childrenByParent.has(task.id))
+      .map((task) => [task.id, taskDescendants(sourceTasks, task.id)]),
+  );
+  const touched = new Set<string>();
+
+  const moveTask = (taskId: string, startDate: string): void => {
+    const task = working.get(taskId);
+    if (!task) return;
+    const descendants = descendantsById.get(taskId);
+    if (descendants && descendants.length > 0) {
+      if (!task.startDate) return;
+      const offset = workdayDistance(task.startDate, startDate);
+      if (offset === 0) return;
+      for (const member of [task, ...descendants.map((child) => working.get(child.id)!)]) {
+        if (!member.startDate || !member.dueDate) continue;
+        working.set(member.id, {
+          ...member,
+          startDate: addWorkdays(member.startDate, offset),
+          dueDate: addWorkdays(member.dueDate, offset),
+        });
+        touched.add(member.id);
+      }
+      return;
+    }
+    if (!task.startDate || !task.dueDate) return;
+    const duration = task.isMilestone
+      ? 1
+      : Math.max(1, workdaysInclusive(task.startDate, task.dueDate));
+    working.set(taskId, {
+      ...task,
+      startDate,
+      dueDate: task.isMilestone ? startDate : dueDateForDuration(startDate, duration),
+    });
+    touched.add(taskId);
+  };
+
   const normalizedStart = normalizeToWorkday(rootChange.startDate);
   const normalizedDue = root.isMilestone
     ? normalizedStart
     : normalizeToWorkday(rootChange.dueDate, "backward");
   if (normalizedDue < normalizedStart) throw new Error("Due date precedes start date");
-  tasks.set(root.id, {
-    ...root,
-    startDate: normalizedStart,
-    dueDate: normalizedDue,
-  });
-
-  const outgoing = new Map<string, string[]>();
-  for (const dependency of dependencies) {
-    const list = outgoing.get(dependency.predecessorTaskId) ?? [];
-    list.push(dependency.successorTaskId);
-    outgoing.set(dependency.predecessorTaskId, list);
+  const rootDescendants = descendantsById.get(root.id);
+  if (rootDescendants && rootDescendants.length > 0) {
+    moveTask(root.id, normalizedStart);
+  } else {
+    working.set(root.id, {
+      ...root,
+      startDate: normalizedStart,
+      dueDate: normalizedDue,
+    });
+    touched.add(root.id);
   }
-  const queue = [root.id];
-  const queued = new Set(queue);
-  while (queue.length > 0) {
-    const currentId = queue.shift()!;
-    for (const successorId of outgoing.get(currentId) ?? []) {
-      const successor = tasks.get(successorId);
-      if (!successor) continue;
-      const constraint = latestConstraint(successorId, tasks, dependencies);
-      if (
-        constraint &&
-        successor.startDate &&
-        successor.dueDate &&
-        successor.startDate < constraint
-      ) {
-        const duration = successor.isMilestone
-          ? 1
-          : Math.max(1, workdaysInclusive(successor.startDate, successor.dueDate));
-        tasks.set(successorId, {
-          ...successor,
-          startDate: constraint,
-          dueDate: successor.isMilestone
-            ? constraint
-            : dueDateForDuration(constraint, duration),
-        });
-      }
-      if (!queued.has(successorId)) {
-        queued.add(successorId);
-        queue.push(successorId);
-      }
+
+  const order = dependencyOrder(sourceTasks, dependencies);
+  const successorIds = new Set(dependencies.map((dependency) => dependency.successorTaskId));
+  const limit = sourceTasks.length + 2;
+  let settled = false;
+  for (let pass = 0; pass < limit && !settled; pass += 1) {
+    settled = true;
+    rollupAncestorsInPlace(working, childrenByParent, depthById, touched);
+    for (const taskId of order) {
+      if (!successorIds.has(taskId)) continue;
+      const task = working.get(taskId);
+      if (!task?.startDate) continue;
+      const desired = constrainedStart(
+        task,
+        dependencyFloor(taskId, working, dependencies),
+        original.get(taskId)?.startDate ?? null,
+      );
+      if (!desired || desired === task.startDate) continue;
+      moveTask(taskId, desired);
+      settled = false;
     }
   }
+  if (!settled) throw new Error("Dependency cycle");
+  rollupAncestorsInPlace(working, childrenByParent, depthById, touched);
 
   const changes: ScheduleChange[] = [];
-  for (const [taskId, task] of tasks) {
+  for (const [taskId, task] of working) {
     const before = original.get(taskId)!;
     if (before.startDate !== task.startDate || before.dueDate !== task.dueDate) {
       changes.push({
@@ -303,19 +546,15 @@ export function criticalPathTaskIds(
   tasks: ScheduleTask[],
   dependencies: ScheduleDependency[],
 ): Set<string> {
-  if (hasDependencyCycle(tasks.map((task) => task.id), dependencies)) return new Set();
+  if (hasScheduleCycle(tasks, dependencies)) return new Set();
   const byId = new Map(tasks.map((task) => [task.id, task]));
   const incoming = new Map<string, string[]>();
   const outgoing = new Map<string, string[]>();
   const indegree = new Map(tasks.map((task) => [task.id, 0]));
   for (const dependency of dependencies) {
     if (!byId.has(dependency.predecessorTaskId) || !byId.has(dependency.successorTaskId)) continue;
-    (incoming.get(dependency.successorTaskId) ?? incoming.set(dependency.successorTaskId, []).get(dependency.successorTaskId)!).push(
-      dependency.predecessorTaskId,
-    );
-    (outgoing.get(dependency.predecessorTaskId) ?? outgoing.set(dependency.predecessorTaskId, []).get(dependency.predecessorTaskId)!).push(
-      dependency.successorTaskId,
-    );
+    pushEdge(incoming, dependency.successorTaskId, dependency.predecessorTaskId);
+    pushEdge(outgoing, dependency.predecessorTaskId, dependency.successorTaskId);
     indegree.set(dependency.successorTaskId, (indegree.get(dependency.successorTaskId) ?? 0) + 1);
   }
   const queue = [...indegree.entries()].filter(([, degree]) => degree === 0).map(([id]) => id);
@@ -502,47 +741,82 @@ export function descendantEnvelope(
   };
 }
 
-export function expandContainerToChildren(
+/**
+ * A summary task's dates (R1). Unlike the container helpers this replaced, the
+ * result is derived purely from the children — it shrinks as readily as it
+ * grows, and a summary whose children are all unscheduled is unscheduled too.
+ */
+export function rollupEnvelope(
   container: Pick<ScheduleTask, "id" | "startDate" | "dueDate">,
-  descendants: Pick<ScheduleTask, "startDate" | "dueDate">[],
+  children: Pick<ScheduleTask, "startDate" | "dueDate">[],
 ): AncestorExpansion {
-  const envelope = descendantEnvelope(descendants);
-  const startDate =
-    envelope.startDate && (!container.startDate || envelope.startDate < container.startDate)
-      ? envelope.startDate
-      : container.startDate;
-  const dueDate =
-    envelope.dueDate && (!container.dueDate || envelope.dueDate > container.dueDate)
-      ? envelope.dueDate
-      : container.dueDate;
+  const envelope = descendantEnvelope(children);
   return {
     taskId: container.id,
-    startDate,
-    dueDate,
-    expandedStart: startDate !== container.startDate,
-    expandedEnd: dueDate !== container.dueDate,
+    startDate: envelope.startDate,
+    dueDate: envelope.dueDate,
+    expandedStart: envelope.startDate !== container.startDate,
+    expandedEnd: envelope.dueDate !== container.dueDate,
   };
 }
 
-export function clampContainerToChildren(
-  desired: Pick<ScheduleTask, "startDate" | "dueDate">,
-  descendants: Pick<ScheduleTask, "startDate" | "dueDate">[],
+/**
+ * How far a project's tasks spill outside its authored window (R3/R4). Projects
+ * keep dates the user authored, so overflow is reported rather than absorbed.
+ */
+export function containerOverflow(
+  container: Pick<ScheduleTask, "startDate" | "dueDate">,
+  children: Pick<ScheduleTask, "startDate" | "dueDate">[],
 ): ScheduleConstraint {
-  const envelope = descendantEnvelope(descendants);
-  const startDate =
-    envelope.startDate && (!desired.startDate || desired.startDate > envelope.startDate)
-      ? envelope.startDate
-      : desired.startDate;
-  const dueDate =
-    envelope.dueDate && (!desired.dueDate || desired.dueDate < envelope.dueDate)
-      ? envelope.dueDate
-      : desired.dueDate;
+  const envelope = descendantEnvelope(children);
+  const overflowsStart = Boolean(
+    container.startDate && envelope.startDate && envelope.startDate < container.startDate,
+  );
+  const overflowsEnd = Boolean(
+    container.dueDate && envelope.dueDate && envelope.dueDate > container.dueDate,
+  );
   return {
-    startDate,
-    dueDate,
-    clampedStart: startDate !== desired.startDate,
-    clampedEnd: dueDate !== desired.dueDate,
+    startDate: envelope.startDate,
+    dueDate: envelope.dueDate,
+    clampedStart: overflowsStart,
+    clampedEnd: overflowsEnd,
   };
+}
+
+/**
+ * The task a row would be nested under when indented (R5): its nearest preceding
+ * sibling. Returns null when the row is already first among its siblings, or
+ * when that sibling is a milestone and so cannot hold subtasks.
+ */
+export function indentTarget<
+  T extends { id: string; parentTaskId?: string | null; sortOrder?: number; isMilestone?: boolean },
+>(tasks: T[], taskId: string): T | null {
+  const task = tasks.find((candidate) => candidate.id === taskId);
+  if (!task) return null;
+  const siblings = tasks
+    .filter((candidate) => (candidate.parentTaskId ?? null) === (task.parentTaskId ?? null))
+    .sort(
+      (left, right) =>
+        (left.sortOrder ?? 0) - (right.sortOrder ?? 0) || left.id.localeCompare(right.id),
+    );
+  const index = siblings.findIndex((candidate) => candidate.id === taskId);
+  if (index <= 0) return null;
+  const previous = siblings[index - 1];
+  return previous.isMilestone ? null : previous;
+}
+
+/**
+ * The parent a row would move to when outdented (R5): its grandparent, or null
+ * for the project root. Returns undefined when the row is already at the root
+ * and cannot be outdented any further.
+ */
+export function outdentTarget<
+  T extends { id: string; parentTaskId?: string | null },
+>(tasks: T[], taskId: string): string | null | undefined {
+  const task = tasks.find((candidate) => candidate.id === taskId);
+  if (!task?.parentTaskId) return undefined;
+  const parent = tasks.find((candidate) => candidate.id === task.parentTaskId);
+  return parent?.parentTaskId ?? null;
 }
 
 export function suggestTaskPlacement(input: {

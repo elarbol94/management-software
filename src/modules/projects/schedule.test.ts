@@ -1,15 +1,18 @@
 import { describe, expect, it } from "vitest";
 import {
   addWorkdays,
+  assertDependencyEndpoints,
   assertTaskHierarchy,
   buildTaskForest,
-  clampContainerToChildren,
+  containerOverflow,
   criticalPathTaskIds,
   dependencyConflicts,
   dependencyStartDate,
-  expandContainerToChildren,
-  hasDependencyCycle,
+  hasScheduleCycle,
+  indentTarget,
+  outdentTarget,
   previewScheduleCascade,
+  rollupEnvelope,
   suggestTaskPlacement,
   taskAncestors,
   taskDescendants,
@@ -71,7 +74,7 @@ describe("project schedule", () => {
       { predecessorTaskId: "a", successorTaskId: "b", lagWorkdays: 0 },
       { predecessorTaskId: "b", successorTaskId: "a", lagWorkdays: 0 },
     ];
-    expect(hasDependencyCycle(["a", "b"], dependencies)).toBe(true);
+    expect(hasScheduleCycle([{ id: "a" }, { id: "b" }], dependencies)).toBe(true);
     expect(
       dependencyConflicts(
         [
@@ -133,8 +136,8 @@ describe("project schedule", () => {
     expect(taskAncestors(tasks, "grandchild").map((task) => task.id)).toEqual(["child", "root"]);
   });
 
-  it("clamps containers and chooses the earliest available placement", () => {
-    expect(clampContainerToChildren(
+  it("reports work reaching outside a project window instead of absorbing it", () => {
+    expect(containerOverflow(
       { startDate: "2026-07-22", dueDate: "2026-07-24" },
       [{ startDate: "2026-07-20", dueDate: "2026-07-28" }],
     )).toMatchObject({
@@ -143,6 +146,13 @@ describe("project schedule", () => {
       clampedStart: true,
       clampedEnd: true,
     });
+    expect(containerOverflow(
+      { startDate: "2026-07-01", dueDate: "2026-08-31" },
+      [{ startDate: "2026-07-20", dueDate: "2026-07-28" }],
+    )).toMatchObject({ clampedStart: false, clampedEnd: false });
+  });
+
+  it("chooses the earliest available placement", () => {
     expect(suggestTaskPlacement({
       today: "2026-07-20",
       parent: { startDate: "2026-07-20", dueDate: "2026-07-31" },
@@ -155,25 +165,156 @@ describe("project schedule", () => {
     });
   });
 
-  it("expands parent containers without shrinking existing boundaries", () => {
+  it("derives a summary from its children in both directions", () => {
+    const container = { id: "summary", startDate: "2026-07-20", dueDate: "2026-07-31" };
     expect(
-      expandContainerToChildren(
-        {
-          id: "project",
-          startDate: "2026-07-20",
-          dueDate: "2026-07-31",
-        },
-        [
-          { startDate: "2026-07-17", dueDate: "2026-07-24" },
-          { startDate: "2026-07-27", dueDate: "2026-08-05" },
-        ],
-      ),
+      rollupEnvelope(container, [
+        { startDate: "2026-07-17", dueDate: "2026-07-24" },
+        { startDate: "2026-07-27", dueDate: "2026-08-05" },
+      ]),
     ).toMatchObject({
       startDate: "2026-07-17",
       dueDate: "2026-08-05",
       expandedStart: true,
       expandedEnd: true,
     });
+    // The old container rule only ever grew. A summary must shrink back too.
+    expect(
+      rollupEnvelope(container, [{ startDate: "2026-07-22", dueDate: "2026-07-24" }]),
+    ).toMatchObject({ startDate: "2026-07-22", dueDate: "2026-07-24" });
+    expect(
+      rollupEnvelope(container, [{ startDate: null, dueDate: null }]),
+    ).toMatchObject({ startDate: null, dueDate: null });
+  });
+
+  it("rejects dependencies between a summary and its own branch", () => {
+    const tasks = [
+      { id: "parent", parentTaskId: null },
+      { id: "child", parentTaskId: "parent" },
+      { id: "other", parentTaskId: null },
+    ];
+    expect(() =>
+      assertDependencyEndpoints(tasks, {
+        predecessorTaskId: "parent",
+        successorTaskId: "child",
+      }),
+    ).toThrow("own subtasks");
+    expect(() =>
+      assertDependencyEndpoints(tasks, {
+        predecessorTaskId: "child",
+        successorTaskId: "other",
+      }),
+    ).not.toThrow();
+    // A subtask preceding a task that precedes the subtask's own parent is
+    // circular even though no single link touches the same branch twice.
+    expect(
+      hasScheduleCycle(tasks, [
+        { predecessorTaskId: "child", successorTaskId: "other", lagWorkdays: 0 },
+        { predecessorTaskId: "other", successorTaskId: "parent", lagWorkdays: 0 },
+      ]),
+    ).toBe(true);
+    expect(
+      hasScheduleCycle(tasks, [
+        { predecessorTaskId: "child", successorTaskId: "other", lagWorkdays: 0 },
+      ]),
+    ).toBe(false);
+  });
+
+  it("pulls an asap successor earlier but holds a constrained one", () => {
+    const tasks = [
+      { id: "a", startDate: "2026-07-20", dueDate: "2026-07-24" },
+      {
+        id: "asap",
+        startDate: "2026-07-27",
+        dueDate: "2026-07-28",
+        constraintType: "asap" as const,
+      },
+      {
+        id: "pinned",
+        startDate: "2026-07-27",
+        dueDate: "2026-07-28",
+        constraintType: "start_no_earlier_than" as const,
+        constraintDate: "2026-07-27",
+      },
+    ];
+    const dependencies = [
+      { predecessorTaskId: "a", successorTaskId: "asap", lagWorkdays: 0 },
+      { predecessorTaskId: "a", successorTaskId: "pinned", lagWorkdays: 0 },
+    ];
+    // Moving the predecessor two workdays earlier.
+    const changes = previewScheduleCascade(tasks, dependencies, {
+      taskId: "a",
+      startDate: "2026-07-16",
+      dueDate: "2026-07-22",
+    });
+    const byId = new Map(changes.map((change) => [change.taskId, change]));
+    expect(byId.get("asap")).toMatchObject({
+      afterStartDate: "2026-07-23",
+      afterDueDate: "2026-07-24",
+    });
+    expect(byId.has("pinned")).toBe(false);
+  });
+
+  it("shifts a summary subtree when a dependency moves it", () => {
+    const tasks = [
+      { id: "lead", startDate: "2026-07-20", dueDate: "2026-07-24" },
+      { id: "summary", parentTaskId: null, startDate: "2026-07-20", dueDate: "2026-07-22" },
+      { id: "one", parentTaskId: "summary", startDate: "2026-07-20", dueDate: "2026-07-21" },
+      { id: "two", parentTaskId: "summary", startDate: "2026-07-22", dueDate: "2026-07-22" },
+    ];
+    const changes = previewScheduleCascade(
+      tasks,
+      [{ predecessorTaskId: "lead", successorTaskId: "summary", lagWorkdays: 0 }],
+      { taskId: "lead", startDate: "2026-07-20", dueDate: "2026-07-24" },
+    );
+    const byId = new Map(changes.map((change) => [change.taskId, change]));
+    // The subtree keeps its internal spacing and the summary still spans it.
+    expect(byId.get("one")).toMatchObject({
+      afterStartDate: "2026-07-27",
+      afterDueDate: "2026-07-28",
+    });
+    expect(byId.get("two")).toMatchObject({
+      afterStartDate: "2026-07-29",
+      afterDueDate: "2026-07-29",
+    });
+    expect(byId.get("summary")).toMatchObject({
+      afterStartDate: "2026-07-27",
+      afterDueDate: "2026-07-29",
+    });
+  });
+
+  it("re-derives a summary when one of its children moves", () => {
+    const tasks = [
+      { id: "summary", parentTaskId: null, startDate: "2026-07-20", dueDate: "2026-07-31" },
+      { id: "one", parentTaskId: "summary", startDate: "2026-07-20", dueDate: "2026-07-24" },
+      { id: "two", parentTaskId: "summary", startDate: "2026-07-27", dueDate: "2026-07-31" },
+    ];
+    // Pulling the last child in shrinks the summary rather than leaving it wide.
+    const changes = previewScheduleCascade(tasks, [], {
+      taskId: "two",
+      startDate: "2026-07-27",
+      dueDate: "2026-07-28",
+    });
+    expect(changes.find((change) => change.taskId === "summary")).toMatchObject({
+      afterStartDate: "2026-07-20",
+      afterDueDate: "2026-07-28",
+    });
+  });
+
+  it("resolves indent and outdent targets", () => {
+    const tasks = [
+      { id: "first", parentTaskId: null, sortOrder: 1000 },
+      { id: "second", parentTaskId: null, sortOrder: 2000 },
+      { id: "gate", parentTaskId: null, sortOrder: 3000, isMilestone: true },
+      { id: "after-gate", parentTaskId: null, sortOrder: 4000 },
+      { id: "nested", parentTaskId: "second", sortOrder: 1000 },
+    ];
+    expect(indentTarget(tasks, "second")?.id).toBe("first");
+    expect(indentTarget(tasks, "first")).toBeNull();
+    // Milestones cannot hold subtasks, so they are never an indent target.
+    expect(indentTarget(tasks, "after-gate")).toBeNull();
+    expect(outdentTarget(tasks, "nested")).toBeNull();
+    expect(outdentTarget(tasks, "second")).toBeUndefined();
   });
 
   it("moves a complete project task tree by a working-day offset", () => {

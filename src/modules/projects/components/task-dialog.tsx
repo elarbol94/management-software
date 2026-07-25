@@ -7,7 +7,6 @@ import { toast } from "sonner";
 import { AlertTriangle, ChevronRight, Loader2, Trash2 } from "lucide-react";
 import {
   deleteTask,
-  fitTaskToChildren,
   upsertTask,
 } from "@/modules/projects/actions";
 import { Button } from "@/components/ui/button";
@@ -292,6 +291,7 @@ export function TaskDialog({
                 type="date"
                 value={startDate}
                 onChange={(e) => setStartDate(e.target.value)}
+                disabled={isSummary}
               />
             </div>
             {!isMilestone && (
@@ -303,6 +303,7 @@ export function TaskDialog({
                   min={startDate || undefined}
                   value={dueDate}
                   onChange={(e) => setDueDate(e.target.value)}
+                  disabled={isSummary}
                 />
               </div>
             )}
@@ -343,24 +344,7 @@ export function TaskDialog({
                   </div>
                 ))}
               </div>
-              {task && (
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={async () => {
-                    try {
-                      await fitTaskToChildren(task.id);
-                      router.refresh();
-                      toast.success(t("fitToChildren"));
-                    } catch {
-                      toast.error(tCommon("error"));
-                    }
-                  }}
-                >
-                  {t("fitToChildren")}
-                </Button>
-              )}
+              <p className="text-xs text-muted-foreground">{t("summaryScheduleDescription")}</p>
             </div>
           )}
 

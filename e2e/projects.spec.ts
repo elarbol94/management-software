@@ -123,7 +123,7 @@ test("show scheduled Kanban work in the portfolio Gantt", async ({ page }) => {
   ).toBeVisible();
 });
 
-test("preview moving the project and its complete task tree", async ({ page }) => {
+test("move the project tree on drop and restore it with undo", async ({ page }) => {
   await login(page);
   await page.goto("/projects");
 
@@ -141,13 +141,16 @@ test("preview moving the project and its complete task tree", async ({ page }) =
   });
   await page.mouse.up();
 
-  const preview = page.getByRole("dialog", {
-    name: "Terminänderungen bestätigen",
-  });
-  await expect(preview).toContainText("Website Relaunch");
-  await expect(preview).toContainText("Landingpage bauen");
-  await preview.getByRole("button", { name: "Abbrechen" }).click();
-  await expect(preview).not.toBeVisible();
+  // The drop commits on its own — no confirmation step.
+  await expect(page.getByText("Terminplan aktualisiert")).toBeVisible();
+  await expect(
+    projectRow.getByRole("button", {
+      name: "Website Relaunch, 2026-07-27 – 2026-07-31",
+    }),
+  ).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Rückgängig" }).click();
+  await expect(page.getByText("Terminplan wiederhergestellt")).toBeVisible();
 
   await page.reload();
   await expect(
@@ -155,6 +158,26 @@ test("preview moving the project and its complete task tree", async ({ page }) =
       name: "Website Relaunch, 2026-07-27 – 2026-07-31",
     }),
   ).toBeVisible();
+});
+
+test("indent a task and let the new parent derive its dates", async ({ page }) => {
+  await login(page);
+  await page.goto("/projects");
+
+  const gantt = page.getByTestId("portfolio-gantt");
+  const target = gantt.locator('[data-row-kind="task"]').nth(1);
+  await expect(target).toBeVisible();
+
+  await target.getByRole("button", { name: /Einrücken/ }).click();
+
+  // The indented row is now a subtask, and its new parent renders as a derived
+  // summary bracket rather than an editable bar.
+  await expect(gantt.locator('[data-row-kind="subtask"]')).toHaveCount(1);
+  const bracket = gantt.locator("[data-summary-bracket]").first();
+  await expect(bracket).toBeVisible();
+  await expect(
+    bracket.locator('[title="Startdatum ändern"], [title="Enddatum ändern"]'),
+  ).toHaveCount(0);
 });
 
 test("create and expand a scheduled subtask in Kanban and Gantt", async ({

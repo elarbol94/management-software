@@ -14,6 +14,12 @@ export type ProjectStatus = (typeof projectStatuses)[number];
 export const taskPriorities = ["low", "medium", "high"] as const;
 export type TaskPriority = (typeof taskPriorities)[number];
 
+export const scheduleConstraintTypes = [
+  "asap",
+  "start_no_earlier_than",
+  "must_start_on",
+] as const;
+
 export const projects = sqliteTable("projects", {
   id: text("id")
     .primaryKey()
@@ -110,6 +116,11 @@ export const tasks = sqliteTable(
     isMilestone: integer("is_milestone", { mode: "boolean" })
       .notNull()
       .default(false),
+    // How the task reacts when a predecessor moves. See ScheduleConstraintType.
+    constraintType: text("constraint_type", { enum: scheduleConstraintTypes })
+      .notNull()
+      .default("asap"),
+    constraintDate: text("constraint_date"), // ISO YYYY-MM-DD
     priority: text("priority", { enum: taskPriorities })
       .notNull()
       .default("medium"),

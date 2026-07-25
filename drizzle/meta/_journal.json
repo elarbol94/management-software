@@ -176,6 +176,13 @@
       "when": 1784981981592,
       "tag": "0024_strange_namora",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "6",
+      "when": 1784989179346,
+      "tag": "0025_hesitant_bedlam",
+      "breakpoints": true
     }
   ]
 }

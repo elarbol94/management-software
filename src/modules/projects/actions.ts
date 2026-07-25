@@ -1,7 +1,7 @@
 "use server";
 
 import { z } from "zod";
-import { and, asc, eq, inArray, isNull, or, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { db } from "@/db";
 import {
@@ -10,19 +10,20 @@ import {
   projects,
   scheduleChangeItems,
   scheduleChangeSets,
+  scheduleConstraintTypes,
   taskDependencies,
   tasks,
 } from "@/db/schema";
 import { requireUserOrThrow } from "@/lib/auth";
 import {
+  assertDependencyEndpoints,
   assertTaskHierarchy,
-  clampContainerToChildren,
   descendantEnvelope,
-  expandContainerToChildren,
-  hasDependencyCycle,
+  hasScheduleCycle,
   leafTasks,
   normalizeToWorkday,
   previewScheduleCascade,
+  rollupEnvelope,
   shiftScheduledTasks,
   taskAncestors,
   taskDescendants,
@@ -258,10 +259,26 @@ const taskSchema = z.object({
     .default(null),
   progress: z.number().int().min(0).max(100).optional().default(0),
   isMilestone: z.boolean().optional().default(false),
+  constraintType: z.enum(scheduleConstraintTypes).optional().default("asap"),
+  constraintDate: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .nullable()
+    .optional()
+    .default(null),
   priority: z.enum(["low", "medium", "high"]).default("medium"),
+}).superRefine((data, context) => {
+  if (data.constraintType === "must_start_on" && !data.constraintDate) {
+    context.addIssue({
+      code: "custom",
+      path: ["constraintDate"],
+      message: "A fixed start needs a date",
+    });
+  }
 });
 
-export type TaskInput = z.infer<typeof taskSchema>;
+// The pre-parse shape, so callers may omit anything the schema defaults.
+export type TaskInput = z.input<typeof taskSchema>;
 
 function nextSortOrder(columnId: string, parentTaskId: string | null): number {
   const scope = parentTaskId
@@ -274,21 +291,6 @@ function nextSortOrder(columnId: string, parentTaskId: string | null): number {
       .where(scope)
       .get()?.value ?? 0;
   return max + SORT_GAP;
-}
-
-function taskHasDependencies(taskId: string): boolean {
-  return Boolean(
-    db
-      .select({ id: taskDependencies.id })
-      .from(taskDependencies)
-      .where(
-        or(
-          eq(taskDependencies.predecessorTaskId, taskId),
-          eq(taskDependencies.successorTaskId, taskId),
-        ),
-      )
-      .get(),
-  );
 }
 
 function projectHierarchyRows(projectId: string) {
@@ -310,7 +312,13 @@ function projectHierarchyRows(projectId: string) {
     .all();
 }
 
-function syncParentSummary(parentTaskId: string, fitToChildren = false): void {
+/**
+ * Brings a summary task back in line with its subtasks (R1): its dates are the
+ * exact envelope of its direct children, so it shrinks as well as grows, and it
+ * becomes unscheduled when none of its children are scheduled. Callers must
+ * work deepest-first so a parent sees settled children.
+ */
+function syncParentSummary(parentTaskId: string): void {
   const parent = db.select().from(tasks).where(eq(tasks.id, parentTaskId)).get();
   if (!parent) return;
   const projectTasks = projectHierarchyRows(parent.projectId);
@@ -318,8 +326,8 @@ function syncParentSummary(parentTaskId: string, fitToChildren = false): void {
   if (descendants.length === 0) return;
   const leaves = leafTasks([projectTasks.find((task) => task.id === parentTaskId)!, ...descendants])
     .filter((task) => task.id !== parentTaskId);
-  const envelope = descendantEnvelope(descendants);
-  const expanded = expandContainerToChildren(parent, descendants);
+  const children = projectTasks.filter((task) => task.parentTaskId === parentTaskId);
+  const envelope = rollupEnvelope(parent, children);
   const columns = db
     .select()
     .from(projectColumns)
@@ -337,11 +345,14 @@ function syncParentSummary(parentTaskId: string, fitToChildren = false): void {
       : parent.columnId;
   db.update(tasks)
     .set({
-      startDate: fitToChildren ? envelope.startDate : expanded.startDate,
-      dueDate: fitToChildren ? envelope.dueDate : expanded.dueDate,
+      startDate: envelope.startDate,
+      dueDate: envelope.dueDate,
       progress: allComplete ? 100 : weightedProgress(leaves),
       columnId,
       isMilestone: false,
+      // A summary's dates are derived, so a constraint on it would never apply.
+      constraintType: "asap",
+      constraintDate: null,
       updatedAt: new Date(),
     })
     .where(eq(tasks.id, parentTaskId))
@@ -361,6 +372,15 @@ function syncProjectParents(projectId: string): void {
   parentIds.forEach((id) => syncParentSummary(id));
 }
 
+/**
+ * Gives a project its first schedule, but never widens one the user authored.
+ *
+ * Unlike a summary task, a project's planned window is a commitment rather than
+ * a rollup (R3) — a project may be planned to run all year while its tasks fill
+ * a single quarter. Work that spills past the window is reported as overflow in
+ * the Gantt (R4) instead of quietly stretching the bar; `fitProjectToTasks`
+ * remains the explicit way to absorb it.
+ */
 function syncProjectBounds(projectId: string): void {
   const project = db
     .select()
@@ -368,6 +388,7 @@ function syncProjectBounds(projectId: string): void {
     .where(eq(projects.id, projectId))
     .get();
   if (!project) return;
+  if (project.plannedStartDate && project.targetEndDate) return;
   const projectTasks = db
     .select({
       startDate: tasks.startDate,
@@ -376,24 +397,19 @@ function syncProjectBounds(projectId: string): void {
     .from(tasks)
     .where(eq(tasks.projectId, projectId))
     .all();
-  const expanded = expandContainerToChildren(
-    {
-      id: project.id,
-      startDate: project.plannedStartDate,
-      dueDate: project.targetEndDate,
-    },
-    projectTasks,
-  );
+  const envelope = descendantEnvelope(projectTasks);
+  const plannedStartDate = project.plannedStartDate ?? envelope.startDate;
+  const targetEndDate = project.targetEndDate ?? envelope.dueDate;
   if (
-    expanded.startDate === project.plannedStartDate &&
-    expanded.dueDate === project.targetEndDate
+    plannedStartDate === project.plannedStartDate &&
+    targetEndDate === project.targetEndDate
   ) {
     return;
   }
   db.update(projects)
     .set({
-      plannedStartDate: expanded.startDate,
-      targetEndDate: expanded.dueDate,
+      plannedStartDate,
+      targetEndDate,
       updatedAt: new Date(),
     })
     .where(eq(projects.id, projectId))
@@ -456,14 +472,11 @@ export async function upsertTask(input: TaskInput): Promise<{ id: string }> {
   if (existingChildren.length > 0 && data.isMilestone) {
     throw new Error("A task with subtasks cannot become a milestone");
   }
-  if (
-    parent &&
-    parentChildren.length === 0 &&
-    existing?.parentTaskId !== parent.id &&
-    taskHasDependencies(parent.id)
-  ) {
-    throw new Error("Reassign parent dependencies before adding subtasks");
-  }
+  // A task promoted to summary hands its dates over to the rollup (R5). Its own
+  // authored dates are dropped here; syncParentSummary fills them back in from
+  // the children within the same transaction.
+  const promotesParent = Boolean(parent) && parentChildren.length === 0 &&
+    existing?.parentTaskId !== parent?.id;
   const normalizedDueDate = data.isMilestone ? data.startDate : data.dueDate;
   if (data.startDate && normalizedDueDate && normalizedDueDate < data.startDate) {
     throw new Error("Due date precedes start date");
@@ -500,12 +513,21 @@ export async function upsertTask(input: TaskInput): Promise<{ id: string }> {
     parentTaskId: data.parentTaskId,
     progress: targetColumn.isCompleted ? 100 : data.progress,
     isMilestone: data.isMilestone,
+    // Only leaves carry constraints; a summary's dates come from its children.
+    constraintType: existingChildren.length > 0 ? "asap" as const : data.constraintType,
+    constraintDate: existingChildren.length > 0 ? null : data.constraintDate,
     priority: data.priority,
     updatedAt: new Date(),
   };
 
   let id = data.id;
   db.transaction(() => {
+    if (promotesParent && parent) {
+      db.update(tasks)
+        .set({ constraintType: "asap", constraintDate: null, updatedAt: new Date() })
+        .where(eq(tasks.id, parent.id))
+        .run();
+    }
     if (id && existing) {
       const movedScope =
         existing.columnId !== data.columnId ||
@@ -563,26 +585,89 @@ export async function deleteTask(id: string) {
   revalidatePath("/projects");
 }
 
-export async function fitTaskToChildren(taskId: string) {
+const reparentSchema = z.object({
+  taskId: z.string().min(1),
+  parentTaskId: z.string().nullable().default(null),
+  beforeTaskId: z.string().nullable().optional().default(null),
+});
+
+/**
+ * Moves a task to a new parent and position (R5), used by indent/outdent and by
+ * dragging rows in the tree pane. Both the old and the new parent are rolled up
+ * afterwards, so a summary that just lost its last child keeps the dates it had
+ * and becomes an ordinary task again.
+ */
+export async function reparentTask(input: z.input<typeof reparentSchema>) {
   await requireUserOrThrow();
-  const task = db.select().from(tasks).where(eq(tasks.id, taskId)).get();
+  const data = reparentSchema.parse(input);
+  const task = db.select().from(tasks).where(eq(tasks.id, data.taskId)).get();
   if (!task) throw new Error("Task not found");
-  const descendants = taskDescendants(projectHierarchyRows(task.projectId), taskId);
-  if (descendants.length === 0) throw new Error("Task has no child schedule");
-  const envelope = descendantEnvelope(descendants);
-  if (!envelope.startDate || !envelope.dueDate) {
-    throw new Error("Schedule at least one child before fitting the parent");
+  if (data.parentTaskId === task.parentTaskId) return;
+
+  const projectTasks = projectHierarchyRows(task.projectId);
+  assertTaskHierarchy(
+    projectTasks.map((row) => ({
+      id: row.id,
+      projectId: task.projectId,
+      parentTaskId: row.parentTaskId,
+      isMilestone: row.isMilestone,
+    })),
+    {
+      id: task.id,
+      projectId: task.projectId,
+      parentTaskId: data.parentTaskId,
+      isMilestone: task.isMilestone,
+    },
+  );
+  if (taskDescendants(projectTasks, task.id).length > 0 && task.isMilestone) {
+    throw new Error("Milestones cannot contain subtasks");
   }
-  db.update(tasks)
-    .set({
-      startDate: envelope.startDate,
-      dueDate: envelope.dueDate,
-      updatedAt: new Date(),
-    })
-    .where(eq(tasks.id, taskId))
-    .run();
-  syncTaskAncestors(taskId);
-  syncProjectBounds(task.projectId);
+
+  const siblings = db
+    .select({ id: tasks.id, sortOrder: tasks.sortOrder })
+    .from(tasks)
+    .where(
+      and(
+        eq(tasks.projectId, task.projectId),
+        data.parentTaskId
+          ? eq(tasks.parentTaskId, data.parentTaskId)
+          : isNull(tasks.parentTaskId),
+      ),
+    )
+    .orderBy(asc(tasks.sortOrder))
+    .all()
+    .filter((sibling) => sibling.id !== task.id);
+  const anchor = data.beforeTaskId
+    ? siblings.findIndex((sibling) => sibling.id === data.beforeTaskId)
+    : -1;
+  const sortOrder =
+    anchor === 0
+      ? siblings[0].sortOrder - SORT_GAP
+      : anchor > 0
+        ? Math.round((siblings[anchor - 1].sortOrder + siblings[anchor].sortOrder) / 2)
+        : (siblings.at(-1)?.sortOrder ?? 0) + SORT_GAP;
+
+  db.transaction(() => {
+    db.update(tasks)
+      .set({
+        parentTaskId: data.parentTaskId,
+        sortOrder,
+        updatedAt: new Date(),
+      })
+      .where(eq(tasks.id, task.id))
+      .run();
+    if (data.parentTaskId) {
+      db.update(tasks)
+        .set({ constraintType: "asap", constraintDate: null, updatedAt: new Date() })
+        .where(eq(tasks.id, data.parentTaskId))
+        .run();
+      syncTaskAncestors(data.parentTaskId);
+    }
+    if (task.parentTaskId) syncTaskAncestors(task.parentTaskId);
+    syncTaskAncestors(task.id);
+    syncProjectBounds(task.projectId);
+  });
+
   revalidatePath(`/projects/${task.projectId}`);
   revalidatePath("/projects");
 }
@@ -722,23 +807,14 @@ export async function upsertTaskDependency(
 ) {
   await requireUserOrThrow();
   const data = dependencySchema.parse(input);
-  if (data.predecessorTaskId === data.successorTaskId) {
-    throw new Error("A task cannot depend on itself");
-  }
-  const summaryEndpoint = db
-    .select({ id: tasks.id })
+  // Summary tasks may sit at either end of a link (R6). A link between a task
+  // and its own ancestor or descendant is still impossible, because a summary
+  // already spans its subtree.
+  const hierarchyTasks = db
+    .select({ id: tasks.id, parentTaskId: tasks.parentTaskId })
     .from(tasks)
-    .where(
-      or(
-        eq(tasks.parentTaskId, data.predecessorTaskId),
-        eq(tasks.parentTaskId, data.successorTaskId),
-      ),
-    )
-    .get();
-  if (summaryEndpoint) {
-    throw new Error("Dependencies can only connect leaf tasks");
-  }
-  const taskIds = db.select({ id: tasks.id }).from(tasks).all().map((row) => row.id);
+    .all();
+  assertDependencyEndpoints(hierarchyTasks, data);
   const existing = db.select().from(taskDependencies).all();
   const candidate = [
     ...existing.filter((dependency) => dependency.id !== data.id),
@@ -748,7 +824,7 @@ export async function upsertTaskDependency(
       lagWorkdays: data.lagWorkdays,
     },
   ];
-  if (hasDependencyCycle(taskIds, candidate)) {
+  if (hasScheduleCycle(hierarchyTasks, candidate)) {
     throw new Error("Dependency cycle");
   }
   if (data.id) {
@@ -804,19 +880,19 @@ const scheduleMoveSchema = z.object({
     });
   }
 });
-const scheduleChangeSchema = z.object({
-  entityType: z.enum(["task", "project"]),
-  entityId: z.string().min(1),
-  beforeStartDate: z.string().nullable(),
-  beforeDueDate: z.string().nullable(),
-  afterStartDate: z.string().nullable(),
-  afterDueDate: z.string().nullable(),
-});
-const scheduleApplySchema = scheduleMoveSchema.extend({
-  expectedChanges: z.array(scheduleChangeSchema).min(1),
-});
+// Drags commit straight from the drop (R8), so the client no longer replays a
+// preview back to the server. The per-row before-state checks inside the
+// transaction remain the guard against a concurrent edit.
+const scheduleApplySchema = scheduleMoveSchema;
 
-type PortfolioScheduleChange = z.infer<typeof scheduleChangeSchema>;
+type PortfolioScheduleChange = {
+  entityType: "task" | "project";
+  entityId: string;
+  beforeStartDate: string | null;
+  beforeDueDate: string | null;
+  afterStartDate: string | null;
+  afterDueDate: string | null;
+};
 
 function scheduleEntityId(input: z.infer<typeof scheduleMoveSchema>): string {
   const id =
@@ -826,9 +902,59 @@ function scheduleEntityId(input: z.infer<typeof scheduleMoveSchema>): string {
   return id;
 }
 
+/**
+ * The projects a schedule edit can reach: the one being edited plus any joined
+ * to it by a dependency. Everything outside that set is untouchable, so there is
+ * no reason to load it.
+ */
+function scheduleScope(
+  projectId: string,
+  dependencies: { predecessorTaskId: string; successorTaskId: string }[],
+): Set<string> {
+  const projectByTask = new Map(
+    db
+      .select({ id: tasks.id, projectId: tasks.projectId })
+      .from(tasks)
+      .all()
+      .map((task) => [task.id, task.projectId]),
+  );
+  const scope = new Set([projectId]);
+  let grew = true;
+  while (grew) {
+    grew = false;
+    for (const dependency of dependencies) {
+      const from = projectByTask.get(dependency.predecessorTaskId);
+      const to = projectByTask.get(dependency.successorTaskId);
+      if (!from || !to || from === to) continue;
+      if (scope.has(from) && !scope.has(to)) {
+        scope.add(to);
+        grew = true;
+      } else if (scope.has(to) && !scope.has(from)) {
+        scope.add(from);
+        grew = true;
+      }
+    }
+  }
+  return scope;
+}
+
 function computeSchedulePreview(
   input: z.infer<typeof scheduleMoveSchema>,
 ): PortfolioScheduleChange[] {
+  const entityId = scheduleEntityId(input);
+  const dependencies = db.select().from(taskDependencies).all();
+  const rootProjectId =
+    input.entityType === "project"
+      ? entityId
+      : db
+          .select({ projectId: tasks.projectId })
+          .from(tasks)
+          .where(eq(tasks.id, entityId))
+          .get()?.projectId;
+  if (!rootProjectId) throw new Error("Task not found");
+  const scope = scheduleScope(rootProjectId, dependencies);
+  const scopeIds = [...scope];
+
   const taskRows = db
     .select({
       id: tasks.id,
@@ -838,8 +964,11 @@ function computeSchedulePreview(
       dueDate: tasks.dueDate,
       progress: tasks.progress,
       isMilestone: tasks.isMilestone,
+      constraintType: tasks.constraintType,
+      constraintDate: tasks.constraintDate,
     })
     .from(tasks)
+    .where(inArray(tasks.projectId, scopeIds))
     .all();
   const projectRows = db
     .select({
@@ -849,8 +978,8 @@ function computeSchedulePreview(
       dueDate: projects.targetEndDate,
     })
     .from(projects)
+    .where(inArray(projects.id, scopeIds))
     .all();
-  const entityId = scheduleEntityId(input);
   const original = new Map(taskRows.map((task) => [task.id, { ...task }]));
   const working = new Map(taskRows.map((task) => [task.id, { ...task }]));
   const originalProjects = new Map(
@@ -860,20 +989,21 @@ function computeSchedulePreview(
     string,
     { startDate: string; dueDate: string }
   >();
-  const leaves = leafTasks(taskRows);
-  const leafIds = new Set(leaves.map((task) => task.id));
-  const dependencies = db
-    .select()
-    .from(taskDependencies)
-    .all()
-    .filter(
-      (dependency) =>
-        leafIds.has(dependency.predecessorTaskId) &&
-        leafIds.has(dependency.successorTaskId),
-    );
-  const applyCascade = (rootTaskId: string, startDate: string, dueDate: string) => {
-    const currentLeaves = leaves.map((leaf) => working.get(leaf.id)!);
-    for (const change of previewScheduleCascade(currentLeaves, dependencies, {
+  const taskIdsInScope = new Set(taskRows.map((task) => task.id));
+  const scopedDependencies = dependencies.filter(
+    (dependency) =>
+      taskIdsInScope.has(dependency.predecessorTaskId) &&
+      taskIdsInScope.has(dependency.successorTaskId),
+  );
+
+  /**
+   * Hands the edit to the rules engine, which resolves the dependency cascade
+   * and re-derives every summary above what moved. Summaries are passed in
+   * alongside leaves so they can anchor dependencies of their own (R6).
+   */
+  const settle = (rootTaskId: string, startDate: string, dueDate: string) => {
+    const current = taskRows.map((task) => working.get(task.id)!);
+    for (const change of previewScheduleCascade(current, scopedDependencies, {
       taskId: rootTaskId,
       startDate,
       dueDate,
@@ -897,10 +1027,6 @@ function computeSchedulePreview(
     const project = projectRows.find((candidate) => candidate.id === entityId);
     if (!project) throw new Error("Project not found");
     const projectTasks = taskRows.filter((task) => task.projectId === project.id);
-    let desiredBounds = {
-      startDate: normalizedStart,
-      dueDate: normalizedDue,
-    };
     if (input.operation === "move" && projectTasks.length > 0) {
       const envelope = descendantEnvelope(projectTasks);
       const currentStart = project.startDate ?? envelope.startDate;
@@ -909,85 +1035,26 @@ function computeSchedulePreview(
       for (const task of shiftScheduledTasks(projectTasks, offset)) {
         working.set(task.id, { ...working.get(task.id)!, ...task });
       }
-      for (const leaf of leafTasks(projectTasks)) {
-        const shifted = working.get(leaf.id)!;
-        if (shifted.startDate && shifted.dueDate) {
-          applyCascade(leaf.id, shifted.startDate, shifted.dueDate);
-        }
-      }
-    } else if (input.operation !== "place") {
-      const constraint = clampContainerToChildren(
-        desiredBounds,
-        projectTasks.map((task) => working.get(task.id)!),
-      );
-      desiredBounds = {
-        startDate: constraint.startDate ?? normalizedStart,
-        dueDate: constraint.dueDate ?? normalizedDue,
-      };
+      // Any scheduled task settles the whole graph; the engine sweeps every
+      // dependent regardless of which root it is handed.
+      const anchor = projectTasks
+        .map((task) => working.get(task.id)!)
+        .find((task) => task.startDate && task.dueDate);
+      if (anchor) settle(anchor.id, anchor.startDate!, anchor.dueDate!);
     }
-    explicitProjectBounds.set(project.id, desiredBounds);
+    // A project window is authored, not derived: it is never clamped to the work
+    // inside it. Tasks that spill past it surface as overflow in the Gantt (R4).
+    explicitProjectBounds.set(project.id, {
+      startDate: normalizedStart,
+      dueDate: normalizedDue,
+    });
   } else {
     const target = taskRows.find((task) => task.id === entityId);
     if (!target) throw new Error("Task not found");
-    const descendants = taskDescendants(taskRows, target.id);
-    const targetHasChildren = descendants.length > 0;
-    if (targetHasChildren && input.operation === "move") {
-      if (!target.startDate) {
-        throw new Error("Place the parent before moving its subtree");
-      }
-      const offset = workdayDistance(target.startDate, normalizedStart);
-      const subtree = [target, ...descendants];
-      for (const task of shiftScheduledTasks(subtree, offset)) {
-        working.set(task.id, { ...working.get(task.id)!, ...task });
-      }
-      for (const leaf of leafTasks(subtree)) {
-        const shifted = working.get(leaf.id)!;
-        if (shifted.startDate && shifted.dueDate) {
-          applyCascade(leaf.id, shifted.startDate, shifted.dueDate);
-        }
-      }
-    } else if (targetHasChildren) {
-      const constraint = clampContainerToChildren(
-        { startDate: normalizedStart, dueDate: normalizedDue },
-        descendants.map((task) => working.get(task.id)!),
-      );
-      working.set(target.id, {
-        ...target,
-        startDate: constraint.startDate,
-        dueDate: constraint.dueDate,
-      });
-    } else {
-      applyCascade(target.id, normalizedStart, normalizedDue);
+    if (taskDescendants(taskRows, target.id).length > 0 && !target.startDate) {
+      throw new Error("Place the parent before moving its subtree");
     }
-  }
-
-  const changedIds = new Set(
-    taskRows
-      .filter((task) => {
-        const after = working.get(task.id)!;
-        return task.startDate !== after.startDate || task.dueDate !== after.dueDate;
-      })
-      .map((task) => task.id),
-  );
-  const ancestorIds = new Set<string>();
-  for (const id of changedIds) {
-    for (const ancestor of taskAncestors(taskRows, id)) ancestorIds.add(ancestor.id);
-  }
-  const ancestorsDeepestFirst = [...ancestorIds].sort(
-    (left, right) =>
-      taskAncestors(taskRows, right).length - taskAncestors(taskRows, left).length,
-  );
-  for (const ancestorId of ancestorsDeepestFirst) {
-    const ancestor = working.get(ancestorId)!;
-    const expansion = expandContainerToChildren(
-      ancestor,
-      taskDescendants(taskRows, ancestorId).map((task) => working.get(task.id)!),
-    );
-    working.set(ancestorId, {
-      ...ancestor,
-      startDate: expansion.startDate,
-      dueDate: expansion.dueDate,
-    });
+    settle(target.id, normalizedStart, normalizedDue);
   }
 
   const taskChanges: PortfolioScheduleChange[] = taskRows.flatMap((task) => {
@@ -1005,25 +1072,12 @@ function computeSchedulePreview(
         }];
   });
 
-  const affectedProjectIds = new Set(
-    taskChanges.map(
-      (change) => original.get(change.entityId)?.projectId,
-    ).filter((projectId): projectId is string => Boolean(projectId)),
-  );
-  explicitProjectBounds.forEach((_, projectId) => affectedProjectIds.add(projectId));
+  // Only a project the user dragged changes bounds. Moving tasks around inside
+  // one no longer stretches it (R3).
   const projectChanges: PortfolioScheduleChange[] = projectRows.flatMap((project) => {
-    if (!affectedProjectIds.has(project.id)) return [];
+    const after = explicitProjectBounds.get(project.id);
+    if (!after) return [];
     const before = originalProjects.get(project.id)!;
-    const base = explicitProjectBounds.get(project.id) ?? {
-      startDate: before.startDate,
-      dueDate: before.dueDate,
-    };
-    const after = expandContainerToChildren(
-      { id: project.id, ...base },
-      taskRows
-        .filter((task) => task.projectId === project.id)
-        .map((task) => working.get(task.id)!),
-    );
     return before.startDate === after.startDate && before.dueDate === after.dueDate
       ? []
       : [{
@@ -1079,9 +1133,6 @@ export async function applyPortfolioScheduleChange(
   const user = await requireUserOrThrow();
   const data = scheduleApplySchema.parse(input);
   const changes = computeSchedulePreview(data);
-  if (JSON.stringify(changes) !== JSON.stringify(data.expectedChanges)) {
-    throw new Error("Schedule changed while the preview was open");
-  }
   if (changes.length === 0) return { changeSetId: null, changes };
 
   const result = db.transaction((tx) => {
@@ -1138,7 +1189,7 @@ export async function applyPortfolioScheduleChange(
         current.startDate !== change.beforeStartDate ||
         current.dueDate !== change.beforeDueDate
       ) {
-        throw new Error("Schedule changed while the preview was open");
+        throw new Error("Schedule changed in another session");
       }
       tx.update(tasks)
         .set({
@@ -1163,7 +1214,7 @@ export async function applyPortfolioScheduleChange(
         current.startDate !== change.beforeStartDate ||
         current.dueDate !== change.beforeDueDate
       ) {
-        throw new Error("Schedule changed while the preview was open");
+        throw new Error("Schedule changed in another session");
       }
       tx.update(projects)
         .set({

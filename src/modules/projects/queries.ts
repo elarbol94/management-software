@@ -65,6 +65,8 @@ export function getBoard(projectId: string) {
       startDate: tasks.startDate,
       progress: tasks.progress,
       isMilestone: tasks.isMilestone,
+      constraintType: tasks.constraintType,
+      constraintDate: tasks.constraintDate,
       priority: tasks.priority,
       sortOrder: tasks.sortOrder,
     })
@@ -115,6 +117,8 @@ export function getPortfolioSchedule() {
       dueDate: tasks.dueDate,
       progress: tasks.progress,
       isMilestone: tasks.isMilestone,
+      constraintType: tasks.constraintType,
+      constraintDate: tasks.constraintDate,
       priority: tasks.priority,
       sortOrder: tasks.sortOrder,
       updatedAt: tasks.updatedAt,
