@@ -26,6 +26,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { createSlashCommandExtension, type SlashCommandDefinition } from "./slash-command-menu";
 import { CommentRail, type CommentRailHandle, type CommentThread } from "./comment-rail";
 import { CommentAnchorOverlay } from "./comment-anchor-overlay";
+import { CollapsibleHeading, HeadingListItem } from "./collapsible-heading";
 import { MarkdownDocumentExtensions, MarkdownShortcutMarks, MarkdownShortcuts } from "./markdown-shortcut-extension";
 import { MarkdownReferenceDialog } from "./markdown-reference-dialog";
 import { WikiShortcutsDialog } from "./wiki-shortcuts-dialog";
@@ -566,7 +567,7 @@ export function WikiEditor({
   ];
   const slashExtension = createSlashCommandExtension({ commands: slashCommands, ariaLabel: t("slash.ariaLabel"), emptyLabel: t("slash.empty") });
 
-  const editor = useEditor({ immediatelyRender: false, enableInputRules: ["blockquote", "bulletList", "codeBlock", "heading", "orderedList", "taskItem"], extensions: [StarterKit.configure({ bold: false, code: false, heading: { levels: [1, 2, 3] }, italic: false, link: { openOnClick: false }, strike: false }), ...MarkdownShortcutMarks, ...MarkdownDocumentExtensions, ...DocumentExtensions, TaskList, TaskItem.configure({ nested: true }), Citation, PdfEvidence, CommentableImage, CommentMark, Highlight, Placeholder.configure({ placeholder: ({ node }) => node.type.name === "heading" ? t("editor.placeholder.heading") : t("editor.placeholder.empty") }), EditorSearchExtension, MarkdownShortcuts, slashExtension], content,
+  const editor = useEditor({ immediatelyRender: false, enableInputRules: ["blockquote", "bulletList", "codeBlock", "heading", "orderedList", "taskItem"], extensions: [StarterKit.configure({ bold: false, code: false, heading: false, listItem: false, italic: false, link: { openOnClick: false }, strike: false }), CollapsibleHeading.configure({ levels: [1, 2, 3] }), HeadingListItem, ...MarkdownShortcutMarks, ...MarkdownDocumentExtensions, ...DocumentExtensions, TaskList, TaskItem.configure({ nested: true }), Citation, PdfEvidence, CommentableImage, CommentMark, Highlight, Placeholder.configure({ placeholder: ({ node }) => node.type.name === "heading" ? t("editor.placeholder.heading") : t("editor.placeholder.empty") }), EditorSearchExtension, MarkdownShortcuts, slashExtension], content,
     editorProps: {
       attributes: { class: "prose prose-neutral dark:prose-invert max-w-none min-h-[28rem] focus:outline-none" },
       handlePaste(view, event) {
@@ -875,7 +876,7 @@ export function WikiEditor({
   }[saveState];
   const shortcutLabel = (action: WikiShortcutAction) => displayWikiShortcut(wikiShortcuts[action]);
 
-  return <div className="relative flex flex-col gap-3"><div className="sticky top-0 z-20 flex flex-wrap items-center gap-0.5 rounded-lg border bg-background/95 p-1 shadow-sm backdrop-blur">
+  return <div className="relative flex flex-col gap-3"><div className="sticky top-0 z-40 flex flex-wrap items-center gap-0.5 rounded-lg border bg-background/95 p-1 shadow-sm backdrop-blur supports-[backdrop-filter]:bg-background/80">
     <ToolbarButton title={t("editor.toolbar.undo")} shortcut={shortcutLabel("undo")} onClick={() => activeEditor.chain().focus().undo().run()}><Undo2 className="size-4" /></ToolbarButton>
     <ToolbarButton title={t("editor.toolbar.redo")} shortcut={shortcutLabel("redo")} onClick={() => activeEditor.chain().focus().redo().run()}><Redo2 className="size-4" /></ToolbarButton>
     <span className="mx-1 h-5 w-px bg-border" />

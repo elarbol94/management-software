@@ -61,7 +61,7 @@ export default function AppLayout({
           </Suspense>
         </div>
         <main
-          className="min-w-0 flex-1 overflow-x-hidden p-6"
+          className="min-w-0 flex-1 overflow-x-clip p-6 md:pl-[calc(1.5rem+var(--app-rail-width,3.5rem))]"
           data-app-main
         >
           {children}

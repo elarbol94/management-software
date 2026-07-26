@@ -2314,7 +2314,10 @@ export function PortfolioClient({
       </div>}
 
       {view === "projects" && !focusedTask ? (
-        <ProjectsClient projects={projects} members={schedule.members} />
+        <ProjectsClient projects={projects} members={schedule.members} predecessorOptions={[
+          ...schedule.projects.map((project) => ({ id: project.id, title: project.name, dueDate: project.targetEndDate, type: "project" as const })),
+          ...schedule.tasks.map((task) => ({ id: task.id, title: task.title, dueDate: task.dueDate, type: "task" as const })),
+        ]} />
       ) : (
         <div className="flex min-h-0 min-w-0 overflow-hidden rounded-lg border bg-card">
           <div className="min-w-0 flex-1">

@@ -13,7 +13,6 @@ import {
   Hash,
   Inbox,
   LibraryBig,
-  ChevronLeft,
   Plus,
   Search,
   Star,
@@ -144,8 +143,11 @@ export function ResearchSidebar({
   const router = useRouter();
   const { isFocused } = useFocusMode();
   const [expanded, setExpanded] = useState(false);
+  useEffect(() => {
+    document.documentElement.style.setProperty("--research-rail-width", expanded ? "16rem" : "3.5rem");
+    return () => { document.documentElement.style.removeProperty("--research-rail-width"); };
+  }, [expanded]);
   const [mobileOpen, setMobileOpen] = useState(false);
-  const toggleExpanded = () => setExpanded((value) => !value);
   const [creating, setCreating] = useState(false);
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SearchResults | null>(null);
@@ -295,7 +297,7 @@ export function ResearchSidebar({
     return (
       <TooltipProvider>
         <div className="flex min-h-0 flex-1 flex-col">
-          <div className={cn("flex items-center border-b", compact ? "flex-col gap-2 px-2 py-3" : "gap-2 p-3")}>
+          <div className={cn("flex h-14 shrink-0 items-center border-b", compact ? "flex-col gap-2 px-2 py-3" : "gap-2 p-3")}>
             <div className="grid size-8 shrink-0 place-items-center rounded-md bg-indigo-600 text-white">
               <BookOpen className="size-4" />
             </div>
@@ -305,17 +307,19 @@ export function ResearchSidebar({
                 <p className="truncate text-[11px] text-muted-foreground">{t("sharedKnowledge")}</p>
               </div>
             )}
-            <Button
-              type="button"
-              variant={compact ? "ghost" : "default"}
-              size="icon-sm"
-              onClick={createNote}
-              disabled={creating}
-              aria-label={t("quickNote")}
-              title={t("quickNote")}
-            >
-              <Plus className="size-4" />
-            </Button>
+            {(!compact || sheet) && (
+              <Button
+                type="button"
+                variant={compact ? "ghost" : "default"}
+                size="icon-sm"
+                onClick={createNote}
+                disabled={creating}
+                aria-label={t("quickNote")}
+                title={t("quickNote")}
+              >
+                <Plus className="size-4" />
+              </Button>
+            )}
             {sheet && (
               <SheetClose render={<Button type="button" variant="ghost" size="icon-sm" aria-label={t("closeResearchNavigation")} />}>
                 <X className="size-4" />
@@ -434,9 +438,15 @@ export function ResearchSidebar({
         data-testid="research-sidebar"
         data-expanded={expanded}
         className={cn(
-          "relative hidden shrink-0 flex-col border-r bg-[linear-gradient(180deg,rgba(79,70,229,0.045),transparent_14rem)] transition-[width] duration-200 ease-out motion-reduce:transition-none md:flex",
+          "fixed inset-y-0 left-[var(--app-rail-width,3.5rem)] z-30 hidden h-dvh shrink-0 flex-col border-r bg-[linear-gradient(180deg,rgba(79,70,229,0.045),transparent_14rem)] transition-[width] duration-200 ease-out motion-reduce:transition-none md:flex",
           expanded ? "w-64" : "w-14",
         )}
+        onMouseEnter={() => setExpanded(true)}
+        onMouseLeave={() => setExpanded(false)}
+        onFocusCapture={() => setExpanded(true)}
+        onBlur={(event) => {
+          if (!event.currentTarget.contains(event.relatedTarget)) setExpanded(false);
+        }}
       >
         {sidebarContent({
           compact: !expanded,
@@ -444,21 +454,6 @@ export function ResearchSidebar({
           searchId: "research-search-desktop",
           navigationId: "research-primary-navigation",
         })}
-        <Button
-          type="button"
-          data-testid="research-sidebar-toggle"
-          variant="ghost"
-          size="icon-xs"
-          aria-label={expanded ? t("collapseResearchNavigation") : t("expandResearchNavigation")}
-          aria-expanded={expanded}
-          aria-controls="research-primary-navigation"
-          title={expanded ? t("collapseResearchNavigation") : t("expandResearchNavigation")}
-          className="absolute top-[50dvh] -right-2.5 z-30 h-8 w-5 -translate-y-1/2 rounded-md border border-transparent bg-sidebar p-0 text-muted-foreground shadow-none transition-[color,background-color,border-color] motion-reduce:transition-none hover:border-sidebar-border hover:bg-accent hover:text-foreground aria-expanded:!border-transparent aria-expanded:!bg-sidebar aria-expanded:!text-muted-foreground active:!-translate-y-1/2 active:[&_svg]:scale-110 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-0"
-          onPointerUp={(event) => { if (event.button === 0) toggleExpanded(); }}
-          onClick={(event) => { if (event.detail === 0) toggleExpanded(); }}
-        >
-          {expanded ? <ChevronLeft className="size-4" /> : <ChevronRight className="size-4" />}
-        </Button>
       </aside>
     </>
   );

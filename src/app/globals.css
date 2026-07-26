@@ -1,4 +1,21 @@
 @import "tailwindcss";
+
+.wiki-collapsed-section { display: none; }
+
+[data-wiki-collapsible-heading] {
+  cursor: pointer;
+}
+
+[data-wiki-collapsible-heading]::before {
+  content: "▾";
+  display: inline-block;
+  width: 1.1em;
+  color: var(--muted-foreground);
+  font-size: .75em;
+  vertical-align: .1em;
+}
+
+[data-wiki-collapsible-heading][data-collapsed="true"]::before { content: "▸"; }
 @import "tw-animate-css";
 
 :root {

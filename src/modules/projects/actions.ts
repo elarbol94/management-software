@@ -6,6 +6,8 @@ import { revalidatePath } from "next/cache";
 import { db } from "@/db";
 import {
   projectColumns,
+  projectDependencies,
+  projectTaskDependencies,
   projectScheduleChangeItems,
   projects,
   scheduleChangeItems,
@@ -30,9 +32,46 @@ import {
   taskAncestors,
   taskDescendants,
   weightedProgress,
+  addWorkdays,
+  workdayDistance,
 } from "@/modules/projects/schedule";
 
 const SORT_GAP = 1000;
+
+/** Applies project successors after their predecessor's finish moves. */
+function cascadeProjectSuccessors(predecessorType: "project" | "task", predecessorId: string, visited = new Set<string>()) {
+  const predecessorDueDate = predecessorType === "project"
+    ? db.select({ dueDate: projects.targetEndDate }).from(projects).where(eq(projects.id, predecessorId)).get()?.dueDate
+    : db.select({ dueDate: tasks.dueDate }).from(tasks).where(eq(tasks.id, predecessorId)).get()?.dueDate;
+  if (!predecessorDueDate) return;
+  const requiredStart = addWorkdays(predecessorDueDate, 1);
+  const links = db.select().from(projectDependencies).where(and(eq(projectDependencies.predecessorType, predecessorType), eq(projectDependencies.predecessorId, predecessorId))).all();
+  for (const link of links) {
+    if (visited.has(link.successorProjectId)) continue;
+    visited.add(link.successorProjectId);
+    const successor = db.select().from(projects).where(eq(projects.id, link.successorProjectId)).get();
+    if (!successor?.plannedStartDate || !successor.targetEndDate || successor.plannedStartDate >= requiredStart) continue;
+    const shift = workdayDistance(successor.plannedStartDate, requiredStart);
+    db.transaction((tx) => {
+      tx.update(projects).set({ plannedStartDate: requiredStart, targetEndDate: addWorkdays(successor.targetEndDate!, shift), updatedAt: new Date() }).where(eq(projects.id, successor.id)).run();
+      const projectTasks = tx.select().from(tasks).where(eq(tasks.projectId, successor.id)).all();
+      for (const task of projectTasks) {
+        if (!task.startDate || !task.dueDate) continue;
+        tx.update(tasks).set({ startDate: addWorkdays(task.startDate, shift), dueDate: addWorkdays(task.dueDate, shift), updatedAt: new Date() }).where(eq(tasks.id, task.id)).run();
+      }
+    });
+    cascadeProjectSuccessors("project", successor.id, visited);
+  }
+  if (predecessorType === "project") {
+    for (const link of db.select().from(projectTaskDependencies).where(eq(projectTaskDependencies.predecessorProjectId, predecessorId)).all()) {
+      const successor = db.select().from(tasks).where(eq(tasks.id, link.successorTaskId)).get();
+      if (!successor?.startDate || !successor.dueDate || successor.startDate >= requiredStart) continue;
+      const shift = workdayDistance(successor.startDate, requiredStart);
+      db.update(tasks).set({ startDate: requiredStart, dueDate: addWorkdays(successor.dueDate, shift), updatedAt: new Date() }).where(eq(tasks.id, successor.id)).run();
+      cascadeProjectSuccessors("task", successor.id, visited);
+    }
+  }
+}
 
 // --- Projects ---
 
@@ -57,6 +96,7 @@ const projectSchema = z.object({
     .nullable()
     .optional()
     .default(null),
+  predecessor: z.object({ type: z.enum(["project", "task"]), id: z.string().min(1) }).nullable().optional().default(null),
 }).superRefine((data, context) => {
   if (
     data.plannedStartDate &&
@@ -71,7 +111,7 @@ const projectSchema = z.object({
   }
 });
 
-export type ProjectInput = z.infer<typeof projectSchema>;
+export type ProjectInput = z.input<typeof projectSchema>;
 
 // Column names are created per locale on the client side.
 export async function upsertProject(
@@ -170,6 +210,7 @@ export async function upsertProject(
       }
       syncProjectBounds(projectId);
     });
+    if (scheduleDatesChanged) cascadeProjectSuccessors("project", projectId);
     revalidatePath("/projects");
     return db.select().from(projects).where(eq(projects.id, projectId)).get()!;
   }
@@ -188,6 +229,14 @@ export async function upsertProject(
     .returning({ id: projects.id })
     .get();
 
+  if (data.predecessor) {
+    db.insert(projectDependencies).values({
+      predecessorType: data.predecessor.type,
+      predecessorId: data.predecessor.id,
+      successorProjectId: row.id,
+    }).run();
+  }
+
   const columnNames = (defaultColumns ?? ["Offen", "In Arbeit", "Erledigt"])
     .slice(0, 10)
     .filter((name) => name.trim().length > 0);
@@ -201,6 +250,8 @@ export async function upsertProject(
       })),
     )
     .run();
+
+  cascadeProjectSuccessors("project", row.id);
 
   revalidatePath("/projects");
   return db.select().from(projects).where(eq(projects.id, row.id)).get()!;
@@ -343,6 +394,7 @@ const taskSchema = z.object({
     .optional()
     .default(null),
   priority: z.enum(["low", "medium", "high"]).default("medium"),
+  predecessor: z.object({ type: z.enum(["project", "task"]), id: z.string().min(1) }).nullable().optional().default(null),
 }).superRefine((data, context) => {
   if (
     (data.startDate && !data.dueDate && !data.isMilestone) ||
@@ -698,6 +750,19 @@ export async function upsertTask(input: TaskInput): Promise<{ id: string }> {
         .returning({ id: tasks.id })
         .get();
       id = row.id;
+      if (data.predecessor?.type === "task") {
+        const predecessor = tx.select().from(tasks).where(eq(tasks.id, data.predecessor.id)).get();
+        if (!predecessor) throw new Error("Predecessor task not found");
+        const dependency = { predecessorTaskId: predecessor.id, successorTaskId: row.id, lagWorkdays: 0 };
+        assertDependencyEndpoints([...hierarchyTasks, { id: row.id, parentTaskId: data.parentTaskId }], dependency);
+        const allDependencies = tx.select().from(taskDependencies).all();
+        if (hasScheduleCycle([...hierarchyTasks, { id: row.id, parentTaskId: data.parentTaskId }], [...allDependencies, dependency])) throw new Error("Dependency cycle");
+        tx.insert(taskDependencies).values(dependency).run();
+      } else if (data.predecessor?.type === "project") {
+        const predecessor = tx.select().from(projects).where(eq(projects.id, data.predecessor.id)).get();
+        if (!predecessor) throw new Error("Predecessor project not found");
+        tx.insert(projectTaskDependencies).values({ predecessorProjectId: predecessor.id, successorTaskId: row.id }).run();
+      }
     }
     const affectedParents = new Set(
       [existing?.parentTaskId, data.parentTaskId].filter(
@@ -708,6 +773,8 @@ export async function upsertTask(input: TaskInput): Promise<{ id: string }> {
     if (id && existingChildren.length > 0) syncParentSummary(id);
     syncProjectBounds(data.projectId);
   });
+
+  if (id && (scheduleDatesChanged || !existing)) cascadeProjectSuccessors("task", id);
 
   revalidatePath(`/projects/${data.projectId}`);
   revalidatePath("/projects");

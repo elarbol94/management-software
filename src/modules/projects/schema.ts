@@ -180,6 +180,36 @@ export const taskDependencies = sqliteTable(
   ],
 );
 
+/** A project can be scheduled after either a project or a task. */
+export const projectDependencies = sqliteTable(
+  "project_dependencies",
+  {
+    id: text("id").primaryKey().$defaultFn(() => createId()),
+    predecessorType: text("predecessor_type", { enum: ["project", "task"] }).notNull(),
+    predecessorId: text("predecessor_id").notNull(),
+    successorProjectId: text("successor_project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("project_dependencies_predecessor_idx").on(table.predecessorType, table.predecessorId),
+    index("project_dependencies_successor_idx").on(table.successorProjectId),
+  ],
+);
+
+export const projectTaskDependencies = sqliteTable(
+  "project_task_dependencies",
+  {
+    id: text("id").primaryKey().$defaultFn(() => createId()),
+    predecessorProjectId: text("predecessor_project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+    successorTaskId: text("successor_task_id").notNull().references(() => tasks.id, { onDelete: "cascade" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("project_task_dependencies_predecessor_idx").on(table.predecessorProjectId),
+    index("project_task_dependencies_successor_idx").on(table.successorTaskId),
+  ],
+);
+
 export const scheduleChangeSets = sqliteTable(
   "schedule_change_sets",
   {

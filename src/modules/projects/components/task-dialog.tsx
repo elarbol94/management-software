@@ -28,6 +28,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { addWorkdays } from "@/modules/projects/schedule";
 
 export type MemberDto = { id: string; name: string };
 export type BoardTaskDto = {
@@ -60,6 +61,7 @@ export function TaskDialog({
   defaultParentTaskId,
   parentTask,
   subtasks,
+  predecessorOptions = [],
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -71,6 +73,7 @@ export function TaskDialog({
   defaultParentTaskId: string | null;
   parentTask: BoardTaskDto | null;
   subtasks: BoardTaskDto[];
+  predecessorOptions?: Array<{ id: string; title: string; dueDate: string | null; type: "project" | "task" }>;
 }) {
   const t = useTranslations("projects");
   const tCommon = useTranslations("common");
@@ -85,6 +88,7 @@ export function TaskDialog({
   const [progress, setProgress] = useState(0);
   const [isMilestone, setIsMilestone] = useState(false);
   const [priority, setPriority] = useState<"low" | "medium" | "high">("medium");
+  const [predecessorTaskId, setPredecessorTaskId] = useState("none");
   const [pending, setPending] = useState(false);
   const isSummary = subtasks.length > 0;
   const isSubtask = Boolean(task?.parentTaskId ?? defaultParentTaskId);
@@ -107,6 +111,7 @@ export function TaskDialog({
       setProgress(task?.progress ?? 0);
       setIsMilestone(task?.isMilestone ?? false);
       setPriority(task?.priority ?? "medium");
+      setPredecessorTaskId("none");
     }
   }
 
@@ -127,6 +132,7 @@ export function TaskDialog({
         progress,
         isMilestone,
         priority,
+        predecessor: !task && predecessorTaskId !== "none" ? (() => { const [type, id] = predecessorTaskId.split(":"); return { type: type as "project" | "task", id }; })() : null,
       });
       toast.success(tCommon("saved"));
       onOpenChange(false);
@@ -270,6 +276,24 @@ export function TaskDialog({
               </Select>
             </div>
           </div>
+
+          {!task && (
+            <div className="flex flex-col gap-2">
+              <Label>{t("choosePredecessor")}</Label>
+              <Select value={predecessorTaskId} onValueChange={(value) => {
+                const next = value ?? "none";
+                setPredecessorTaskId(next);
+                const predecessor = predecessorOptions.find((candidate) => `${candidate.type}:${candidate.id}` === next);
+                if (predecessor?.dueDate) setStartDate(addWorkdays(predecessor.dueDate, 1));
+              }}>
+                <SelectTrigger className="w-full"><SelectValue>{predecessorTaskId === "none" ? t("choosePredecessor") : predecessorOptions.find((candidate) => `${candidate.type}:${candidate.id}` === predecessorTaskId)?.title}</SelectValue></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">{t("choosePredecessor")}</SelectItem>
+                  {predecessorOptions.filter((candidate) => candidate.dueDate).map((candidate) => <SelectItem key={`${candidate.type}:${candidate.id}`} value={`${candidate.type}:${candidate.id}`}>{candidate.type === "project" ? `${t("newProject")}: ${candidate.title}` : candidate.title}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
 
           <div className="flex items-center gap-2">
             <Checkbox

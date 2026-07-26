@@ -474,12 +474,14 @@ export function BoardClient({
   tasksByColumn,
   subtasksByParent,
   members,
+  predecessorOptions = [],
 }: {
   project: Project;
   columns: ColumnDto[];
   tasksByColumn: Record<string, BoardTaskDto[]>;
   subtasksByParent: Record<string, BoardTaskDto[]>;
   members: MemberDto[];
+  predecessorOptions?: Array<{ id: string; title: string; dueDate: string | null; type: "project" | "task" }>;
 }) {
   const t = useTranslations("projects");
   const tCommon = useTranslations("common");
@@ -750,6 +752,7 @@ export function BoardClient({
               : null) ?? null
         }
         subtasks={editingTask ? (subtasksByParent[editingTask.id] ?? []) : []}
+        predecessorOptions={predecessorOptions.filter((candidate) => candidate.id !== editingTask?.id)}
       />
     </div>
   );

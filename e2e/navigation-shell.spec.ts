@@ -29,7 +29,7 @@ async function expectWidth(locator: Locator, width: number) {
   await expect.poll(async () => Math.round((await locator.boundingBox())?.width ?? 0)).toBe(width);
 }
 
-test("desktop navigation rails expand independently, reset on reload, and survive focus mode", async ({ page }) => {
+test("desktop navigation rails expand on hover, collapse on leave, and survive focus mode", async ({ page }) => {
   await login(page);
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.goto("/wiki/inbox");
@@ -45,19 +45,15 @@ test("desktop navigation rails expand independently, reset on reload, and surviv
   await expect(researchSidebar.getByRole("link", { name: /Eingang/ })).toBeVisible();
   await expect(appSidebar.getByRole("button", { name: /E2E Admin/ })).toBeVisible();
 
-  await page.getByRole("button", { name: "Hauptnavigation ausklappen" }).click();
+  await appSidebar.hover();
   await expectWidth(appSidebar, 240);
-  await expectWidth(researchSidebar, 56);
+  await page.locator("main").hover();
+  await expectWidth(appSidebar, 56);
 
-  await page.getByRole("button", { name: "Wissensnavigation ausklappen" }).click();
-  await expectWidth(appSidebar, 240);
-  await expectWidth(researchSidebar, 256);
-
-  await page.getByRole("button", { name: "Hauptnavigation einklappen" }).click();
+  await researchSidebar.hover();
   await expectWidth(appSidebar, 56);
   await expectWidth(researchSidebar, 256);
-
-  await page.getByRole("button", { name: "Wissensnavigation einklappen" }).click();
+  await page.locator("main").hover();
   await researchSidebar.getByRole("button", { name: "Seiten und Quellen durchsuchen…" }).click();
   await expectWidth(researchSidebar, 256);
   await expect(page.locator("#research-search-desktop")).toBeFocused();
@@ -66,11 +62,7 @@ test("desktop navigation rails expand independently, reset on reload, and surviv
   await expect(page).toHaveURL(/\/wiki\/pages$/);
   await expectWidth(researchSidebar, 256);
 
-  await page.reload();
-  await expectWidth(appSidebar, 56);
-  await expectWidth(researchSidebar, 56);
-
-  await page.getByRole("button", { name: "Hauptnavigation ausklappen" }).click();
+  await appSidebar.hover();
   await expectWidth(appSidebar, 240);
   await researchSidebar.getByRole("button", { name: "Schnelle Notiz" }).click();
   await expect(page).toHaveURL(/\/wiki\/pages\/[^/]+$/);

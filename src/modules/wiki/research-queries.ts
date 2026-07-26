@@ -312,6 +312,7 @@ export function getPageResearchMeta(pageId: string, userId: string) {
       kind: wikiPageRevisions.kind,
       createdAt: wikiPageRevisions.createdAt,
       createdByName: user.name,
+      contentJson: wikiPageRevisions.contentJson,
     })
     .from(wikiPageRevisions)
     .innerJoin(user, eq(wikiPageRevisions.createdBy, user.id))

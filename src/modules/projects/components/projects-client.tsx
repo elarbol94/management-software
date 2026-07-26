@@ -43,15 +43,18 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { addWorkdays } from "@/modules/projects/schedule";
 
 type Project = typeof projectsTable.$inferSelect & { openTasks: number };
 
 export function ProjectsClient({
   projects,
   members = [],
+  predecessorOptions = [],
 }: {
   projects: Project[];
   members?: Array<{ id: string; name: string }>;
+  predecessorOptions?: Array<{ id: string; title: string; dueDate: string | null; type: "project" | "task" }>;
 }) {
   const t = useTranslations("projects");
   const tCommon = useTranslations("common");
@@ -66,6 +69,7 @@ export function ProjectsClient({
   const [plannedStartDate, setPlannedStartDate] = useState("");
   const [targetEndDate, setTargetEndDate] = useState("");
   const [pending, setPending] = useState(false);
+  const [predecessor, setPredecessor] = useState("none");
 
   function openDialog(project: Project | null) {
     setEditing(project);
@@ -75,6 +79,7 @@ export function ProjectsClient({
     setManagerId(project?.managerId ?? "none");
     setPlannedStartDate(project?.plannedStartDate ?? "");
     setTargetEndDate(project?.targetEndDate ?? "");
+    setPredecessor("none");
     setDialogOpen(true);
   }
 
@@ -90,6 +95,7 @@ export function ProjectsClient({
         managerId: managerId === "none" ? null : managerId,
         plannedStartDate: plannedStartDate || null,
         targetEndDate: targetEndDate || null,
+        predecessor: !editing && predecessor !== "none" ? (() => { const [type, id] = predecessor.split(":"); return { type: type as "project" | "task", id }; })() : null,
       };
       const saved = await upsertProject(input, [
         t("colOpen"),
@@ -334,6 +340,21 @@ export function ProjectsClient({
                 />
               </div>
             </div>
+            {!editing && <div className="flex flex-col gap-2">
+              <Label>{t("choosePredecessor")}</Label>
+              <Select value={predecessor} onValueChange={(value) => {
+                const next = value ?? "none";
+                setPredecessor(next);
+                const selected = predecessorOptions.find((option) => `${option.type}:${option.id}` === next);
+                if (selected?.dueDate) setPlannedStartDate(addWorkdays(selected.dueDate, 1));
+              }}>
+                <SelectTrigger className="w-full"><SelectValue>{predecessor === "none" ? t("choosePredecessor") : predecessorOptions.find((option) => `${option.type}:${option.id}` === predecessor)?.title}</SelectValue></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">{t("choosePredecessor")}</SelectItem>
+                  {predecessorOptions.filter((option) => option.dueDate).map((option) => <SelectItem key={`${option.type}:${option.id}`} value={`${option.type}:${option.id}`}>{option.type === "project" ? `${t("newProject")}: ${option.title}` : option.title}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>}
             <Button type="submit" disabled={pending}>
               {tCommon("save")}
             </Button>

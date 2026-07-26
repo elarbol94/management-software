@@ -1,17 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useTranslations } from "next-intl";
-import {
-  LayoutDashboard,
-  Menu,
-  ChevronLeft,
-  ChevronRight,
-  Settings,
-  X,
-} from "lucide-react";
+import { LayoutDashboard, Menu, Settings, X } from "lucide-react";
 import { useFocusMode } from "@/components/focus-mode";
 import { UserMenu } from "@/components/user-menu";
 import { Button } from "@/components/ui/button";
@@ -138,7 +131,10 @@ export function AppSidebar({ userName, userEmail }: { userName: string; userEmai
   const { isFocused } = useFocusMode();
   const [expanded, setExpanded] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
-  const toggleExpanded = () => setExpanded((value) => !value);
+  useEffect(() => {
+    document.documentElement.style.setProperty("--app-rail-width", expanded ? "15rem" : "3.5rem");
+    return () => { document.documentElement.style.removeProperty("--app-rail-width"); };
+  }, [expanded]);
 
   if (isFocused) return null;
 
@@ -193,12 +189,18 @@ export function AppSidebar({ userName, userEmail }: { userName: string; userEmai
         data-testid="app-sidebar"
         data-expanded={expanded}
         className={cn(
-          "relative hidden shrink-0 flex-col border-r bg-sidebar transition-[width] duration-200 ease-out motion-reduce:transition-none md:flex",
+          "fixed inset-y-0 left-0 z-40 hidden h-dvh shrink-0 flex-col border-r bg-sidebar transition-[width] duration-200 ease-out motion-reduce:transition-none md:flex",
           expanded ? "w-60" : "w-14",
         )}
+        onMouseEnter={() => setExpanded(true)}
+        onMouseLeave={() => setExpanded(false)}
+        onFocusCapture={() => setExpanded(true)}
+        onBlur={(event) => {
+          if (!event.currentTarget.contains(event.relatedTarget)) setExpanded(false);
+        }}
       >
         {expanded ? (
-          <div className="flex h-14 items-center border-b px-4">
+          <div className="flex h-14 shrink-0 items-center border-b px-4">
             <Link href="/" className="truncate text-base font-semibold tracking-tight">
               {tCommon("appName")}
             </Link>
@@ -213,21 +215,6 @@ export function AppSidebar({ userName, userEmail }: { userName: string; userEmai
           userName={userName}
           userEmail={userEmail}
         />
-        <Button
-          type="button"
-          data-testid="app-sidebar-toggle"
-          variant="ghost"
-          size="icon-xs"
-          aria-label={expanded ? t("collapseNavigation") : t("expandNavigation")}
-          aria-expanded={expanded}
-          aria-controls="app-primary-navigation"
-          title={expanded ? t("collapseNavigation") : t("expandNavigation")}
-          className="absolute top-[50dvh] -right-2.5 z-30 h-8 w-5 -translate-y-1/2 rounded-md border border-transparent bg-sidebar p-0 text-muted-foreground shadow-none transition-[color,background-color,border-color] motion-reduce:transition-none hover:border-sidebar-border hover:bg-accent hover:text-foreground aria-expanded:!border-transparent aria-expanded:!bg-sidebar aria-expanded:!text-muted-foreground active:!-translate-y-1/2 active:[&_svg]:scale-110 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-0"
-          onPointerUp={(event) => { if (event.button === 0) toggleExpanded(); }}
-          onClick={(event) => { if (event.detail === 0) toggleExpanded(); }}
-        >
-          {expanded ? <ChevronLeft className="size-4" /> : <ChevronRight className="size-4" />}
-        </Button>
       </aside>
     </>
   );

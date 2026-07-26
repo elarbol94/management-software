@@ -167,7 +167,10 @@ export function EditorOutlineSheet({ editor, items, activePosition, open, onOpen
       </SheetHeader>
       <nav className="min-h-0 flex-1 overflow-y-auto p-3" aria-label={t("title")}>
         {items.length ? items.map((item) => <button key={`${item.position}-${item.id}`} type="button" className={cn("block w-full rounded-md py-1.5 pr-2 text-left text-sm transition-colors hover:bg-accent focus-visible:outline-2", activePosition === item.position && "bg-indigo-50 font-medium text-indigo-700 dark:bg-indigo-950/40 dark:text-indigo-300")} style={{ paddingLeft: `${0.5 + (item.level - 1) * 0.85}rem` }} onClick={() => {
-          editor.chain().focus().setTextSelection(item.position + 1).scrollIntoView().run();
+          const heading = editor.view.nodeDOM(item.position) as HTMLElement | null;
+          const top = heading?.getBoundingClientRect().top ?? 0;
+          window.scrollBy({ top: top - 84, behavior: "smooth" });
+          editor.chain().focus().setTextSelection(item.position + 1).run();
           onOpenChange(false);
         }}>{item.text || t("untitled")}</button>) : <p className="p-3 text-sm text-muted-foreground">{t("empty")}</p>}
       </nav>
