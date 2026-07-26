@@ -226,81 +226,81 @@
 
   .wiki-editor-surface .ProseMirror,
   .wiki-typography-preview {
-    color: var(--wiki-text-color);
-    font-family: var(--wiki-body-font);
-    font-size: var(--wiki-body-size);
-    line-height: var(--wiki-line-height);
+    color: var(--wiki-text-color) !important;
+    font-family: var(--wiki-body-font) !important;
+    font-size: var(--wiki-body-size) !important;
+    line-height: var(--wiki-line-height) !important;
   }
 
   .wiki-editor-surface .ProseMirror p,
   .wiki-typography-preview p {
-    margin: 0 0 var(--wiki-paragraph-spacing);
+    margin: 0 0 var(--wiki-paragraph-spacing) !important;
   }
 
   .wiki-editor-surface .ProseMirror :is(ul, ol),
   .wiki-typography-preview :is(ul, ol) {
-    margin-block: var(--wiki-list-block-spacing);
-    padding-inline-start: var(--wiki-list-indent);
+    margin-block: var(--wiki-list-block-spacing) !important;
+    padding-inline-start: var(--wiki-list-indent) !important;
   }
 
   .wiki-editor-surface .ProseMirror ul:not([data-type="taskList"]),
   .wiki-typography-preview ul:not([data-type="taskList"]) {
-    list-style: disc;
+    list-style: disc !important;
   }
 
   .wiki-editor-surface .ProseMirror ol,
   .wiki-typography-preview ol {
-    list-style: decimal;
+    list-style: decimal !important;
   }
 
   .wiki-editor-surface .ProseMirror li,
   .wiki-typography-preview li {
-    margin: 0;
+    margin: 0 !important;
   }
 
   .wiki-editor-surface .ProseMirror li + li,
   .wiki-typography-preview li + li {
-    margin-top: var(--wiki-list-item-spacing);
+    margin-top: var(--wiki-list-item-spacing) !important;
   }
 
   .wiki-editor-surface .ProseMirror li > p,
   .wiki-typography-preview li > p {
-    margin: 0;
+    margin: 0 !important;
   }
 
   .wiki-editor-surface .ProseMirror :is(h1, h2, h3),
   .wiki-typography-preview :is(h1, h2, h3) {
-    margin-block: var(--wiki-heading-before) var(--wiki-heading-after);
-    color: var(--wiki-text-color);
-    font-family: var(--wiki-heading-font);
-    line-height: var(--wiki-heading-line-height);
+    margin-block: var(--wiki-heading-before) var(--wiki-heading-after) !important;
+    color: var(--wiki-text-color) !important;
+    font-family: var(--wiki-heading-font) !important;
+    line-height: var(--wiki-heading-line-height) !important;
     letter-spacing: -0.018em;
   }
 
   .wiki-editor-surface .ProseMirror h1,
   .wiki-typography-preview h1 {
-    font-size: var(--wiki-h1-size);
+    font-size: var(--wiki-h1-size) !important;
   }
 
   .wiki-editor-surface .ProseMirror h2,
   .wiki-typography-preview h2 {
-    font-size: var(--wiki-h2-size);
+    font-size: var(--wiki-h2-size) !important;
   }
 
   .wiki-editor-surface .ProseMirror h3,
   .wiki-typography-preview h3 {
-    font-size: var(--wiki-h3-size);
+    font-size: var(--wiki-h3-size) !important;
   }
 
   .wiki-editor-surface .ProseMirror :is(a, .wiki-footnote-reference),
   .wiki-typography-preview a {
-    color: var(--wiki-accent-color);
+    color: var(--wiki-accent-color) !important;
   }
 
   .wiki-editor-surface .ProseMirror ul[data-type="taskList"],
   .wiki-typography-preview ul[data-type="taskList"] {
-    list-style: none;
-    padding-left: 0;
+    list-style: none !important;
+    padding-left: 0 !important;
   }
 
   .wiki-editor-surface .ProseMirror ul[data-type="taskList"] li,
@@ -331,12 +331,12 @@
 
   .wiki-editor-surface .ProseMirror ul[data-type="taskList"] li > div > p,
   .wiki-typography-preview ul[data-type="taskList"] li > div > p {
-    margin: 0;
+    margin: 0 !important;
   }
 
   .wiki-editor-surface .ProseMirror ul[data-type="taskList"] ul[data-type="taskList"],
   .wiki-typography-preview ul[data-type="taskList"] ul[data-type="taskList"] {
-    margin: var(--wiki-list-item-spacing) 0 0;
+    margin: var(--wiki-list-item-spacing) 0 0 !important;
   }
 
   .wiki-editor-surface .ProseMirror li[data-checked="true"] > div,
@@ -441,10 +441,10 @@
       - var(--document-margin-top)
       - var(--document-margin-bottom)
     );
-    color: var(--wiki-text-color);
-    font-family: var(--wiki-body-font);
-    font-size: var(--wiki-body-size);
-    line-height: var(--wiki-line-height);
+    color: var(--wiki-text-color) !important;
+    font-family: var(--wiki-body-font) !important;
+    font-size: var(--wiki-body-size) !important;
+    line-height: var(--wiki-line-height) !important;
   }
 
   .wiki-document-canvas .ProseMirror :is(a, .wiki-footnote-reference) {

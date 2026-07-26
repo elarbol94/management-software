@@ -921,6 +921,7 @@ export function WikiEditor({
       setMinimalToolbar(preferences.minimalToolbar);
       setStatusVisible(preferences.statusVisible);
       setTypewriterMode(preferences.typewriterMode);
+      router.refresh();
     }}
     onOpenChange={setTypographyOpen}
     onTemplatesChange={setPersonalTypographyTemplates}

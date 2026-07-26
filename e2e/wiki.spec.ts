@@ -59,6 +59,7 @@ test("global writing style previews, cancels, persists across pages, and reaches
   await expect(dialog).toBeVisible();
   await dialog.getByRole("button", { name: "Standard" }).click();
   await dialog.getByRole("button", { name: "Speichern", exact: true }).click();
+  await expect(page.locator(".ProseMirror")).toHaveCSS("line-height", "21px");
   await page.getByRole("button", { name: "Schreibbild", exact: true }).click();
   await expect(preview).toContainText("Entscheidungen nachvollziehbar dokumentieren");
   await expect(page.getByTestId("listItemSpacingEm-number")).toHaveValue("0.15");
@@ -86,6 +87,7 @@ test("global writing style previews, cancels, persists across pages, and reaches
   await dialog.getByRole("button", { name: "Speichern", exact: true }).click();
   await expect(dialog).toBeHidden();
   await expect(page.locator(".wiki-editor-surface")).toHaveCSS("--wiki-list-item-spacing", "0em");
+  await expect(page.locator(".ProseMirror")).toHaveCSS("line-height", "18.9px");
 
   await page.reload();
   await expect(page.locator(".wiki-editor-surface")).toHaveCSS("--wiki-line-height", "1.35");
