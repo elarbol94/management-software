@@ -224,6 +224,168 @@
     outline: none;
   }
 
+  .wiki-editor-surface .ProseMirror,
+  .wiki-typography-preview {
+    color: var(--wiki-text-color);
+    font-family: var(--wiki-body-font);
+    font-size: var(--wiki-body-size);
+    line-height: var(--wiki-line-height);
+  }
+
+  .wiki-editor-surface .ProseMirror p,
+  .wiki-typography-preview p {
+    margin: 0 0 var(--wiki-paragraph-spacing);
+  }
+
+  .wiki-editor-surface .ProseMirror :is(ul, ol),
+  .wiki-typography-preview :is(ul, ol) {
+    margin-block: var(--wiki-list-block-spacing);
+    padding-inline-start: var(--wiki-list-indent);
+  }
+
+  .wiki-editor-surface .ProseMirror ul:not([data-type="taskList"]),
+  .wiki-typography-preview ul:not([data-type="taskList"]) {
+    list-style: disc;
+  }
+
+  .wiki-editor-surface .ProseMirror ol,
+  .wiki-typography-preview ol {
+    list-style: decimal;
+  }
+
+  .wiki-editor-surface .ProseMirror li,
+  .wiki-typography-preview li {
+    margin: 0;
+  }
+
+  .wiki-editor-surface .ProseMirror li + li,
+  .wiki-typography-preview li + li {
+    margin-top: var(--wiki-list-item-spacing);
+  }
+
+  .wiki-editor-surface .ProseMirror li > p,
+  .wiki-typography-preview li > p {
+    margin: 0;
+  }
+
+  .wiki-editor-surface .ProseMirror :is(h1, h2, h3),
+  .wiki-typography-preview :is(h1, h2, h3) {
+    margin-block: var(--wiki-heading-before) var(--wiki-heading-after);
+    color: var(--wiki-text-color);
+    font-family: var(--wiki-heading-font);
+    line-height: var(--wiki-heading-line-height);
+    letter-spacing: -0.018em;
+  }
+
+  .wiki-editor-surface .ProseMirror h1,
+  .wiki-typography-preview h1 {
+    font-size: var(--wiki-h1-size);
+  }
+
+  .wiki-editor-surface .ProseMirror h2,
+  .wiki-typography-preview h2 {
+    font-size: var(--wiki-h2-size);
+  }
+
+  .wiki-editor-surface .ProseMirror h3,
+  .wiki-typography-preview h3 {
+    font-size: var(--wiki-h3-size);
+  }
+
+  .wiki-editor-surface .ProseMirror :is(a, .wiki-footnote-reference),
+  .wiki-typography-preview a {
+    color: var(--wiki-accent-color);
+  }
+
+  .wiki-editor-surface .ProseMirror ul[data-type="taskList"],
+  .wiki-typography-preview ul[data-type="taskList"] {
+    list-style: none;
+    padding-left: 0;
+  }
+
+  .wiki-editor-surface .ProseMirror ul[data-type="taskList"] li,
+  .wiki-typography-preview ul[data-type="taskList"] li {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.55rem;
+  }
+
+  .wiki-editor-surface .ProseMirror ul[data-type="taskList"] li > label,
+  .wiki-typography-preview ul[data-type="taskList"] li > label {
+    flex: 0 0 auto;
+    margin-top: 0.25rem;
+    user-select: none;
+  }
+
+  .wiki-editor-surface .ProseMirror ul[data-type="taskList"] li > label input,
+  .wiki-typography-preview ul[data-type="taskList"] li > label input {
+    cursor: pointer;
+    accent-color: var(--wiki-accent-color);
+  }
+
+  .wiki-editor-surface .ProseMirror ul[data-type="taskList"] li > div,
+  .wiki-typography-preview ul[data-type="taskList"] li > div {
+    min-width: 0;
+    flex: 1 1 auto;
+  }
+
+  .wiki-editor-surface .ProseMirror ul[data-type="taskList"] li > div > p,
+  .wiki-typography-preview ul[data-type="taskList"] li > div > p {
+    margin: 0;
+  }
+
+  .wiki-editor-surface .ProseMirror ul[data-type="taskList"] ul[data-type="taskList"],
+  .wiki-typography-preview ul[data-type="taskList"] ul[data-type="taskList"] {
+    margin: var(--wiki-list-item-spacing) 0 0;
+  }
+
+  .wiki-editor-surface .ProseMirror li[data-checked="true"] > div,
+  .wiki-typography-preview li[data-checked="true"] > div {
+    color: var(--wiki-muted-color);
+    text-decoration: line-through;
+    text-decoration-thickness: 0.08em;
+  }
+
+  .wiki-typography-slider {
+    width: 100%;
+    height: 1.25rem;
+    cursor: pointer;
+    accent-color: var(--primary);
+  }
+
+  .wiki-typography-slider:focus-visible {
+    border-radius: 999px;
+    outline: 3px solid color-mix(in oklab, var(--ring) 45%, transparent);
+    outline-offset: 2px;
+  }
+
+  .wiki-typography-preview {
+    position: relative;
+    min-height: 31rem;
+    overflow: hidden;
+    border: 1px solid color-mix(in oklab, var(--border) 70%, #94a3b8);
+    border-radius: 0.9rem;
+    padding: clamp(1.5rem, 4vw, 3.5rem);
+    background-color: white;
+    background-image: repeating-linear-gradient(
+      to bottom,
+      transparent 0,
+      transparent calc(1.5rem - 1px),
+      rgb(49 94 251 / 0.045) calc(1.5rem - 1px),
+      rgb(49 94 251 / 0.045) 1.5rem
+    );
+    box-shadow: 0 1px 2px rgb(15 23 42 / 0.08), 0 16px 40px rgb(15 23 42 / 0.12);
+  }
+
+  .wiki-typography-preview::before {
+    position: absolute;
+    inset-block: 0;
+    left: 1.15rem;
+    width: 1px;
+    content: "";
+    background: rgb(239 68 68 / 0.12);
+  }
+
   .ProseMirror .is-editor-empty:first-child::before,
   .ProseMirror .is-empty[data-placeholder]::before {
     color: var(--muted-foreground);
@@ -268,7 +430,7 @@
       var(--document-margin-right)
       var(--document-margin-bottom)
       var(--document-margin-left);
-    color: var(--document-text-color);
+    color: var(--wiki-text-color);
     background: white;
     box-shadow: 0 1px 2px rgb(15 23 42 / 0.12), 0 12px 36px rgb(15 23 42 / 0.14);
   }
@@ -279,20 +441,14 @@
       - var(--document-margin-top)
       - var(--document-margin-bottom)
     );
-    color: var(--document-text-color);
-    font-family: var(--document-body-font);
-    font-size: var(--document-body-size);
-    line-height: var(--document-line-height);
-  }
-
-  .wiki-document-canvas .ProseMirror :is(h1, h2, h3) {
-    color: var(--document-text-color);
-    font-family: var(--document-heading-font);
-    letter-spacing: -0.018em;
+    color: var(--wiki-text-color);
+    font-family: var(--wiki-body-font);
+    font-size: var(--wiki-body-size);
+    line-height: var(--wiki-line-height);
   }
 
   .wiki-document-canvas .ProseMirror :is(a, .wiki-footnote-reference) {
-    color: var(--document-accent-color);
+    color: var(--wiki-accent-color);
   }
 
   .wiki-document-page-break {
@@ -318,13 +474,13 @@
 
   .wiki-document-toc {
     margin-block: 1.75rem;
-    border-block: 1px solid color-mix(in srgb, var(--document-muted-color) 45%, transparent);
+    border-block: 1px solid color-mix(in srgb, var(--wiki-muted-color) 45%, transparent);
     padding-block: 1rem;
   }
 
   .wiki-document-toc p {
     margin: 0.25rem 0 0;
-    color: var(--document-muted-color);
+    color: var(--wiki-muted-color);
     font-size: 0.78rem;
   }
 
@@ -332,9 +488,9 @@
     display: inline-flex;
     border-radius: 0.25rem;
     padding-inline: 0.25rem;
-    color: color-mix(in srgb, var(--document-accent-color) 88%, black);
-    background: color-mix(in srgb, var(--document-accent-color) 10%, white);
-    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--document-accent-color) 25%, transparent);
+    color: color-mix(in srgb, var(--wiki-accent-color) 88%, black);
+    background: color-mix(in srgb, var(--wiki-accent-color) 10%, white);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--wiki-accent-color) 25%, transparent);
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     font-size: 0.86em;
   }
@@ -343,18 +499,18 @@
     column-count: var(--document-columns, 2);
     column-gap: var(--document-column-gap, 8mm);
     margin-block: 1.25rem;
-    border-inline: 2px solid color-mix(in srgb, var(--document-accent-color) 25%, transparent);
+    border-inline: 2px solid color-mix(in srgb, var(--wiki-accent-color) 25%, transparent);
     padding-inline: 0.75rem;
   }
 
   .wiki-document-canvas [data-keep-with-next] {
     margin-bottom: 0.2em;
-    border-left: 2px solid color-mix(in srgb, var(--document-accent-color) 35%, transparent);
+    border-left: 2px solid color-mix(in srgb, var(--wiki-accent-color) 35%, transparent);
     padding-left: 0.5rem;
   }
 
   .wiki-document-canvas [data-keep-together] {
-    outline: 1px dashed color-mix(in srgb, var(--document-muted-color) 42%, transparent);
+    outline: 1px dashed color-mix(in srgb, var(--wiki-muted-color) 42%, transparent);
     outline-offset: 0.3rem;
   }
 

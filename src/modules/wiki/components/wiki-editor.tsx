@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { EditorContent, useEditor, type Editor } from "@tiptap/react";
@@ -21,7 +21,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { createSlashCommandExtension, type SlashCommandDefinition } from "./slash-command-menu";
 import { CommentRail, type CommentRailHandle, type CommentThread } from "./comment-rail";
@@ -36,6 +36,7 @@ import { calculateWritingStats, type WritingStats } from "../lib/editor-writing"
 import { userMarkColorStyle, type UserMarkColor } from "@/lib/user-mark-colors";
 import { DocumentExtensions } from "./document-extension";
 import { DocumentLayoutPanel } from "./document-layout-panel";
+import { WikiTypographyDialog, type WikiEditorPreferences } from "./wiki-typography-dialog";
 import {
   collectDocumentPreflightIssues,
   parseDocumentSettings,
@@ -43,6 +44,11 @@ import {
   type DocumentPreflightIssue,
   type DocumentSettingsV1,
 } from "../lib/document-settings";
+import {
+  normalizeWikiTypography,
+  wikiTypographyCssVariables,
+  type WikiTypographySettingsV1,
+} from "../lib/wiki-typography";
 import type { StoredDocumentTemplate } from "../document-queries";
 import {
   addMarkdownTableColumn,
@@ -56,7 +62,6 @@ import {
 type PageRef = { id: string; title: string; slug: string };
 type SourceRef = { id: string; title: string; issuedDate: string; contributors: string };
 type WikiEditorPageActions = { addAttachment: () => void; linkSupportingSource: () => void };
-type EditorPreferences = { statusVisible: boolean; minimalToolbar: boolean; typewriterMode: boolean };
 type WikiEditorProps = {
   focused?: boolean;
   pageId: string;
@@ -72,12 +77,13 @@ type WikiEditorProps = {
   comments: CommentThread[];
   currentUserId: string;
   pageActions: WikiEditorPageActions;
+  initialTypography: WikiTypographySettingsV1;
 };
 
-function loadEditorPreferences(): EditorPreferences {
+function loadEditorPreferences(): WikiEditorPreferences {
   if (typeof window === "undefined") return { statusVisible: true, minimalToolbar: false, typewriterMode: false };
   try {
-    const stored = JSON.parse(localStorage.getItem("wiki-editor-preferences") ?? "{}") as Partial<EditorPreferences>;
+    const stored = JSON.parse(localStorage.getItem("wiki-editor-preferences") ?? "{}") as Partial<WikiEditorPreferences>;
     return { statusVisible: stored.statusVisible ?? true, minimalToolbar: stored.minimalToolbar ?? false, typewriterMode: stored.typewriterMode ?? false };
   } catch {
     return { statusVisible: true, minimalToolbar: false, typewriterMode: false };
@@ -179,9 +185,9 @@ function ToolbarButton({ active, onClick, title, shortcut, children }: { active?
   </Tooltip>;
 }
 
-function ToolbarMenu({ label, icon, children }: { label: string; icon: React.ReactNode; children: React.ReactNode }) {
+function ToolbarMenu({ label, icon, children, onPointerDown }: { label: string; icon: React.ReactNode; children: React.ReactNode; onPointerDown?: () => void }) {
   return <DropdownMenu>
-    <DropdownMenuTrigger render={<Button type="button" variant="ghost" size="sm" className="gap-1 px-2" aria-label={label} />}>{icon}<span className="hidden text-xs sm:inline">{label}</span></DropdownMenuTrigger>
+    <DropdownMenuTrigger render={<Button type="button" variant="ghost" size="sm" className="gap-1 px-2" aria-label={label} onFocus={onPointerDown} onPointerDown={onPointerDown} />}>{icon}<span className="hidden text-xs sm:inline">{label}</span></DropdownMenuTrigger>
     <DropdownMenuContent className="w-56">{children}</DropdownMenuContent>
   </DropdownMenu>;
 }
@@ -407,6 +413,7 @@ export function WikiEditor({
   comments,
   currentUserId,
   pageActions,
+  initialTypography,
 }: WikiEditorProps) {
   const t = useTranslations("wiki"); const router = useRouter(); const [saveState, setSaveState] = useState<"idle" | "unsaved" | "saving" | "saved" | "offline" | "error" | "conflict">("idle");
   const [conflictRevision, setConflictRevision] = useState<string | null>(null); const [activeThreadId, setActiveThreadId] = useState<string | null>(null); const [optimisticCommentThreads, setOptimisticCommentThreads] = useState<CommentThread[]>([]); const [commentFocusRequest, setCommentFocusRequest] = useState(0); const [imagePickerRequest, setImagePickerRequest] = useState(0); const [commentOpen, setCommentOpen] = useState(false); const [commentBody, setCommentBody] = useState(""); const [pendingAnchor, setPendingAnchor] = useState<CommentAnchor | null>(null); const [regionTarget, setRegionTarget] = useState<{ nodeId: string; label: string } | null>(null); const [imageError, setImageError] = useState(""); const [imageUploading, setImageUploading] = useState(false); const [assigneeId, setAssigneeId] = useState("none");
@@ -420,9 +427,11 @@ export function WikiEditor({
   const [documentMode, setDocumentMode] = useState(initialDocumentMode);
   const [documentSettings, setDocumentSettings] = useState<DocumentSettingsV1>(() => parseDocumentSettings(initialDocumentSettings));
   const [documentIssues, setDocumentIssues] = useState<DocumentPreflightIssue[]>([]);
+  const [typography, setTypography] = useState(() => normalizeWikiTypography(initialTypography));
+  const [typographyOpen, setTypographyOpen] = useState(false);
   const [initialPreferences] = useState(loadEditorPreferences);
   const [statusVisible, setStatusVisible] = useState(initialPreferences.statusVisible); const [minimalToolbar, setMinimalToolbar] = useState(initialPreferences.minimalToolbar); const [typewriterMode, setTypewriterMode] = useState(initialPreferences.typewriterMode); const typewriterModeRef = useRef(initialPreferences.typewriterMode);
-  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null); const version = useRef(pageVersion); const lastServerContent = useRef(initialContent); const lastServerDocumentMode = useRef(initialDocumentMode); const lastServerDocumentSettings = useRef(serializeDocumentSettings(parseDocumentSettings(initialDocumentSettings))); const documentModeRef = useRef(initialDocumentMode); const documentSettingsRef = useRef(parseDocumentSettings(initialDocumentSettings)); const pendingSave = useRef<string | null>(null); const persistContentRef = useRef<(json: string) => Promise<void>>(async () => {}); const conflictBlocked = useRef(false); const selection = useRef<{ from: number; to: number } | null>(null); const imageInputRef = useRef<HTMLInputElement>(null); const editorRootRef = useRef<HTMLDivElement>(null); const commentRailRef = useRef<CommentRailHandle>(null); const [commentsVisible, setCommentsVisible] = useState(!focused); const previousFocused = useRef(focused); const storageKey = `wiki-draft:${pageId}`; const preferencesKey = `wiki-editor-preferences`;
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null); const version = useRef(pageVersion); const lastServerContent = useRef(initialContent); const lastServerDocumentMode = useRef(initialDocumentMode); const lastServerDocumentSettings = useRef(serializeDocumentSettings(parseDocumentSettings(initialDocumentSettings))); const documentModeRef = useRef(initialDocumentMode); const documentSettingsRef = useRef(parseDocumentSettings(initialDocumentSettings)); const pendingSave = useRef<string | null>(null); const persistContentRef = useRef<(json: string) => Promise<void>>(async () => {}); const conflictBlocked = useRef(false); const selection = useRef<{ from: number; to: number } | null>(null); const toolbarSelection = useRef<{ from: number; to: number } | null>(null); const imageInputRef = useRef<HTMLInputElement>(null); const editorRootRef = useRef<HTMLDivElement>(null); const commentRailRef = useRef<CommentRailHandle>(null); const [commentsVisible, setCommentsVisible] = useState(!focused); const previousFocused = useRef(focused); const storageKey = `wiki-draft:${pageId}`; const preferencesKey = `wiki-editor-preferences`;
   let content: object | undefined; try { content = initialContent ? JSON.parse(initialContent) : undefined; } catch { content = undefined; }
   if (typeof window !== "undefined") { const draft = window.localStorage.getItem(storageKey); if (draft && draft !== initialContent) { try { content = JSON.parse(draft); } catch { /* ignore damaged recovery */ } } }
 
@@ -523,7 +532,7 @@ export function WikiEditor({
 
   const editor = useEditor({ immediatelyRender: false, enableInputRules: ["blockquote", "bulletList", "codeBlock", "heading", "orderedList", "taskItem"], extensions: [StarterKit.configure({ bold: false, code: false, heading: { levels: [1, 2, 3] }, italic: false, link: { openOnClick: false }, strike: false }), ...MarkdownShortcutMarks, ...MarkdownDocumentExtensions, ...DocumentExtensions, TaskList, TaskItem.configure({ nested: true }), Citation, PdfEvidence, CommentableImage, CommentMark, Highlight, Placeholder.configure({ placeholder: ({ node }) => node.type.name === "heading" ? t("editor.placeholder.heading") : t("editor.placeholder.empty") }), EditorSearchExtension, MarkdownShortcuts, slashExtension], content,
     editorProps: {
-      attributes: { class: "prose prose-neutral dark:prose-invert max-w-none min-h-[28rem] focus:outline-none text-[15px] leading-7" },
+      attributes: { class: "prose prose-neutral dark:prose-invert max-w-none min-h-[28rem] focus:outline-none" },
       handlePaste(view, event) {
         const files = [...(event.clipboardData?.files ?? [])].filter((file) => INLINE_IMAGE_TYPES.has(file.type));
         if (files.length) {
@@ -641,6 +650,22 @@ export function WikiEditor({
   }, []);
   if (!editor) return <div className="min-h-[28rem]" />;
   const activeEditor = editor;
+  function rememberToolbarSelection() {
+    const { from, to } = activeEditor.state.selection;
+    toolbarSelection.current = { from, to };
+  }
+  function toolbarChain() {
+    const saved = toolbarSelection.current;
+    const chain = activeEditor.chain();
+    if (saved) {
+      const end = activeEditor.state.doc.content.size;
+      chain.setTextSelection({
+        from: Math.min(saved.from, end),
+        to: Math.min(saved.to, end),
+      });
+    }
+    return chain.focus();
+  }
   function scheduleDocumentSave() {
     const json = JSON.stringify(activeEditor.getJSON());
     pendingSave.current = json;
@@ -663,20 +688,15 @@ export function WikiEditor({
   const paperWidth = documentSettings.page.size === "A4" ? 210 : 215.9;
   const paperHeight = documentSettings.page.size === "A4" ? 297 : 279.4;
   const documentCanvasStyle = {
+    ...wikiTypographyCssVariables(typography),
     "--document-paper-width": `${documentSettings.page.orientation === "portrait" ? paperWidth : paperHeight}mm`,
     "--document-paper-height": `${documentSettings.page.orientation === "portrait" ? paperHeight : paperWidth}mm`,
     "--document-margin-top": `${documentSettings.page.marginsMm.top}mm`,
     "--document-margin-right": `${documentSettings.page.marginsMm.right}mm`,
     "--document-margin-bottom": `${documentSettings.page.marginsMm.bottom}mm`,
     "--document-margin-left": `${documentSettings.page.marginsMm.left}mm`,
-    "--document-body-size": `${documentSettings.theme.bodySizePt}pt`,
-    "--document-line-height": String(documentSettings.theme.lineHeight),
-    "--document-text-color": documentSettings.theme.textColor,
-    "--document-accent-color": documentSettings.theme.accentColor,
-    "--document-muted-color": documentSettings.theme.mutedColor,
-    "--document-body-font": documentSettings.theme.bodyFont === "serif" ? "Georgia, 'Times New Roman', serif" : documentSettings.theme.bodyFont === "humanist" ? "'Segoe UI', Arial, sans-serif" : "system-ui, sans-serif",
-    "--document-heading-font": documentSettings.theme.headingFont === "serif" ? "Georgia, 'Times New Roman', serif" : documentSettings.theme.headingFont === "humanist" ? "'Segoe UI', Arial, sans-serif" : "system-ui, sans-serif",
-  } as React.CSSProperties;
+  } as CSSProperties;
+  const editorTypographyStyle = wikiTypographyCssVariables(typography) as CSSProperties;
   function openCommentComposer(anchor: CommentAnchor) {
     setPendingAnchor(anchor);
     requestAnimationFrame(() => setCommentOpen(true));
@@ -763,25 +783,25 @@ export function WikiEditor({
       <ToolbarButton title={t("editor.toolbar.bulletList")} active={activeEditor.isActive("bulletList")} onClick={() => activeEditor.chain().focus().toggleBulletList().run()}><List className="size-4" /></ToolbarButton>
       <ToolbarButton title={t("editor.toolbar.orderedList")} active={activeEditor.isActive("orderedList")} onClick={() => activeEditor.chain().focus().toggleOrderedList().run()}><ListOrdered className="size-4" /></ToolbarButton>
     </>}
-    <ToolbarMenu label={t("editor.toolbar.format")} icon={<MoreHorizontal className="size-4" />}>
+    <ToolbarMenu label={t("editor.toolbar.format")} icon={<MoreHorizontal className="size-4" />} onPointerDown={rememberToolbarSelection}>
       <DropdownMenuGroup>
         <DropdownMenuLabel>{t("editor.toolbar.format")}</DropdownMenuLabel>
-        <DropdownMenuItem onClick={() => activeEditor.chain().focus().toggleHeading({ level: 3 }).run()}><Heading3 />{t("editor.toolbar.heading3")}</DropdownMenuItem>
-        <DropdownMenuItem onClick={() => activeEditor.chain().focus().toggleUnderline().run()}><UnderlineIcon />{t("editor.toolbar.underline")}</DropdownMenuItem>
-        <DropdownMenuItem onClick={() => activeEditor.chain().focus().toggleMark("highlight", { createdBy: currentUserId }).run()}><Highlighter />{t("editor.toolbar.highlight")}</DropdownMenuItem>
-        <DropdownMenuItem onClick={() => activeEditor.chain().focus().toggleStrike().run()}><Strikethrough />{t("editor.toolbar.strike")}</DropdownMenuItem>
-        <DropdownMenuItem onClick={() => activeEditor.chain().focus().toggleCode().run()}><Code />{t("editor.toolbar.inlineCode")}</DropdownMenuItem>
+        <DropdownMenuItem onClick={() => toolbarChain().toggleHeading({ level: 3 }).run()}><Heading3 />{t("editor.toolbar.heading3")}</DropdownMenuItem>
+        <DropdownMenuItem onClick={() => toolbarChain().toggleUnderline().run()}><UnderlineIcon />{t("editor.toolbar.underline")}</DropdownMenuItem>
+        <DropdownMenuItem onClick={() => toolbarChain().toggleMark("highlight", { createdBy: currentUserId }).run()}><Highlighter />{t("editor.toolbar.highlight")}</DropdownMenuItem>
+        <DropdownMenuItem onClick={() => toolbarChain().toggleStrike().run()}><Strikethrough />{t("editor.toolbar.strike")}</DropdownMenuItem>
+        <DropdownMenuItem onClick={() => toolbarChain().toggleCode().run()}><Code />{t("editor.toolbar.inlineCode")}</DropdownMenuItem>
         <DropdownMenuSeparator />
-        <DropdownMenuItem onClick={() => activeEditor.chain().focus().toggleTaskList().run()}><ListTodo />{t("editor.toolbar.taskList")}</DropdownMenuItem>
-        <DropdownMenuItem onClick={() => activeEditor.chain().focus().toggleBlockquote().run()}><Quote />{t("editor.toolbar.blockquote")}</DropdownMenuItem>
-        <DropdownMenuItem onClick={() => activeEditor.chain().focus().toggleCodeBlock().run()}><Code />{t("editor.toolbar.codeBlock")}</DropdownMenuItem>
+        <DropdownMenuItem onClick={() => toolbarChain().toggleTaskList().run()}><ListTodo />{t("editor.toolbar.taskList")}</DropdownMenuItem>
+        <DropdownMenuItem onClick={() => toolbarChain().toggleBlockquote().run()}><Quote />{t("editor.toolbar.blockquote")}</DropdownMenuItem>
+        <DropdownMenuItem onClick={() => toolbarChain().toggleCodeBlock().run()}><Code />{t("editor.toolbar.codeBlock")}</DropdownMenuItem>
       </DropdownMenuGroup>
     </ToolbarMenu>
     <EditorLinkPopover editor={activeEditor} pages={allPages} request={linkEditorRequest} />
     {!minimalToolbar && <><PageLinkPicker editor={editor} pages={allPages} open={pageLinkOpen} onOpenChange={setPageLinkOpen} /><CitationPicker editor={editor} sources={sources} locale={citationLocale} open={citationOpen} onOpenChange={setCitationOpen} /><EvidencePicker editor={editor} pageId={pageId} locale={citationLocale} open={evidenceOpen} onOpenChange={setEvidenceOpen} /></>}
-    <ToolbarMenu label={t("editor.toolbar.insert")} icon={<ImagePlus className="size-4" />}>
+    <ToolbarMenu label={t("editor.toolbar.insert")} icon={<ImagePlus className="size-4" />} onPointerDown={rememberToolbarSelection}>
       <DropdownMenuItem onClick={() => imageInputRef.current?.click()}><ImagePlus />{t("insertImage")}</DropdownMenuItem>
-      <DropdownMenuItem onClick={() => activeEditor.chain().focus().setHorizontalRule().run()}><Minus />{t("slash.commands.horizontalRule.label")}</DropdownMenuItem>
+      <DropdownMenuItem onClick={() => toolbarChain().setHorizontalRule().run()}><Minus />{t("slash.commands.horizontalRule.label")}</DropdownMenuItem>
       <DropdownMenuItem onClick={() => pageActions.addAttachment()}><Paperclip />{t("slash.commands.attachment.label")}</DropdownMenuItem>
       <DropdownMenuItem onClick={() => pageActions.linkSupportingSource()}><BookMarked />{t("slash.commands.supportingSource.label")}</DropdownMenuItem>
     </ToolbarMenu>
@@ -803,14 +823,9 @@ export function WikiEditor({
       <FileText className="size-3.5" />{t("document.toggle")}
     </Button>
     <Button type="button" data-testid="markdown-help-button" size="sm" variant="ghost" className="gap-1.5 px-2 text-xs" onClick={() => setMarkdownHelpOpen(true)}><BookMarked className="size-3.5" />{t("markdownHelp.button")}</Button>
-    <ToolbarMenu label={t("editor.preferences.title")} icon={<Settings2 className="size-4" />}>
-      <DropdownMenuGroup>
-        <DropdownMenuLabel>{t("editor.preferences.title")}</DropdownMenuLabel>
-        <DropdownMenuCheckboxItem checked={minimalToolbar} onCheckedChange={(checked) => setMinimalToolbar(checked === true)}>{t("editor.preferences.minimalToolbar")}</DropdownMenuCheckboxItem>
-        <DropdownMenuCheckboxItem checked={typewriterMode} onCheckedChange={(checked) => setTypewriterMode(checked === true)}>{t("editor.preferences.typewriter")}</DropdownMenuCheckboxItem>
-        <DropdownMenuCheckboxItem checked={statusVisible} onCheckedChange={(checked) => setStatusVisible(checked === true)}>{t("editor.preferences.statusBar")}</DropdownMenuCheckboxItem>
-      </DropdownMenuGroup>
-    </ToolbarMenu>
+    <ToolbarButton title={t("editor.preferences.title")} active={typographyOpen} onClick={() => setTypographyOpen(true)}>
+      <Settings2 className="size-4" />
+    </ToolbarButton>
     <span role={saveState === "error" || saveState === "conflict" ? "alert" : "status"} aria-live={saveState === "error" || saveState === "conflict" ? "assertive" : "polite"} className={`ml-auto flex items-center gap-1 px-2 text-xs ${savePresentation.className}`}>{savePresentation.icon}{savePresentation.label}</span>
     {(saveState === "error" || saveState === "offline") && pendingSave.current && <Button type="button" size="xs" variant="ghost" onClick={() => void persistContent(pendingSave.current!)}>{t("editor.save.retry")}</Button>}
   </div>
@@ -858,7 +873,10 @@ export function WikiEditor({
         <Button type="button" size="icon-sm" variant="ghost" aria-label={t("document.table.deleteRow")} onClick={() => deleteMarkdownTableRow(activeEditor)}><Trash2 /></Button>
         <Button type="button" size="icon-sm" variant="ghost" aria-label={t("document.table.deleteColumn")} onClick={() => deleteMarkdownTableColumn(activeEditor)}><Minus /></Button>
       </BubbleMenu>}
-      <div className={documentMode ? "wiki-document-canvas" : undefined} style={documentMode ? documentCanvasStyle : undefined}>
+      <div
+        className={`wiki-editor-surface${documentMode ? " wiki-document-canvas" : ""}`}
+        style={documentMode ? documentCanvasStyle : editorTypographyStyle}
+      >
         <EditorContent editor={editor} data-testid="wiki-editor" data-document-mode={documentMode ? "true" : "false"} />
       </div>
       <CommentAnchorOverlay visible={commentsVisible} comments={commentThreads} editor={editor} rootRef={editorRootRef} activeThreadId={activeThreadId} onActiveThreadChange={setActiveThreadId} />
@@ -872,6 +890,7 @@ export function WikiEditor({
       templates={documentTemplates}
       issues={documentIssues}
       outline={outline}
+      onOpenTypographySettings={() => setTypographyOpen(true)}
     />}
   </div>
   {statusVisible && <footer data-testid="editor-writing-status" className="flex flex-wrap items-center gap-x-4 gap-y-1 border-t px-1 pt-2 text-[11px] text-muted-foreground">
@@ -884,6 +903,18 @@ export function WikiEditor({
   {regionTarget && <ImageRegionSelector rootRef={editorRootRef} {...regionTarget} onCancel={() => setRegionTarget(null)} onSelect={(anchor) => { setRegionTarget(null); openCommentComposer(anchor); }} />}
   <Dialog open={commentOpen} onOpenChange={(open) => { setCommentOpen(open); if (!open) setPendingAnchor(null); }}><DialogContent className="w-[min(26rem,calc(100vw-2rem))]"><DialogHeader><DialogTitle>{pendingAnchor?.type === "image" ? t("imageComment") : t("inlineComment")}</DialogTitle></DialogHeader>{pendingAnchor?.type !== "page" && pendingAnchor && <blockquote className="border-l-2 border-amber-400 pl-3 text-sm italic text-muted-foreground">{pendingAnchor.type === "text" ? pendingAnchor.quote : pendingAnchor.label}</blockquote>}<Textarea autoFocus value={commentBody} onChange={(event) => setCommentBody(event.target.value)} placeholder={t("commentPlaceholder")} /><Select value={assigneeId} onValueChange={(value) => setAssigneeId(value ?? "none")}><SelectTrigger className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="none">{t("unassigned")}</SelectItem>{users.map((person) => <SelectItem key={person.id} value={person.id}>{person.name}</SelectItem>)}</SelectContent></Select><Button onClick={submitComment} disabled={!commentBody.trim()}>{t("addComment")}</Button></DialogContent></Dialog>
   <MarkdownReferenceDialog open={markdownHelpOpen} onOpenChange={setMarkdownHelpOpen} />
+  {typographyOpen && <WikiTypographyDialog
+    editorPreferences={{ minimalToolbar, statusVisible, typewriterMode }}
+    onApplied={(nextTypography, preferences) => {
+      setTypography(nextTypography);
+      setMinimalToolbar(preferences.minimalToolbar);
+      setStatusVisible(preferences.statusVisible);
+      setTypewriterMode(preferences.typewriterMode);
+    }}
+    onOpenChange={setTypographyOpen}
+    open={typographyOpen}
+    typography={typography}
+  />}
   <EditorOutlineSheet editor={activeEditor} items={outline} activePosition={activeHeadingPosition} open={outlineOpen} onOpenChange={setOutlineOpen} />
   </div>;
 }

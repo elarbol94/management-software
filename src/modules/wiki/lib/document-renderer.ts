@@ -6,6 +6,11 @@ import {
   type DocumentSettingsV1,
 } from "./document-settings";
 import type { TiptapNode } from "./tiptap";
+import {
+  normalizeWikiTypography,
+  wikiFontStack,
+  type WikiTypographySettingsV1,
+} from "./wiki-typography";
 
 export type DocumentAssetResolver = (input: {
   attachmentId: string;
@@ -19,6 +24,7 @@ export type RenderDocumentInput = {
   settings: DocumentSettingsV1;
   references?: string[];
   resolveAsset?: DocumentAssetResolver;
+  typography?: WikiTypographySettingsV1;
 };
 
 export type RenderedDocument = {
@@ -216,14 +222,8 @@ async function renderNode(
   }
 }
 
-function fontFamily(value: DocumentSettingsV1["theme"]["bodyFont"]) {
-  if (value === "serif") return `Georgia, "Times New Roman", serif`;
-  if (value === "humanist") return `"Segoe UI", "Aptos", Arial, sans-serif`;
-  return `Arial, Helvetica, sans-serif`;
-}
-
-function printCss(settings: DocumentSettingsV1) {
-  const { page, theme } = settings;
+function printCss(settings: DocumentSettingsV1, typography: WikiTypographySettingsV1) {
+  const { page } = settings;
   const pageSize = page.size === "Letter" ? "Letter" : "A4";
   const orientation = page.orientation;
   const portraitHeightMm = page.size === "Letter" ? 279.4 : 297;
@@ -231,11 +231,23 @@ function printCss(settings: DocumentSettingsV1) {
   const physicalHeightMm = orientation === "portrait" ? portraitHeightMm : portraitWidthMm;
   return `
     :root {
-      --ink: ${theme.textColor};
-      --accent: ${theme.accentColor};
-      --muted: ${theme.mutedColor};
-      --body: ${fontFamily(theme.bodyFont)};
-      --heading: ${fontFamily(theme.headingFont)};
+      --ink: ${typography.textColor};
+      --accent: ${typography.accentColor};
+      --muted: ${typography.mutedColor};
+      --body: ${wikiFontStack(typography.bodyFont)};
+      --heading: ${wikiFontStack(typography.headingFont)};
+      --body-size: ${typography.bodySizePt}pt;
+      --line-height: ${typography.lineHeight};
+      --paragraph-spacing: ${typography.paragraphSpacingEm}em;
+      --list-item-spacing: ${typography.listItemSpacingEm}em;
+      --list-block-spacing: ${typography.listBlockSpacingEm}em;
+      --list-indent: ${typography.listIndentEm}em;
+      --h1-size: ${typography.h1SizeEm}em;
+      --h2-size: ${typography.h2SizeEm}em;
+      --h3-size: ${typography.h3SizeEm}em;
+      --heading-line-height: ${typography.headingLineHeight};
+      --heading-before: ${typography.headingSpacingBeforeEm}em;
+      --heading-after: ${typography.headingSpacingAfterEm}em;
     }
     @page {
       size: ${pageSize} ${orientation};
@@ -243,29 +255,33 @@ function printCss(settings: DocumentSettingsV1) {
     }
     * { box-sizing: border-box; }
     html { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
-    body { margin: 0; color: var(--ink); background: white; font: ${theme.bodySizePt}pt/${theme.lineHeight} var(--body); }
+    body { margin: 0; color: var(--ink); background: white; font: var(--body-size)/var(--line-height) var(--body); }
     article { width: 100%; }
     .cover { min-height: calc(${physicalHeightMm}mm - ${page.marginsMm.top + page.marginsMm.bottom}mm); display: flex; flex-direction: column; justify-content: center; page-break-after: always; }
     .cover .eyebrow { color: var(--accent); font: 700 9pt/1.2 var(--body); letter-spacing: .16em; text-transform: uppercase; }
-    .cover h1 { max-width: 150mm; margin: 8mm 0 5mm; font: 650 34pt/1.05 var(--heading); letter-spacing: -.025em; color: var(--ink); }
+    .cover h1 { max-width: 150mm; margin: var(--heading-before) 0 var(--heading-after); font-family: var(--heading); font-size: var(--h1-size); font-weight: 650; line-height: var(--heading-line-height); letter-spacing: -.025em; color: var(--ink); }
     .cover .subtitle { max-width: 125mm; margin: 0; color: var(--muted); font-size: 14pt; }
     .cover .meta { margin-top: 22mm; padding-top: 5mm; border-top: .7pt solid color-mix(in srgb, var(--accent) 30%, transparent); color: var(--muted); font-size: 9pt; }
-    h1, h2, h3, h4, h5, h6 { color: var(--ink); font-family: var(--heading); break-after: avoid; page-break-after: avoid; }
-    h1 { margin: 0 0 8mm; font-size: 24pt; line-height: 1.1; letter-spacing: -.02em; }
-    h2 { margin: 9mm 0 3.5mm; padding-top: 2mm; border-top: .6pt solid color-mix(in srgb, var(--accent) 24%, transparent); font-size: 16pt; line-height: 1.18; }
-    h3 { margin: 6mm 0 2.5mm; color: var(--accent); font-size: 12pt; line-height: 1.25; }
-    p { margin: 0 0 3.5mm; orphans: 3; widows: 3; }
+    h1, h2, h3, h4, h5, h6 { margin: var(--heading-before) 0 var(--heading-after); color: var(--ink); font-family: var(--heading); line-height: var(--heading-line-height); break-after: avoid; page-break-after: avoid; }
+    h1 { font-size: var(--h1-size); letter-spacing: -.02em; }
+    h2 { border-top: .6pt solid color-mix(in srgb, var(--accent) 24%, transparent); font-size: var(--h2-size); }
+    h3 { color: var(--accent); font-size: var(--h3-size); }
+    article > :is(h1, h2, h3):first-child { margin-top: 0; }
+    p { margin: 0 0 var(--paragraph-spacing); orphans: 3; widows: 3; }
     a { color: var(--accent); text-decoration-thickness: .6pt; text-underline-offset: 1.5pt; }
     blockquote { margin: 5mm 0; padding: 2mm 0 2mm 5mm; border-left: 2pt solid var(--accent); color: color-mix(in srgb, var(--ink) 78%, white); }
-    ul, ol { margin: 0 0 4mm; padding-left: 7mm; }
-    li { margin: 0 0 1.3mm; }
+    ul, ol { margin-block: var(--list-block-spacing); padding-left: var(--list-indent); }
+    li { margin: 0; }
+    li + li { margin-top: var(--list-item-spacing); }
+    li > p { margin: 0; }
     pre { overflow-wrap: anywhere; white-space: pre-wrap; margin: 5mm 0; padding: 4mm; border: .6pt solid #d8dee9; border-radius: 2mm; background: #f6f8fb; font: 8.5pt/1.5 Consolas, monospace; break-inside: avoid; }
     code { font-family: Consolas, monospace; font-size: .92em; }
     mark { background: #fff2a8; color: inherit; }
     hr { margin: 8mm 0; border: 0; border-top: .7pt solid #d8dee9; }
     .citation { white-space: nowrap; }
     .task-list { list-style: none; padding-left: 0; }
-    .task-item { display: flex; gap: 2.5mm; }
+    .task-item { display: flex; align-items: flex-start; gap: 2.5mm; }
+    .task-item > div { min-width: 0; flex: 1; }
     .task-checkbox { flex: 0 0 3.5mm; height: 3.5mm; margin-top: 1mm; border: .7pt solid var(--muted); line-height: 3mm; text-align: center; }
     .evidence { margin: 6mm 0; padding: 4mm 5mm; border-left: 2pt solid var(--accent); background: color-mix(in srgb, var(--accent) 6%, white); break-inside: avoid; }
     .evidence blockquote { margin: 0; padding: 0; border: 0; font-family: var(--heading); font-size: 11pt; }
@@ -288,7 +304,7 @@ function printCss(settings: DocumentSettingsV1) {
     .footnote-definition { display: flex; gap: 2mm; margin-top: 2mm; color: var(--muted); font-size: 8.5pt; }
     .toc { page-break-after: always; }
     .toc ol { list-style: none; padding: 0; }
-    .toc li { margin: 0 0 2mm; }
+    .toc li + li { margin-top: var(--list-item-spacing); }
     .toc .toc-level-2 { padding-left: 5mm; }
     .toc .toc-level-3 { padding-left: 10mm; color: var(--muted); }
     .toc a { color: inherit; text-decoration: none; }
@@ -299,7 +315,7 @@ function printCss(settings: DocumentSettingsV1) {
     [data-keep-together] { break-inside: avoid; page-break-inside: avoid; }
     .unresolved { color: #b42318; background: #fee4e2; }
     .bibliography { ${settings.bibliography.pageBreakBefore ? "break-before: page; page-break-before: always;" : ""} }
-    .bibliography li { padding-left: 6mm; text-indent: -6mm; margin-bottom: 3mm; }
+    .bibliography li { padding-left: 6mm; text-indent: -6mm; }
     @media screen {
       body { background: #e7ebf1; padding: 24px; }
       .print-sheet { max-width: ${page.orientation === "portrait" ? "210mm" : "297mm"}; min-height: ${page.orientation === "portrait" ? "297mm" : "210mm"}; margin: 0 auto; padding: ${page.marginsMm.top}mm ${page.marginsMm.right}mm ${page.marginsMm.bottom}mm ${page.marginsMm.left}mm; background: white; box-shadow: 0 18px 60px rgba(23,32,51,.16); }
@@ -309,6 +325,7 @@ function printCss(settings: DocumentSettingsV1) {
 
 function marginTemplate(
   settings: DocumentSettingsV1,
+  typography: WikiTypographySettingsV1,
   title: string,
   area: "header" | "footer",
 ) {
@@ -320,12 +337,13 @@ function marginTemplate(
   if (area === "footer" && settings.footer.pageNumbers) {
     right = `${right ? `${right} · ` : ""}<span class="pageNumber"></span> / <span class="totalPages"></span>`;
   }
-  return `<div style="box-sizing:border-box;width:100%;padding:0 20mm;color:${settings.theme.mutedColor};font:8px Arial,sans-serif;display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px"><span>${left}</span><span style="text-align:center">${center}</span><span style="text-align:right">${right}</span></div>`;
+  return `<div style="box-sizing:border-box;width:100%;padding:0 20mm;color:${typography.mutedColor};font:8px ${wikiFontStack(typography.bodyFont)};display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px"><span>${left}</span><span style="text-align:center">${center}</span><span style="text-align:right">${right}</span></div>`;
 }
 
 export async function renderDocumentHtml(input: RenderDocumentInput): Promise<RenderedDocument> {
   const settings = normalizeDocumentSettings(input.settings);
-  const normalizedInput = { ...input, settings };
+  const typography = normalizeWikiTypography(input.typography);
+  const normalizedInput = { ...input, settings, typography };
   const headings = collectHeadings(input.doc);
   const content = await renderNode(input.doc, normalizedInput, headings);
   const cover = settings.cover.enabled
@@ -336,15 +354,15 @@ export async function renderDocumentHtml(input: RenderDocumentInput): Promise<Re
     : "";
   const article = `<article>${content}${references}</article>`;
   const bodyHtml = `${cover}${article}`;
-  const shell = (inner: string, extraCss = "") => `<!doctype html><html><head><meta charset="utf-8"><meta name="color-scheme" content="light"><title>${escapeHtml(input.title)}</title><style>${printCss(settings)}${extraCss}</style></head><body><main class="print-sheet">${inner}</main></body></html>`;
+  const shell = (inner: string, extraCss = "") => `<!doctype html><html><head><meta charset="utf-8"><meta name="color-scheme" content="light"><title>${escapeHtml(input.title)}</title><style>${printCss(settings, typography)}${extraCss}</style></head><body><main class="print-sheet">${inner}</main></body></html>`;
   const html = shell(bodyHtml);
   return {
     html,
     bodyHtml,
     bodyDocumentHtml: shell(article),
     coverDocumentHtml: cover ? shell(cover, ".cover{break-after:auto!important;page-break-after:auto!important}") : null,
-    headerTemplate: marginTemplate(settings, input.title, "header"),
-    footerTemplate: marginTemplate(settings, input.title, "footer"),
+    headerTemplate: marginTemplate(settings, typography, input.title, "header"),
+    footerTemplate: marginTemplate(settings, typography, input.title, "footer"),
     issues: collectDocumentPreflightIssues(input.doc, settings),
   };
 }
@@ -364,17 +382,26 @@ function markdownText(node: TiptapNode): string {
 }
 
 export function renderDocumentMarkdown(doc: TiptapNode, settings: DocumentSettingsV1): string {
-  function render(node: TiptapNode, depth = 0): string {
-    const content = (node.content ?? []).map((child) => render(child, depth + 1)).join("");
+  function render(node: TiptapNode, depth = 0, listMarker = "-"): string {
+    const children = node.content ?? [];
+    const content = children.map((child) => render(child, depth + 1)).join("");
     switch (node.type) {
       case "doc": return content;
       case "text": return markdownText(node);
       case "paragraph": return `${content}\n\n`;
       case "heading": return `${"#".repeat(clampNumber(node.attrs?.level, 1, 1, 6))} ${content}\n\n`;
       case "blockquote": return content.trim().split("\n").map((line) => `> ${line}`).join("\n") + "\n\n";
-      case "bulletList": return content + "\n";
-      case "orderedList": return content + "\n";
-      case "listItem": return `${"  ".repeat(Math.max(0, depth - 2))}- ${content.trim()}\n`;
+      case "bulletList":
+        return children.map((child) => render(child, depth + 1, "-")).join("") + "\n";
+      case "orderedList": {
+        const start = Math.max(1, Number(node.attrs?.start) || 1);
+        return children.map((child, index) => render(child, depth + 1, `${start + index}.`)).join("") + "\n";
+      }
+      case "taskList":
+        return children.map((child) => render(child, depth + 1, `- [${child.attrs?.checked ? "x" : " "}]`)).join("") + "\n";
+      case "listItem":
+      case "taskItem":
+        return `${"  ".repeat(Math.max(0, depth - 2))}${listMarker} ${content.trim()}\n`;
       case "codeBlock": return `\`\`\`\n${content}\n\`\`\`\n\n`;
       case "horizontalRule": return "---\n\n";
       case "hardBreak": return "  \n";

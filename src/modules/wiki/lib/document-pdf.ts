@@ -9,6 +9,7 @@ import { renderDocumentHtml, type RenderedDocument } from "./document-renderer";
 import { parseStoredDocument } from "./tiptap";
 import { getCitationSourcesForPage } from "../research-queries";
 import { renderDocumentPdfBytes } from "./document-pdf-engine";
+import type { WikiTypographySettingsV1 } from "./wiki-typography";
 
 const EXPORT_IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
 
@@ -25,7 +26,7 @@ function dataUriForAttachment(attachmentId: string, pageId: string) {
   return `data:${attachment.mimeType};base64,${fs.readFileSync(absolute).toString("base64")}`;
 }
 
-export async function renderStoredWikiDocument(pageId: string): Promise<{
+export async function renderStoredWikiDocument(pageId: string, typography: WikiTypographySettingsV1): Promise<{
   page: typeof wikiPages.$inferSelect;
   rendered: RenderedDocument;
 }> {
@@ -38,6 +39,7 @@ export async function renderStoredWikiDocument(pageId: string): Promise<{
     title: page.title,
     doc,
     settings,
+    typography,
     references,
     resolveAsset: async ({ attachmentId, src }) => {
       const routeId = src.match(/^\/api\/files\/([^/?#]+)/)?.[1];
@@ -48,8 +50,8 @@ export async function renderStoredWikiDocument(pageId: string): Promise<{
   return { page, rendered };
 }
 
-export async function generateWikiDocumentPdf(pageId: string) {
-  const { page: storedPage, rendered } = await renderStoredWikiDocument(pageId);
+export async function generateWikiDocumentPdf(pageId: string, typography: WikiTypographySettingsV1) {
+  const { page: storedPage, rendered } = await renderStoredWikiDocument(pageId, typography);
   const settings = parseDocumentSettings(storedPage.documentSettingsJson);
   const pdf = await renderDocumentPdfBytes({
     rendered,

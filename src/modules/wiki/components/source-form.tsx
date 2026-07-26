@@ -72,7 +72,7 @@ export function SourceForm({ initial: initialSource, documentTypes = [], compact
       <div className="space-y-1.5"><Label htmlFor="notes">{t("sourceNotes")}</Label><Textarea id="notes" name="notes" rows={4} defaultValue={initial?.notes} /></div>
     </>}
     <div className="space-y-1.5"><Label htmlFor="tags">{t("tags")}</Label><Input id="tags" name="tags" defaultValue={(initial?.tags ?? []).map((tag) => tag.name).join(", ")} placeholder={t("tagsHint")} /></div>
-    <div className="flex justify-end"><Button disabled={pending}>{pending ? <Loader2 className="size-4 animate-spin" /> : initial?.id ? <Save className="size-4" /> : <Plus className="size-4" />}{initial?.id ? t("saveSource") : t("createSource")}</Button></div>
+    <div className="flex justify-end"><Button type="submit" disabled={pending}>{pending ? <Loader2 className="size-4 animate-spin" /> : initial?.id ? <Save className="size-4" /> : <Plus className="size-4" />}{initial?.id ? t("saveSource") : t("createSource")}</Button></div>
   </form>;
 }
 

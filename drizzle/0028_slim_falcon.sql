@@ -1,0 +1,1 @@
+ALTER TABLE `user_profile_preferences` ADD `wiki_typography_json` text DEFAULT '';

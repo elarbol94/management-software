@@ -3,6 +3,7 @@ import { generateWikiDocumentPdf, renderStoredWikiDocument } from "@/modules/wik
 import { parseDocumentSettings } from "@/modules/wiki/lib/document-settings";
 import { renderDocumentMarkdown } from "@/modules/wiki/lib/document-renderer";
 import { parseStoredDocument } from "@/modules/wiki/lib/tiptap";
+import { getWikiTypographyForUser } from "@/modules/wiki/lib/wiki-typography.server";
 
 function disposition(slug: string, extension: string, inline: boolean) {
   const safe = slug.replace(/[^a-z0-9_-]+/gi, "-") || "document";
@@ -10,14 +11,16 @@ function disposition(slug: string, extension: string, inline: boolean) {
 }
 
 export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
-  if (!await getSession()) return new Response("Unauthorized", { status: 401 });
+  const session = await getSession();
+  if (!session) return new Response("Unauthorized", { status: 401 });
   const { id } = await params;
+  const typography = getWikiTypographyForUser(session.user.id);
   const url = new URL(request.url);
   const format = url.searchParams.get("format") ?? "markdown";
   const inline = url.searchParams.get("disposition") === "inline";
   try {
     if (format === "pdf") {
-      const { pdf, page, rendered } = await generateWikiDocumentPdf(id);
+      const { pdf, page, rendered } = await generateWikiDocumentPdf(id, typography);
       return new Response(new Uint8Array(pdf), {
         headers: {
           "Content-Type": "application/pdf",
@@ -28,7 +31,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
       });
     }
 
-    const { page, rendered } = await renderStoredWikiDocument(id);
+    const { page, rendered } = await renderStoredWikiDocument(id, typography);
     if (format === "html") {
       return new Response(rendered.html, {
         headers: {

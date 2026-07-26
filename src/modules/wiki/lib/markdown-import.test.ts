@@ -37,4 +37,22 @@ describe("Markdown document import", () => {
     expect(doc.content?.find((node) => node.type === "heading")?.attrs).toMatchObject({ id: "heading", level: 2 });
     expect(doc.content?.find((node) => node.type === "commentableImage")?.attrs).toMatchObject({ nodeId: "node-1", src: "/image.png" });
   });
+
+  it("parses Markdown bullets, numbered items, and checked tasks", () => {
+    const doc = parseMarkdownDocument([
+      "- Bullet one",
+      "- Bullet two",
+      "1. First",
+      "2. Second",
+      "- [ ] Open",
+      "- [x] Done",
+    ].join("\n"));
+
+    expect(doc.content?.find((node) => node.type === "bulletList")?.content).toHaveLength(2);
+    expect(doc.content?.find((node) => node.type === "orderedList")?.content).toHaveLength(2);
+    expect(doc.content?.find((node) => node.type === "taskList")?.content).toEqual([
+      expect.objectContaining({ type: "taskItem", attrs: { checked: false } }),
+      expect.objectContaining({ type: "taskItem", attrs: { checked: true } }),
+    ]);
+  });
 });

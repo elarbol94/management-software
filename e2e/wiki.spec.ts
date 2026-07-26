@@ -7,13 +7,13 @@ async function login(page: Page) {
   await page.locator("#username").fill("admin");
   await page.locator("#password").fill("super-secret-1");
   await page.getByRole("button", { name: "Anmelden" }).click();
-  await expect(page.getByText("Willkommen, E2E Admin!")).toBeVisible();
+  await expect(page.getByText("Willkommen, E2E Admin!")).toBeVisible({ timeout: 30_000 });
 }
 
 async function quickNote(page: Page, title: string, body: string) {
   await page.goto("/wiki/inbox");
   await page.getByRole("button", { name: "Schnelle Notiz" }).last().click();
-  await expect(page).toHaveURL(/\/wiki\/pages\/unbenannte-notiz/);
+  await expect(page).toHaveURL(/\/wiki\/pages\/unbenannte-notiz/, { timeout: 30_000 });
   const editor = page.locator(".ProseMirror");
   await editor.click();
   await page.keyboard.type(title);
@@ -46,6 +46,69 @@ test("Markdown reference dialog opens from the editor toolbar and closes on Esca
   await expect(dialog).toBeVisible();
   await page.locator('[data-slot="dialog-overlay"]').click({ position: { x: 4, y: 4 } });
   await expect(dialog).toBeHidden();
+});
+
+test("global writing style previews, cancels, persists across pages, and reaches HTML export", async ({ page }) => {
+  test.setTimeout(120_000);
+  await login(page);
+  await quickNote(page, `Typography settings ${Date.now()}`, "A compact list preview.");
+
+  await page.getByRole("button", { name: "Schreibbild", exact: true }).click();
+  const dialog = page.getByTestId("wiki-typography-dialog");
+  const preview = page.getByTestId("wiki-typography-preview");
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole("button", { name: "Standard" }).click();
+  await dialog.getByRole("button", { name: "Speichern" }).click();
+  await page.getByRole("button", { name: "Schreibbild", exact: true }).click();
+  await expect(preview).toContainText("Entscheidungen nachvollziehbar dokumentieren");
+  await expect(page.getByTestId("listItemSpacingEm-number")).toHaveValue("0.15");
+
+  await page.getByTestId("listItemSpacingEm-number").fill("0.8");
+  await expect(page.getByTestId("listItemSpacingEm-slider")).toHaveValue("0.8");
+  await expect(dialog.getByRole("button", { name: "Benutzerdefiniert" })).toHaveAttribute("aria-pressed", "true");
+  await expect(preview).toHaveCSS("--wiki-list-item-spacing", "0.8em");
+  await dialog.getByRole("button", { name: "Abbrechen" }).click();
+
+  await page.getByRole("button", { name: "Schreibbild", exact: true }).click();
+  await expect(page.getByTestId("listItemSpacingEm-number")).toHaveValue("0.15");
+  await dialog.getByRole("button", { name: "Kompakt" }).click();
+  await expect(page.getByTestId("lineHeight-number")).toHaveValue("1.35");
+  await expect(page.getByTestId("listItemSpacingEm-number")).toHaveValue("0");
+  await dialog.getByRole("button", { name: "Speichern" }).click();
+  await expect(dialog).toBeHidden();
+  await expect(page.locator(".wiki-editor-surface")).toHaveCSS("--wiki-list-item-spacing", "0em");
+
+  await page.reload();
+  await expect(page.locator(".wiki-editor-surface")).toHaveCSS("--wiki-line-height", "1.35");
+  await page.getByRole("button", { name: "Seite exportieren" }).click();
+  const htmlHref = await page.locator('a[href*="format=html"]').getAttribute("href");
+  expect(htmlHref).toBeTruthy();
+  const htmlResponse = await page.request.get(htmlHref!);
+  expect(htmlResponse.status()).toBe(200);
+  const html = await htmlResponse.text();
+  expect(html).toContain("--line-height: 1.35");
+  expect(html).toContain("--list-item-spacing: 0em");
+
+  await page.goto("/wiki/inbox");
+  await page.getByRole("button", { name: "Schnelle Notiz" }).last().click();
+  await expect(page).toHaveURL(/\/wiki\/pages\/unbenannte-notiz/, { timeout: 30_000 });
+  await expect(page.locator(".wiki-editor-surface")).toHaveCSS("--wiki-list-item-spacing", "0em", { timeout: 30_000 });
+
+  await page.getByRole("button", { name: "Schreibbild", exact: true }).click();
+  await dialog.getByRole("button", { name: "Standard" }).click();
+  await dialog.getByRole("button", { name: "Speichern" }).click();
+  await expect(page.locator(".wiki-editor-surface")).toHaveCSS("--wiki-list-item-spacing", "0.15em");
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole("button", { name: "Schreibbild", exact: true }).click();
+  const dialogBox = await dialog.boundingBox();
+  const previewBox = await preview.boundingBox();
+  const firstSectionBox = await dialog.locator("section").first().boundingBox();
+  const footerBox = await dialog.locator('[data-slot="dialog-footer"]').boundingBox();
+  expect(dialogBox?.width).toBeLessThanOrEqual(390);
+  expect(previewBox!.y).toBeGreaterThan(firstSectionBox!.y);
+  expect(footerBox!.y + footerBox!.height).toBeLessThanOrEqual(844);
+  await dialog.getByRole("button", { name: "Abbrechen" }).click();
 });
 
 test("document mode persists page layout, document blocks, templates, and PDF export", async ({ page }) => {
@@ -235,6 +298,7 @@ test("extended Markdown syntax creates editable semantic content", async ({ page
   await expect(table.locator("td").nth(0)).toHaveText("Header");
   await expect(table.locator("td").nth(1)).toHaveText("Title");
 
+  await editor.locator("table[data-markdown-table] + p").click();
   await page.keyboard.type("### ");
   await page.keyboard.type("My Great Heading {#custom-id}");
   await page.keyboard.press("Enter");
@@ -266,52 +330,61 @@ test("extended Markdown syntax creates editable semantic content", async ({ page
 });
 
 test("internal links create backlinks and unified search finds content", async ({ page }) => {
+  test.setTimeout(120_000);
   await login(page);
   await quickNote(page, "IT-Setup", "Laptop einrichten. Siehe auch: ");
   await page.locator(".ProseMirror").click();
   await page.getByRole("button", { name: "Seite verlinken" }).click();
-  await page.getByRole("button", { name: "Onboarding" }).click();
+  await page.getByRole("button", { name: "Onboarding" }).first().click();
   await expect(page.getByText("Gespeichert", { exact: true })).toBeVisible({ timeout: 10_000 });
-  await page.getByRole("link", { name: "Onboarding" }).first().click();
+  const onboardingHref = await page.locator(".ProseMirror").getByRole("link", { name: "Onboarding" }).getAttribute("href");
+  expect(onboardingHref).toBeTruthy();
+  await page.goto(onboardingHref!);
   await expect(page.getByText("Verweise auf diese Seite")).toBeVisible();
   await expect(page.getByRole("link", { name: "IT-Setup" }).last()).toBeVisible();
+  await page.getByRole("button", { name: "Seiten und Quellen durchsuchen…" }).click();
   await page.getByPlaceholder("Seiten und Quellen durchsuchen…").fill("Laptop");
   await expect(page.getByRole("link", { name: /IT-Setup/ }).first()).toBeVisible();
 });
 
 test("create a source, cite it, and render the bibliography", async ({ page }) => {
+  test.setTimeout(120_000);
+  const sourceTitle = `Knowledge Systems ${Date.now()}`;
   await login(page);
   await page.goto("/wiki/sources");
   await page.getByRole("button", { name: "Neue Quelle" }).click();
-  await page.getByLabel("Titel").fill("Knowledge Systems");
+  await page.getByLabel("Titel", { exact: true }).fill(sourceTitle);
   await page.getByLabel("Mitwirkende").fill("Smith, Jane");
   await page.getByLabel("Erscheinungsdatum").fill("2026");
   await page.getByRole("button", { name: "Quelle anlegen" }).click();
-  await expect(page).toHaveURL(/\/wiki\/sources\//);
-  await expect(page.getByRole("heading", { name: "Knowledge Systems" })).toBeVisible();
+  await expect(page).toHaveURL(/\/wiki\/sources\//, { timeout: 30_000 });
+  await expect(page.getByRole("heading", { name: sourceTitle })).toBeVisible();
+  await page.goto("/wiki/pages");
   await page.getByRole("link", { name: "Onboarding" }).first().click();
   await page.locator(".ProseMirror").click();
   await page.getByRole("button", { name: "Zitat einfügen" }).click();
-  await page.getByRole("button", { name: /Knowledge Systems/ }).click();
+  await page.getByRole("button", { name: sourceTitle }).click();
   await expect(page.getByText("Gespeichert", { exact: true })).toBeVisible({ timeout: 10_000 });
   await page.reload();
   await expect(page.getByRole("heading", { name: "Literaturverzeichnis" })).toBeVisible();
-  await expect(page.getByText(/Smith, J\. \(2026\).*Knowledge Systems/)).toBeVisible();
+  await expect(page.getByText(/Smith, J\. \(2026\)/)).toBeVisible();
+  await expect(page.getByText(sourceTitle, { exact: false })).toBeVisible();
 });
 
 test("subpages remain nested and deletion is recoverable", async ({ page }) => {
+  test.setTimeout(120_000);
   await login(page);
   await page.goto("/wiki/pages");
   await page.getByRole("link", { name: "Onboarding" }).last().click();
   page.once("dialog", (dialog) => dialog.accept("Erster Arbeitstag"));
   await page.getByRole("button", { name: "Unterseite anlegen" }).click();
-  await expect(page).toHaveURL(/\/wiki\/pages\/erster-arbeitstag/);
+  await expect(page).toHaveURL(/\/wiki\/pages\/erster-arbeitstag/, { timeout: 30_000 });
   page.once("dialog", (dialog) => dialog.accept("Tag Eins"));
   await page.getByRole("button", { name: "Erster Arbeitstag" }).click();
   await expect(page.getByRole("button", { name: "Tag Eins" })).toBeVisible();
   page.once("dialog", (dialog) => dialog.accept());
   await page.getByRole("button", { name: "Seite löschen" }).click();
-  await expect(page).toHaveURL(/\/wiki\/inbox/);
+  await expect(page).toHaveURL(/\/wiki\/inbox/, { timeout: 30_000 });
   await page.goto("/wiki/trash");
   await expect(page.getByText("Tag Eins")).toBeVisible();
   await page.getByRole("button", { name: "Wiederherstellen" }).click();

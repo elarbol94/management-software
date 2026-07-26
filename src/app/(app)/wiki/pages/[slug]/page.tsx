@@ -5,6 +5,7 @@ import { getBacklinks, getPageBySlug, getPageMeta, listPagesFlat } from "@/modul
 import { getCitationSourcesForPage, getPageComments, getPageResearchMeta, listSources, listUsers } from "@/modules/wiki/research-queries";
 import { WikiShell } from "@/modules/wiki/components/wiki-shell";
 import { listDocumentTemplates } from "@/modules/wiki/document-queries";
+import { getWikiTypographyForUser } from "@/modules/wiki/lib/wiki-typography.server";
 
 export default async function WikiPage({ params }: { params: Promise<{ slug: string }> }) {
   const currentUser = await requireUser(); const { slug } = await params;
@@ -18,6 +19,7 @@ export default async function WikiPage({ params }: { params: Promise<{ slug: str
     comments={getPageComments(page.id)} currentUserId={currentUser.id} users={listUsers()}
     attachments={listAttachmentsFor("wikiPage", page.id).map((file) => ({ id: file.id, fileName: file.fileName, mimeType: file.mimeType, sizeBytes: file.sizeBytes }))}
     documentTemplates={listDocumentTemplates()}
+    typography={getWikiTypographyForUser(currentUser.id)}
     meta={meta ? { updatedAt: meta.updatedAt.getTime(), updatedByName: meta.updatedByName } : null}
   />;
 }

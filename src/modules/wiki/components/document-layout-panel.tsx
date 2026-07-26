@@ -14,6 +14,7 @@ import {
   Plus,
   Save,
   ScissorsLineDashed,
+  Settings2,
   Variable,
 } from "lucide-react";
 import { applyDocumentTemplate, savePageAsDocumentTemplate } from "../document-actions";
@@ -37,6 +38,7 @@ type Props = {
   templates: StoredDocumentTemplate[];
   issues: DocumentPreflightIssue[];
   outline: OutlineItem[];
+  onOpenTypographySettings: () => void;
 };
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
@@ -61,6 +63,7 @@ export function DocumentLayoutPanel({
   templates,
   issues,
   outline,
+  onOpenTypographySettings,
 }: Props) {
   const t = useTranslations("wiki.document");
   const router = useRouter();
@@ -81,10 +84,6 @@ export function DocumentLayoutPanel({
 
   function patchPage(next: Partial<DocumentSettingsV1["page"]>) {
     patch({ page: { ...settings.page, ...next } });
-  }
-
-  function patchTheme(next: Partial<DocumentSettingsV1["theme"]>) {
-    patch({ theme: { ...settings.theme, ...next, id: "custom" } });
   }
 
   function patchMargins(key: keyof DocumentSettingsV1["page"]["marginsMm"], value: number) {
@@ -169,32 +168,12 @@ export function DocumentLayoutPanel({
         </section>
 
         <section className="space-y-2 border-t pt-3">
-          <p className="text-[11px] font-semibold tracking-wide uppercase">{t("typography")}</p>
-          <div className="grid grid-cols-2 gap-2">
-            <Field label={t("bodyFont")}>
-              <Select value={settings.theme.bodyFont} onValueChange={(value) => value && patchTheme({ bodyFont: value as DocumentSettingsV1["theme"]["bodyFont"] })}>
-                <SelectTrigger className="h-8"><SelectValue /></SelectTrigger>
-                <SelectContent><SelectItem value="humanist">{t("font.humanist")}</SelectItem><SelectItem value="serif">{t("font.serif")}</SelectItem><SelectItem value="system">{t("font.system")}</SelectItem></SelectContent>
-              </Select>
-            </Field>
-            <Field label={t("headingFont")}>
-              <Select value={settings.theme.headingFont} onValueChange={(value) => value && patchTheme({ headingFont: value as DocumentSettingsV1["theme"]["headingFont"] })}>
-                <SelectTrigger className="h-8"><SelectValue /></SelectTrigger>
-                <SelectContent><SelectItem value="serif">{t("font.serif")}</SelectItem><SelectItem value="humanist">{t("font.humanist")}</SelectItem><SelectItem value="system">{t("font.system")}</SelectItem></SelectContent>
-              </Select>
-            </Field>
-            <Field label={t("fontSize")}>
-              <Input className="h-8" type="number" min={8} max={16} step={0.5} value={settings.theme.bodySizePt} onChange={(event) => patchTheme({ bodySizePt: Number(event.target.value) })} />
-            </Field>
-            <Field label={t("lineHeight")}>
-              <Input className="h-8" type="number" min={1.1} max={2} step={0.05} value={settings.theme.lineHeight} onChange={(event) => patchTheme({ lineHeight: Number(event.target.value) })} />
-            </Field>
-          </div>
-          <div className="grid grid-cols-3 gap-2">
-            <Field label={t("color.text")}><Input type="color" className="h-8 p-1" value={settings.theme.textColor} onChange={(event) => patchTheme({ textColor: event.target.value })} /></Field>
-            <Field label={t("color.accent")}><Input type="color" className="h-8 p-1" value={settings.theme.accentColor} onChange={(event) => patchTheme({ accentColor: event.target.value })} /></Field>
-            <Field label={t("color.muted")}><Input type="color" className="h-8 p-1" value={settings.theme.mutedColor} onChange={(event) => patchTheme({ mutedColor: event.target.value })} /></Field>
-          </div>
+          <p className="text-[11px] font-semibold tracking-wide uppercase">{t("globalTypography")}</p>
+          <p className="text-[11px] leading-4 text-muted-foreground">{t("globalTypographyDescription")}</p>
+          <Button type="button" size="sm" variant="outline" className="w-full justify-start" onClick={onOpenTypographySettings}>
+            <Settings2 />
+            {t("openGlobalTypography")}
+          </Button>
         </section>
 
         <section className="space-y-2 border-t pt-3">

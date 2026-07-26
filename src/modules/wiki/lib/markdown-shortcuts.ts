@@ -2,6 +2,7 @@ import { defaultBlockAt } from "@tiptap/core";
 import { isAllowedUri } from "@tiptap/extension-link";
 import { Selection, TextSelection, type Transaction } from "@tiptap/pm/state";
 import { canSplit } from "@tiptap/pm/transform";
+import { closeHistory } from "@tiptap/pm/history";
 
 export type MarkdownShortcutBoundary = "space" | "enter";
 export type MarkdownShortcutMark =
@@ -208,6 +209,9 @@ export function applyMarkdownShortcut(transaction: Transaction, boundary: Markdo
   const match = findMarkdownShortcutAtSelection(transaction);
   if (!match) return false;
 
+  // Keep the conversion in its own undo step so Ctrl/Cmd+Z restores the
+  // literal Markdown instead of removing the entire recently typed block.
+  closeHistory(transaction);
   const rawTo = transaction.selection.from - match.tailLength;
   const rawFrom = rawTo - match.raw.length;
   let cursor: number;
