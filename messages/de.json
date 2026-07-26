@@ -21,6 +21,7 @@
   "nav": {
     "dashboard": "Übersicht",
     "accounting": "Buchhaltung",
+    "personnel": "Personal",
     "documents": "Rechnungen & Belege",
     "projects": "Projekte",
     "wiki": "Wiki",

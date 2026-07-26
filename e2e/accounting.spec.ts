@@ -254,3 +254,50 @@ test("language switcher changes the UI to English and back", async ({ page }) =>
   await page.reload();
   await expect(page.getByText("Willkommen, E2E Admin!")).toBeVisible();
 });
+
+test("plan personnel costs, preserve a scenario, and create a consolidated draft", async ({ page }) => {
+  // Keep this acceptance path independently runnable as well as compatible
+  // with the serial accounting suite, where the account already exists.
+  await page.request.post("/api/auth/sign-up/email", {
+    data: { name: "E2E Admin", username: "admin", displayUsername: "admin", email: "admin@example.com", password: "super-secret-1" },
+  });
+  await page.context().clearCookies();
+  await page.goto("/login");
+  await page.locator("#username").fill("admin");
+  await page.locator("#password").fill("super-secret-1");
+  await page.getByRole("button", { name: "Anmelden" }).click();
+  await expect(page.getByText("Willkommen, E2E Admin!")).toBeVisible();
+
+  await page.goto("/personnel");
+  await expect(page.getByRole("heading", { name: "Personalkosten" })).toBeVisible();
+  await expect(page.getByText("Planungshilfe · keine zertifizierte Lohnverrechnung").first()).toBeVisible();
+
+  await page.getByRole("button", { name: "Rechner" }).click();
+  await expect(page.getByRole("heading", { name: "Live-Berechnung" })).toBeVisible();
+  await expect(page.getByText("AT-2026").first()).toBeVisible();
+  await page.getByLabel("Szenarioname").fill("E2E Gehalt + Planung");
+  await page.getByRole("button", { name: "Als Szenario speichern" }).click();
+  await expect(page.getByText("Szenario gespeichert")).toBeVisible();
+
+  await page.getByRole("button", { name: "Regelstände" }).click();
+  await expect(page.getByText("AT-2027-FORECAST")).toBeVisible();
+  await expect(page.getByText("Buchungsübergabe gesperrt")).toBeVisible();
+
+  await page.getByRole("button", { name: "Personen" }).click();
+  await page.getByRole("button", { name: "Person und Vertragsstand anlegen" }).click();
+  await page.locator('input[name="name"]').fill("E2E Planperson");
+  await page.locator('input[name="personnelNumber"]').fill("E2E-P-001");
+  await page.locator('input[name="amount"]').fill("4500");
+  await page.locator('input[name="weeklyHours"]').fill("40");
+  await page.getByRole("button", { name: "Personalplanung speichern" }).click();
+  await expect(page.getByText("Personalplanung gespeichert")).toBeVisible();
+  await expect(page.getByText("E2E Planperson")).toBeVisible();
+
+  await page.getByRole("button", { name: "Übersicht" }).click();
+  await page.locator("#close-month").fill("2026-07");
+  await page.getByRole("button", { name: "Monat als Sammelentwurf übergeben" }).click();
+  await expect(page.getByText("Sammelentwurf erstellt")).toBeVisible();
+
+  await page.goto("/accounting/bookings?year=2026&month=7");
+  await expect(page.getByRole("row", { name: /Personalkosten 2026-07/ })).toBeVisible();
+});

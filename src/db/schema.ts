@@ -4,5 +4,6 @@ export * from "./core-schema";
 export * from "@/modules/accounting/schema";
 export * from "@/modules/funding/schema";
 export * from "@/modules/projects/schema";
+export * from "@/modules/personnel/schema";
 export * from "@/modules/wiki/schema";
 export * from "@/modules/wiki/pdf-schema";

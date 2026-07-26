@@ -260,12 +260,17 @@ export const employees = sqliteTable("employees", {
     .$defaultFn(() => createId()),
   name: text("name").notNull(),
   personnelNumber: text("personnel_number").notNull().default(""),
+  userId: text("user_id").references(() => user.id, { onDelete: "set null" }),
+  birthDate: text("birth_date"),
+  collectiveAgreement: text("collective_agreement").notNull().default(""),
   employmentType: text("employment_type", { enum: employmentTypes }).notNull(),
   locationId: text("location_id").references(() => businessLocations.id),
   joinedOn: text("joined_on"),
   leftOn: text("left_on"),
   active: integer("active", { mode: "boolean" }).notNull().default(true),
-});
+}, (table) => [
+  uniqueIndex("employees_user_idx").on(table.userId),
+]);
 
 export const payrollMonthContexts = sqliteTable("payroll_month_contexts", {
   payrollMonth: text("payroll_month").primaryKey(), // YYYY-MM
