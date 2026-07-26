@@ -48,6 +48,7 @@ import {
   normalizeWikiTypography,
   wikiTypographyCssVariables,
   type WikiTypographySettingsV1,
+  type WikiTypographyTemplate,
 } from "../lib/wiki-typography";
 import type { StoredDocumentTemplate } from "../document-queries";
 import {
@@ -78,6 +79,9 @@ type WikiEditorProps = {
   currentUserId: string;
   pageActions: WikiEditorPageActions;
   initialTypography: WikiTypographySettingsV1;
+  editableTypography: WikiTypographySettingsV1;
+  typographyTemplates: WikiTypographyTemplate[];
+  isPrimaryAuthor: boolean;
 };
 
 function loadEditorPreferences(): WikiEditorPreferences {
@@ -414,6 +418,9 @@ export function WikiEditor({
   currentUserId,
   pageActions,
   initialTypography,
+  editableTypography,
+  typographyTemplates,
+  isPrimaryAuthor,
 }: WikiEditorProps) {
   const t = useTranslations("wiki"); const router = useRouter(); const [saveState, setSaveState] = useState<"idle" | "unsaved" | "saving" | "saved" | "offline" | "error" | "conflict">("idle");
   const [conflictRevision, setConflictRevision] = useState<string | null>(null); const [activeThreadId, setActiveThreadId] = useState<string | null>(null); const [optimisticCommentThreads, setOptimisticCommentThreads] = useState<CommentThread[]>([]); const [commentFocusRequest, setCommentFocusRequest] = useState(0); const [imagePickerRequest, setImagePickerRequest] = useState(0); const [commentOpen, setCommentOpen] = useState(false); const [commentBody, setCommentBody] = useState(""); const [pendingAnchor, setPendingAnchor] = useState<CommentAnchor | null>(null); const [regionTarget, setRegionTarget] = useState<{ nodeId: string; label: string } | null>(null); const [imageError, setImageError] = useState(""); const [imageUploading, setImageUploading] = useState(false); const [assigneeId, setAssigneeId] = useState("none");
@@ -428,6 +435,8 @@ export function WikiEditor({
   const [documentSettings, setDocumentSettings] = useState<DocumentSettingsV1>(() => parseDocumentSettings(initialDocumentSettings));
   const [documentIssues, setDocumentIssues] = useState<DocumentPreflightIssue[]>([]);
   const [typography, setTypography] = useState(() => normalizeWikiTypography(initialTypography));
+  const [personalTypography, setPersonalTypography] = useState(() => normalizeWikiTypography(editableTypography));
+  const [personalTypographyTemplates, setPersonalTypographyTemplates] = useState(typographyTemplates);
   const [typographyOpen, setTypographyOpen] = useState(false);
   const [initialPreferences] = useState(loadEditorPreferences);
   const [statusVisible, setStatusVisible] = useState(initialPreferences.statusVisible); const [minimalToolbar, setMinimalToolbar] = useState(initialPreferences.minimalToolbar); const [typewriterMode, setTypewriterMode] = useState(initialPreferences.typewriterMode); const typewriterModeRef = useRef(initialPreferences.typewriterMode);
@@ -905,15 +914,19 @@ export function WikiEditor({
   <MarkdownReferenceDialog open={markdownHelpOpen} onOpenChange={setMarkdownHelpOpen} />
   {typographyOpen && <WikiTypographyDialog
     editorPreferences={{ minimalToolbar, statusVisible, typewriterMode }}
+    isPrimaryAuthor={isPrimaryAuthor}
     onApplied={(nextTypography, preferences) => {
-      setTypography(nextTypography);
+      setPersonalTypography(nextTypography);
+      if (isPrimaryAuthor) setTypography(nextTypography);
       setMinimalToolbar(preferences.minimalToolbar);
       setStatusVisible(preferences.statusVisible);
       setTypewriterMode(preferences.typewriterMode);
     }}
     onOpenChange={setTypographyOpen}
+    onTemplatesChange={setPersonalTypographyTemplates}
     open={typographyOpen}
-    typography={typography}
+    templates={personalTypographyTemplates}
+    typography={personalTypography}
   />}
   <EditorOutlineSheet editor={activeEditor} items={outline} activePosition={activeHeadingPosition} open={outlineOpen} onOpenChange={setOutlineOpen} />
   </div>;

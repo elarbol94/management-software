@@ -1003,7 +1003,11 @@
       "placeholder": { "empty": "Schreiben oder / für Befehle eingeben …", "heading": "Überschrift …" },
       "preferences": {
         "title": "Schreibbild",
-        "description": "Lege Schrift, Rhythmus und Farben persönlich für alle Wiki-Seiten und Dokumentexporte fest.",
+        "description": "Lege Schrift, Rhythmus und Farben für alle Wiki-Seiten und Dokumentexporte fest, bei denen du Hauptautor bist.",
+        "scope": {
+          "primaryAuthor": "Diese Seite übernimmt Änderungen sofort. Alle weiteren Wiki-Seiten, bei denen du Hauptautor bist, folgen demselben Schreibbild.",
+          "otherPage": "Diese Seite behält das Schreibbild ihres Hauptautors. Deine Änderungen gelten auf allen Wiki-Seiten, bei denen du Hauptautor bist."
+        },
         "tabs": { "typography": "Typografie", "editor": "Editor" },
         "density": {
           "title": "Dichte",
@@ -1012,6 +1016,17 @@
           "standard": "Standard",
           "spacious": "Luftig",
           "custom": "Benutzerdefiniert"
+        },
+        "templates": {
+          "title": "Eigene Vorlagen",
+          "description": "Speichere ein Schreibbild als Ausgangspunkt für spätere Seiten.",
+          "name": "Name der Vorlage",
+          "namePlaceholder": "z. B. Projektbericht",
+          "save": "Vorlage speichern",
+          "empty": "Noch keine eigene Vorlage gespeichert.",
+          "delete": "Vorlage „{name}“ löschen",
+          "saveFailed": "Die Vorlage konnte nicht gespeichert werden. Bitte versuche es erneut.",
+          "deleteFailed": "Die Vorlage konnte nicht gelöscht werden. Bitte versuche es erneut."
         },
         "sections": { "type": "Grundtext und Listen", "headings": "Überschriften", "colors": "Farben" },
         "controls": {

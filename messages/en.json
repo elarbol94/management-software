@@ -1003,7 +1003,11 @@
       "placeholder": { "empty": "Write something, or type / for commands…", "heading": "Heading…" },
       "preferences": {
         "title": "Writing style",
-        "description": "Set your personal fonts, rhythm and colors for every wiki page and document export.",
+        "description": "Set fonts, rhythm and colors for every wiki page and document export where you are the primary author.",
+        "scope": {
+          "primaryAuthor": "This page updates immediately. Every other wiki page where you are the primary author uses the same writing style.",
+          "otherPage": "This page keeps its primary author's writing style. Your changes apply to every wiki page where you are the primary author."
+        },
         "tabs": { "typography": "Typography", "editor": "Editor" },
         "density": {
           "title": "Density",
@@ -1012,6 +1016,17 @@
           "standard": "Standard",
           "spacious": "Spacious",
           "custom": "Custom"
+        },
+        "templates": {
+          "title": "Your templates",
+          "description": "Save a writing style as a starting point for future pages.",
+          "name": "Template name",
+          "namePlaceholder": "For example, project report",
+          "save": "Save template",
+          "empty": "No saved writing-style templates yet.",
+          "delete": "Delete template “{name}”",
+          "saveFailed": "The template could not be saved. Please try again.",
+          "deleteFailed": "The template could not be deleted. Please try again."
         },
         "sections": { "type": "Body text and lists", "headings": "Headings", "colors": "Colors" },
         "controls": {

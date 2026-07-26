@@ -2,7 +2,7 @@
 
 import { useState, useTransition, type CSSProperties } from "react";
 import { useTranslations } from "next-intl";
-import { Check, RotateCcw, Settings2, SlidersHorizontal, Type } from "lucide-react";
+import { BookmarkPlus, Check, RotateCcw, Settings2, SlidersHorizontal, Trash2, Type } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -17,7 +17,11 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { updateMyWikiTypography } from "../wiki-preference-actions";
+import {
+  deleteMyWikiTypographyTemplate,
+  saveMyWikiTypographyTemplate,
+  updateMyWikiTypography,
+} from "../wiki-preference-actions";
 import {
   DEFAULT_WIKI_TYPOGRAPHY,
   applyWikiTypographyDensity,
@@ -26,6 +30,7 @@ import {
   type WikiFontFamily,
   type WikiTypographyDensity,
   type WikiTypographySettingsV1,
+  type WikiTypographyTemplate,
 } from "../lib/wiki-typography";
 
 export type WikiEditorPreferences = {
@@ -38,8 +43,11 @@ type Props = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   typography: WikiTypographySettingsV1;
+  templates: WikiTypographyTemplate[];
+  isPrimaryAuthor: boolean;
   editorPreferences: WikiEditorPreferences;
   onApplied: (typography: WikiTypographySettingsV1, preferences: WikiEditorPreferences) => void;
+  onTemplatesChange: (templates: WikiTypographyTemplate[]) => void;
 };
 
 type NumericTypographyKey = {
@@ -148,11 +156,16 @@ export function WikiTypographyDialog({
   open,
   onOpenChange,
   typography,
+  templates: initialTemplates,
+  isPrimaryAuthor,
   editorPreferences,
   onApplied,
+  onTemplatesChange,
 }: Props) {
   const t = useTranslations("wiki.editor.preferences");
   const [draft, setDraft] = useState(() => normalizeWikiTypography(typography));
+  const [templates, setTemplates] = useState(initialTemplates);
+  const [templateName, setTemplateName] = useState("");
   const [draftPreferences, setDraftPreferences] = useState(editorPreferences);
   const [error, setError] = useState("");
   const [pending, startTransition] = useTransition();
@@ -174,6 +187,38 @@ export function WikiTypographyDialog({
         onOpenChange(false);
       } catch {
         setError(t("saveFailed"));
+      }
+    });
+  }
+
+  function saveTemplate() {
+    const name = templateName.trim();
+    if (!name) return;
+    setError("");
+    startTransition(async () => {
+      try {
+        const template = await saveMyWikiTypographyTemplate({ name, typography: draft });
+        const next = [...templates, template];
+        setTemplates(next);
+        onTemplatesChange(next);
+        setTemplateName("");
+      } catch {
+        setError(t("templates.saveFailed"));
+      }
+    });
+  }
+
+  function removeTemplate(templateId: string) {
+    setError("");
+    startTransition(async () => {
+      try {
+        const deleted = await deleteMyWikiTypographyTemplate(templateId);
+        if (!deleted) return;
+        const next = templates.filter((template) => template.id !== templateId);
+        setTemplates(next);
+        onTemplatesChange(next);
+      } catch {
+        setError(t("templates.deleteFailed"));
       }
     });
   }
@@ -209,6 +254,7 @@ export function WikiTypographyDialog({
             {t("title")}
           </DialogTitle>
           <DialogDescription>{t("description")}</DialogDescription>
+          <p className="mt-1 text-xs leading-5 text-muted-foreground">{t(isPrimaryAuthor ? "scope.primaryAuthor" : "scope.otherPage")}</p>
         </DialogHeader>
 
         <Tabs defaultValue="typography" className="min-h-0 gap-0 overflow-hidden">
@@ -244,6 +290,66 @@ export function WikiTypographyDialog({
                       {t("density.custom")}
                     </Button>
                   </div>
+                </section>
+
+                <section className="grid gap-3 border-t pt-5">
+                  <div>
+                    <h3 className="text-sm font-semibold">{t("templates.title")}</h3>
+                    <p className="text-xs leading-5 text-muted-foreground">{t("templates.description")}</p>
+                  </div>
+                  <div className="flex gap-2">
+                    <Input
+                      aria-label={t("templates.name")}
+                      className="h-9 min-w-0 flex-1"
+                      data-testid="wiki-typography-template-name"
+                      maxLength={80}
+                      onChange={(event) => setTemplateName(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") {
+                          event.preventDefault();
+                          saveTemplate();
+                        }
+                      }}
+                      placeholder={t("templates.namePlaceholder")}
+                      value={templateName}
+                    />
+                    <Button disabled={pending || !templateName.trim()} onClick={saveTemplate} size="sm" type="button">
+                      <BookmarkPlus className="size-4" />
+                      {t("templates.save")}
+                    </Button>
+                  </div>
+                  {templates.length === 0 ? (
+                    <p className="rounded-lg border border-dashed px-3 py-2 text-xs text-muted-foreground">{t("templates.empty")}</p>
+                  ) : (
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      {templates.map((template) => (
+                        <div className="flex min-w-0 items-center gap-1 rounded-lg border bg-background/70 p-1.5" key={template.id}>
+                          <Button
+                            className="min-w-0 flex-1 justify-start"
+                            data-testid={`wiki-typography-template-${template.id}`}
+                            disabled={pending}
+                            onClick={() => setDraft(normalizeWikiTypography(template.typography))}
+                            size="sm"
+                            type="button"
+                            variant="ghost"
+                          >
+                            <span className="truncate">{template.name}</span>
+                          </Button>
+                          <Button
+                            aria-label={t("templates.delete", { name: template.name })}
+                            className="size-8 shrink-0 text-muted-foreground hover:text-destructive"
+                            disabled={pending}
+                            onClick={() => removeTemplate(template.id)}
+                            size="icon-sm"
+                            type="button"
+                            variant="ghost"
+                          >
+                            <Trash2 className="size-3.5" />
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </section>
 
                 <section className="grid gap-3">

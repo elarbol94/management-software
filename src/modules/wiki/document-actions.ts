@@ -1,7 +1,7 @@
 "use server";
 
 import { z } from "zod";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { db } from "@/db";
 import { wikiDocumentTemplates, wikiPageRevisions, wikiPages } from "@/db/schema";
@@ -75,7 +75,7 @@ export async function applyDocumentTemplate(input: z.infer<typeof applyTemplateS
 
   const builtIn = BUILT_IN_DOCUMENT_TEMPLATES.find((template) => template.id === data.templateId);
   const stored = builtIn ? null : db.select().from(wikiDocumentTemplates)
-    .where(eq(wikiDocumentTemplates.id, data.templateId)).get();
+    .where(and(eq(wikiDocumentTemplates.id, data.templateId), eq(wikiDocumentTemplates.createdBy, currentUser.id))).get();
   if (!builtIn && !stored) throw new Error("Template not found");
 
   let rawSettings: unknown = builtIn?.settings ?? null;
@@ -125,9 +125,11 @@ export async function applyDocumentTemplate(input: z.infer<typeof applyTemplateS
 }
 
 export async function deleteDocumentTemplate(templateId: string) {
-  await requireUserOrThrow();
+  const currentUser = await requireUserOrThrow();
   const id = z.string().min(1).parse(templateId);
-  db.delete(wikiDocumentTemplates).where(eq(wikiDocumentTemplates.id, id)).run();
+  db.delete(wikiDocumentTemplates)
+    .where(and(eq(wikiDocumentTemplates.id, id), eq(wikiDocumentTemplates.createdBy, currentUser.id)))
+    .run();
   revalidatePath("/wiki", "layout");
 }
 

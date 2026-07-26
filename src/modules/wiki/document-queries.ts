@@ -1,4 +1,4 @@
-import { asc } from "drizzle-orm";
+import { asc, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { wikiDocumentTemplates } from "@/db/schema";
 import {
@@ -13,10 +13,11 @@ export type StoredDocumentTemplate = DocumentTemplateDefinition & {
   createdAt?: number;
 };
 
-export function listDocumentTemplates(): StoredDocumentTemplate[] {
+export function listDocumentTemplates(userId: string): StoredDocumentTemplate[] {
   const custom = db
     .select()
     .from(wikiDocumentTemplates)
+    .where(eq(wikiDocumentTemplates.createdBy, userId))
     .orderBy(asc(wikiDocumentTemplates.name))
     .all()
     .map((template): StoredDocumentTemplate => {

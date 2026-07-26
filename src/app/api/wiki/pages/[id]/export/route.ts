@@ -14,7 +14,12 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
   const session = await getSession();
   if (!session) return new Response("Unauthorized", { status: 401 });
   const { id } = await params;
-  const typography = getWikiTypographyForUser(session.user.id);
+  const pageOwner = db.select({ createdBy: wikiPages.createdBy })
+    .from(wikiPages)
+    .where(and(eq(wikiPages.id, id), isNull(wikiPages.deletedAt)))
+    .get();
+  if (!pageOwner) return Response.json({ error: "Page not found" }, { status: 404 });
+  const typography = getWikiTypographyForUser(pageOwner.createdBy);
   const url = new URL(request.url);
   const format = url.searchParams.get("format") ?? "markdown";
   const inline = url.searchParams.get("disposition") === "inline";
@@ -56,3 +61,6 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
     return Response.json({ error: message }, { status });
   }
 }
+import { and, eq, isNull } from "drizzle-orm";
+import { db } from "@/db";
+import { wikiPages } from "@/db/schema";

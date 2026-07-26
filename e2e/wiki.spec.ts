@@ -58,9 +58,18 @@ test("global writing style previews, cancels, persists across pages, and reaches
   const preview = page.getByTestId("wiki-typography-preview");
   await expect(dialog).toBeVisible();
   await dialog.getByRole("button", { name: "Standard" }).click();
-  await dialog.getByRole("button", { name: "Speichern" }).click();
+  await dialog.getByRole("button", { name: "Speichern", exact: true }).click();
   await page.getByRole("button", { name: "Schreibbild", exact: true }).click();
   await expect(preview).toContainText("Entscheidungen nachvollziehbar dokumentieren");
+  await expect(page.getByTestId("listItemSpacingEm-number")).toHaveValue("0.15");
+
+  await page.getByTestId("wiki-typography-template-name").fill("E2E Schreibbild");
+  await dialog.getByRole("button", { name: "Vorlage speichern" }).click();
+  const savedTemplate = dialog.getByRole("button", { name: "E2E Schreibbild", exact: true });
+  await expect(savedTemplate).toBeVisible();
+  await dialog.getByRole("button", { name: "Kompakt" }).click();
+  await expect(page.getByTestId("listItemSpacingEm-number")).toHaveValue("0");
+  await savedTemplate.click();
   await expect(page.getByTestId("listItemSpacingEm-number")).toHaveValue("0.15");
 
   await page.getByTestId("listItemSpacingEm-number").fill("0.8");
@@ -74,7 +83,7 @@ test("global writing style previews, cancels, persists across pages, and reaches
   await dialog.getByRole("button", { name: "Kompakt" }).click();
   await expect(page.getByTestId("lineHeight-number")).toHaveValue("1.35");
   await expect(page.getByTestId("listItemSpacingEm-number")).toHaveValue("0");
-  await dialog.getByRole("button", { name: "Speichern" }).click();
+  await dialog.getByRole("button", { name: "Speichern", exact: true }).click();
   await expect(dialog).toBeHidden();
   await expect(page.locator(".wiki-editor-surface")).toHaveCSS("--wiki-list-item-spacing", "0em");
 
@@ -96,7 +105,7 @@ test("global writing style previews, cancels, persists across pages, and reaches
 
   await page.getByRole("button", { name: "Schreibbild", exact: true }).click();
   await dialog.getByRole("button", { name: "Standard" }).click();
-  await dialog.getByRole("button", { name: "Speichern" }).click();
+  await dialog.getByRole("button", { name: "Speichern", exact: true }).click();
   await expect(page.locator(".wiki-editor-surface")).toHaveCSS("--wiki-list-item-spacing", "0.15em");
 
   await page.setViewportSize({ width: 390, height: 844 });

@@ -4,7 +4,9 @@ import {
   WIKI_TYPOGRAPHY_DENSITY_PRESETS,
   applyWikiTypographyDensity,
   normalizeWikiTypography,
+  parseWikiTypographyProfile,
   parseWikiTypography,
+  serializeWikiTypographyProfile,
   wikiTypographyCssVariables,
 } from "./wiki-typography";
 
@@ -83,5 +85,42 @@ describe("wiki typography", () => {
       "--wiki-list-indent": "1.75em",
       "--wiki-text-color": "#172033",
     });
+  });
+
+  it("keeps saved writing-style templates while remaining compatible with V1 settings", () => {
+    const profile = parseWikiTypographyProfile(JSON.stringify({
+      ...DEFAULT_WIKI_TYPOGRAPHY,
+      templates: [{
+        id: "project-report",
+        name: " Project report ",
+        createdAt: 1_000,
+        typography: { ...DEFAULT_WIKI_TYPOGRAPHY, listItemSpacingEm: 0 },
+      }],
+    }));
+
+    expect(profile.typography).toEqual(DEFAULT_WIKI_TYPOGRAPHY);
+    expect(profile.templates).toEqual([expect.objectContaining({
+      id: "project-report",
+      name: "Project report",
+      createdAt: 1_000,
+      typography: expect.objectContaining({ listItemSpacingEm: 0 }),
+    })]);
+    expect(parseWikiTypography(serializeWikiTypographyProfile(profile))).toEqual(DEFAULT_WIKI_TYPOGRAPHY);
+  });
+
+  it("drops malformed and duplicate writing-style templates", () => {
+    const profile = parseWikiTypographyProfile(JSON.stringify({
+      templates: [
+        { id: "valid", name: "Valid", typography: DEFAULT_WIKI_TYPOGRAPHY, createdAt: 12 },
+        { id: "valid", name: "Duplicate", typography: DEFAULT_WIKI_TYPOGRAPHY, createdAt: 13 },
+        { id: "missing-name", typography: DEFAULT_WIKI_TYPOGRAPHY },
+        { id: "other", name: "Other", typography: { listIndentEm: 99 } },
+      ],
+    }));
+
+    expect(profile.templates).toEqual([
+      expect.objectContaining({ id: "valid", name: "Valid" }),
+      expect.objectContaining({ id: "other", typography: expect.objectContaining({ listIndentEm: 4 }) }),
+    ]);
   });
 });

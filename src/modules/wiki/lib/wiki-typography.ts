@@ -25,6 +25,20 @@ export type WikiTypographySettingsV1 = {
   mutedColor: string;
 };
 
+export type WikiTypographyTemplate = {
+  id: string;
+  name: string;
+  typography: WikiTypographySettingsV1;
+  createdAt: number;
+};
+
+export type WikiTypographyProfile = {
+  typography: WikiTypographySettingsV1;
+  templates: WikiTypographyTemplate[];
+};
+
+export const MAX_WIKI_TYPOGRAPHY_TEMPLATES = 20;
+
 type DensityValues = Pick<
   WikiTypographySettingsV1,
   "lineHeight" | "paragraphSpacingEm" | "listItemSpacingEm" | "listBlockSpacingEm" | "listIndentEm"
@@ -115,16 +129,62 @@ export function normalizeWikiTypography(value: unknown): WikiTypographySettingsV
 }
 
 export function parseWikiTypography(value: string | null | undefined) {
-  if (!value?.trim()) return normalizeWikiTypography(null);
-  try {
-    return normalizeWikiTypography(JSON.parse(value));
-  } catch {
-    return normalizeWikiTypography(null);
-  }
+  return parseWikiTypographyProfile(value).typography;
 }
 
 export function serializeWikiTypography(settings: WikiTypographySettingsV1) {
-  return JSON.stringify(normalizeWikiTypography(settings));
+  return serializeWikiTypographyProfile({ typography: settings, templates: [] });
+}
+
+function record(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function normalizeWikiTypographyTemplates(value: unknown): WikiTypographyTemplate[] {
+  if (!Array.isArray(value)) return [];
+  const ids = new Set<string>();
+  const templates: WikiTypographyTemplate[] = [];
+  for (const candidate of value) {
+    if (templates.length >= MAX_WIKI_TYPOGRAPHY_TEMPLATES) break;
+    const input = record(candidate);
+    const id = typeof input?.id === "string" ? input.id.trim().slice(0, 120) : "";
+    const name = typeof input?.name === "string" ? input.name.trim().slice(0, 80) : "";
+    if (!id || !name || ids.has(id)) continue;
+    ids.add(id);
+    templates.push({
+      id,
+      name,
+      typography: normalizeWikiTypography(input?.typography),
+      createdAt: finiteNumber(input?.createdAt, 0, 0, Number.MAX_SAFE_INTEGER),
+    });
+  }
+  return templates;
+}
+
+export function normalizeWikiTypographyProfile(value: unknown): WikiTypographyProfile {
+  const input = record(value);
+  return {
+    // Existing V1 values stored directly in the JSON column remain valid.
+    typography: normalizeWikiTypography(input?.typography ?? input),
+    templates: normalizeWikiTypographyTemplates(input?.templates),
+  };
+}
+
+export function parseWikiTypographyProfile(value: string | null | undefined): WikiTypographyProfile {
+  if (!value?.trim()) return normalizeWikiTypographyProfile(null);
+  try {
+    return normalizeWikiTypographyProfile(JSON.parse(value));
+  } catch {
+    return normalizeWikiTypographyProfile(null);
+  }
+}
+
+export function serializeWikiTypographyProfile(profile: WikiTypographyProfile) {
+  const normalized = normalizeWikiTypographyProfile(profile);
+  // Keep typography at the root so prior V1 clients can still read it safely.
+  return JSON.stringify({ ...normalized.typography, templates: normalized.templates });
 }
 
 export function applyWikiTypographyDensity(
