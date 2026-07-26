@@ -911,9 +911,20 @@
       "description": "Type the syntax, then use Space or Enter to convert it. Block shortcuts activate when you complete the line.",
       "groups": { "inline": "Inline", "blocks": "Blocks", "structured": "Structured content" },
       "items": {
-        "bold": "Bold", "italic": "Italic", "strikethrough": "Strikethrough", "code": "Inline code", "link": "External link", "highlight": "Highlight", "subscript": "Subscript", "superscript": "Superscript", "emoji": "Emoji", "footnoteReference": "Footnote reference",
+        "bold": "Bold", "italic": "Italic", "strikethrough": "Strikethrough", "code": "Inline code", "link": "External link", "highlight": "Highlight", "subscript": "Subscript", "superscript": "Superscript", "arrows": "Arrows", "emoji": "Emoji", "footnoteReference": "Footnote reference",
         "headings": "Heading", "headingId": "Heading with ID", "blockquote": "Block quote", "bulletList": "Bullet list", "orderedList": "Ordered list", "taskList": "Task list", "divider": "Divider", "fencedCode": "Code block",
         "image": "Image", "table": "Table · fill in cells afterwards", "definitionList": "Definition list", "footnoteDefinition": "Footnote"
+      }
+    },
+    "shortcuts": {
+      "title": "Keyboard shortcuts", "description": "Select a shortcut, then press Ctrl or Cmd plus the desired key.", "recording": "Press a key…", "requiresModifier": "Use Ctrl or Cmd together with a key.", "reserved": "This key is reserved.", "conflict": "This shortcut is already used by “{action}”.", "resetAll": "Reset all", "resetOne": "Reset {action}", "done": "Done",
+      "groups": { "editing": "Editing", "structure": "Structure", "wiki": "Wiki and view", "insert": "Insert", "context": "Selection: image and table" },
+      "actions": {
+        "undo": "Undo", "redo": "Redo", "bold": "Bold", "italic": "Italic", "underline": "Underline", "highlight": "Highlight", "strike": "Strikethrough", "inlineCode": "Inline code",
+        "heading1": "Heading 1", "heading2": "Heading 2", "heading3": "Heading 3", "bulletList": "Bullet list", "orderedList": "Numbered list", "taskList": "Task list", "blockquote": "Block quote", "codeBlock": "Code block", "horizontalRule": "Divider", "pageBreak": "Page break", "tableOfContents": "Table of contents", "twoColumns": "Two-column section",
+        "search": "Find and replace", "outline": "Document outline", "inlineComment": "Add comment", "toggleComments": "Show/hide comments", "documentMode": "Document mode", "markdownHelp": "Markdown help", "typography": "Writing style", "shortcuts": "Keyboard shortcuts",
+        "image": "Insert image", "pageLink": "Link wiki page", "externalLink": "Insert external link", "citation": "Insert citation", "pdfEvidence": "Insert PDF evidence", "attachment": "Add attachment", "supportingSource": "Link supporting source",
+        "imageHighlight": "Highlight image", "imageComment": "Comment on image", "imageRegion": "Comment on image area", "imageWidth50": "Image width 50%", "imageWidth75": "Image width 75%", "imageWidth100": "Image width 100%", "imageAlignLeft": "Align image left", "imageAlignCenter": "Center image", "imageAlignRight": "Align image right", "tableAddRow": "Add table row", "tableAddColumn": "Add table column", "tableHeader": "Toggle table header", "tableAlignLeft": "Align table cell left", "tableAlignCenter": "Center table cell", "tableAlignRight": "Align table cell right", "tableDeleteRow": "Delete current table row", "tableDeleteColumn": "Delete current table column"
       }
     },
     "document": {

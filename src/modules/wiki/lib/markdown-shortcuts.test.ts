@@ -85,6 +85,15 @@ describe("matchMarkdownShortcut", () => {
   });
 
   it.each([
+    ["->", "→"],
+    ["<-", "←"],
+    ["-->", "⟶"],
+    ["<->", "↔"],
+  ])("matches the Markdown arrow %s", (input, replacement) => {
+    expect(matchMarkdownShortcut(`Direction ${input}`)).toMatchObject({ kind: "text", replacement });
+  });
+
+  it.each([
     "**unfinished",
     "* spaced *",
     String.raw`\**escaped**`,
@@ -141,6 +150,19 @@ describe("applyMarkdownShortcut", () => {
     expect(applyMarkdownShortcut(footnote, "space")).toBe(true);
     expect(footnote.doc.firstChild?.firstChild?.type.name).toBe("footnoteReference");
     expect(footnote.doc.firstChild?.firstChild?.attrs.label).toBe("note");
+  });
+
+  it.each([
+    ["->", "→"],
+    ["<-", "←"],
+    ["-->", "⟶"],
+    ["<->", "↔"],
+  ])("replaces arrow %s on both boundaries", (input, replacement) => {
+    for (const boundary of ["space", "enter"] as MarkdownShortcutBoundary[]) {
+      const transaction = transactionFor(input);
+      expect(applyMarkdownShortcut(transaction, boundary)).toBe(true);
+      expect(transaction.doc.firstChild?.textContent).toBe(replacement + (boundary === "space" ? " " : ""));
+    }
   });
 
   it("does not convert inside code blocks or over existing formatting", () => {

@@ -20,6 +20,7 @@ const groups = [
       ["==hervorgehoben==", "highlight"],
       ["H~2~O", "subscript"],
       ["X^2^", "superscript"],
+      ["->  <-  -->  <->", "arrows"],
       [":joy:", "emoji"],
       ["[^1]", "footnoteReference"],
     ],

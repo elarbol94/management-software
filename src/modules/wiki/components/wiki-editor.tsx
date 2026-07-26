@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useEffectEvent, useMemo, useRef, useState, type CSSProperties } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { EditorContent, useEditor, type Editor } from "@tiptap/react";
@@ -12,7 +12,7 @@ import Placeholder from "@tiptap/extension-placeholder";
 import TaskList from "@tiptap/extension-task-list";
 import TaskItem from "@tiptap/extension-task-item";
 import { Fragment, Slice } from "@tiptap/pm/model";
-import { AlertCircle, AlignCenter, AlignLeft, AlignRight, Bold, BookMarked, Check, CloudOff, Code, Columns2, Eye, EyeOff, FileText, Heading1, Heading2, Heading3, Highlighter, ImagePlus, Italic, Link2, List, ListOrdered, ListTree, ListTodo, MessageSquareText, Minus, MoreHorizontal, Paperclip, Pilcrow, Quote, Redo2, RotateCcw, Rows3, Scan, ScissorsLineDashed, Search, Settings2, Strikethrough, Trash2, Underline as UnderlineIcon, Undo2, WifiOff } from "lucide-react";
+import { AlertCircle, AlignCenter, AlignLeft, AlignRight, Bold, BookMarked, Check, CloudOff, Code, Columns2, Eye, EyeOff, FileText, Heading1, Heading2, Heading3, Highlighter, ImagePlus, Italic, Keyboard, Link2, List, ListOrdered, ListTree, ListTodo, MessageSquareText, Minus, MoreHorizontal, Paperclip, Pilcrow, Quote, Redo2, RotateCcw, Rows3, Scan, ScissorsLineDashed, Search, Settings2, Strikethrough, Trash2, Underline as UnderlineIcon, Undo2, WifiOff } from "lucide-react";
 import { savePageContent } from "../actions";
 import { addComment, restorePageRevision } from "../research-actions";
 import { Button } from "@/components/ui/button";
@@ -21,13 +21,14 @@ import { Textarea } from "@/components/ui/textarea";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuShortcut, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { createSlashCommandExtension, type SlashCommandDefinition } from "./slash-command-menu";
 import { CommentRail, type CommentRailHandle, type CommentThread } from "./comment-rail";
 import { CommentAnchorOverlay } from "./comment-anchor-overlay";
 import { MarkdownDocumentExtensions, MarkdownShortcutMarks, MarkdownShortcuts } from "./markdown-shortcut-extension";
 import { MarkdownReferenceDialog } from "./markdown-reference-dialog";
+import { WikiShortcutsDialog } from "./wiki-shortcuts-dialog";
 import { EditorLinkPopover, EditorOutlineSheet, EditorSearchPanel, type OutlineItem } from "./editor-tools";
 import { mergeCommentThreadIds, normalizeImageRect, type CommentAnchor } from "../lib/comment-anchors";
 import { EditorSearchExtension } from "../lib/editor-search";
@@ -59,10 +60,26 @@ import {
   setMarkdownTableCellAlignment,
   toggleMarkdownTableHeader,
 } from "../lib/document-table";
+import {
+  DEFAULT_WIKI_SHORTCUT_BINDINGS,
+  displayWikiShortcut,
+  normalizeWikiShortcut,
+  parseWikiShortcutBindings,
+  WIKI_SHORTCUT_ACTIONS,
+  type WikiShortcutAction,
+} from "../lib/wiki-shortcuts";
 
 type PageRef = { id: string; title: string; slug: string };
 type SourceRef = { id: string; title: string; issuedDate: string; contributors: string };
 type WikiEditorPageActions = { addAttachment: () => void; linkSupportingSource: () => void };
+const WIKI_SHORTCUTS_KEY = "wiki:editor-shortcuts:v1";
+// These are TipTap's built-in editing combinations. Capture them as well when
+// a user has moved the corresponding action, otherwise TipTap would still run
+// the old command after the custom shortcut handler intentionally ignores it.
+const LEGACY_TIPTAP_SHORTCUTS = new Set([
+  "Ctrl+B", "Ctrl+I", "Ctrl+U", "Ctrl+Shift+S", "Ctrl+E",
+  "Ctrl+Alt+1", "Ctrl+Alt+2", "Ctrl+Alt+3", "Ctrl+Shift+7", "Ctrl+Shift+8", "Ctrl+Shift+9",
+]);
 type WikiEditorProps = {
   focused?: boolean;
   pageId: string;
@@ -91,6 +108,15 @@ function loadEditorPreferences(): WikiEditorPreferences {
     return { statusVisible: stored.statusVisible ?? true, minimalToolbar: stored.minimalToolbar ?? false, typewriterMode: stored.typewriterMode ?? false };
   } catch {
     return { statusVisible: true, minimalToolbar: false, typewriterMode: false };
+  }
+}
+
+function loadWikiShortcutBindings() {
+  if (typeof window === "undefined") return { ...DEFAULT_WIKI_SHORTCUT_BINDINGS };
+  try {
+    return parseWikiShortcutBindings(JSON.parse(window.localStorage.getItem(WIKI_SHORTCUTS_KEY) ?? "null"));
+  } catch {
+    return { ...DEFAULT_WIKI_SHORTCUT_BINDINGS };
   }
 }
 
@@ -428,7 +454,7 @@ export function WikiEditor({
     () => [...optimisticCommentThreads.filter((thread) => !comments.some((item) => item.id === thread.id)), ...comments],
     [comments, optimisticCommentThreads],
   );
-  const [pageLinkOpen, setPageLinkOpen] = useState(false); const [citationOpen, setCitationOpen] = useState(false); const [evidenceOpen, setEvidenceOpen] = useState(false); const [markdownHelpOpen, setMarkdownHelpOpen] = useState(false); const [linkEditorRequest, setLinkEditorRequest] = useState(0);
+  const [pageLinkOpen, setPageLinkOpen] = useState(false); const [citationOpen, setCitationOpen] = useState(false); const [evidenceOpen, setEvidenceOpen] = useState(false); const [markdownHelpOpen, setMarkdownHelpOpen] = useState(false); const [shortcutsOpen, setShortcutsOpen] = useState(false); const [linkEditorRequest, setLinkEditorRequest] = useState(0);
   const [searchOpen, setSearchOpen] = useState(false); const [outlineOpen, setOutlineOpen] = useState(false); const [outline, setOutline] = useState<OutlineItem[]>([]); const [activeHeadingPosition, setActiveHeadingPosition] = useState<number | null>(null);
   const [writingStats, setWritingStats] = useState<WritingStats>({ words: 0, characters: 0, selectedWords: 0, readingMinutes: 0 });
   const [documentMode, setDocumentMode] = useState(initialDocumentMode);
@@ -438,6 +464,7 @@ export function WikiEditor({
   const [personalTypography, setPersonalTypography] = useState(() => normalizeWikiTypography(editableTypography));
   const [personalTypographyTemplates, setPersonalTypographyTemplates] = useState(typographyTemplates);
   const [typographyOpen, setTypographyOpen] = useState(false);
+  const [wikiShortcuts, setWikiShortcuts] = useState(loadWikiShortcutBindings);
   const [initialPreferences] = useState(loadEditorPreferences);
   const [statusVisible, setStatusVisible] = useState(initialPreferences.statusVisible); const [minimalToolbar, setMinimalToolbar] = useState(initialPreferences.minimalToolbar); const [typewriterMode, setTypewriterMode] = useState(initialPreferences.typewriterMode); const typewriterModeRef = useRef(initialPreferences.typewriterMode);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null); const version = useRef(pageVersion); const lastServerContent = useRef(initialContent); const lastServerDocumentMode = useRef(initialDocumentMode); const lastServerDocumentSettings = useRef(serializeDocumentSettings(parseDocumentSettings(initialDocumentSettings))); const documentModeRef = useRef(initialDocumentMode); const documentSettingsRef = useRef(parseDocumentSettings(initialDocumentSettings)); const pendingSave = useRef<string | null>(null); const persistContentRef = useRef<(json: string) => Promise<void>>(async () => {}); const conflictBlocked = useRef(false); const selection = useRef<{ from: number; to: number } | null>(null); const toolbarSelection = useRef<{ from: number; to: number } | null>(null); const imageInputRef = useRef<HTMLInputElement>(null); const editorRootRef = useRef<HTMLDivElement>(null); const commentRailRef = useRef<CommentRailHandle>(null); const [commentsVisible, setCommentsVisible] = useState(!focused); const previousFocused = useRef(focused); const storageKey = `wiki-draft:${pageId}`; const preferencesKey = `wiki-editor-preferences`;
@@ -640,6 +667,7 @@ export function WikiEditor({
     typewriterModeRef.current = typewriterMode;
     localStorage.setItem(preferencesKey, JSON.stringify({ statusVisible, minimalToolbar, typewriterMode }));
   }, [minimalToolbar, preferencesKey, statusVisible, typewriterMode]);
+  useEffect(() => { window.localStorage.setItem(WIKI_SHORTCUTS_KEY, JSON.stringify(wikiShortcuts)); }, [wikiShortcuts]);
   useEffect(() => {
     const online = () => { if (pendingSave.current) void persistContentRef.current(pendingSave.current); };
     const offline = () => { if (pendingSave.current) setSaveState("offline"); };
@@ -647,16 +675,82 @@ export function WikiEditor({
     window.addEventListener("offline", offline);
     return () => { window.removeEventListener("online", online); window.removeEventListener("offline", offline); };
   }, []);
-  useEffect(() => {
-    const shortcut = (event: KeyboardEvent) => {
-      if ((event.ctrlKey || event.metaKey) && event.key.toLocaleLowerCase() === "f") {
-        event.preventDefault();
-        setSearchOpen(true);
+  const handleWikiShortcut = useEffectEvent((event: KeyboardEvent) => {
+      if (!editor || event.defaultPrevented || event.isComposing) return;
+      const target = event.target as HTMLElement | null;
+      const activeElement = document.activeElement as HTMLElement | null;
+      if (!editorRootRef.current?.contains(target) && !editorRootRef.current?.contains(activeElement)) return;
+      if (target?.closest("input, textarea, select, [role=dialog], [role=menu], [data-shortcut-recorder]")) return;
+      const binding = normalizeWikiShortcut(event);
+      if (!binding) return;
+      const action = WIKI_SHORTCUT_ACTIONS.find((candidate) => wikiShortcuts[candidate] === binding);
+      if (!action && !LEGACY_TIPTAP_SHORTCUTS.has(binding)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
+      if (!action) return;
+      const run = (command: () => boolean) => command();
+      switch (action) {
+        case "undo": run(() => editor.chain().focus().undo().run()); break;
+        case "redo": run(() => editor.chain().focus().redo().run()); break;
+        case "bold": run(() => editor.chain().focus().toggleBold().run()); break;
+        case "italic": run(() => editor.chain().focus().toggleItalic().run()); break;
+        case "underline": run(() => editor.chain().focus().toggleUnderline().run()); break;
+        case "highlight": run(() => editor.chain().focus().toggleMark("highlight", { createdBy: currentUserId }).run()); break;
+        case "strike": run(() => editor.chain().focus().toggleStrike().run()); break;
+        case "inlineCode": run(() => editor.chain().focus().toggleCode().run()); break;
+        case "heading1": run(() => editor.chain().focus().toggleHeading({ level: 1 }).run()); break;
+        case "heading2": run(() => editor.chain().focus().toggleHeading({ level: 2 }).run()); break;
+        case "heading3": run(() => editor.chain().focus().toggleHeading({ level: 3 }).run()); break;
+        case "bulletList": run(() => editor.chain().focus().toggleBulletList().run()); break;
+        case "orderedList": run(() => editor.chain().focus().toggleOrderedList().run()); break;
+        case "taskList": run(() => editor.chain().focus().toggleTaskList().run()); break;
+        case "blockquote": run(() => editor.chain().focus().toggleBlockquote().run()); break;
+        case "codeBlock": run(() => editor.chain().focus().toggleCodeBlock().run()); break;
+        case "horizontalRule": run(() => editor.chain().focus().setHorizontalRule().run()); break;
+        case "pageBreak": run(() => editor.chain().focus().insertContent({ type: "pageBreak" }).run()); break;
+        case "tableOfContents": run(() => editor.chain().focus().insertContent({ type: "tableOfContents", attrs: { title: t("document.contents"), maxLevel: 3 } }).run()); break;
+        case "twoColumns": run(() => editor.chain().focus().insertContent({ type: "layoutSection", attrs: { columns: 2, gapMm: 8 }, content: [{ type: "paragraph" }, { type: "paragraph" }] }).run()); break;
+        case "search": setSearchOpen(true); break;
+        case "outline": setOutlineOpen(true); break;
+        case "inlineComment": prepareComment(); break;
+        case "toggleComments": setCommentsVisible((value) => !value); break;
+        case "documentMode": changeDocumentMode(!documentMode); break;
+        case "markdownHelp": setMarkdownHelpOpen(true); break;
+        case "typography": setTypographyOpen(true); break;
+        case "shortcuts": setShortcutsOpen(true); break;
+        case "image": imageInputRef.current?.click(); break;
+        case "pageLink": setPageLinkOpen(true); break;
+        case "externalLink": setLinkEditorRequest((value) => value + 1); break;
+        case "citation": setCitationOpen(true); break;
+        case "pdfEvidence": setEvidenceOpen(true); break;
+        case "attachment": pageActions.addAttachment(); break;
+        case "supportingSource": pageActions.linkSupportingSource(); break;
+        case "imageHighlight": run(() => editor.chain().focus().toggleMark("highlight", { createdBy: currentUserId }).run()); break;
+        case "imageComment": prepareImageComment("whole"); break;
+        case "imageRegion": prepareImageComment("region"); break;
+        case "imageWidth50": run(() => editor.chain().focus().updateAttributes("commentableImage", { widthPercent: 50 }).run()); break;
+        case "imageWidth75": run(() => editor.chain().focus().updateAttributes("commentableImage", { widthPercent: 75 }).run()); break;
+        case "imageWidth100": run(() => editor.chain().focus().updateAttributes("commentableImage", { widthPercent: 100 }).run()); break;
+        case "imageAlignLeft": run(() => editor.chain().focus().updateAttributes("commentableImage", { alignment: "left" }).run()); break;
+        case "imageAlignCenter": run(() => editor.chain().focus().updateAttributes("commentableImage", { alignment: "center" }).run()); break;
+        case "imageAlignRight": run(() => editor.chain().focus().updateAttributes("commentableImage", { alignment: "right" }).run()); break;
+        case "tableAddRow": addMarkdownTableRow(editor); break;
+        case "tableAddColumn": addMarkdownTableColumn(editor); break;
+        case "tableHeader": toggleMarkdownTableHeader(editor); break;
+        case "tableAlignLeft": setMarkdownTableCellAlignment(editor, "left"); break;
+        case "tableAlignCenter": setMarkdownTableCellAlignment(editor, "center"); break;
+        case "tableAlignRight": setMarkdownTableCellAlignment(editor, "right"); break;
+        case "tableDeleteRow": deleteMarkdownTableRow(editor); break;
+        case "tableDeleteColumn": deleteMarkdownTableColumn(editor); break;
       }
-    };
-    window.addEventListener("keydown", shortcut);
-    return () => window.removeEventListener("keydown", shortcut);
-  }, []);
+  });
+  useEffect(() => {
+    if (!editor) return;
+    const shortcut = (event: KeyboardEvent) => handleWikiShortcut(event);
+    window.addEventListener("keydown", shortcut, true);
+    return () => window.removeEventListener("keydown", shortcut, true);
+  }, [editor]);
   if (!editor) return <div className="min-h-[28rem]" />;
   const activeEditor = editor;
   function rememberToolbarSelection() {
@@ -779,47 +873,48 @@ export function WikiEditor({
     error: { label: t("editor.save.error"), icon: <AlertCircle className="size-3.5" />, className: "text-destructive" },
     conflict: { label: t("editConflict"), icon: <CloudOff className="size-3.5" />, className: "text-amber-700 dark:text-amber-400" },
   }[saveState];
+  const shortcutLabel = (action: WikiShortcutAction) => displayWikiShortcut(wikiShortcuts[action]);
 
   return <div className="relative flex flex-col gap-3"><div className="sticky top-0 z-20 flex flex-wrap items-center gap-0.5 rounded-lg border bg-background/95 p-1 shadow-sm backdrop-blur">
-    <ToolbarButton title={t("editor.toolbar.undo")} shortcut="Ctrl/⌘ Z" onClick={() => activeEditor.chain().focus().undo().run()}><Undo2 className="size-4" /></ToolbarButton>
-    <ToolbarButton title={t("editor.toolbar.redo")} shortcut="Ctrl/⌘ ⇧ Z" onClick={() => activeEditor.chain().focus().redo().run()}><Redo2 className="size-4" /></ToolbarButton>
+    <ToolbarButton title={t("editor.toolbar.undo")} shortcut={shortcutLabel("undo")} onClick={() => activeEditor.chain().focus().undo().run()}><Undo2 className="size-4" /></ToolbarButton>
+    <ToolbarButton title={t("editor.toolbar.redo")} shortcut={shortcutLabel("redo")} onClick={() => activeEditor.chain().focus().redo().run()}><Redo2 className="size-4" /></ToolbarButton>
     <span className="mx-1 h-5 w-px bg-border" />
-    <ToolbarButton title={t("editor.toolbar.bold")} shortcut="Ctrl/⌘ B" active={activeEditor.isActive("bold")} onClick={() => activeEditor.chain().focus().toggleBold().run()}><Bold className="size-4" /></ToolbarButton>
-    <ToolbarButton title={t("editor.toolbar.italic")} shortcut="Ctrl/⌘ I" active={activeEditor.isActive("italic")} onClick={() => activeEditor.chain().focus().toggleItalic().run()}><Italic className="size-4" /></ToolbarButton>
+    <ToolbarButton title={t("editor.toolbar.bold")} shortcut={shortcutLabel("bold")} active={activeEditor.isActive("bold")} onClick={() => activeEditor.chain().focus().toggleBold().run()}><Bold className="size-4" /></ToolbarButton>
+    <ToolbarButton title={t("editor.toolbar.italic")} shortcut={shortcutLabel("italic")} active={activeEditor.isActive("italic")} onClick={() => activeEditor.chain().focus().toggleItalic().run()}><Italic className="size-4" /></ToolbarButton>
     {!minimalToolbar && <>
-      <ToolbarButton title={t("editor.toolbar.heading1")} active={activeEditor.isActive("heading", { level: 1 })} onClick={() => activeEditor.chain().focus().toggleHeading({ level: 1 }).run()}><Heading1 className="size-4" /></ToolbarButton>
-      <ToolbarButton title={t("editor.toolbar.heading2")} active={activeEditor.isActive("heading", { level: 2 })} onClick={() => activeEditor.chain().focus().toggleHeading({ level: 2 }).run()}><Heading2 className="size-4" /></ToolbarButton>
-      <ToolbarButton title={t("editor.toolbar.bulletList")} active={activeEditor.isActive("bulletList")} onClick={() => activeEditor.chain().focus().toggleBulletList().run()}><List className="size-4" /></ToolbarButton>
-      <ToolbarButton title={t("editor.toolbar.orderedList")} active={activeEditor.isActive("orderedList")} onClick={() => activeEditor.chain().focus().toggleOrderedList().run()}><ListOrdered className="size-4" /></ToolbarButton>
+      <ToolbarButton title={t("editor.toolbar.heading1")} shortcut={shortcutLabel("heading1")} active={activeEditor.isActive("heading", { level: 1 })} onClick={() => activeEditor.chain().focus().toggleHeading({ level: 1 }).run()}><Heading1 className="size-4" /></ToolbarButton>
+      <ToolbarButton title={t("editor.toolbar.heading2")} shortcut={shortcutLabel("heading2")} active={activeEditor.isActive("heading", { level: 2 })} onClick={() => activeEditor.chain().focus().toggleHeading({ level: 2 }).run()}><Heading2 className="size-4" /></ToolbarButton>
+      <ToolbarButton title={t("editor.toolbar.bulletList")} shortcut={shortcutLabel("bulletList")} active={activeEditor.isActive("bulletList")} onClick={() => activeEditor.chain().focus().toggleBulletList().run()}><List className="size-4" /></ToolbarButton>
+      <ToolbarButton title={t("editor.toolbar.orderedList")} shortcut={shortcutLabel("orderedList")} active={activeEditor.isActive("orderedList")} onClick={() => activeEditor.chain().focus().toggleOrderedList().run()}><ListOrdered className="size-4" /></ToolbarButton>
     </>}
     <ToolbarMenu label={t("editor.toolbar.format")} icon={<MoreHorizontal className="size-4" />} onPointerDown={rememberToolbarSelection}>
       <DropdownMenuGroup>
         <DropdownMenuLabel>{t("editor.toolbar.format")}</DropdownMenuLabel>
-        <DropdownMenuItem onClick={() => toolbarChain().toggleHeading({ level: 3 }).run()}><Heading3 />{t("editor.toolbar.heading3")}</DropdownMenuItem>
-        <DropdownMenuItem onClick={() => toolbarChain().toggleUnderline().run()}><UnderlineIcon />{t("editor.toolbar.underline")}</DropdownMenuItem>
-        <DropdownMenuItem onClick={() => toolbarChain().toggleMark("highlight", { createdBy: currentUserId }).run()}><Highlighter />{t("editor.toolbar.highlight")}</DropdownMenuItem>
-        <DropdownMenuItem onClick={() => toolbarChain().toggleStrike().run()}><Strikethrough />{t("editor.toolbar.strike")}</DropdownMenuItem>
-        <DropdownMenuItem onClick={() => toolbarChain().toggleCode().run()}><Code />{t("editor.toolbar.inlineCode")}</DropdownMenuItem>
+        <DropdownMenuItem onClick={() => toolbarChain().toggleHeading({ level: 3 }).run()}><Heading3 />{t("editor.toolbar.heading3")}<DropdownMenuShortcut>{shortcutLabel("heading3")}</DropdownMenuShortcut></DropdownMenuItem>
+        <DropdownMenuItem onClick={() => toolbarChain().toggleUnderline().run()}><UnderlineIcon />{t("editor.toolbar.underline")}<DropdownMenuShortcut>{shortcutLabel("underline")}</DropdownMenuShortcut></DropdownMenuItem>
+        <DropdownMenuItem onClick={() => toolbarChain().toggleMark("highlight", { createdBy: currentUserId }).run()}><Highlighter />{t("editor.toolbar.highlight")}<DropdownMenuShortcut>{shortcutLabel("highlight")}</DropdownMenuShortcut></DropdownMenuItem>
+        <DropdownMenuItem onClick={() => toolbarChain().toggleStrike().run()}><Strikethrough />{t("editor.toolbar.strike")}<DropdownMenuShortcut>{shortcutLabel("strike")}</DropdownMenuShortcut></DropdownMenuItem>
+        <DropdownMenuItem onClick={() => toolbarChain().toggleCode().run()}><Code />{t("editor.toolbar.inlineCode")}<DropdownMenuShortcut>{shortcutLabel("inlineCode")}</DropdownMenuShortcut></DropdownMenuItem>
         <DropdownMenuSeparator />
-        <DropdownMenuItem onClick={() => toolbarChain().toggleTaskList().run()}><ListTodo />{t("editor.toolbar.taskList")}</DropdownMenuItem>
-        <DropdownMenuItem onClick={() => toolbarChain().toggleBlockquote().run()}><Quote />{t("editor.toolbar.blockquote")}</DropdownMenuItem>
-        <DropdownMenuItem onClick={() => toolbarChain().toggleCodeBlock().run()}><Code />{t("editor.toolbar.codeBlock")}</DropdownMenuItem>
+        <DropdownMenuItem onClick={() => toolbarChain().toggleTaskList().run()}><ListTodo />{t("editor.toolbar.taskList")}<DropdownMenuShortcut>{shortcutLabel("taskList")}</DropdownMenuShortcut></DropdownMenuItem>
+        <DropdownMenuItem onClick={() => toolbarChain().toggleBlockquote().run()}><Quote />{t("editor.toolbar.blockquote")}<DropdownMenuShortcut>{shortcutLabel("blockquote")}</DropdownMenuShortcut></DropdownMenuItem>
+        <DropdownMenuItem onClick={() => toolbarChain().toggleCodeBlock().run()}><Code />{t("editor.toolbar.codeBlock")}<DropdownMenuShortcut>{shortcutLabel("codeBlock")}</DropdownMenuShortcut></DropdownMenuItem>
       </DropdownMenuGroup>
     </ToolbarMenu>
     <EditorLinkPopover editor={activeEditor} pages={allPages} request={linkEditorRequest} />
-    {!minimalToolbar && <><PageLinkPicker editor={editor} pages={allPages} open={pageLinkOpen} onOpenChange={setPageLinkOpen} /><CitationPicker editor={editor} sources={sources} locale={citationLocale} open={citationOpen} onOpenChange={setCitationOpen} /><EvidencePicker editor={editor} pageId={pageId} locale={citationLocale} open={evidenceOpen} onOpenChange={setEvidenceOpen} /></>}
+    <PageLinkPicker editor={editor} pages={allPages} open={pageLinkOpen} onOpenChange={setPageLinkOpen} /><CitationPicker editor={editor} sources={sources} locale={citationLocale} open={citationOpen} onOpenChange={setCitationOpen} /><EvidencePicker editor={editor} pageId={pageId} locale={citationLocale} open={evidenceOpen} onOpenChange={setEvidenceOpen} />
     <ToolbarMenu label={t("editor.toolbar.insert")} icon={<ImagePlus className="size-4" />} onPointerDown={rememberToolbarSelection}>
-      <DropdownMenuItem onClick={() => imageInputRef.current?.click()}><ImagePlus />{t("insertImage")}</DropdownMenuItem>
-      <DropdownMenuItem onClick={() => toolbarChain().setHorizontalRule().run()}><Minus />{t("slash.commands.horizontalRule.label")}</DropdownMenuItem>
-      <DropdownMenuItem onClick={() => pageActions.addAttachment()}><Paperclip />{t("slash.commands.attachment.label")}</DropdownMenuItem>
-      <DropdownMenuItem onClick={() => pageActions.linkSupportingSource()}><BookMarked />{t("slash.commands.supportingSource.label")}</DropdownMenuItem>
+      <DropdownMenuItem onClick={() => imageInputRef.current?.click()}><ImagePlus />{t("insertImage")}<DropdownMenuShortcut>{shortcutLabel("image")}</DropdownMenuShortcut></DropdownMenuItem>
+      <DropdownMenuItem onClick={() => toolbarChain().setHorizontalRule().run()}><Minus />{t("slash.commands.horizontalRule.label")}<DropdownMenuShortcut>{shortcutLabel("horizontalRule")}</DropdownMenuShortcut></DropdownMenuItem>
+      <DropdownMenuItem onClick={() => pageActions.addAttachment()}><Paperclip />{t("slash.commands.attachment.label")}<DropdownMenuShortcut>{shortcutLabel("attachment")}</DropdownMenuShortcut></DropdownMenuItem>
+      <DropdownMenuItem onClick={() => pageActions.linkSupportingSource()}><BookMarked />{t("slash.commands.supportingSource.label")}<DropdownMenuShortcut>{shortcutLabel("supportingSource")}</DropdownMenuShortcut></DropdownMenuItem>
     </ToolbarMenu>
     <input ref={imageInputRef} data-testid="wiki-inline-image-input" hidden type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => { const file = event.target.files?.[0]; if (file) void insertInlineImage(file); event.target.value = ""; }} />
     <span className="mx-1 h-5 w-px bg-border" />
-    <ToolbarButton title={t("editor.search.title")} shortcut="Ctrl/⌘ F" active={searchOpen} onClick={() => setSearchOpen((value) => !value)}><Search className="size-4" /></ToolbarButton>
-    <ToolbarButton title={t("editor.outline.title")} active={outlineOpen} onClick={() => setOutlineOpen(true)}><ListTree className="size-4" /></ToolbarButton>
-    <ToolbarButton title={t("inlineComment")} onClick={prepareComment}><MessageSquareText className="size-4" /></ToolbarButton>
-    <ToolbarButton title={commentsVisible ? t("hideComments") : t("showComments")} active={commentsVisible} onClick={() => setCommentsVisible((value) => !value)}>{commentsVisible ? <EyeOff className="size-4" /> : <Eye className="size-4" />}</ToolbarButton>
+    <ToolbarButton title={t("editor.search.title")} shortcut={shortcutLabel("search")} active={searchOpen} onClick={() => setSearchOpen((value) => !value)}><Search className="size-4" /></ToolbarButton>
+    <ToolbarButton title={t("editor.outline.title")} shortcut={shortcutLabel("outline")} active={outlineOpen} onClick={() => setOutlineOpen(true)}><ListTree className="size-4" /></ToolbarButton>
+    <ToolbarButton title={t("inlineComment")} shortcut={shortcutLabel("inlineComment")} onClick={prepareComment}><MessageSquareText className="size-4" /></ToolbarButton>
+    <ToolbarButton title={commentsVisible ? t("hideComments") : t("showComments")} shortcut={shortcutLabel("toggleComments")} active={commentsVisible} onClick={() => setCommentsVisible((value) => !value)}>{commentsVisible ? <EyeOff className="size-4" /> : <Eye className="size-4" />}</ToolbarButton>
     <Button
       type="button"
       data-testid="document-mode-toggle"
@@ -831,10 +926,11 @@ export function WikiEditor({
     >
       <FileText className="size-3.5" />{t("document.toggle")}
     </Button>
-    <Button type="button" data-testid="markdown-help-button" size="sm" variant="ghost" className="gap-1.5 px-2 text-xs" onClick={() => setMarkdownHelpOpen(true)}><BookMarked className="size-3.5" />{t("markdownHelp.button")}</Button>
-    <ToolbarButton title={t("editor.preferences.title")} active={typographyOpen} onClick={() => setTypographyOpen(true)}>
+    <Button type="button" data-testid="markdown-help-button" size="sm" variant="ghost" className="gap-1.5 px-2 text-xs" title={shortcutLabel("markdownHelp")} onClick={() => setMarkdownHelpOpen(true)}><BookMarked className="size-3.5" />{t("markdownHelp.button")}</Button>
+    <ToolbarButton title={t("editor.preferences.title")} shortcut={shortcutLabel("typography")} active={typographyOpen} onClick={() => setTypographyOpen(true)}>
       <Settings2 className="size-4" />
     </ToolbarButton>
+    <ToolbarButton title={t("shortcuts.title")} shortcut={shortcutLabel("shortcuts")} active={shortcutsOpen} onClick={() => setShortcutsOpen(true)}><Keyboard className="size-4" /></ToolbarButton>
     <span role={saveState === "error" || saveState === "conflict" ? "alert" : "status"} aria-live={saveState === "error" || saveState === "conflict" ? "assertive" : "polite"} className={`ml-auto flex items-center gap-1 px-2 text-xs ${savePresentation.className}`}>{savePresentation.icon}{savePresentation.label}</span>
     {(saveState === "error" || saveState === "offline") && pendingSave.current && <Button type="button" size="xs" variant="ghost" onClick={() => void persistContent(pendingSave.current!)}>{t("editor.save.retry")}</Button>}
   </div>
@@ -912,6 +1008,7 @@ export function WikiEditor({
   {regionTarget && <ImageRegionSelector rootRef={editorRootRef} {...regionTarget} onCancel={() => setRegionTarget(null)} onSelect={(anchor) => { setRegionTarget(null); openCommentComposer(anchor); }} />}
   <Dialog open={commentOpen} onOpenChange={(open) => { setCommentOpen(open); if (!open) setPendingAnchor(null); }}><DialogContent className="w-[min(26rem,calc(100vw-2rem))]"><DialogHeader><DialogTitle>{pendingAnchor?.type === "image" ? t("imageComment") : t("inlineComment")}</DialogTitle></DialogHeader>{pendingAnchor?.type !== "page" && pendingAnchor && <blockquote className="border-l-2 border-amber-400 pl-3 text-sm italic text-muted-foreground">{pendingAnchor.type === "text" ? pendingAnchor.quote : pendingAnchor.label}</blockquote>}<Textarea autoFocus value={commentBody} onChange={(event) => setCommentBody(event.target.value)} placeholder={t("commentPlaceholder")} /><Select value={assigneeId} onValueChange={(value) => setAssigneeId(value ?? "none")}><SelectTrigger className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="none">{t("unassigned")}</SelectItem>{users.map((person) => <SelectItem key={person.id} value={person.id}>{person.name}</SelectItem>)}</SelectContent></Select><Button onClick={submitComment} disabled={!commentBody.trim()}>{t("addComment")}</Button></DialogContent></Dialog>
   <MarkdownReferenceDialog open={markdownHelpOpen} onOpenChange={setMarkdownHelpOpen} />
+  <WikiShortcutsDialog open={shortcutsOpen} onOpenChange={setShortcutsOpen} bindings={wikiShortcuts} onBindingsChange={setWikiShortcuts} />
   {typographyOpen && <WikiTypographyDialog
     editorPreferences={{ minimalToolbar, statusVisible, typewriterMode }}
     isPrimaryAuthor={isPrimaryAuthor}

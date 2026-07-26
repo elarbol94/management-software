@@ -143,6 +143,12 @@ export function matchMarkdownShortcut(textBeforeCursor: string): MarkdownShortcu
     };
   }
 
+  const arrow = textBeforeCursor.match(/(<->|-->|->|<-)$/);
+  if (arrow?.[1]) {
+    const replacements: Record<string, string> = { "->": "→", "<-": "←", "-->": "⟶", "<->": "↔" };
+    return { kind: "text", raw: arrow[1], replacement: replacements[arrow[1]], tailLength: 0 };
+  }
+
   const emoji = textBeforeCursor.match(/(?:^|\s)(:([a-z0-9_+-]+):)$/i);
   const replacement = emoji?.[2] ? emojiShortcodes[emoji[2].toLowerCase()] : undefined;
   if (emoji?.[1] && replacement) {

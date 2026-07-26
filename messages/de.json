@@ -911,9 +911,20 @@
       "description": "Syntax eingeben und mit Leertaste oder Eingabetaste umwandeln. Blockbefehle werden beim Abschluss der Zeile aktiviert.",
       "groups": { "inline": "Im Text", "blocks": "Blöcke", "structured": "Strukturierte Inhalte" },
       "items": {
-        "bold": "Fett", "italic": "Kursiv", "strikethrough": "Durchgestrichen", "code": "Inline-Code", "link": "Externer Link", "highlight": "Hervorheben", "subscript": "Tiefgestellt", "superscript": "Hochgestellt", "emoji": "Emoji", "footnoteReference": "Fußnotenverweis",
+        "bold": "Fett", "italic": "Kursiv", "strikethrough": "Durchgestrichen", "code": "Inline-Code", "link": "Externer Link", "highlight": "Hervorheben", "subscript": "Tiefgestellt", "superscript": "Hochgestellt", "arrows": "Pfeile", "emoji": "Emoji", "footnoteReference": "Fußnotenverweis",
         "headings": "Überschrift", "headingId": "Überschrift mit ID", "blockquote": "Zitatblock", "bulletList": "Aufzählung", "orderedList": "Nummerierte Liste", "taskList": "Aufgabenliste", "divider": "Trennlinie", "fencedCode": "Codeblock",
         "image": "Bild", "table": "Tabelle · Zellen danach ausfüllen", "definitionList": "Definitionsliste", "footnoteDefinition": "Fußnote"
+      }
+    },
+    "shortcuts": {
+      "title": "Tastenkürzel", "description": "Klicke auf ein Kürzel und drücke anschließend Strg oder Cmd plus die gewünschte Taste.", "recording": "Taste drücken…", "requiresModifier": "Verwende Strg oder Cmd zusammen mit einer Taste.", "reserved": "Diese Taste ist reserviert.", "conflict": "Dieses Kürzel wird bereits für „{action}“ verwendet.", "resetAll": "Alle zurücksetzen", "resetOne": "{action} zurücksetzen", "done": "Fertig",
+      "groups": { "editing": "Bearbeiten", "structure": "Struktur", "wiki": "Wiki und Ansicht", "insert": "Einfügen", "context": "Auswahl: Bild und Tabelle" },
+      "actions": {
+        "undo": "Rückgängig", "redo": "Wiederholen", "bold": "Fett", "italic": "Kursiv", "underline": "Unterstreichen", "highlight": "Hervorheben", "strike": "Durchstreichen", "inlineCode": "Inline-Code",
+        "heading1": "Überschrift 1", "heading2": "Überschrift 2", "heading3": "Überschrift 3", "bulletList": "Aufzählung", "orderedList": "Nummerierte Liste", "taskList": "Aufgabenliste", "blockquote": "Zitatblock", "codeBlock": "Codeblock", "horizontalRule": "Trennlinie", "pageBreak": "Seitenumbruch", "tableOfContents": "Inhaltsverzeichnis", "twoColumns": "Zweispaltiger Abschnitt",
+        "search": "Suchen und ersetzen", "outline": "Dokumentgliederung", "inlineComment": "Kommentar erstellen", "toggleComments": "Kommentare ein-/ausblenden", "documentMode": "Dokumentmodus", "markdownHelp": "Markdown-Hilfe", "typography": "Schreibbild", "shortcuts": "Tastenkürzel",
+        "image": "Bild einfügen", "pageLink": "Wiki-Seite verlinken", "externalLink": "Externen Link einfügen", "citation": "Zitat einfügen", "pdfEvidence": "PDF-Nachweis einfügen", "attachment": "Anhang hinzufügen", "supportingSource": "Unterstützende Quelle verknüpfen",
+        "imageHighlight": "Bild hervorheben", "imageComment": "Bild kommentieren", "imageRegion": "Bildbereich kommentieren", "imageWidth50": "Bildbreite 50 %", "imageWidth75": "Bildbreite 75 %", "imageWidth100": "Bildbreite 100 %", "imageAlignLeft": "Bild links ausrichten", "imageAlignCenter": "Bild zentrieren", "imageAlignRight": "Bild rechts ausrichten", "tableAddRow": "Tabellenzeile hinzufügen", "tableAddColumn": "Tabellenspalte hinzufügen", "tableHeader": "Tabellenkopf umschalten", "tableAlignLeft": "Tabellenzelle links ausrichten", "tableAlignCenter": "Tabellenzelle zentrieren", "tableAlignRight": "Tabellenzelle rechts ausrichten", "tableDeleteRow": "Aktuelle Tabellenzeile löschen", "tableDeleteColumn": "Aktuelle Tabellenspalte löschen"
       }
     },
     "document": {
