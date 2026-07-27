@@ -3,6 +3,8 @@ import { db, sqlite } from "@/db";
 import {
   user,
   userProfilePreferences,
+  taskContexts,
+  tasks,
   wikiCommentThreads,
   wikiComments,
   wikiFavorites,
@@ -430,15 +432,21 @@ export function listNotifications(userId: string) {
       createdAt: wikiNotifications.createdAt,
       pageId: wikiNotifications.pageId,
       threadId: wikiNotifications.threadId,
+      taskId: wikiNotifications.taskId,
       actorName: user.name,
       actorMarkColor: userProfilePreferences.markColor,
       pageTitle: wikiPages.title,
       pageSlug: wikiPages.slug,
+      taskTitle: tasks.title,
+      taskKind: tasks.kind,
+      taskRoute: taskContexts.route,
     })
     .from(wikiNotifications)
     .innerJoin(user, eq(wikiNotifications.actorId, user.id))
     .leftJoin(userProfilePreferences, eq(wikiNotifications.actorId, userProfilePreferences.userId))
     .leftJoin(wikiPages, eq(wikiNotifications.pageId, wikiPages.id))
+    .leftJoin(tasks, eq(wikiNotifications.taskId, tasks.id))
+    .leftJoin(taskContexts, eq(wikiNotifications.taskId, taskContexts.taskId))
     .where(eq(wikiNotifications.userId, userId))
     .orderBy(desc(wikiNotifications.createdAt))
     .limit(100)

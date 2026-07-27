@@ -6,9 +6,10 @@ import { getCitationSourcesForPage, getPageComments, getPageResearchMeta, listSo
 import { WikiShell } from "@/modules/wiki/components/wiki-shell";
 import { listDocumentTemplates } from "@/modules/wiki/document-queries";
 import { getWikiTypographyForUser, getWikiTypographyProfileForUser } from "@/modules/wiki/lib/wiki-typography.server";
+import { listDeadlinesForContext, listTasksForContext } from "@/modules/projects/queries";
 
-export default async function WikiPage({ params }: { params: Promise<{ slug: string }> }) {
-  const currentUser = await requireUser(); const { slug } = await params;
+export default async function WikiPage({ params, searchParams }: { params: Promise<{ slug: string }>; searchParams: Promise<{ task?: string; deadline?: string }> }) {
+  const currentUser = await requireUser(); const [{ slug }, query] = await Promise.all([params, searchParams]);
   const page = getPageBySlug(decodeURIComponent(slug)); if (!page) notFound();
   const meta = getPageMeta(page.id);
   const currentUserTypography = getWikiTypographyProfileForUser(currentUser.id);
@@ -23,6 +24,10 @@ export default async function WikiPage({ params }: { params: Promise<{ slug: str
     typography={getWikiTypographyForUser(page.createdBy)}
     editableTypography={currentUserTypography.typography}
     typographyTemplates={currentUserTypography.templates}
+    tasks={listTasksForContext("wikiPage", page.id)}
+    deadlines={listDeadlinesForContext("wikiPage", page.id)}
+    focusTaskId={query.task}
+    focusDeadlineId={query.deadline}
     meta={meta ? { updatedAt: meta.updatedAt.getTime(), updatedByName: meta.updatedByName } : null}
   />;
 }

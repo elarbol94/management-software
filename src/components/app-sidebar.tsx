@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useTranslations } from "next-intl";
-import { LayoutDashboard, Menu, Settings, X } from "lucide-react";
+import { CalendarClock, ClipboardPlus, LayoutDashboard, Menu, Settings, X } from "lucide-react";
 import { useFocusMode } from "@/components/focus-mode";
 import { UserMenu } from "@/components/user-menu";
 import { Button } from "@/components/ui/button";
@@ -24,6 +24,8 @@ import {
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { moduleNav } from "@/modules/registry";
+import { useTaskCreator } from "@/modules/tasks/components/task-create-provider";
+import { useDeadlineCreator } from "@/modules/tasks/components/deadline-create-provider";
 
 function NavLink({
   href,
@@ -83,6 +85,10 @@ function AppNavigation({
   navigationId: string;
 }) {
   const t = useTranslations("nav");
+  const tTasks = useTranslations("tasks");
+  const tDeadlines = useTranslations("deadlines");
+  const { openTaskCreator } = useTaskCreator();
+  const { openDeadlineCreator } = useDeadlineCreator();
   const isActive = (href: string) =>
     href === "/" ? pathname === "/" : pathname.startsWith(href);
 
@@ -114,6 +120,39 @@ function AppNavigation({
               compact={compact}
               onNavigate={onNavigate}
             />
+            <div className="my-1 border-t" />
+            <button
+              type="button"
+              onClick={() => {
+                openTaskCreator();
+                onNavigate?.();
+              }}
+              className={cn(
+                "flex h-10 items-center rounded-md text-sm font-medium text-muted-foreground transition-colors hover:bg-accent/50 hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                compact ? "justify-center px-0" : "gap-3 px-3",
+              )}
+              aria-label={tTasks("createTask")}
+              title={`${tTasks("createTask")} · ${tTasks("globalShortcut")}`}
+            >
+              <ClipboardPlus className="size-5" />
+              {!compact && <span className="truncate">{tTasks("createTask")}</span>}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                openDeadlineCreator();
+                onNavigate?.();
+              }}
+              className={cn(
+                "flex h-10 items-center rounded-md text-sm font-medium text-muted-foreground transition-colors hover:bg-accent/50 hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                compact ? "justify-center px-0" : "gap-3 px-3",
+              )}
+              aria-label={tDeadlines("createDeadline")}
+              title={`${tDeadlines("createDeadline")} · ${tDeadlines("globalShortcut")}`}
+            >
+              <CalendarClock className="size-5" />
+              {!compact && <span className="truncate">{tDeadlines("createDeadline")}</span>}
+            </button>
           </div>
         </nav>
         <div className={cn("border-t", compact ? "px-2 py-3" : "p-3")}>

@@ -1,7 +1,7 @@
 "use server";
 
 import { z } from "zod";
-import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { db } from "@/db";
 import {
@@ -13,8 +13,11 @@ import {
   scheduleChangeItems,
   scheduleChangeSets,
   scheduleConstraintTypes,
+  taskContexts,
   taskDependencies,
   tasks,
+  user,
+  wikiNotifications,
 } from "@/db/schema";
 import { requireUserOrThrow } from "@/lib/auth";
 import {
@@ -435,7 +438,7 @@ function projectHierarchyRows(projectId: string) {
   return db
     .select({
       id: tasks.id,
-      projectId: tasks.projectId,
+      projectId: sql<string>`${tasks.projectId}`,
       parentTaskId: tasks.parentTaskId,
       startDate: tasks.startDate,
       dueDate: tasks.dueDate,
@@ -456,8 +459,9 @@ function projectHierarchyRows(projectId: string) {
  */
 function syncParentSummary(parentTaskId: string): void {
   const parent = db.select().from(tasks).where(eq(tasks.id, parentTaskId)).get();
-  if (!parent) return;
-  const projectTasks = projectHierarchyRows(parent.projectId);
+  if (!parent?.projectId) return;
+  const projectId = parent.projectId;
+  const projectTasks = projectHierarchyRows(projectId);
   const descendants = taskDescendants(projectTasks, parentTaskId);
   if (descendants.length === 0) return;
   const leaves = leafTasks([projectTasks.find((task) => task.id === parentTaskId)!, ...descendants])
@@ -467,7 +471,7 @@ function syncParentSummary(parentTaskId: string): void {
   const columns = db
     .select()
     .from(projectColumns)
-    .where(eq(projectColumns.projectId, parent.projectId))
+    .where(eq(projectColumns.projectId, projectId))
     .orderBy(asc(projectColumns.sortOrder))
     .all();
   const allComplete = leaves.length > 0 && leaves.every((child) => child.columnIsCompleted);
@@ -485,6 +489,11 @@ function syncParentSummary(parentTaskId: string): void {
       dueDate: envelope.dueDate,
       progress: allComplete ? 100 : weightedProgress(leaves),
       columnId,
+      status: allComplete ? "done" : "open",
+      completedAt: allComplete ? parent.completedAt ?? new Date() : null,
+      lastOpenColumnId: allComplete
+        ? parent.lastOpenColumnId ?? (currentColumn?.isCompleted ? null : currentColumn?.id ?? null)
+        : columnId,
       isMilestone: false,
       // A summary's dates are derived, so a constraint on it would never apply.
       constraintType: "asap",
@@ -552,7 +561,7 @@ function syncProjectBounds(projectId: string): void {
 
 function syncTaskAncestors(taskId: string): void {
   const task = db.select().from(tasks).where(eq(tasks.id, taskId)).get();
-  if (!task) return;
+  if (!task?.projectId) return;
   const rows = projectHierarchyRows(task.projectId);
   if (rows.some((candidate) => candidate.parentTaskId === taskId)) {
     syncParentSummary(taskId);
@@ -577,11 +586,12 @@ export async function upsertTask(input: TaskInput): Promise<{ id: string }> {
   const hierarchyTasks = db
     .select({
       id: tasks.id,
-      projectId: tasks.projectId,
+      projectId: sql<string>`${tasks.projectId}`,
       parentTaskId: tasks.parentTaskId,
       isMilestone: tasks.isMilestone,
     })
     .from(tasks)
+    .where(isNotNull(tasks.projectId))
     .all();
   assertTaskHierarchy(hierarchyTasks, {
     id: data.id ?? "__new__",
@@ -646,6 +656,13 @@ export async function upsertTask(input: TaskInput): Promise<{ id: string }> {
     constraintType: existingChildren.length > 0 ? "asap" as const : data.constraintType,
     constraintDate: existingChildren.length > 0 ? null : data.constraintDate,
     priority: data.priority,
+    status: targetColumn.isCompleted ? "done" as const : "open" as const,
+    completedAt: targetColumn.isCompleted ? new Date() : null,
+    lastOpenColumnId: targetColumn.isCompleted
+      ? existing?.status === "open"
+        ? existing.columnId
+        : existing?.lastOpenColumnId ?? null
+      : data.columnId,
     updatedAt: new Date(),
   };
   const scheduleDatesChanged = Boolean(
@@ -782,6 +799,280 @@ export async function upsertTask(input: TaskInput): Promise<{ id: string }> {
   return { id };
 }
 
+const contextualTaskSchema = z.object({
+  id: z.string().optional(),
+  kind: z.enum(["task", "deadline"]).default("task"),
+  title: z.string().trim().min(1).max(300),
+  description: z.string().trim().max(5000).default(""),
+  assigneeId: z.string().nullable().default(null),
+  priority: z.enum(["low", "medium", "high"]).default("medium"),
+  dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().default(null),
+  deadlineAt: z.string().datetime().nullable().default(null),
+  localDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().default(null),
+  status: z.enum(["open", "done"]).default("open"),
+  projectId: z.string().nullable().default(null),
+  context: z.object({
+    type: z.enum(["wikiPage", "wikiSource", "pdf", "app"]),
+    entityId: z.string().max(300).default(""),
+    route: z.string().min(1).max(1000),
+    label: z.string().max(300).default(""),
+    anchorJson: z.string().max(20_000).default("{}"),
+  }).nullable().default(null),
+}).superRefine((data, context) => {
+  if (data.kind === "deadline" && (!data.deadlineAt || !data.localDate)) {
+    context.addIssue({
+      code: "custom",
+      path: ["deadlineAt"],
+      message: "Deadline timestamp and local date are required",
+    });
+  }
+});
+
+export type ContextualTaskInput = z.input<typeof contextualTaskSchema>;
+export type ContextualDeadlineInput = Omit<
+  ContextualTaskInput,
+  "kind" | "priority" | "dueDate" | "projectId"
+> & {
+  deadlineAt: string;
+  localDate: string;
+};
+
+export async function getContextualTaskOptions() {
+  await requireUserOrThrow();
+  return {
+    members: db
+      .select({ id: user.id, name: user.name })
+      .from(user)
+      .orderBy(asc(user.name))
+      .all(),
+    projects: db
+      .select({ id: projects.id, name: projects.name })
+      .from(projects)
+      .where(eq(projects.status, "active"))
+      .orderBy(asc(projects.name))
+      .all(),
+  };
+}
+
+function safeInternalRoute(route: string) {
+  if (!route.startsWith("/") || route.startsWith("//")) {
+    throw new Error("Task context must use an internal route");
+  }
+  return route;
+}
+
+function firstProjectColumn(projectId: string, completed: boolean) {
+  return db
+    .select()
+    .from(projectColumns)
+    .where(
+      and(
+        eq(projectColumns.projectId, projectId),
+        eq(projectColumns.isCompleted, completed),
+      ),
+    )
+    .orderBy(asc(projectColumns.sortOrder))
+    .get();
+}
+
+function nextContextTaskSortOrder(columnId: string | null) {
+  const max = db
+    .select({ value: sql<number>`coalesce(max(${tasks.sortOrder}), 0)` })
+    .from(tasks)
+    .where(columnId ? eq(tasks.columnId, columnId) : isNull(tasks.projectId))
+    .get()?.value ?? 0;
+  return max + SORT_GAP;
+}
+
+function notifyTaskAssignment(input: {
+  taskId: string;
+  actorId: string;
+  previousAssigneeId: string | null | undefined;
+  assigneeId: string | null;
+  pageId?: string | null;
+}) {
+  if (
+    input.assigneeId &&
+    input.assigneeId !== input.actorId &&
+    input.assigneeId !== input.previousAssigneeId
+  ) {
+    db.insert(wikiNotifications).values({
+      userId: input.assigneeId,
+      actorId: input.actorId,
+      type: "assignment",
+      pageId: input.pageId ?? null,
+      taskId: input.taskId,
+    }).run();
+  }
+}
+
+export async function upsertContextualTask(
+  input: ContextualTaskInput,
+): Promise<{ id: string }> {
+  const currentUser = await requireUserOrThrow();
+  const data = contextualTaskSchema.parse(input);
+  const existing = data.id
+    ? db.select().from(tasks).where(eq(tasks.id, data.id)).get()
+    : undefined;
+  if (data.id && !existing) throw new Error("Task not found");
+  if (data.assigneeId) {
+    const member = db.select({ id: user.id }).from(user).where(eq(user.id, data.assigneeId)).get();
+    if (!member) throw new Error("Assignee not found");
+  }
+
+  if (existing && existing.kind !== data.kind) {
+    throw new Error("Task kind cannot be changed");
+  }
+  const projectId = data.kind === "deadline"
+    ? null
+    : data.projectId ?? existing?.projectId ?? null;
+  if (projectId && !db.select({ id: projects.id }).from(projects).where(eq(projects.id, projectId)).get()) {
+    throw new Error("Project not found");
+  }
+  const openColumn = projectId ? firstProjectColumn(projectId, false) : undefined;
+  const doneColumn = projectId ? firstProjectColumn(projectId, true) : undefined;
+  const existingColumn = existing?.columnId && existing.projectId === projectId
+    ? db.select().from(projectColumns).where(eq(projectColumns.id, existing.columnId)).get()
+    : undefined;
+  const desiredColumn = existingColumn && existing?.status === data.status
+    ? existingColumn
+    : data.status === "done"
+      ? doneColumn ?? openColumn
+      : openColumn;
+  if (projectId && !desiredColumn) throw new Error("Project has no task column");
+  const columnId = desiredColumn?.id ?? null;
+  const now = new Date();
+  let id = data.id;
+
+  db.transaction((tx) => {
+    const values = {
+      kind: data.kind,
+      projectId,
+      columnId,
+      lastOpenColumnId: data.status === "open"
+        ? columnId
+        : existing?.lastOpenColumnId ?? openColumn?.id ?? null,
+      title: data.title,
+      description: data.kind === "deadline"
+        ? data.description
+        : existing?.description ?? data.description,
+      assigneeId: data.assigneeId,
+      dueDate: data.kind === "deadline" ? data.localDate : data.dueDate,
+      startDate: data.kind === "deadline" ? data.localDate : existing?.startDate ?? null,
+      deadlineAt: data.kind === "deadline" ? new Date(data.deadlineAt!) : null,
+      isMilestone: data.kind === "deadline" ? true : existing?.isMilestone ?? false,
+      priority: data.priority,
+      status: data.status,
+      completedAt: data.status === "done" ? existing?.completedAt ?? now : null,
+      progress: data.status === "done" ? 100 : Math.min(existing?.progress ?? 0, 99),
+      updatedAt: now,
+    };
+    if (existing && id) {
+      tx.update(tasks).set(values).where(eq(tasks.id, id)).run();
+    } else {
+      id = tx.insert(tasks).values({
+        ...values,
+        parentTaskId: null,
+        sortOrder: nextContextTaskSortOrder(columnId),
+        createdBy: currentUser.id,
+      }).returning({ id: tasks.id }).get().id;
+    }
+
+    if (!id) throw new Error("Task was not saved");
+    if (data.context) {
+      const context = {
+        taskId: id,
+        type: data.context.type,
+        entityId: data.context.entityId,
+        route: safeInternalRoute(data.context.route),
+        label: data.context.label,
+        anchorJson: data.context.anchorJson,
+        updatedAt: now,
+      };
+      tx.insert(taskContexts).values(context).onConflictDoUpdate({
+        target: taskContexts.taskId,
+        set: context,
+      }).run();
+    }
+  });
+
+  if (!id) throw new Error("Task was not saved");
+  notifyTaskAssignment({
+    taskId: id,
+    actorId: currentUser.id,
+    previousAssigneeId: existing?.assigneeId,
+    assigneeId: data.assigneeId,
+    pageId: data.context?.type === "wikiPage" ? data.context.entityId : null,
+  });
+  if (projectId) {
+    syncProjectBounds(projectId);
+    revalidatePath(`/projects/${projectId}`);
+    revalidatePath("/projects");
+  }
+  revalidatePath("/");
+  revalidatePath("/wiki", "layout");
+  return { id };
+}
+
+export async function upsertContextualDeadline(
+  input: ContextualDeadlineInput,
+): Promise<{ id: string }> {
+  return upsertContextualTask({
+    ...input,
+    kind: "deadline",
+    priority: "medium",
+    dueDate: input.localDate,
+    projectId: null,
+  });
+}
+
+export async function setTaskStatus(id: string, status: "open" | "done") {
+  await requireUserOrThrow();
+  const task = db.select().from(tasks).where(eq(tasks.id, id)).get();
+  if (!task) throw new Error("Task not found");
+  const now = new Date();
+  let columnId = task.columnId;
+  let lastOpenColumnId = task.lastOpenColumnId;
+
+  if (task.projectId) {
+    if (status === "done") {
+      const completed = firstProjectColumn(task.projectId, true);
+      if (!completed) throw new Error("Project has no completed column");
+      if (task.status === "open") lastOpenColumnId = task.columnId;
+      columnId = completed.id;
+    } else {
+      const remembered = task.lastOpenColumnId
+        ? db.select().from(projectColumns).where(
+            and(
+              eq(projectColumns.id, task.lastOpenColumnId),
+              eq(projectColumns.projectId, task.projectId),
+              eq(projectColumns.isCompleted, false),
+            ),
+          ).get()
+        : undefined;
+      columnId = remembered?.id ?? firstProjectColumn(task.projectId, false)?.id ?? null;
+      if (!columnId) throw new Error("Project has no open column");
+      lastOpenColumnId = columnId;
+    }
+  }
+
+  db.update(tasks).set({
+    status,
+    columnId,
+    lastOpenColumnId,
+    completedAt: status === "done" ? task.completedAt ?? now : null,
+    progress: status === "done" ? 100 : Math.min(task.progress, 99),
+    updatedAt: now,
+  }).where(eq(tasks.id, id)).run();
+  if (task.projectId) {
+    syncProjectBounds(task.projectId);
+    revalidatePath(`/projects/${task.projectId}`);
+    revalidatePath("/projects");
+  }
+  revalidatePath("/");
+  revalidatePath("/wiki", "layout");
+}
+
 export async function deleteTask(id: string) {
   await requireUserOrThrow();
   const task = db.select().from(tasks).where(eq(tasks.id, id)).get();
@@ -789,10 +1080,11 @@ export async function deleteTask(id: string) {
   db.transaction(() => {
     db.delete(tasks).where(eq(tasks.id, id)).run();
     if (task.parentTaskId) syncTaskAncestors(task.parentTaskId);
-    syncProjectBounds(task.projectId);
+    if (task.projectId) syncProjectBounds(task.projectId);
   });
-  revalidatePath(`/projects/${task.projectId}`);
+  if (task.projectId) revalidatePath(`/projects/${task.projectId}`);
   revalidatePath("/projects");
+  revalidatePath("/");
 }
 
 const reparentSchema = z.object({
@@ -812,13 +1104,15 @@ export async function reparentTask(input: z.input<typeof reparentSchema>) {
   const data = reparentSchema.parse(input);
   const task = db.select().from(tasks).where(eq(tasks.id, data.taskId)).get();
   if (!task) throw new Error("Task not found");
+  if (!task.projectId) throw new Error("Only project tasks can be nested");
+  const projectId = task.projectId;
   if (data.parentTaskId === task.parentTaskId) return;
 
-  const projectTasks = projectHierarchyRows(task.projectId);
+  const projectTasks = projectHierarchyRows(projectId);
   assertTaskHierarchy(
     projectTasks.map((row) => ({
       id: row.id,
-      projectId: task.projectId,
+      projectId,
       parentTaskId: row.parentTaskId,
       isMilestone: row.isMilestone,
     })),
@@ -838,7 +1132,7 @@ export async function reparentTask(input: z.input<typeof reparentSchema>) {
     .from(tasks)
     .where(
       and(
-        eq(tasks.projectId, task.projectId),
+        eq(tasks.projectId, projectId),
         data.parentTaskId
           ? eq(tasks.parentTaskId, data.parentTaskId)
           : isNull(tasks.parentTaskId),
@@ -875,10 +1169,10 @@ export async function reparentTask(input: z.input<typeof reparentSchema>) {
     }
     if (task.parentTaskId) syncTaskAncestors(task.parentTaskId);
     syncTaskAncestors(task.id);
-    syncProjectBounds(task.projectId);
+    syncProjectBounds(projectId);
   });
 
-  revalidatePath(`/projects/${task.projectId}`);
+  revalidatePath(`/projects/${projectId}`);
   revalidatePath("/projects");
 }
 
@@ -912,13 +1206,15 @@ export async function moveTask(input: z.infer<typeof moveSchema>) {
 
   const task = db.select().from(tasks).where(eq(tasks.id, data.taskId)).get();
   if (!task) throw new Error("Task not found");
+  if (!task.projectId) throw new Error("Only project tasks can move between columns");
+  const projectId = task.projectId;
   const targetColumn = db
     .select({ isCompleted: projectColumns.isCompleted })
     .from(projectColumns)
     .where(eq(projectColumns.id, data.columnId))
     .get();
   if (!targetColumn) throw new Error("Column not found");
-  const descendants = taskDescendants(projectHierarchyRows(task.projectId), task.id);
+  const descendants = taskDescendants(projectHierarchyRows(projectId), task.id);
   const children = leafTasks(descendants);
   if (
     children.length > 0 &&
@@ -968,8 +1264,15 @@ export async function moveTask(input: z.infer<typeof moveSchema>) {
         tx.update(tasks)
           .set({
             sortOrder: (index + 1) * SORT_GAP,
-            columnId: data.columnId,
-            ...(targetColumn.isCompleted ? { progress: 100 } : {}),
+            ...(t.id === data.taskId ? {
+              columnId: data.columnId,
+              status: targetColumn.isCompleted ? "done" as const : "open" as const,
+              completedAt: targetColumn.isCompleted ? new Date() : null,
+              lastOpenColumnId: targetColumn.isCompleted
+                ? task.lastOpenColumnId ?? task.columnId
+                : data.columnId,
+              ...(targetColumn.isCompleted ? { progress: 100 } : {}),
+            } : {}),
           })
           .where(eq(tasks.id, t.id))
           .run();
@@ -980,6 +1283,11 @@ export async function moveTask(input: z.infer<typeof moveSchema>) {
       .set({
         columnId: data.columnId,
         sortOrder,
+        status: targetColumn.isCompleted ? "done" : "open",
+        completedAt: targetColumn.isCompleted ? new Date() : null,
+        lastOpenColumnId: targetColumn.isCompleted
+          ? task.lastOpenColumnId ?? task.columnId
+          : data.columnId,
         ...(targetColumn.isCompleted ? { progress: 100 } : {}),
       })
       .where(eq(tasks.id, data.taskId))
@@ -987,7 +1295,7 @@ export async function moveTask(input: z.infer<typeof moveSchema>) {
   }
 
   if (task.parentTaskId) syncTaskAncestors(task.id);
-  revalidatePath(`/projects/${task.projectId}`);
+  revalidatePath(`/projects/${projectId}`);
   revalidatePath("/projects");
 }
 
@@ -1189,7 +1497,7 @@ function computeSchedulePreview(
   const taskRows = reader
     .select({
       id: tasks.id,
-      projectId: tasks.projectId,
+      projectId: sql<string>`${tasks.projectId}`,
       parentTaskId: tasks.parentTaskId,
       startDate: tasks.startDate,
       dueDate: tasks.dueDate,
@@ -1439,9 +1747,9 @@ export async function revertPortfolioScheduleChange(changeSetId: string) {
       .where(eq(projectScheduleChangeItems.changeSetId, changeSetId))
       .all();
     const currentTasks = tx
-      .select({
+    .select({
         id: tasks.id,
-        projectId: tasks.projectId,
+        projectId: sql<string>`${tasks.projectId}`,
         parentTaskId: tasks.parentTaskId,
         startDate: tasks.startDate,
         dueDate: tasks.dueDate,
@@ -1451,6 +1759,7 @@ export async function revertPortfolioScheduleChange(changeSetId: string) {
         constraintDate: tasks.constraintDate,
       })
       .from(tasks)
+      .where(isNotNull(tasks.projectId))
       .all();
     const currentProjects = tx
       .select({

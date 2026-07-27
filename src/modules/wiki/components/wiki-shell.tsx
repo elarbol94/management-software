@@ -24,10 +24,11 @@ import type { StoredDocumentTemplate } from "../document-queries";
 import type { WikiTypographySettingsV1, WikiTypographyTemplate } from "../lib/wiki-typography";
 import { extractText, parseStoredDocument } from "../lib/tiptap";
 import { RevisionDiffView } from "./revision-diff-view";
+import type { ContextDeadlineMarker, ContextTaskMarker } from "@/modules/tasks/types";
 
 type PageRef = { id: string; title: string; slug: string };
 type SourceRef = { id: string; title: string; issuedDate: string; contributors: string };
-export function WikiShell({ page, backlinks, allPages, sources, citationSources, research, comments, currentUserId, users, attachments, documentTemplates, typography, editableTypography, typographyTemplates, meta }: {
+export function WikiShell({ page, backlinks, allPages, sources, citationSources, research, comments, currentUserId, users, attachments, documentTemplates, typography, editableTypography, typographyTemplates, tasks, deadlines, focusTaskId, focusDeadlineId, meta }: {
   page: { id: string; title: string; slug: string; contentJson: string; status: "inbox" | "working" | "evergreen"; citationLocale: string; version: number; documentMode: boolean; documentSettingsJson: string; createdBy: string };
   backlinks: PageRef[]; allPages: PageRef[]; sources: SourceRef[]; citationSources: CitationSource[];
   research: { tags: Array<{ id: string; name: string; color: string }>; supportingSources: Array<{ id: string; title: string; issuedDate: string; relation: string }>; favorite: boolean; revisions: Array<{ id: string; version: number; kind: string; createdAt: Date; createdByName: string; contentJson: string }> };
@@ -37,6 +38,10 @@ export function WikiShell({ page, backlinks, allPages, sources, citationSources,
   typography: WikiTypographySettingsV1;
   editableTypography: WikiTypographySettingsV1;
   typographyTemplates: WikiTypographyTemplate[];
+  tasks: ContextTaskMarker[];
+  deadlines: ContextDeadlineMarker[];
+  focusTaskId?: string;
+  focusDeadlineId?: string;
   meta: { updatedAt: number; updatedByName: string } | null;
 }) {
   const t = useTranslations("wiki"); const common = useTranslations("common"); const format = useFormatter(); const router = useRouter();
@@ -69,7 +74,7 @@ export function WikiShell({ page, backlinks, allPages, sources, citationSources,
 
     <div className={isFocused ? "w-full" : "grid gap-7 xl:grid-cols-[minmax(0,1fr)_17rem]"}>
       <section className="min-w-0">
-        <WikiEditor key={page.id} focused={isFocused} pageId={page.id} pageVersion={page.version} initialContent={page.contentJson} initialDocumentMode={page.documentMode} initialDocumentSettings={page.documentSettingsJson} initialTypography={typography} editableTypography={editableTypography} typographyTemplates={typographyTemplates} isPrimaryAuthor={page.createdBy === currentUserId} documentTemplates={documentTemplates} allPages={allPages} sources={sources} users={users} citationLocale={citationLocale} comments={comments} currentUserId={currentUserId} pageActions={{ addAttachment: () => attachmentRef.current?.openFilePicker(), linkSupportingSource: () => { supportingSourceSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "center" }); setSupportingSourceOpen(true); requestAnimationFrame(() => supportingSourceTriggerRef.current?.focus()); } }} />
+        <WikiEditor key={page.id} focused={isFocused} pageId={page.id} pageTitle={page.title} pageSlug={page.slug} pageVersion={page.version} initialContent={page.contentJson} initialDocumentMode={page.documentMode} initialDocumentSettings={page.documentSettingsJson} initialTypography={typography} editableTypography={editableTypography} typographyTemplates={typographyTemplates} isPrimaryAuthor={page.createdBy === currentUserId} documentTemplates={documentTemplates} allPages={allPages} sources={sources} users={users} citationLocale={citationLocale} comments={comments} contextTasks={tasks} contextDeadlines={deadlines} focusTaskId={focusTaskId} focusDeadlineId={focusDeadlineId} currentUserId={currentUserId} pageActions={{ addAttachment: () => attachmentRef.current?.openFilePicker(), linkSupportingSource: () => { supportingSourceSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "center" }); setSupportingSourceOpen(true); requestAnimationFrame(() => supportingSourceTriggerRef.current?.focus()); } }} />
         {!isFocused && bibliography.length > 0 && <section className="mt-10 border-t pt-6"><p className="mb-1 text-xs font-semibold tracking-[0.16em] text-indigo-600 uppercase">APA 7</p><h2 className="mb-4 text-xl font-semibold">{t("references")}</h2><ol className="space-y-3 text-sm leading-relaxed">{bibliography.map((source) => <li key={source.id} className="pl-6 -indent-6">{formatBibliographyEntry(source)}</li>)}</ol></section>}
         {!isFocused && backlinks.length > 0 && <section className="mt-8 border-t pt-5"><h2 className="mb-3 flex items-center gap-2 text-sm font-medium"><Link2 className="size-4 text-indigo-500" />{t("backlinks")}</h2><div className="flex flex-wrap gap-2">{backlinks.map((item) => <Link key={item.id} href={`/wiki/pages/${item.slug}`} className="rounded-md border px-2 py-1 text-sm hover:bg-accent">{item.title}</Link>)}</div></section>}
       </section>

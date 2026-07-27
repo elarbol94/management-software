@@ -832,12 +832,14 @@ export function PortfolioClient({
   initialFocusedTaskId?: string | null;
 }) {
   const t = useTranslations("projects");
+  const tDeadlines = useTranslations("deadlines");
   const tCommon = useTranslations("common");
   const format = useFormatter();
   const router = useRouter();
   const desktopInspector = useMediaQuery("(min-width: 960px)");
   const compactInspector = useMediaQuery("(max-width: 767px)");
   const reducedMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
+  const [renderedAt] = useState(() => Date.now());
   const today = new Date().toISOString().slice(0, 10);
   const [view, setView] = useState<"timeline" | "projects">("timeline");
   const [zoom, setZoom] = useState<Zoom>("month");
@@ -1286,18 +1288,22 @@ export function PortfolioClient({
         end: focusRange.dueDate,
       };
     }
-    const scheduled = rows.flatMap((row) => [row.startDate, row.dueDate]).filter((value): value is string => Boolean(value));
+    const scheduled = [
+      ...rows.flatMap((row) => [row.startDate, row.dueDate]),
+      ...schedule.deadlines.map((deadline) => deadline.dueDate),
+    ].filter((value): value is string => Boolean(value));
     const earliest = minDate(scheduled) ?? today;
     const latest = maxDate(scheduled) ?? today;
     return {
       start: addCalendarDays(earliest < addCalendarDays(today, -14) ? earliest : addCalendarDays(today, -14), -7),
       end: addCalendarDays(latest > addCalendarDays(today, 90) ? latest : addCalendarDays(today, 90), 14),
     };
-  }, [rows, today, focusedSubtree]);
+  }, [rows, today, focusedSubtree, schedule.deadlines]);
   const dayCount = calendarDistance(range.start, range.end) + 1;
   const timelineWidth = dayCount * dayWidth;
   const totalWidth = treeWidth + timelineWidth;
-  const totalHeight = HEADER_HEIGHT + rows.length * ROW_HEIGHT;
+  const deadlineLaneHeight = !focusedTask && schedule.deadlines.length > 0 ? ROW_HEIGHT : 0;
+  const totalHeight = HEADER_HEIGHT + deadlineLaneHeight + rows.length * ROW_HEIGHT;
 
   useEffect(() => {
     if (!focusedTaskId || fittedFocusRef.current === focusedTaskId) return;
@@ -2365,6 +2371,26 @@ export function PortfolioClient({
             </div>
           )}
           <div className="grid gap-2 p-2 md:hidden" role="tree" aria-label={t("workBreakdown")}>
+            {!focusedTask && schedule.deadlines.map((deadline) => {
+              const separator = deadline.contextRoute?.includes("?") ? "&" : "?";
+              const href = deadline.contextRoute
+                ? `${deadline.contextRoute}${separator}deadline=${encodeURIComponent(deadline.id)}`
+                : "/";
+              return (
+                <button
+                  key={deadline.id}
+                  type="button"
+                  onClick={() => router.push(href)}
+                  className="grid grid-cols-[auto_1fr] items-center gap-3 rounded-lg border border-amber-300 bg-amber-50/50 p-3 text-left dark:border-amber-800 dark:bg-amber-950/20"
+                >
+                  <Diamond className="size-4 rotate-45 fill-amber-500 text-amber-600" />
+                  <span className="min-w-0">
+                    <span className="block truncate text-sm font-medium">{deadline.title}</span>
+                    <span className="block text-xs text-muted-foreground">{format.dateTime(new Date(deadline.deadlineAt), { dateStyle: "medium", timeStyle: "short" })}</span>
+                  </span>
+                </button>
+              );
+            })}
             {rows.filter((row) => row.kind === "task" || row.kind === "subtask").map((row) => (
               <button
                 key={row.id}
@@ -2463,7 +2489,7 @@ export function PortfolioClient({
                 </div>
               </div>
 
-              <div className="pointer-events-none absolute z-0" style={{ left: treeWidth, top: HEADER_HEIGHT, width: timelineWidth, height: rows.length * ROW_HEIGHT }}>
+              <div className="pointer-events-none absolute z-0" style={{ left: treeWidth, top: HEADER_HEIGHT, width: timelineWidth, height: deadlineLaneHeight + rows.length * ROW_HEIGHT }}>
                 {Array.from({ length: dayCount }, (_, index) => {
                   const date = addCalendarDays(range.start, index);
                   const day = parseDate(date).getUTCDay();
@@ -2472,7 +2498,7 @@ export function PortfolioClient({
                 {today >= range.start && today <= range.end && <span className="absolute inset-y-0 z-10 w-px bg-red-500" style={{ left: calendarDistance(range.start, today) * dayWidth + dayWidth / 2 }} />}
               </div>
 
-              <svg className="pointer-events-none absolute z-[1] overflow-visible" aria-hidden style={{ left: treeWidth, top: HEADER_HEIGHT, width: timelineWidth, height: rows.length * ROW_HEIGHT }}>
+              <svg className="pointer-events-none absolute z-[1] overflow-visible" aria-hidden style={{ left: treeWidth, top: HEADER_HEIGHT + deadlineLaneHeight, width: timelineWidth, height: rows.length * ROW_HEIGHT }}>
                 {schedule.dependencies
                   .filter(
                     (dependency) =>
@@ -2493,6 +2519,56 @@ export function PortfolioClient({
                     return <path key={dependency.id} d={`M ${x1} ${y1} C ${bend} ${y1}, ${bend} ${y2}, ${x2} ${y2}`} fill="none" stroke="currentColor" strokeWidth="1.25" className="text-slate-400 dark:text-slate-600" />;
                   })}
               </svg>
+
+              {deadlineLaneHeight > 0 && (
+                <div
+                  data-row-kind="deadlines"
+                  role="treeitem"
+                  aria-level={1}
+                  aria-selected={false}
+                  className="relative z-[2] flex border-b bg-amber-50/35 dark:bg-amber-950/10"
+                  style={{ width: totalWidth, height: ROW_HEIGHT }}
+                >
+                  <div
+                    className="sticky left-0 z-20 flex shrink-0 items-center gap-2 border-r bg-amber-50/90 px-3 font-semibold dark:bg-amber-950/40"
+                    style={{ width: treeWidth }}
+                  >
+                    <CalendarClock className="size-4 text-amber-600" />
+                    <span className="truncate text-sm">{tDeadlines("ganttLane")}</span>
+                    <span className="ml-auto font-mono text-[10px] tabular-nums text-muted-foreground">{schedule.deadlines.length}</span>
+                  </div>
+                  <div className="relative" style={{ width: timelineWidth }}>
+                    {schedule.deadlines.map((deadline) => {
+                      if (!deadline.dueDate || deadline.dueDate < range.start || deadline.dueDate > range.end) return null;
+                      const overdue = deadline.status === "open" && new Date(deadline.deadlineAt).getTime() < renderedAt;
+                      const separator = deadline.contextRoute?.includes("?") ? "&" : "?";
+                      const href = deadline.contextRoute
+                        ? `${deadline.contextRoute}${separator}deadline=${encodeURIComponent(deadline.id)}`
+                        : "/";
+                      return (
+                        <button
+                          key={deadline.id}
+                          type="button"
+                          data-deadline-id={deadline.id}
+                          onClick={() => router.push(href)}
+                          className={cn(
+                            "absolute top-1/2 grid size-5 -translate-x-1/2 -translate-y-1/2 rotate-45 place-items-center rounded-[3px] border-2 bg-card shadow-sm transition-transform hover:scale-125 focus-visible:outline-2 focus-visible:outline-ring",
+                            deadline.status === "done" && "opacity-45",
+                          )}
+                          style={{
+                            left: calendarDistance(range.start, deadline.dueDate) * dayWidth + dayWidth / 2,
+                            borderColor: deadline.status === "done" ? "#059669" : overdue ? "#dc2626" : "#d97706",
+                          }}
+                          title={`${deadline.title} · ${format.dateTime(new Date(deadline.deadlineAt), { dateStyle: "medium", timeStyle: "short" })} · ${deadline.assigneeName || tDeadlines("unassigned")}`}
+                          aria-label={`${deadline.title}, ${format.dateTime(new Date(deadline.deadlineAt), { dateStyle: "medium", timeStyle: "short" })}`}
+                        >
+                          <span className="size-1.5 -rotate-45 rounded-full bg-current" />
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
 
               {rows.map((row) => {
                 const project = schedule.projects.find((candidate) => candidate.id === row.projectId)!;

@@ -24,7 +24,9 @@ describe("PDF shortcuts", () => {
   });
 
   it("defines one unique binding for every fixed PDF command", () => {
-    expect(Object.keys(DEFAULT_PDF_SHORTCUT_BINDINGS)).toHaveLength(34);
-    expect(new Set(Object.values(DEFAULT_PDF_SHORTCUT_BINDINGS)).size).toBe(34);
+    expect(DEFAULT_PDF_SHORTCUT_BINDINGS.createTask).toBe("Ctrl+Shift+A");
+    expect(DEFAULT_PDF_SHORTCUT_BINDINGS.createDeadline).toBe("Ctrl+Shift+D");
+    expect(Object.keys(DEFAULT_PDF_SHORTCUT_BINDINGS)).toHaveLength(36);
+    expect(new Set(Object.values(DEFAULT_PDF_SHORTCUT_BINDINGS)).size).toBe(36);
   });
 });

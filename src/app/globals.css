@@ -249,6 +249,112 @@
     line-height: var(--wiki-line-height) !important;
   }
 
+  .wiki-task-reference {
+    margin-block: 0.75rem !important;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    border: 1px solid color-mix(in oklab, var(--color-indigo-500) 35%, var(--border));
+    border-left-width: 3px;
+    border-radius: 0.65rem;
+    background: color-mix(in oklab, var(--color-indigo-500) 7%, var(--background));
+    padding: 0.65rem 0.75rem;
+  }
+
+  .wiki-task-reference[data-status="done"] {
+    opacity: 0.68;
+    border-left-color: var(--color-emerald-500);
+  }
+
+  .wiki-task-reference-check {
+    display: grid;
+    width: 1.35rem;
+    height: 1.35rem;
+    flex: 0 0 auto;
+    place-items: center;
+    border: 1px solid var(--color-indigo-400);
+    border-radius: 999px;
+    color: white;
+    font-size: 0.75rem;
+    line-height: 1;
+  }
+
+  .wiki-task-reference[data-status="done"] .wiki-task-reference-check {
+    border-color: var(--color-emerald-600);
+    background: var(--color-emerald-600);
+  }
+
+  .wiki-task-reference-body {
+    display: grid;
+    min-width: 0;
+  }
+
+  .wiki-task-reference-body strong {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 0.875rem;
+  }
+
+  .wiki-task-reference-body small {
+    color: var(--muted-foreground);
+    font-size: 0.7rem;
+    text-transform: capitalize;
+  }
+
+  .wiki-deadline-reference {
+    margin-block: 0.75rem !important;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    border: 1px solid color-mix(in oklab, var(--color-amber-500) 42%, var(--border));
+    border-left-width: 3px;
+    border-radius: 0.65rem;
+    background: color-mix(in oklab, var(--color-amber-500) 9%, var(--background));
+    padding: 0.65rem 0.75rem;
+  }
+
+  .wiki-deadline-reference[data-status="done"] {
+    opacity: 0.68;
+    border-left-color: var(--color-emerald-500);
+  }
+
+  .wiki-deadline-reference-icon {
+    display: grid;
+    width: 1.35rem;
+    height: 1.35rem;
+    flex: 0 0 auto;
+    place-items: center;
+    border: 1px solid var(--color-amber-500);
+    border-radius: 999px;
+    color: var(--color-amber-700);
+    font-size: 0.75rem;
+    line-height: 1;
+  }
+
+  .wiki-deadline-reference[data-status="done"] .wiki-deadline-reference-icon {
+    border-color: var(--color-emerald-600);
+    background: var(--color-emerald-600);
+    color: white;
+  }
+
+  .wiki-deadline-reference-body {
+    display: grid;
+    min-width: 0;
+  }
+
+  .wiki-deadline-reference-body strong {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 0.875rem;
+  }
+
+  .wiki-deadline-reference-body small {
+    color: var(--muted-foreground);
+    font-size: 0.7rem;
+  }
+
   .wiki-editor-surface .ProseMirror p,
   .wiki-typography-preview p {
     margin: 0 0 var(--wiki-paragraph-spacing) !important;

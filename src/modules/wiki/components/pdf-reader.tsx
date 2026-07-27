@@ -7,8 +7,8 @@ import { useRouter } from "next/navigation";
 import { useFormatter, useTranslations } from "next-intl";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import {
-  ArrowLeft, ArrowUp, Bookmark, CaseSensitive, Check, ChevronDown, ChevronLeft, ChevronRight, Clock3, Copy,
-  Download, ExternalLink, FileSearch, Highlighter, Keyboard, ListTree, Loader2, Menu, MessageCircle,
+  ArrowLeft, ArrowUp, Bookmark, CalendarClock, CaseSensitive, Check, ChevronDown, ChevronLeft, ChevronRight, Clock3, Copy,
+  ClipboardPlus, Download, ExternalLink, FileSearch, Highlighter, Keyboard, ListTree, Loader2, Menu, MessageCircle,
   Minus, MoreHorizontal, Pencil, Plus, Printer, RotateCw, Search, Trash2, X,
   SquareDashedMousePointer, WholeWord,
 } from "lucide-react";
@@ -45,6 +45,9 @@ import {
   userMarkColorStyle,
   type UserMarkColor,
 } from "@/lib/user-mark-colors";
+import { useTaskCreator } from "@/modules/tasks/components/task-create-provider";
+import { useDeadlineCreator } from "@/modules/tasks/components/deadline-create-provider";
+import type { ContextDeadlineMarker, ContextTaskMarker } from "@/modules/tasks/types";
 
 type ReaderPage = {
   pageNumber: number; width: number; height: number; text: string;
@@ -67,9 +70,42 @@ type SelectionAnchor = {
   side: "left" | "right";
 };
 type CommentPanelState = { mode: "closed" } | { mode: "list" } | { mode: "thread"; annotationId: string };
+type PdfTaskAnchor = { pageNumber?: number; rects?: PdfRect[]; quote?: string };
 
 const COMMENT_PANEL_WIDTH_KEY = "wiki:pdf-comment-panel-width";
 const LAST_PAGE_KEY_PREFIX = "wiki:pdf-last-page:";
+
+function taskAnchor(task: ContextTaskMarker): PdfTaskAnchor {
+  try {
+    return JSON.parse(task.anchorJson) as PdfTaskAnchor;
+  } catch {
+    return {};
+  }
+}
+
+function taskAnchorPage(tasks: ContextTaskMarker[], taskId?: string) {
+  if (!taskId) return null;
+  const task = tasks.find((candidate) => candidate.id === taskId);
+  if (!task) return null;
+  const page = taskAnchor(task).pageNumber;
+  return typeof page === "number" && Number.isInteger(page) && page > 0 ? page : null;
+}
+
+function deadlineAnchor(deadline: ContextDeadlineMarker): PdfTaskAnchor {
+  try {
+    return JSON.parse(deadline.anchorJson) as PdfTaskAnchor;
+  } catch {
+    return {};
+  }
+}
+
+function deadlineAnchorPage(deadlines: ContextDeadlineMarker[], deadlineId?: string) {
+  if (!deadlineId) return null;
+  const deadline = deadlines.find((candidate) => candidate.id === deadlineId);
+  if (!deadline) return null;
+  const page = deadlineAnchor(deadline).pageNumber;
+  return typeof page === "number" && Number.isInteger(page) && page > 0 ? page : null;
+}
 
 function NoteMeta({ name, timestamp, markColor }: { name: string; timestamp: string; markColor: UserMarkColor }) {
   return <span className="mt-1.5 inline-flex items-center gap-1.5 text-[10px] text-muted-foreground" style={userMarkColorStyle(markColor)}><Avatar size="sm" className="size-4 border" style={{ borderColor: "var(--user-mark-solid)" }}><AvatarFallback className="text-[8px]" style={{ color: "var(--user-mark-solid)", backgroundColor: "var(--user-mark-highlight)" }}>{initialsForName(name)}</AvatarFallback></Avatar><span>{name}</span><Clock3 className="size-3" /><time>{timestamp}</time></span>;
@@ -114,15 +150,17 @@ function searchRangeInTextLayer(
 
 export function PdfReader({
   sourceId, sourceTitle, attachmentId, documentId, fileName, pages, initialAnnotations,
-  initialPage, initialAnnotationId, user,
+  initialPage, initialAnnotationId, initialTaskId, contextTasks, initialDeadlineId, contextDeadlines, user,
   hasExplicitPage = false,
 }: {
   sourceId: string; sourceTitle: string; attachmentId: string; documentId: string; fileName: string;
   pages: ReaderPage[]; initialAnnotations: ReaderAnnotation[]; initialPage: number; initialAnnotationId?: string;
+  initialTaskId?: string; contextTasks: ContextTaskMarker[];
+  initialDeadlineId?: string; contextDeadlines: ContextDeadlineMarker[];
   hasExplicitPage?: boolean;
   user: { id: string; name: string; role?: string | null; markColor: UserMarkColor };
 }) {
-  const t = useTranslations("wiki"); const tMarkColor = useTranslations("settings.profile.colors"); const format = useFormatter(); const router = useRouter();
+  const t = useTranslations("wiki"); const tTasks = useTranslations("tasks"); const tDeadlines = useTranslations("deadlines"); const tMarkColor = useTranslations("settings.profile.colors"); const format = useFormatter(); const router = useRouter(); const { openTaskCreator } = useTaskCreator(); const { openDeadlineCreator } = useDeadlineCreator();
   const pdfLoadFailedMessage = t("pdfLoadFailed");
   const { isFocused, toggleFocused } = useFocusMode();
   const [showThumbnails, setShowThumbnails] = useState(true);
@@ -136,7 +174,10 @@ export function PdfReader({
   const previousFocused = useRef(isFocused);
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null);
   const pdfjsRef = useRef<typeof import("pdfjs-dist") | null>(null);
-  const [pageNumber, setPageNumber] = useState(Math.min(Math.max(initialPage, 1), Math.max(1, pages.length)));
+  const [pageNumber, setPageNumber] = useState(() => {
+    const anchoredPage = deadlineAnchorPage(contextDeadlines, initialDeadlineId) ?? taskAnchorPage(contextTasks, initialTaskId);
+    return Math.min(Math.max(anchoredPage ?? initialPage, 1), Math.max(1, pages.length));
+  });
   const [scale, setScale] = useState(1.25); const [rotation, setRotation] = useState(0);
   const [fitMode, setFitMode] = useState<FitMode>("custom");
   const [preferencesLoaded, setPreferencesLoaded] = useState(false);
@@ -177,6 +218,8 @@ export function PdfReader({
   const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
   const [commentDraftById, setCommentDraftById] = useState<Record<string, string>>({});
   const [selection, setSelection] = useState<{ text: string; rects: PdfRect[]; pageNumber: number } | null>(null);
+  const [hoveredTaskId, setHoveredTaskId] = useState<string | null>(null);
+  const [hoveredDeadlineId, setHoveredDeadlineId] = useState<string | null>(null);
   const [selectionAnchor, setSelectionAnchor] = useState<SelectionAnchor | null>(null);
   const [selectionAnchorPosition, setSelectionAnchorPosition] = useState<{ left: number; top: number; side: SelectionAnchor["side"] } | null>(null);
   const [pendingAnnotation, setPendingAnnotation] = useState<PendingAnnotation | null>(null);
@@ -188,6 +231,64 @@ export function PdfReader({
   const initialContinuousScroll = useRef(true);
   const [query, setQuery] = useState("");
   const deferredQuery = useDeferredValue(query);
+
+  useEffect(() => {
+    if (!initialTaskId) return;
+    const anchoredPage = taskAnchorPage(contextTasks, initialTaskId);
+    if (anchoredPage && anchoredPage !== pageNumber) {
+      router.replace(`/wiki/sources/${sourceId}/read/${documentId}?page=${anchoredPage}&task=${encodeURIComponent(initialTaskId)}`, { scroll: false });
+      const syncPage = window.setTimeout(() => {
+        restoreContinuousPage.current = anchoredPage;
+        setPageNumber(anchoredPage);
+      }, 0);
+      return () => window.clearTimeout(syncPage);
+    }
+    if (rendering) return;
+    const targetPage = anchoredPage ?? pageNumber;
+    router.replace(`/wiki/sources/${sourceId}/read/${documentId}?page=${targetPage}&task=${encodeURIComponent(initialTaskId)}`, { scroll: false });
+    if (viewMode === "continuous") scrollToPage(targetPage, "center");
+    const timeout = window.setTimeout(() => {
+      const marker = readerRef.current?.querySelector<HTMLElement>(
+        `[data-task-marker="${CSS.escape(initialTaskId)}"]`,
+      );
+      if (marker) {
+        marker.scrollIntoView({ behavior: "smooth", block: "center" });
+        marker.focus({ preventScroll: true });
+      } else {
+        toast.info(tTasks("sourceFallback"));
+      }
+    }, 100);
+    return () => window.clearTimeout(timeout);
+  }, [contextTasks, documentId, initialTaskId, pageNumber, rendering, router, sourceId, tTasks, viewMode]);
+
+  useEffect(() => {
+    if (!initialDeadlineId) return;
+    const anchoredPage = deadlineAnchorPage(contextDeadlines, initialDeadlineId);
+    if (anchoredPage && anchoredPage !== pageNumber) {
+      router.replace(`/wiki/sources/${sourceId}/read/${documentId}?page=${anchoredPage}&deadline=${encodeURIComponent(initialDeadlineId)}`, { scroll: false });
+      const syncPage = window.setTimeout(() => {
+        restoreContinuousPage.current = anchoredPage;
+        setPageNumber(anchoredPage);
+      }, 0);
+      return () => window.clearTimeout(syncPage);
+    }
+    if (rendering) return;
+    const targetPage = anchoredPage ?? pageNumber;
+    router.replace(`/wiki/sources/${sourceId}/read/${documentId}?page=${targetPage}&deadline=${encodeURIComponent(initialDeadlineId)}`, { scroll: false });
+    if (viewMode === "continuous") scrollToPage(targetPage, "center");
+    const timeout = window.setTimeout(() => {
+      const marker = readerRef.current?.querySelector<HTMLElement>(
+        `[data-deadline-marker="${CSS.escape(initialDeadlineId)}"]`,
+      );
+      if (marker) {
+        marker.scrollIntoView({ behavior: "smooth", block: "center" });
+        marker.focus({ preventScroll: true });
+      } else {
+        toast.info(tDeadlines("sourceFallback"));
+      }
+    }, 100);
+    return () => window.clearTimeout(timeout);
+  }, [contextDeadlines, documentId, initialDeadlineId, pageNumber, rendering, router, sourceId, tDeadlines, viewMode]);
   const searchPending = deferredQuery !== query;
   const searchOccurrences = useMemo(() => searchPending ? [] : findSearchOccurrences(pages, {
     query: deferredQuery,
@@ -354,7 +455,7 @@ export function PdfReader({
     if (viewMode === "continuous" || !pdf || !pdfjsRef.current || !canvasRef.current || !textLayerRef.current || !pageShellRef.current) return;
     let cancelled = false; let renderTask: { cancel: () => void; promise: Promise<unknown> } | null = null;
     setRendering(true); setSelection(null); setRegion(null);
-    void pdf.getPage(pageNumber).then(async (pdfPage) => {
+    void Promise.resolve().then(() => pdf.getPage(pageNumber)).then(async (pdfPage) => {
       if (cancelled) return;
       const viewport = pdfPage.getViewport({ scale, rotation });
       const canvas = canvasRef.current!; const context = canvas.getContext("2d", { alpha: false });
@@ -390,7 +491,7 @@ export function PdfReader({
   useEffect(() => {
     if (!pdf || !pdfjsRef.current || viewMode !== "double" || !secondaryCanvasRef.current || !secondaryTextLayerRef.current || !secondaryPageShellRef.current || pageNumber >= pages.length) return;
     let cancelled = false; let renderTask: { cancel: () => void; promise: Promise<unknown> } | null = null;
-    void pdf.getPage(pageNumber + 1).then((pdfPage) => {
+    void Promise.resolve().then(() => pdf.getPage(pageNumber + 1)).then((pdfPage) => {
       if (cancelled || !secondaryCanvasRef.current || !secondaryTextLayerRef.current || !secondaryPageShellRef.current || !pdfjsRef.current) return;
       const viewport = pdfPage.getViewport({ scale, rotation });
       const canvas = secondaryCanvasRef.current; const context = canvas.getContext("2d", { alpha: false });
@@ -466,7 +567,7 @@ export function PdfReader({
       const canvas = continuousCanvasRefs.current.get(page.pageNumber);
       if (!canvas) continue;
       continuousLoadingPagesRef.current.add(page.pageNumber);
-      void pdf.getPage(page.pageNumber).then((pdfPage) => {
+      void Promise.resolve().then(() => pdf.getPage(page.pageNumber)).then((pdfPage) => {
         if (continuousRenderGenerationRef.current !== generation || (!desiredPages.has(page.pageNumber) && page.pageNumber !== continuousActivePageRef.current)) return;
         const viewport = pdfPage.getViewport({ scale, rotation });
         const context = canvas.getContext("2d", { alpha: false });
@@ -644,8 +745,8 @@ export function PdfReader({
 
   const pageAnnotations = annotations.filter((annotation) => annotation.pageNumber === pageNumber);
 
-  function readerUrl(nextPage: number, annotationId?: string) {
-    return `/wiki/sources/${sourceId}/read/${documentId}?page=${nextPage}${annotationId ? `&annotation=${annotationId}` : ""}`;
+  function readerUrl(nextPage: number, annotationId?: string, taskId?: string) {
+    return `/wiki/sources/${sourceId}/read/${documentId}?page=${nextPage}${annotationId ? `&annotation=${annotationId}` : ""}${taskId ? `&task=${encodeURIComponent(taskId)}` : ""}`;
   }
 
   function updateUrl(nextPage: number) {
@@ -668,6 +769,54 @@ export function PdfReader({
 
   function shortcutTitle(action: PdfShortcutAction, label: string) {
     return `${label} · ${displayPdfShortcut(shortcuts[action])}`;
+  }
+
+  function requestPdfTask() {
+    const selected = selection;
+    const selectedRegion = region;
+    const taskPage = selected?.pageNumber ?? pageNumber;
+    const rects = selected?.rects ?? (selectedRegion ? [selectedRegion] : []);
+    const quote = selected?.text.trim() ?? "";
+    openTaskCreator({
+      initialTitle: quote,
+      origin: {
+        type: "pdf",
+        entityId: documentId,
+        route: `/wiki/sources/${sourceId}/read/${documentId}?page=${taskPage}`,
+        label: `${sourceTitle} · ${t("pageNumber", { page: taskPage })}`,
+        anchor: { pageNumber: taskPage, quote, rects },
+      },
+      onCreated: () => {
+        setSelection(null);
+        setRegion(null);
+        setSelectionAnchor(null);
+        router.refresh();
+      },
+    });
+  }
+
+  function requestPdfDeadline() {
+    const selected = selection;
+    const selectedRegion = region;
+    const deadlinePage = selected?.pageNumber ?? pageNumber;
+    const rects = selected?.rects ?? (selectedRegion ? [selectedRegion] : []);
+    const quote = selected?.text.trim() ?? "";
+    openDeadlineCreator({
+      initialTitle: quote,
+      origin: {
+        type: "pdf",
+        entityId: documentId,
+        route: `/wiki/sources/${sourceId}/read/${documentId}?page=${deadlinePage}`,
+        label: `${sourceTitle} · ${t("pageNumber", { page: deadlinePage })}`,
+        anchor: { pageNumber: deadlinePage, quote, rects },
+      },
+      onCreated: () => {
+        setSelection(null);
+        setRegion(null);
+        setSelectionAnchor(null);
+        router.refresh();
+      },
+    });
   }
 
   function runPdfShortcut(action: PdfShortcutAction) {
@@ -699,6 +848,8 @@ export function PdfReader({
       case "copyCitation": if (selectedAnnotation) void copyAnnotationCitation(selectedAnnotation); break;
       case "editAnnotation": if (selectedAnnotation) beginEditingAnnotation(selectedAnnotation); break;
       case "deleteAnnotation": if (selectedAnnotation) void removeAnnotation(selectedAnnotation); break;
+      case "createTask": requestPdfTask(); break;
+      case "createDeadline": requestPdfDeadline(); break;
       case "rotate": setRotation((value) => (value + 90) % 360); break;
       case "toggleNavigator": setShowThumbnails((value) => !value); break;
       case "openOriginal": window.open(`/api/files/${attachmentId}`, "_blank", "noopener,noreferrer"); break;
@@ -1057,7 +1208,7 @@ export function PdfReader({
       if (frame !== null) window.cancelAnimationFrame(frame);
       frame = window.requestAnimationFrame(() => {
         if (!pdf || !viewportRef.current) return;
-        void pdf.getPage(pageNumber).then((pdfPage) => {
+        void Promise.resolve().then(() => pdf.getPage(pageNumber)).then((pdfPage) => {
           if (!viewportRef.current) return;
           const base = pdfPage.getViewport({ scale: 1, rotation });
           const nextScale = calculateFitScale({
@@ -1065,7 +1216,7 @@ export function PdfReader({
             viewportWidth: viewportRef.current.clientWidth, viewportHeight: viewportRef.current.clientHeight,
           });
           if (nextScale !== null) setScale(nextScale);
-        });
+        }).catch(() => {});
       });
     };
     const observer = new ResizeObserver(recalculate);
@@ -1075,8 +1226,9 @@ export function PdfReader({
   }, [fitMode, pageNumber, pdf, rotation]);
 
   function selectionActionsStyle(anchor: { left: number; top: number; side: "left" | "right" }) {
-    const width = 210; const height = 42; const gap = 8;
-    const left = anchor.side === "right" ? anchor.left + gap : anchor.left - width - gap;
+    const width = 480; const height = 42; const gap = 8;
+    const preferredLeft = anchor.side === "right" ? anchor.left + gap : anchor.left - width - gap;
+    const left = Math.min(window.innerWidth - Math.min(width, window.innerWidth - 32) - 16, Math.max(16, preferredLeft));
     const placeAbove = anchor.top - gap - height >= 16;
     const top = placeAbove ? anchor.top - gap : anchor.top + gap;
     return { left, top, transform: placeAbove ? "translateY(-100%)" : "translateY(0)" };
@@ -1115,6 +1267,152 @@ export function PdfReader({
     setNavigatorTab("search");
     updateUrl(occurrence.pageNumber);
     window.requestAnimationFrame(() => searchInputRef.current?.focus());
+  }
+
+  function taskColor(task: ContextTaskMarker) {
+    if (task.status === "done") return "#059669";
+    if (task.priority === "high") return "#dc2626";
+    if (task.priority === "low") return "#64748b";
+    return "#4f46e5";
+  }
+
+  function taskHighlightsForPage(targetPage: number) {
+    return contextTasks.flatMap((task) => {
+      if (task.id !== hoveredTaskId) return [];
+      const anchor = taskAnchor(task);
+      if (anchor.pageNumber !== targetPage || !anchor.rects?.length) return [];
+      const color = taskColor(task);
+      return anchor.rects.map((rect, index) => <div
+        key={`${task.id}-task-highlight-${index}`}
+        data-task-highlight={task.id}
+        className="absolute rounded-sm transition-opacity duration-150"
+        style={{
+          left: `${rect.x * 100}%`, top: `${rect.y * 100}%`, width: `${rect.width * 100}%`, height: `${rect.height * 100}%`,
+          backgroundColor: `color-mix(in srgb, ${color} 28%, transparent)`,
+          outline: `2px solid color-mix(in srgb, ${color} 70%, transparent)`,
+        }}
+      />);
+    });
+  }
+
+  function deadlineMarkersForPage(targetPage: number) {
+    const highlights = contextDeadlines.flatMap((deadline) => {
+      if (deadline.id !== hoveredDeadlineId) return [];
+      const anchor = deadlineAnchor(deadline);
+      if (anchor.pageNumber !== targetPage || !anchor.rects?.length) return [];
+      return anchor.rects.map((rect, index) => <div
+        key={`${deadline.id}-deadline-highlight-${index}`}
+        data-deadline-highlight={deadline.id}
+        className="absolute rounded-sm transition-opacity duration-150"
+        style={{
+          left: `${rect.x * 100}%`, top: `${rect.y * 100}%`, width: `${rect.width * 100}%`, height: `${rect.height * 100}%`,
+          backgroundColor: "color-mix(in srgb, #d97706 28%, transparent)",
+          outline: "2px solid color-mix(in srgb, #d97706 70%, transparent)",
+        }}
+      />);
+    });
+    const markers = contextDeadlines.flatMap((deadline) => {
+      const anchor = deadlineAnchor(deadline);
+      if ((anchor.pageNumber ?? 1) !== targetPage) return [];
+      const rects = anchor.rects ?? [];
+      const top = rects.length ? Math.min(...rects.map((rect) => rect.y)) : 0.035;
+      const overdue = deadline.status === "open" && new Date(deadline.deadlineAt).getTime() < Date.now();
+      const color = deadline.status === "done" ? "#059669" : overdue ? "#dc2626" : "#d97706";
+      const active = initialDeadlineId === deadline.id;
+      return [<button
+        type="button"
+        key={`${deadline.id}-deadline-marker`}
+        data-deadline-marker={deadline.id}
+        title={`${deadline.title} · ${format.dateTime(new Date(deadline.deadlineAt), { dateStyle: "medium", timeStyle: "short" })} · ${deadline.assigneeName || tDeadlines("unassigned")}`}
+        aria-label={`${tDeadlines("markerLabel")}: ${deadline.title}`}
+        className="pointer-events-auto absolute grid size-7 place-items-center rounded-full border-2 bg-background shadow-sm transition-transform hover:scale-105"
+        style={{
+          left: "calc(100% + 72px)",
+          top: `${top * 100}%`,
+          transform: "translateY(-50%)",
+          borderColor: color,
+          color,
+          boxShadow: active ? `0 0 0 4px color-mix(in srgb, ${color} 25%, transparent)` : undefined,
+        }}
+        onMouseEnter={() => setHoveredDeadlineId(deadline.id)}
+        onMouseLeave={() => setHoveredDeadlineId((current) => current === deadline.id ? null : current)}
+        onFocus={() => setHoveredDeadlineId(deadline.id)}
+        onBlur={() => setHoveredDeadlineId((current) => current === deadline.id ? null : current)}
+        onClick={() => openDeadlineCreator({
+          deadline: {
+            id: deadline.id,
+            title: deadline.title,
+            description: deadline.description,
+            assigneeId: deadline.assigneeId,
+            deadlineAt: deadline.deadlineAt,
+            status: deadline.status,
+          },
+          origin: {
+            type: "pdf",
+            entityId: documentId,
+            route: deadline.route,
+            label: deadline.label,
+            anchor,
+          },
+        })}
+      ><CalendarClock className="size-3.5" /></button>];
+    });
+    return [...highlights, ...markers];
+  }
+
+  function taskMarkersForPage(targetPage: number) {
+    return [
+      ...taskHighlightsForPage(targetPage),
+      ...deadlineMarkersForPage(targetPage),
+      ...contextTasks.flatMap((task) => {
+      const anchor = taskAnchor(task);
+      if ((anchor.pageNumber ?? 1) !== targetPage) return [];
+      const rects = anchor.rects ?? [];
+      const top = rects.length
+        ? Math.min(...rects.map((rect) => rect.y))
+        : 0.035;
+      const active = initialTaskId === task.id;
+      const color = taskColor(task);
+      return [<button
+        type="button"
+        key={`${task.id}-task-marker`}
+        data-task-marker={task.id}
+        title={`${task.title} · ${task.assigneeName || tTasks("unassigned")}`}
+        aria-label={`${tTasks("markerLabel")}: ${task.title}`}
+        className="pointer-events-auto absolute grid size-7 place-items-center rounded-full border-2 bg-background shadow-sm transition-transform hover:scale-105"
+        style={{
+          left: "calc(100% + 40px)",
+          top: `${top * 100}%`,
+          transform: "translateY(-50%)",
+          borderColor: color,
+          color,
+          boxShadow: active ? `0 0 0 4px color-mix(in srgb, ${color} 25%, transparent)` : undefined,
+        }}
+        onMouseEnter={() => setHoveredTaskId(task.id)}
+        onMouseLeave={() => setHoveredTaskId((current) => current === task.id ? null : current)}
+        onFocus={() => setHoveredTaskId(task.id)}
+        onBlur={() => setHoveredTaskId((current) => current === task.id ? null : current)}
+        onClick={() => openTaskCreator({
+          task: {
+            id: task.id,
+            title: task.title,
+            assigneeId: task.assigneeId,
+            priority: task.priority,
+            dueDate: task.dueDate,
+            status: task.status,
+            projectId: null,
+          },
+          origin: {
+            type: "pdf",
+            entityId: documentId,
+            route: task.route,
+            label: task.label,
+            anchor,
+          },
+        })}
+      ><ClipboardPlus className="size-3.5" /></button>];
+      }),
+    ];
   }
 
   const thumbnailTools = <div className="flex h-full min-h-0 flex-col">
@@ -1235,6 +1533,8 @@ export function PdfReader({
       <DropdownMenu><DropdownMenuTrigger render={<Button ref={zoomLabelRef} variant="ghost" size="sm" className="min-w-14 px-1 text-xs tabular-nums" aria-label={t("zoomOptions")} />}>{Math.round(scale * 100)}%<ChevronDown className="size-3" /></DropdownMenuTrigger><DropdownMenuContent align="center" className="w-48"><div className="px-1.5 py-1 text-xs font-medium text-muted-foreground">{t("zoomOptions")}</div><DropdownMenuItem onClick={() => void applyFitMode("width")}>{fitMode === "width" && <Check />}{t("fitWidth")}<DropdownMenuShortcut>{displayPdfShortcut(shortcuts.fitWidth)}</DropdownMenuShortcut></DropdownMenuItem><DropdownMenuItem onClick={() => void applyFitMode("page")}>{fitMode === "page" && <Check />}{t("fitPage")}<DropdownMenuShortcut>{displayPdfShortcut(shortcuts.fitPage)}</DropdownMenuShortcut></DropdownMenuItem><DropdownMenuItem onClick={() => void applyFitMode("actual")}>{fitMode === "actual" && <Check />}{t("actualSize")}<DropdownMenuShortcut>{displayPdfShortcut(shortcuts.actualSize)}</DropdownMenuShortcut></DropdownMenuItem><DropdownMenuSeparator />{[75, 100, 125, 150, 200].map((percentage) => <DropdownMenuItem key={percentage} onClick={() => setCustomScale(percentage / 100)}>{Math.round(scale * 100) === percentage && fitMode === "custom" && <Check />}{percentage}%</DropdownMenuItem>)}<DropdownMenuSeparator /><div className="px-1.5 py-1"><label className="mb-1 block text-xs font-medium text-muted-foreground" htmlFor="pdf-custom-zoom">{t("customZoom")}</label><Input id="pdf-custom-zoom" aria-label={t("customZoom")} className="h-7" type="number" min={50} max={300} defaultValue={Math.round(scale * 100)} onKeyDown={(event) => { event.stopPropagation(); if (event.key === "Enter") setCustomScale(Number(event.currentTarget.value) / 100); }} /></div></DropdownMenuContent></DropdownMenu>
       <Button data-testid="pdf-zoom-in" aria-label={t("zoomIn")} title={shortcutTitle("zoomIn", t("zoomIn"))} variant="ghost" size="icon-sm" onClick={() => setCustomScale(scale + 0.15)}><Plus className="size-4" /></Button>
       <Button aria-label={t("captureRegion")} title={shortcutTitle("captureRegion", t("captureRegion"))} variant={regionMode ? "secondary" : "ghost"} size="sm" className="shrink-0 px-2" onClick={() => { if (viewMode === "continuous") setViewMode("single"); setRegionMode((value) => !value); }}><SquareDashedMousePointer className="size-4" /><span className="hidden xl:inline">{t("captureRegion")}</span></Button>
+      <Button aria-label={tTasks("createTask")} title={shortcutTitle("createTask", tTasks("createTask"))} variant="ghost" size="icon-sm" onClick={requestPdfTask}><ClipboardPlus className="size-4" /></Button>
+      <Button aria-label={tDeadlines("createDeadline")} title={shortcutTitle("createDeadline", tDeadlines("createDeadline"))} variant="ghost" size="icon-sm" onClick={requestPdfDeadline}><CalendarClock className="size-4" /></Button>
       <Button aria-label={t("bookmarkPage")} title={shortcutTitle("bookmarkPage", t("bookmarkPage"))} variant="ghost" size="icon-sm" onClick={() => requestAnnotation({ kind: "bookmark", geometry: [], selectedText: "", pageNumber })}><Bookmark className="size-4" /></Button>
       <Button className="relative" variant={commentsVisible ? "secondary" : "ghost"} size="icon-sm" aria-label={commentsVisible ? t("hideAnnotations") : t("showAnnotations")} aria-pressed={commentsVisible} title={shortcutTitle("comments", commentsVisible ? t("hideAnnotations") : t("showAnnotations"))} onClick={() => commentsVisible ? closeCommentPanel() : showCommentList()}><MessageCircle className="size-4" />{commentThreads.length > 0 && <span className="absolute -right-1 -top-1 min-w-4 rounded-full bg-indigo-600 px-1 text-[9px] leading-4 text-white tabular-nums">{commentThreads.length}</span>}</Button>
       <DropdownMenu><DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" aria-label={t("morePdfActions")} title={t("morePdfActions")} />}><MoreHorizontal /></DropdownMenuTrigger><DropdownMenuContent align="end" className="w-56"><div className="px-1.5 py-1 text-xs font-medium text-muted-foreground">{t("viewMode")}</div><DropdownMenuItem onClick={() => changeViewMode("continuous")}>{viewMode === "continuous" && <Check />}{t("continuousView")}<DropdownMenuShortcut>{displayPdfShortcut(shortcuts.continuousView)}</DropdownMenuShortcut></DropdownMenuItem><DropdownMenuItem onClick={() => changeViewMode("single")}>{viewMode === "single" && <Check />}{t("singlePageView")}<DropdownMenuShortcut>{displayPdfShortcut(shortcuts.singlePageView)}</DropdownMenuShortcut></DropdownMenuItem><DropdownMenuItem onClick={() => changeViewMode("double")}>{viewMode === "double" && <Check />}{t("doublePageView")}<DropdownMenuShortcut>{displayPdfShortcut(shortcuts.doublePageView)}</DropdownMenuShortcut></DropdownMenuItem><DropdownMenuSeparator /><DropdownMenuItem onClick={() => setRotation((value) => (value + 90) % 360)}><RotateCw />{t("rotate")}<DropdownMenuShortcut>{displayPdfShortcut(shortcuts.rotate)}</DropdownMenuShortcut></DropdownMenuItem><DropdownMenuItem onClick={() => setShowThumbnails((value) => !value)}><FileSearch />{showThumbnails ? t("hideNavigator") : t("showNavigator")}<DropdownMenuShortcut>{displayPdfShortcut(shortcuts.toggleNavigator)}</DropdownMenuShortcut></DropdownMenuItem><DropdownMenuItem onClick={() => { setShowThumbnails(true); setNavigatorTab("outline"); }}><ListTree />{t("outline")}<DropdownMenuShortcut>{displayPdfShortcut(shortcuts.outline)}</DropdownMenuShortcut></DropdownMenuItem><DropdownMenuSeparator /><DropdownMenuItem onClick={() => runPdfShortcut("download")}><Download />{t("download")}<DropdownMenuShortcut>{displayPdfShortcut(shortcuts.download)}</DropdownMenuShortcut></DropdownMenuItem><DropdownMenuItem onClick={() => runPdfShortcut("openOriginal")}><ExternalLink />{t("openOriginal")}<DropdownMenuShortcut>{displayPdfShortcut(shortcuts.openOriginal)}</DropdownMenuShortcut></DropdownMenuItem><DropdownMenuItem onClick={() => runPdfShortcut("printPdf")}><Printer />{t("printPdf")}<DropdownMenuShortcut>{displayPdfShortcut(shortcuts.printPdf)}</DropdownMenuShortcut></DropdownMenuItem><DropdownMenuSeparator /><DropdownMenuItem onClick={() => setShortcutsOpen(true)}><Keyboard />{t("keyboardShortcuts")}<DropdownMenuShortcut>{displayPdfShortcut(shortcuts.shortcuts)}</DropdownMenuShortcut></DropdownMenuItem></DropdownMenuContent></DropdownMenu>
@@ -1242,10 +1542,10 @@ export function PdfReader({
     </header>
     <div className={`relative grid min-h-0 flex-1 ${styles.readerGrid} ${gridColumns}`} style={{ "--pdf-thumbnail-width": `${thumbnailWidth}px`, "--pdf-comment-width": `${commentPanelWidth}px` } as React.CSSProperties}>
       {thumbnailsVisible && <><aside data-testid="pdf-thumbnails-panel" className="hidden min-h-0 overflow-hidden border-r bg-background md:block">{thumbnailTools}</aside><button type="button" aria-label={t("resizeThumbnails")} title={t("resizeThumbnails")} className="absolute inset-y-0 z-30 hidden w-3 -translate-x-1/2 cursor-col-resize touch-none border-x border-transparent bg-background/50 transition-colors hover:border-indigo-300 hover:bg-indigo-500/15 focus-visible:border-indigo-500 focus-visible:bg-indigo-500/15 md:block" style={{ left: `${thumbnailWidth}px` }} onPointerDown={(event) => { event.currentTarget.setPointerCapture(event.pointerId); beginThumbnailResize(event); }} /></>}
-      <section ref={viewportRef} data-testid="pdf-reader-viewport" className="relative overflow-auto [overflow-anchor:none] p-4" onMouseUp={captureSelection}>{!pdf || (rendering && viewMode !== "continuous") ? <div className="pointer-events-none absolute inset-0 z-20 grid place-items-center"><Loader2 className="size-7 animate-spin text-indigo-500" /></div> : null}{viewMode === "continuous" ? <div ref={zoomContentRef} className="space-y-4">{pages.map((page) => <div key={page.pageNumber} data-page-number={page.pageNumber} ref={(element) => { if (element) continuousPageRefs.current.set(page.pageNumber, element); else continuousPageRefs.current.delete(page.pageNumber); }} className={styles.pageShell}><canvas ref={(element) => { if (element) continuousCanvasRefs.current.set(page.pageNumber, element); else continuousCanvasRefs.current.delete(page.pageNumber); }} className="block" /><div data-pdf-search-overlay className={styles.searchOverlay} /><div ref={(element) => { if (element) continuousTextLayerRefs.current.set(page.pageNumber, element); else continuousTextLayerRefs.current.delete(page.pageNumber); }} className={styles.textLayer} /><div className="pointer-events-none absolute inset-0 z-[3]">{annotations.filter((annotation) => annotation.pageNumber === page.pageNumber).flatMap((annotation) => displayAnnotationRects(annotation).map((rect, index) => <div data-annotation-rect={annotation.id} key={annotation.id + "-" + index} className="absolute" style={{ ...userMarkColorStyle(annotation.createdByMarkColor), left: `${rect.x * 100}%`, top: `${rect.y * 100}%`, width: `${rect.width * 100}%`, height: `${rect.height * 100}%`, backgroundColor: "var(--user-mark-highlight)", borderBottom: annotation.kind === "region" ? "2px solid var(--user-mark-solid)" : undefined }} />))}{annotations.filter((annotation) => annotation.pageNumber === page.pageNumber).map(annotationMarker)}</div></div>)}</div> : <div ref={zoomContentRef} className="flex items-start justify-center gap-4"><div ref={pageShellRef} data-page-number={pageNumber} className={styles.pageShell}><canvas ref={canvasRef} className="block" /><div data-pdf-search-overlay className={styles.searchOverlay} /><div ref={textLayerRef} className={styles.textLayer} />
-        <div className="pointer-events-none absolute inset-0 z-[3]">{pageAnnotations.flatMap((annotation) => displayAnnotationRects(annotation).map((rect, index) => <div data-annotation-rect={annotation.id} key={annotation.id + "-" + index} className="absolute" style={{ ...userMarkColorStyle(annotation.createdByMarkColor), left: `${rect.x * 100}%`, top: `${rect.y * 100}%`, width: `${rect.width * 100}%`, height: `${rect.height * 100}%`, backgroundColor: "var(--user-mark-highlight)", borderBottom: annotation.kind === "region" ? "2px solid var(--user-mark-solid)" : undefined }} />))}{pageAnnotations.map(annotationMarker)}{region && <div className="absolute border-2 bg-transparent" style={{ ...userMarkColorStyle(user.markColor), left: `${region.x * 100}%`, top: `${region.y * 100}%`, width: `${region.width * 100}%`, height: `${region.height * 100}%`, borderColor: "var(--user-mark-solid)", backgroundColor: "var(--user-mark-highlight)" }} />}</div>
+      <section ref={viewportRef} data-testid="pdf-reader-viewport" className="relative overflow-auto [overflow-anchor:none] p-4" onMouseUp={captureSelection}>{!pdf || (rendering && viewMode !== "continuous") ? <div className="pointer-events-none absolute inset-0 z-20 grid place-items-center"><Loader2 className="size-7 animate-spin text-indigo-500" /></div> : null}{viewMode === "continuous" ? <div ref={zoomContentRef} className="space-y-4">{pages.map((page) => <div key={page.pageNumber} data-page-number={page.pageNumber} ref={(element) => { if (element) continuousPageRefs.current.set(page.pageNumber, element); else continuousPageRefs.current.delete(page.pageNumber); }} className={styles.pageShell}><canvas ref={(element) => { if (element) continuousCanvasRefs.current.set(page.pageNumber, element); else continuousCanvasRefs.current.delete(page.pageNumber); }} className="block" /><div data-pdf-search-overlay className={styles.searchOverlay} /><div ref={(element) => { if (element) continuousTextLayerRefs.current.set(page.pageNumber, element); else continuousTextLayerRefs.current.delete(page.pageNumber); }} className={styles.textLayer} /><div className="pointer-events-none absolute inset-0 z-[3]">{annotations.filter((annotation) => annotation.pageNumber === page.pageNumber).flatMap((annotation) => displayAnnotationRects(annotation).map((rect, index) => <div data-annotation-rect={annotation.id} key={annotation.id + "-" + index} className="absolute" style={{ ...userMarkColorStyle(annotation.createdByMarkColor), left: `${rect.x * 100}%`, top: `${rect.y * 100}%`, width: `${rect.width * 100}%`, height: `${rect.height * 100}%`, backgroundColor: "var(--user-mark-highlight)", borderBottom: annotation.kind === "region" ? "2px solid var(--user-mark-solid)" : undefined }} />))}{annotations.filter((annotation) => annotation.pageNumber === page.pageNumber).map(annotationMarker)}{taskMarkersForPage(page.pageNumber)}</div></div>)}</div> : <div ref={zoomContentRef} className="flex items-start justify-center gap-4"><div ref={pageShellRef} data-page-number={pageNumber} className={styles.pageShell}><canvas ref={canvasRef} className="block" /><div data-pdf-search-overlay className={styles.searchOverlay} /><div ref={textLayerRef} className={styles.textLayer} />
+        <div className="pointer-events-none absolute inset-0 z-[3]">{pageAnnotations.flatMap((annotation) => displayAnnotationRects(annotation).map((rect, index) => <div data-annotation-rect={annotation.id} key={annotation.id + "-" + index} className="absolute" style={{ ...userMarkColorStyle(annotation.createdByMarkColor), left: `${rect.x * 100}%`, top: `${rect.y * 100}%`, width: `${rect.width * 100}%`, height: `${rect.height * 100}%`, backgroundColor: "var(--user-mark-highlight)", borderBottom: annotation.kind === "region" ? "2px solid var(--user-mark-solid)" : undefined }} />))}{pageAnnotations.map(annotationMarker)}{taskMarkersForPage(pageNumber)}{region && <div className="absolute border-2 bg-transparent" style={{ ...userMarkColorStyle(user.markColor), left: `${region.x * 100}%`, top: `${region.y * 100}%`, width: `${region.width * 100}%`, height: `${region.height * 100}%`, borderColor: "var(--user-mark-solid)", backgroundColor: "var(--user-mark-highlight)" }} />}</div>
         {regionMode && <div data-testid="pdf-region-selector" className="absolute inset-0 z-[5] cursor-crosshair" onPointerDown={(event) => { regionStart.current = regionPoint(event); event.currentTarget.setPointerCapture(event.pointerId); }} onPointerMove={(event) => { if (!regionStart.current) return; const end = regionPoint(event); setRegion({ x: Math.min(regionStart.current.x, end.x), y: Math.min(regionStart.current.y, end.y), width: Math.abs(end.x - regionStart.current.x), height: Math.abs(end.y - regionStart.current.y) }); }} onPointerUp={(event) => { const start = regionStart.current; if (start) { const end = regionPoint(event); setRegion({ x: Math.min(start.x, end.x), y: Math.min(start.y, end.y), width: Math.abs(end.x - start.x), height: Math.abs(end.y - start.y) }); const bounds = event.currentTarget.getBoundingClientRect(); setSelectionAnchor({ pageNumber, x: (event.clientX - bounds.left) / bounds.width, y: (event.clientY - bounds.top) / bounds.height, side: "right" }); } if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId); regionStart.current = null; }} />}
-      </div>{viewMode === "double" && pageNumber < pages.length && <div ref={secondaryPageShellRef} data-page-number={pageNumber + 1} className={styles.pageShell}><canvas ref={secondaryCanvasRef} className="block" /><div data-pdf-search-overlay className={styles.searchOverlay} /><div ref={secondaryTextLayerRef} className={styles.textLayer} /><div className="pointer-events-none absolute inset-0 z-[3]">{annotations.filter((annotation) => annotation.pageNumber === pageNumber + 1).flatMap((annotation) => displayAnnotationRects(annotation).map((rect, index) => <div data-annotation-rect={annotation.id} key={annotation.id + "-secondary-" + index} className="absolute" style={{ ...userMarkColorStyle(annotation.createdByMarkColor), left: `${rect.x * 100}%`, top: `${rect.y * 100}%`, width: `${rect.width * 100}%`, height: `${rect.height * 100}%`, backgroundColor: "var(--user-mark-highlight)", borderBottom: annotation.kind === "region" ? "2px solid var(--user-mark-solid)" : undefined }} />))}{annotations.filter((annotation) => annotation.pageNumber === pageNumber + 1).map(annotationMarker)}</div></div>}</div>}{selection && selectionAnchorPosition && <div data-testid="pdf-selection-actions" className="fixed z-40 flex gap-1 rounded-lg border bg-background p-1 shadow-xl" style={selectionActionsStyle(selectionAnchorPosition)}><Button size="sm" onClick={() => void saveAnnotation("text", selection.rects, selection.text, undefined, selection.pageNumber, "", true)}><Highlighter className="size-4" />{t("highlight")}</Button><Button size="sm" variant="outline" onClick={() => requestAnnotation({ kind: "text", geometry: selection.rects, selectedText: selection.text, pageNumber: selection.pageNumber })}><MessageCircle className="size-4" />{t("note")}</Button></div>}{region && selectionAnchorPosition && <div data-testid="pdf-selection-actions" className="fixed z-40 flex gap-1 rounded-lg border bg-background p-1 shadow-xl" style={selectionActionsStyle(selectionAnchorPosition)}><Button size="sm" onClick={() => void saveAnnotation("region", [region], "", previewForRegion(region), pageNumber, "", true)}><Highlighter className="size-4" />{t("highlight")}</Button><Button size="sm" variant="outline" onClick={() => requestAnnotation({ kind: "region", geometry: [region], selectedText: "", previewDataUrl: previewForRegion(region), pageNumber })}><MessageCircle className="size-4" />{t("note")}</Button><Button size="sm" variant="ghost" onClick={() => { setRegion(null); setSelectionAnchor(null); }}>{t("cancel")}</Button></div>}</section>
+      </div>{viewMode === "double" && pageNumber < pages.length && <div ref={secondaryPageShellRef} data-page-number={pageNumber + 1} className={styles.pageShell}><canvas ref={secondaryCanvasRef} className="block" /><div data-pdf-search-overlay className={styles.searchOverlay} /><div ref={secondaryTextLayerRef} className={styles.textLayer} /><div className="pointer-events-none absolute inset-0 z-[3]">{annotations.filter((annotation) => annotation.pageNumber === pageNumber + 1).flatMap((annotation) => displayAnnotationRects(annotation).map((rect, index) => <div data-annotation-rect={annotation.id} key={annotation.id + "-secondary-" + index} className="absolute" style={{ ...userMarkColorStyle(annotation.createdByMarkColor), left: `${rect.x * 100}%`, top: `${rect.y * 100}%`, width: `${rect.width * 100}%`, height: `${rect.height * 100}%`, backgroundColor: "var(--user-mark-highlight)", borderBottom: annotation.kind === "region" ? "2px solid var(--user-mark-solid)" : undefined }} />))}{annotations.filter((annotation) => annotation.pageNumber === pageNumber + 1).map(annotationMarker)}{taskMarkersForPage(pageNumber + 1)}</div></div>}</div>}{selection && selectionAnchorPosition && <div data-testid="pdf-selection-actions" className="fixed z-40 flex gap-1 rounded-lg border bg-background p-1 shadow-xl" style={selectionActionsStyle(selectionAnchorPosition)}><Button size="sm" onClick={() => void saveAnnotation("text", selection.rects, selection.text, undefined, selection.pageNumber, "", true)}><Highlighter className="size-4" />{t("highlight")}</Button><Button size="sm" variant="outline" onClick={() => requestAnnotation({ kind: "text", geometry: selection.rects, selectedText: selection.text, pageNumber: selection.pageNumber })}><MessageCircle className="size-4" />{t("note")}</Button><Button size="sm" variant="outline" onClick={requestPdfTask}><ClipboardPlus className="size-4" />{tTasks("createTask")}</Button><Button size="sm" variant="outline" onClick={requestPdfDeadline}><CalendarClock className="size-4" />{tDeadlines("createDeadline")}</Button></div>}{region && selectionAnchorPosition && <div data-testid="pdf-selection-actions" className="fixed z-40 flex gap-1 rounded-lg border bg-background p-1 shadow-xl" style={selectionActionsStyle(selectionAnchorPosition)}><Button size="sm" onClick={() => void saveAnnotation("region", [region], "", previewForRegion(region), pageNumber, "", true)}><Highlighter className="size-4" />{t("highlight")}</Button><Button size="sm" variant="outline" onClick={() => requestAnnotation({ kind: "region", geometry: [region], selectedText: "", previewDataUrl: previewForRegion(region), pageNumber })}><MessageCircle className="size-4" />{t("note")}</Button><Button size="sm" variant="outline" onClick={requestPdfTask}><ClipboardPlus className="size-4" />{tTasks("createTask")}</Button><Button size="sm" variant="outline" onClick={requestPdfDeadline}><CalendarClock className="size-4" />{tDeadlines("createDeadline")}</Button><Button size="sm" variant="ghost" onClick={() => { setRegion(null); setSelectionAnchor(null); }}>{t("cancel")}</Button></div>}</section>
       {commentsVisible && <><button type="button" aria-label={t("resizeComments")} title={t("resizeComments")} className="absolute inset-y-0 right-[var(--pdf-comment-width)] z-30 hidden w-3 translate-x-1/2 cursor-col-resize touch-none border-x border-transparent bg-background/50 transition-colors hover:border-indigo-300 hover:bg-indigo-500/15 focus-visible:border-indigo-500 focus-visible:bg-indigo-500/15 md:block" onPointerDown={(event) => { event.currentTarget.setPointerCapture(event.pointerId); beginCommentPanelResize(event); }} /><aside data-testid="pdf-comments-panel" className="hidden min-h-0 overflow-hidden border-l bg-background md:block">{renderCommentPanel()}</aside></>}
     </div>
     <Sheet open={compactViewport && commentsVisible} onOpenChange={(open) => { if (!open) closeCommentPanel(); }}>

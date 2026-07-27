@@ -2,6 +2,8 @@ import { Suspense } from "react";
 import { requireUser } from "@/lib/auth";
 import { AppSidebar } from "@/components/app-sidebar";
 import { Skeleton } from "@/components/ui/skeleton";
+import { TaskCreateProvider } from "@/modules/tasks/components/task-create-provider";
+import { DeadlineCreateProvider } from "@/modules/tasks/components/deadline-create-provider";
 
 export const unstable_instant = {
   prefetch: "runtime",
@@ -41,7 +43,8 @@ export default function AppLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <>
+    <TaskCreateProvider>
+      <DeadlineCreateProvider>
       <style>{`
         [data-app-shell]:has([data-project-focus-root="true"]) > [data-app-chrome] {
           display: none;
@@ -67,6 +70,7 @@ export default function AppLayout({
           {children}
         </main>
       </div>
-    </>
+      </DeadlineCreateProvider>
+    </TaskCreateProvider>
   );
 }

@@ -13,6 +13,12 @@ export type ProjectStatus = (typeof projectStatuses)[number];
 
 export const taskPriorities = ["low", "medium", "high"] as const;
 export type TaskPriority = (typeof taskPriorities)[number];
+export const taskStatuses = ["open", "done"] as const;
+export type TaskStatus = (typeof taskStatuses)[number];
+export const taskKinds = ["task", "deadline"] as const;
+export type TaskKind = (typeof taskKinds)[number];
+export const taskContextTypes = ["wikiPage", "wikiSource", "pdf", "app"] as const;
+export type TaskContextType = (typeof taskContextTypes)[number];
 
 export const scheduleConstraintTypes = [
   "asap",
@@ -93,12 +99,16 @@ export const tasks = sqliteTable(
     id: text("id")
       .primaryKey()
       .$defaultFn(() => createId()),
-    projectId: text("project_id")
-      .notNull()
-      .references(() => projects.id, { onDelete: "cascade" }),
-    columnId: text("column_id")
-      .notNull()
-      .references(() => projectColumns.id, { onDelete: "cascade" }),
+    projectId: text("project_id").references(() => projects.id, {
+      onDelete: "cascade",
+    }),
+    columnId: text("column_id").references(() => projectColumns.id, {
+      onDelete: "cascade",
+    }),
+    lastOpenColumnId: text("last_open_column_id").references(
+      () => projectColumns.id,
+      { onDelete: "set null" },
+    ),
     phaseId: text("phase_id").references(() => projectPhases.id, {
       onDelete: "set null",
     }),
@@ -107,10 +117,12 @@ export const tasks = sqliteTable(
       { onDelete: "cascade" },
     ),
     title: text("title").notNull(),
+    kind: text("kind", { enum: taskKinds }).notNull().default("task"),
     // Simple text for now; can hold Tiptap JSON later without a migration.
     description: text("description").notNull().default(""),
     assigneeId: text("assignee_id").references(() => user.id),
     dueDate: text("due_date"), // ISO YYYY-MM-DD
+    deadlineAt: integer("deadline_at", { mode: "timestamp_ms" }),
     startDate: text("start_date"), // ISO YYYY-MM-DD
     progress: integer("progress").notNull().default(0),
     isMilestone: integer("is_milestone", { mode: "boolean" })
@@ -124,6 +136,8 @@ export const tasks = sqliteTable(
     priority: text("priority", { enum: taskPriorities })
       .notNull()
       .default("medium"),
+    status: text("status", { enum: taskStatuses }).notNull().default("open"),
+    completedAt: integer("completed_at", { mode: "timestamp_ms" }),
     // Gap-based ordering within a column (steps of 1000).
     sortOrder: integer("sort_order").notNull().default(0),
     createdBy: text("created_by")
@@ -142,9 +156,15 @@ export const tasks = sqliteTable(
     index("tasks_assignee_idx").on(table.assigneeId),
     index("tasks_column_sort_idx").on(table.columnId, table.sortOrder),
     index("tasks_assignee_due_idx").on(table.assigneeId, table.dueDate),
+    index("tasks_status_assignee_priority_idx").on(
+      table.status,
+      table.assigneeId,
+      table.priority,
+    ),
     index("tasks_phase_sort_idx").on(table.phaseId, table.sortOrder),
     index("tasks_parent_sort_idx").on(table.parentTaskId, table.sortOrder),
     index("tasks_schedule_idx").on(table.startDate, table.dueDate),
+    index("tasks_kind_deadline_idx").on(table.kind, table.deadlineAt),
   ],
 );
 
@@ -193,6 +213,29 @@ export const projectDependencies = sqliteTable(
   (table) => [
     index("project_dependencies_predecessor_idx").on(table.predecessorType, table.predecessorId),
     index("project_dependencies_successor_idx").on(table.successorProjectId),
+  ],
+);
+
+export const taskContexts = sqliteTable(
+  "task_contexts",
+  {
+    taskId: text("task_id")
+      .primaryKey()
+      .references(() => tasks.id, { onDelete: "cascade" }),
+    type: text("type", { enum: taskContextTypes }).notNull(),
+    entityId: text("entity_id").notNull().default(""),
+    route: text("route").notNull(),
+    label: text("label").notNull().default(""),
+    anchorJson: text("anchor_json").notNull().default("{}"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("task_contexts_type_entity_idx").on(table.type, table.entityId),
   ],
 );
 

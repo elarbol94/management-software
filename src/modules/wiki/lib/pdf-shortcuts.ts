@@ -3,7 +3,7 @@ export const PDF_SHORTCUT_ACTIONS = [
   "continuousView", "singlePageView", "doublePageView", "search", "previousMatch", "nextMatch",
   "caseSensitive", "wholeWord", "navigatorPages", "navigatorSearch", "outline", "captureRegion",
   "bookmarkPage", "comments", "previousAnnotation", "nextAnnotation", "backToComments", "copyCitation",
-  "editAnnotation", "deleteAnnotation", "rotate", "toggleNavigator", "openOriginal", "download", "printPdf",
+  "editAnnotation", "deleteAnnotation", "createTask", "createDeadline", "rotate", "toggleNavigator", "openOriginal", "download", "printPdf",
   "focusMode", "shortcuts",
 ] as const;
 
@@ -15,7 +15,7 @@ export const PDF_SHORTCUT_GROUPS: Array<{ label: string; actions: PdfShortcutAct
   { label: "Ansichten", actions: ["continuousView", "singlePageView", "doublePageView"] },
   { label: "Suche", actions: ["search", "previousMatch", "nextMatch", "caseSensitive", "wholeWord"] },
   { label: "Navigator", actions: ["navigatorPages", "navigatorSearch", "outline", "toggleNavigator"] },
-  { label: "Kommentare und Markierungen", actions: ["captureRegion", "bookmarkPage", "comments", "previousAnnotation", "nextAnnotation", "backToComments", "copyCitation", "editAnnotation", "deleteAnnotation"] },
+  { label: "Kommentare, Markierungen und Aufgaben", actions: ["captureRegion", "bookmarkPage", "comments", "previousAnnotation", "nextAnnotation", "backToComments", "copyCitation", "editAnnotation", "deleteAnnotation", "createTask", "createDeadline"] },
   { label: "Dokument und Oberfläche", actions: ["rotate", "openOriginal", "download", "printPdf", "focusMode", "shortcuts"] },
 ];
 
@@ -26,6 +26,8 @@ export const PDF_SHORTCUT_LABELS: Record<PdfShortcutAction, string> = {
   search: "PDF durchsuchen", previousMatch: "Vorheriger Treffer", nextMatch: "Nächster Treffer",
   caseSensitive: "Groß-/Kleinschreibung", wholeWord: "Nur ganze Wörter", navigatorPages: "Seiten", navigatorSearch: "Suche", outline: "Gliederung",
   captureRegion: "Bereich markieren", bookmarkPage: "Seite merken", comments: "Kommentare", previousAnnotation: "Vorheriger Kommentar", nextAnnotation: "Nächster Kommentar", backToComments: "Zurück zu Kommentaren", copyCitation: "Zitat kopieren", editAnnotation: "Annotation bearbeiten", deleteAnnotation: "Annotation löschen",
+  createTask: "Aufgabe erstellen",
+  createDeadline: "Deadline erstellen",
   rotate: "Drehen", toggleNavigator: "Navigator ein-/ausblenden", openOriginal: "Original öffnen", download: "Herunterladen", printPdf: "Drucken", focusMode: "Fokusmodus", shortcuts: "Tastenkürzel",
 };
 
@@ -35,6 +37,8 @@ export const DEFAULT_PDF_SHORTCUT_BINDINGS: PdfShortcutBindings = {
   search: "Ctrl+F", previousMatch: "Shift+Tab", nextMatch: "Tab", caseSensitive: "Ctrl+Alt+C", wholeWord: "Ctrl+Alt+W",
   navigatorPages: "Ctrl+Alt+1", navigatorSearch: "Ctrl+Alt+2", outline: "Ctrl+Alt+3", captureRegion: "Ctrl+R", bookmarkPage: "Ctrl+B", comments: "Ctrl+M",
   previousAnnotation: "Ctrl+Alt+ArrowUp", nextAnnotation: "Ctrl+Alt+ArrowDown", backToComments: "Ctrl+Alt+ArrowLeft", copyCitation: "Ctrl+Shift+C", editAnnotation: "Ctrl+E", deleteAnnotation: "Ctrl+Delete",
+  createTask: "Ctrl+Shift+A",
+  createDeadline: "Ctrl+Shift+D",
   rotate: "Ctrl+Alt+R", toggleNavigator: "Ctrl+N", openOriginal: "Ctrl+O", download: "Ctrl+S", printPdf: "Ctrl+P", focusMode: "Ctrl+Shift+F", shortcuts: "Ctrl+/",
 };
 

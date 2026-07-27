@@ -211,6 +211,20 @@
       "when": 1785069000000,
       "tag": "0029_project_dependencies",
       "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "6",
+      "when": 1785095352486,
+      "tag": "0030_known_firebird",
+      "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "6",
+      "when": 1785130063935,
+      "tag": "0031_contextual_deadlines",
+      "breakpoints": true
     }
   ]
 }

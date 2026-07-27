@@ -1,8 +1,9 @@
-import { and, asc, eq, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, isNull, lte, sql, type SQL } from "drizzle-orm";
 import { db } from "@/db";
 import {
   projectColumns,
   projects,
+  taskContexts,
   taskDependencies,
   tasks,
   user,
@@ -54,8 +55,8 @@ export function getBoard(projectId: string) {
   const taskRows = db
     .select({
       id: tasks.id,
-      projectId: tasks.projectId,
-      columnId: tasks.columnId,
+      projectId: sql<string>`${tasks.projectId}`,
+      columnId: sql<string>`${tasks.columnId}`,
       parentTaskId: tasks.parentTaskId,
       title: tasks.title,
       description: tasks.description,
@@ -104,9 +105,9 @@ export function getPortfolioSchedule() {
   const taskRows = db
     .select({
       id: tasks.id,
-      projectId: tasks.projectId,
+      projectId: sql<string>`${tasks.projectId}`,
       parentTaskId: tasks.parentTaskId,
-      columnId: tasks.columnId,
+      columnId: sql<string>`${tasks.columnId}`,
       columnName: projectColumns.name,
       columnIsCompleted: projectColumns.isCompleted,
       title: tasks.title,
@@ -131,6 +132,30 @@ export function getPortfolioSchedule() {
     .orderBy(asc(tasks.projectId), asc(tasks.sortOrder))
     .all();
 
+  const deadlineRows = db
+    .select({
+      id: tasks.id,
+      title: tasks.title,
+      description: tasks.description,
+      assigneeId: tasks.assigneeId,
+      assigneeName: user.name,
+      dueDate: tasks.dueDate,
+      deadlineAt: tasks.deadlineAt,
+      status: tasks.status,
+      contextRoute: taskContexts.route,
+      contextLabel: taskContexts.label,
+    })
+    .from(tasks)
+    .leftJoin(user, eq(tasks.assigneeId, user.id))
+    .leftJoin(taskContexts, eq(tasks.id, taskContexts.taskId))
+    .where(eq(tasks.kind, "deadline"))
+    .orderBy(asc(tasks.deadlineAt))
+    .all()
+    .map((deadline) => ({
+      ...deadline,
+      deadlineAt: deadline.deadlineAt?.toISOString() ?? "",
+    }));
+
   const dependencyRows = db
     .select()
     .from(taskDependencies)
@@ -146,6 +171,7 @@ export function getPortfolioSchedule() {
   return {
     projects: projectRows,
     tasks: taskRows,
+    deadlines: deadlineRows,
     columns: columnRows.filter((column) =>
       projectRows.some((project) => project.id === column.projectId),
     ),
@@ -164,6 +190,202 @@ export function listMembers() {
     .from(user)
     .orderBy(asc(user.name))
     .all();
+}
+
+export function getTaskDialogOptions() {
+  return {
+    members: listMembers(),
+    projects: db
+      .select({ id: projects.id, name: projects.name })
+      .from(projects)
+      .where(eq(projects.status, "active"))
+      .orderBy(asc(projects.name))
+      .all(),
+  };
+}
+
+export type TaskOverviewFilters = {
+  assigneeId?: string;
+  priority?: "low" | "medium" | "high";
+  status?: "open" | "done" | "all";
+};
+
+export function listTaskOverview(filters: TaskOverviewFilters = {}) {
+  const conditions: SQL[] = [eq(tasks.kind, "task")];
+  if (filters.assigneeId && filters.assigneeId !== "all") {
+    conditions.push(
+      filters.assigneeId === "unassigned"
+        ? isNull(tasks.assigneeId)
+        : eq(tasks.assigneeId, filters.assigneeId),
+    );
+  }
+  if (filters.priority) conditions.push(eq(tasks.priority, filters.priority));
+  if (filters.status && filters.status !== "all") {
+    conditions.push(eq(tasks.status, filters.status));
+  }
+
+  const rows = db
+    .select({
+      id: tasks.id,
+      title: tasks.title,
+      assigneeId: tasks.assigneeId,
+      assigneeName: user.name,
+      priority: tasks.priority,
+      status: tasks.status,
+      dueDate: tasks.dueDate,
+      projectId: tasks.projectId,
+      projectName: projects.name,
+      projectColor: projects.color,
+      columnName: projectColumns.name,
+      contextType: taskContexts.type,
+      contextEntityId: taskContexts.entityId,
+      contextRoute: taskContexts.route,
+      contextLabel: taskContexts.label,
+      contextAnchorJson: taskContexts.anchorJson,
+      updatedAt: tasks.updatedAt,
+    })
+    .from(tasks)
+    .leftJoin(user, eq(tasks.assigneeId, user.id))
+    .leftJoin(projects, eq(tasks.projectId, projects.id))
+    .leftJoin(projectColumns, eq(tasks.columnId, projectColumns.id))
+    .leftJoin(taskContexts, eq(tasks.id, taskContexts.taskId))
+    .where(conditions.length ? and(...conditions) : undefined)
+    .orderBy(
+      sql`CASE ${tasks.priority} WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END`,
+      sql`${tasks.dueDate} IS NULL`,
+      asc(tasks.dueDate),
+      desc(tasks.updatedAt),
+    )
+    .all();
+
+  return rows.map((task) => {
+    const separator = task.contextRoute?.includes("?") ? "&" : "?";
+    return {
+      ...task,
+      href: task.contextRoute
+        ? `${task.contextRoute}${separator}task=${encodeURIComponent(task.id)}`
+        : task.projectId
+          ? `/projects?focus=${encodeURIComponent(task.id)}`
+          : "/",
+    };
+  });
+}
+
+export type DeadlineOverviewFilters = {
+  assigneeId?: string;
+  from?: string;
+  to?: string;
+  status?: "open" | "done" | "all";
+};
+
+export function listDeadlineOverview(filters: DeadlineOverviewFilters = {}) {
+  const conditions: SQL[] = [eq(tasks.kind, "deadline")];
+  if (filters.assigneeId && filters.assigneeId !== "all") {
+    conditions.push(
+      filters.assigneeId === "unassigned"
+        ? isNull(tasks.assigneeId)
+        : eq(tasks.assigneeId, filters.assigneeId),
+    );
+  }
+  if (filters.from) conditions.push(gte(tasks.dueDate, filters.from));
+  if (filters.to) conditions.push(lte(tasks.dueDate, filters.to));
+  if (filters.status && filters.status !== "all") {
+    conditions.push(eq(tasks.status, filters.status));
+  }
+
+  return db
+    .select({
+      id: tasks.id,
+      title: tasks.title,
+      description: tasks.description,
+      assigneeId: tasks.assigneeId,
+      assigneeName: user.name,
+      deadlineAt: tasks.deadlineAt,
+      status: tasks.status,
+      contextType: taskContexts.type,
+      contextEntityId: taskContexts.entityId,
+      contextRoute: taskContexts.route,
+      contextLabel: taskContexts.label,
+      contextAnchorJson: taskContexts.anchorJson,
+    })
+    .from(tasks)
+    .leftJoin(user, eq(tasks.assigneeId, user.id))
+    .leftJoin(taskContexts, eq(tasks.id, taskContexts.taskId))
+    .where(and(...conditions))
+    .orderBy(asc(tasks.deadlineAt))
+    .all()
+    .map((deadline) => {
+      const separator = deadline.contextRoute?.includes("?") ? "&" : "?";
+      return {
+        ...deadline,
+        deadlineAt: deadline.deadlineAt?.toISOString() ?? "",
+        href: deadline.contextRoute
+          ? `${deadline.contextRoute}${separator}deadline=${encodeURIComponent(deadline.id)}`
+          : "/",
+      };
+    });
+}
+
+export function listTasksForContext(
+  type: "wikiPage" | "wikiSource" | "pdf" | "app",
+  entityId: string,
+) {
+  return db
+    .select({
+      id: tasks.id,
+      title: tasks.title,
+      assigneeId: tasks.assigneeId,
+      assigneeName: user.name,
+      priority: tasks.priority,
+      status: tasks.status,
+      dueDate: tasks.dueDate,
+      route: taskContexts.route,
+      label: taskContexts.label,
+      anchorJson: taskContexts.anchorJson,
+    })
+    .from(taskContexts)
+    .innerJoin(tasks, eq(taskContexts.taskId, tasks.id))
+    .leftJoin(user, eq(tasks.assigneeId, user.id))
+    .where(and(
+      eq(taskContexts.type, type),
+      eq(taskContexts.entityId, entityId),
+      eq(tasks.kind, "task"),
+    ))
+    .orderBy(asc(tasks.createdAt))
+    .all();
+}
+
+export function listDeadlinesForContext(
+  type: "wikiPage" | "wikiSource" | "pdf" | "app",
+  entityId: string,
+) {
+  return db
+    .select({
+      id: tasks.id,
+      title: tasks.title,
+      description: tasks.description,
+      assigneeId: tasks.assigneeId,
+      assigneeName: user.name,
+      deadlineAt: tasks.deadlineAt,
+      status: tasks.status,
+      route: taskContexts.route,
+      label: taskContexts.label,
+      anchorJson: taskContexts.anchorJson,
+    })
+    .from(taskContexts)
+    .innerJoin(tasks, eq(taskContexts.taskId, tasks.id))
+    .leftJoin(user, eq(tasks.assigneeId, user.id))
+    .where(and(
+      eq(taskContexts.type, type),
+      eq(taskContexts.entityId, entityId),
+      eq(tasks.kind, "deadline"),
+    ))
+    .orderBy(asc(tasks.deadlineAt))
+    .all()
+    .map((deadline) => ({
+      ...deadline,
+      deadlineAt: deadline.deadlineAt?.toISOString() ?? "",
+    }));
 }
 
 /** Open tasks assigned to a user across all active projects (for the dashboard). */

@@ -3,6 +3,7 @@
 import { useEffect, useEffectEvent, useMemo, useRef, useState, type CSSProperties } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
+import { toast } from "sonner";
 import { EditorContent, useEditor, type Editor } from "@tiptap/react";
 import { BubbleMenu } from "@tiptap/react/menus";
 import { Mark, Node, mergeAttributes } from "@tiptap/core";
@@ -12,7 +13,7 @@ import Placeholder from "@tiptap/extension-placeholder";
 import TaskList from "@tiptap/extension-task-list";
 import TaskItem from "@tiptap/extension-task-item";
 import { Fragment, Slice } from "@tiptap/pm/model";
-import { AlertCircle, AlignCenter, AlignLeft, AlignRight, Bold, BookMarked, Check, CloudOff, Code, Columns2, Eye, EyeOff, FileText, Heading1, Heading2, Heading3, Highlighter, ImagePlus, Italic, Keyboard, Link2, List, ListOrdered, ListTree, ListTodo, MessageSquareText, Minus, MoreHorizontal, Paperclip, Pilcrow, Quote, Redo2, RotateCcw, Rows3, Scan, ScissorsLineDashed, Search, Settings2, Strikethrough, Trash2, Underline as UnderlineIcon, Undo2, WifiOff } from "lucide-react";
+import { AlertCircle, AlignCenter, AlignLeft, AlignRight, Bold, BookMarked, CalendarClock, Check, ClipboardCheck, CloudOff, Code, Columns2, Eye, EyeOff, FileText, Heading1, Heading2, Heading3, Highlighter, ImagePlus, Italic, Keyboard, Link2, List, ListOrdered, ListTree, ListTodo, MessageSquareText, Minus, MoreHorizontal, Paperclip, Pilcrow, Quote, Redo2, RotateCcw, Rows3, Scan, ScissorsLineDashed, Search, Settings2, Strikethrough, Trash2, Underline as UnderlineIcon, Undo2, WifiOff } from "lucide-react";
 import { savePageContent } from "../actions";
 import { addComment, restorePageRevision } from "../research-actions";
 import { Button } from "@/components/ui/button";
@@ -69,6 +70,9 @@ import {
   WIKI_SHORTCUT_ACTIONS,
   type WikiShortcutAction,
 } from "../lib/wiki-shortcuts";
+import { useTaskCreator } from "@/modules/tasks/components/task-create-provider";
+import { useDeadlineCreator } from "@/modules/tasks/components/deadline-create-provider";
+import type { ContextDeadlineMarker, ContextTaskMarker } from "@/modules/tasks/types";
 
 type PageRef = { id: string; title: string; slug: string };
 type SourceRef = { id: string; title: string; issuedDate: string; contributors: string };
@@ -84,6 +88,8 @@ const LEGACY_TIPTAP_SHORTCUTS = new Set([
 type WikiEditorProps = {
   focused?: boolean;
   pageId: string;
+  pageTitle: string;
+  pageSlug: string;
   pageVersion: number;
   initialContent: string;
   initialDocumentMode: boolean;
@@ -95,6 +101,10 @@ type WikiEditorProps = {
   citationLocale: string;
   comments: CommentThread[];
   currentUserId: string;
+  contextTasks: ContextTaskMarker[];
+  contextDeadlines: ContextDeadlineMarker[];
+  focusTaskId?: string;
+  focusDeadlineId?: string;
   pageActions: WikiEditorPageActions;
   initialTypography: WikiTypographySettingsV1;
   editableTypography: WikiTypographySettingsV1;
@@ -137,6 +147,70 @@ const PdfEvidence = Node.create({
     const attributes = mergeAttributes(HTMLAttributes, { "data-pdf-evidence": HTMLAttributes.annotationId, "data-comment-node-id": HTMLAttributes.nodeId, class: "wiki-commentable-media my-4 rounded-lg border-l-4 border-indigo-400 bg-indigo-50/60 p-4 text-sm dark:bg-indigo-950/20" });
     if (HTMLAttributes.kind === "region" && HTMLAttributes.previewUrl) return ["figure", attributes, ["img", { src: HTMLAttributes.previewUrl, alt: text, class: "max-h-96 rounded object-contain" }], ["figcaption", { class: "mt-2 text-xs text-muted-foreground" }, text]];
     return ["aside", attributes, text];
+  },
+});
+
+const TaskReference = Node.create({
+  name: "taskReference",
+  group: "block",
+  atom: true,
+  selectable: true,
+  addAttributes() {
+    return {
+      taskId: { default: "" },
+      title: { default: "" },
+      status: { default: "open" },
+      priority: { default: "medium" },
+      assigneeName: { default: "" },
+    };
+  },
+  parseHTML() { return [{ tag: "aside[data-task-reference]" }]; },
+  renderHTML({ HTMLAttributes }) {
+    const done = HTMLAttributes.status === "done";
+    return ["aside", mergeAttributes(HTMLAttributes, {
+      "data-task-reference": HTMLAttributes.taskId,
+      "data-status": HTMLAttributes.status,
+      "data-priority": HTMLAttributes.priority,
+      class: "wiki-task-reference",
+    }),
+      ["span", { class: "wiki-task-reference-check" }, done ? "✓" : ""],
+      ["span", { class: "wiki-task-reference-body" },
+        ["strong", {}, HTMLAttributes.title || "Aufgabe"],
+        ["small", {}, [HTMLAttributes.assigneeName, HTMLAttributes.priority].filter(Boolean).join(" · ")],
+      ],
+    ];
+  },
+});
+
+const DeadlineReference = Node.create({
+  name: "deadlineReference",
+  group: "block",
+  atom: true,
+  selectable: true,
+  addAttributes() {
+    return {
+      deadlineId: { default: "" },
+      title: { default: "" },
+      description: { default: "" },
+      status: { default: "open" },
+      assigneeName: { default: "" },
+      deadlineAt: { default: "" },
+    };
+  },
+  parseHTML() { return [{ tag: "aside[data-deadline-reference]" }]; },
+  renderHTML({ HTMLAttributes }) {
+    const done = HTMLAttributes.status === "done";
+    return ["aside", mergeAttributes(HTMLAttributes, {
+      "data-deadline-reference": HTMLAttributes.deadlineId,
+      "data-status": HTMLAttributes.status,
+      class: "wiki-deadline-reference",
+    }),
+      ["span", { class: "wiki-deadline-reference-icon" }, done ? "✓" : "◷"],
+      ["span", { class: "wiki-deadline-reference-body" },
+        ["strong", {}, HTMLAttributes.title || "Deadline"],
+        ["small", {}, [HTMLAttributes.deadlineAt, HTMLAttributes.assigneeName].filter(Boolean).join(" · ")],
+      ],
+    ];
   },
 });
 
@@ -432,6 +506,8 @@ function EvidencePicker({ editor, pageId, locale, open, onOpenChange }: { editor
 export function WikiEditor({
   focused = false,
   pageId,
+  pageTitle,
+  pageSlug,
   pageVersion,
   initialContent,
   initialDocumentMode,
@@ -442,6 +518,10 @@ export function WikiEditor({
   users,
   citationLocale,
   comments,
+  contextTasks,
+  contextDeadlines,
+  focusTaskId,
+  focusDeadlineId,
   currentUserId,
   pageActions,
   initialTypography,
@@ -449,7 +529,7 @@ export function WikiEditor({
   typographyTemplates,
   isPrimaryAuthor,
 }: WikiEditorProps) {
-  const t = useTranslations("wiki"); const router = useRouter(); const [saveState, setSaveState] = useState<"idle" | "unsaved" | "saving" | "saved" | "offline" | "error" | "conflict">("idle");
+  const t = useTranslations("wiki"); const tTasks = useTranslations("tasks"); const tDeadlines = useTranslations("deadlines"); const router = useRouter(); const { openTaskCreator } = useTaskCreator(); const { openDeadlineCreator } = useDeadlineCreator(); const [saveState, setSaveState] = useState<"idle" | "unsaved" | "saving" | "saved" | "offline" | "error" | "conflict">("idle");
   const [conflictRevision, setConflictRevision] = useState<string | null>(null); const [activeThreadId, setActiveThreadId] = useState<string | null>(null); const [optimisticCommentThreads, setOptimisticCommentThreads] = useState<CommentThread[]>([]); const [commentFocusRequest, setCommentFocusRequest] = useState(0); const [imagePickerRequest, setImagePickerRequest] = useState(0); const [commentOpen, setCommentOpen] = useState(false); const [commentBody, setCommentBody] = useState(""); const [pendingAnchor, setPendingAnchor] = useState<CommentAnchor | null>(null); const [regionTarget, setRegionTarget] = useState<{ nodeId: string; label: string } | null>(null); const [imageError, setImageError] = useState(""); const [imageUploading, setImageUploading] = useState(false); const [assigneeId, setAssigneeId] = useState("none");
   const commentThreads = useMemo(
     () => [...optimisticCommentThreads.filter((thread) => !comments.some((item) => item.id === thread.id)), ...comments],
@@ -540,6 +620,62 @@ export function WikiEditor({
   }
   persistContentRef.current = (json: string) => persistContent(json);
 
+  function requestWikiTask(targetEditor: Editor) {
+    const { from, to } = targetEditor.state.selection;
+    const quote = targetEditor.state.doc.textBetween(from, to, " ").trim();
+    openTaskCreator({
+      initialTitle: quote,
+      origin: {
+        type: "wikiPage",
+        entityId: pageId,
+        route: `/wiki/pages/${encodeURIComponent(pageSlug)}`,
+        label: pageTitle,
+        anchor: { quote, from, to },
+      },
+      onCreated: (taskId) => {
+        targetEditor.chain().focus().insertContent({
+          type: "taskReference",
+          attrs: {
+            taskId,
+            title: quote || tTasks("title"),
+            status: "open",
+            priority: "medium",
+            assigneeName: "",
+          },
+        }).run();
+        router.refresh();
+      },
+    });
+  }
+
+  function requestWikiDeadline(targetEditor: Editor) {
+    const { from, to } = targetEditor.state.selection;
+    const quote = targetEditor.state.doc.textBetween(from, to, " ").trim();
+    openDeadlineCreator({
+      initialTitle: quote,
+      origin: {
+        type: "wikiPage",
+        entityId: pageId,
+        route: `/wiki/pages/${encodeURIComponent(pageSlug)}`,
+        label: pageTitle,
+        anchor: { quote, from, to },
+      },
+      onCreated: (deadlineId) => {
+        targetEditor.chain().focus().insertContent({
+          type: "deadlineReference",
+          attrs: {
+            deadlineId,
+            title: quote || tDeadlines("title"),
+            status: "open",
+            assigneeName: "",
+            deadlineAt: "",
+          },
+        }).run();
+        router.refresh();
+      },
+    });
+  }
+
   const group = (name: "text" | "lists" | "blocks" | "wiki") => t("slash.groups." + name);
   const slash = (id: string, groupName: "text" | "lists" | "blocks" | "wiki", icon: SlashCommandDefinition["icon"], execute: SlashCommandDefinition["execute"]): SlashCommandDefinition => ({ id, group: groupName, groupLabel: group(groupName), icon, execute, label: t("slash.commands." + id + ".label"), description: t("slash.commands." + id + ".description"), keywords: t.raw("slash.commands." + id + ".keywords") as string[] });
   const slashCommands: SlashCommandDefinition[] = [
@@ -557,6 +693,8 @@ export function WikiEditor({
     slash("tableOfContents", "blocks", ListTree, (editor) => editor.chain().focus().insertContent({ type: "tableOfContents", attrs: { title: t("document.contents"), maxLevel: 3 } }).run()),
     slash("twoColumns", "blocks", Columns2, (editor) => editor.chain().focus().insertContent({ type: "layoutSection", attrs: { columns: 2, gapMm: 8 }, content: [{ type: "paragraph" }, { type: "paragraph" }] }).run()),
     slash("pageLink", "wiki", Link2, () => setPageLinkOpen(true)),
+    slash("todo", "wiki", ClipboardCheck, (editor) => requestWikiTask(editor)),
+    slash("deadline", "wiki", CalendarClock, (editor) => requestWikiDeadline(editor)),
     slash("externalLink", "wiki", Link2, () => setLinkEditorRequest((value) => value + 1)),
     slash("citation", "wiki", BookMarked, () => setCitationOpen(true)),
     slash("pdfEvidence", "wiki", Highlighter, () => setEvidenceOpen(true)),
@@ -567,7 +705,7 @@ export function WikiEditor({
   ];
   const slashExtension = createSlashCommandExtension({ commands: slashCommands, ariaLabel: t("slash.ariaLabel"), emptyLabel: t("slash.empty") });
 
-  const editor = useEditor({ immediatelyRender: false, enableInputRules: ["blockquote", "bulletList", "codeBlock", "heading", "orderedList", "taskItem"], extensions: [StarterKit.configure({ bold: false, code: false, heading: false, listItem: false, italic: false, link: { openOnClick: false }, strike: false }), CollapsibleHeading.configure({ levels: [1, 2, 3] }), HeadingListItem, ...MarkdownShortcutMarks, ...MarkdownDocumentExtensions, ...DocumentExtensions, TaskList, TaskItem.configure({ nested: true }), Citation, PdfEvidence, CommentableImage, CommentMark, Highlight, Placeholder.configure({ placeholder: ({ node }) => node.type.name === "heading" ? t("editor.placeholder.heading") : t("editor.placeholder.empty") }), EditorSearchExtension, MarkdownShortcuts, slashExtension], content,
+  const editor = useEditor({ immediatelyRender: false, enableInputRules: ["blockquote", "bulletList", "codeBlock", "heading", "orderedList", "taskItem"], extensions: [StarterKit.configure({ bold: false, code: false, heading: false, listItem: false, italic: false, link: { openOnClick: false }, strike: false }), CollapsibleHeading.configure({ levels: [1, 2, 3] }), HeadingListItem, ...MarkdownShortcutMarks, ...MarkdownDocumentExtensions, ...DocumentExtensions, TaskList, TaskItem.configure({ nested: true }), Citation, PdfEvidence, TaskReference, DeadlineReference, CommentableImage, CommentMark, Highlight, Placeholder.configure({ placeholder: ({ node }) => node.type.name === "heading" ? t("editor.placeholder.heading") : t("editor.placeholder.empty") }), EditorSearchExtension, MarkdownShortcuts, slashExtension], content,
     editorProps: {
       attributes: { class: "prose prose-neutral dark:prose-invert max-w-none min-h-[28rem] focus:outline-none" },
       handlePaste(view, event) {
@@ -746,6 +884,87 @@ export function WikiEditor({
         case "tableDeleteColumn": deleteMarkdownTableColumn(editor); break;
       }
   });
+
+  useEffect(() => {
+    if (!editor) return;
+    const byId = new Map(contextTasks.map((task) => [task.id, task]));
+    const transaction = editor.state.tr;
+    let changed = false;
+    editor.state.doc.descendants((node, position) => {
+      if (node.type.name !== "taskReference") return;
+      const task = byId.get(String(node.attrs.taskId));
+      if (!task) return;
+      const nextAttrs = {
+        ...node.attrs,
+        title: task.title,
+        status: task.status,
+        priority: task.priority,
+        assigneeName: task.assigneeName ?? "",
+      };
+      if (JSON.stringify(nextAttrs) !== JSON.stringify(node.attrs)) {
+        transaction.setNodeMarkup(position, undefined, nextAttrs);
+        changed = true;
+      }
+    });
+    if (changed) editor.view.dispatch(transaction);
+  }, [contextTasks, editor]);
+
+  useEffect(() => {
+    if (!editor) return;
+    const byId = new Map(contextDeadlines.map((deadline) => [deadline.id, deadline]));
+    const transaction = editor.state.tr;
+    let changed = false;
+    editor.state.doc.descendants((node, position) => {
+      if (node.type.name !== "deadlineReference") return;
+      const deadline = byId.get(String(node.attrs.deadlineId));
+      if (!deadline) return;
+      const nextAttrs = {
+        ...node.attrs,
+        title: deadline.title,
+        description: deadline.description,
+        status: deadline.status,
+        assigneeName: deadline.assigneeName ?? "",
+        deadlineAt: new Date(deadline.deadlineAt).toLocaleString(),
+      };
+      if (JSON.stringify(nextAttrs) !== JSON.stringify(node.attrs)) {
+        transaction.setNodeMarkup(position, undefined, nextAttrs);
+        changed = true;
+      }
+    });
+    if (changed) editor.view.dispatch(transaction);
+  }, [contextDeadlines, editor]);
+
+  useEffect(() => {
+    if (!editor || !focusTaskId) return;
+    const timeout = window.setTimeout(() => {
+      const marker = editorRootRef.current?.querySelector<HTMLElement>(
+        `[data-task-reference="${CSS.escape(focusTaskId)}"]`,
+      );
+      if (marker) {
+        marker.scrollIntoView({ behavior: "smooth", block: "center" });
+        marker.focus({ preventScroll: true });
+      } else {
+        toast.info(tTasks("sourceFallback"));
+      }
+    }, 80);
+    return () => window.clearTimeout(timeout);
+  }, [editor, focusTaskId, tTasks]);
+
+  useEffect(() => {
+    if (!editor || !focusDeadlineId) return;
+    const timeout = window.setTimeout(() => {
+      const marker = editorRootRef.current?.querySelector<HTMLElement>(
+        `[data-deadline-reference="${CSS.escape(focusDeadlineId)}"]`,
+      );
+      if (marker) {
+        marker.scrollIntoView({ behavior: "smooth", block: "center" });
+        marker.focus({ preventScroll: true });
+      } else {
+        toast.info(tDeadlines("sourceFallback"));
+      }
+    }, 80);
+    return () => window.clearTimeout(timeout);
+  }, [editor, focusDeadlineId, tDeadlines]);
   useEffect(() => {
     if (!editor) return;
     const shortcut = (event: KeyboardEvent) => handleWikiShortcut(event);
@@ -915,6 +1134,8 @@ export function WikiEditor({
     <ToolbarButton title={t("editor.search.title")} shortcut={shortcutLabel("search")} active={searchOpen} onClick={() => setSearchOpen((value) => !value)}><Search className="size-4" /></ToolbarButton>
     <ToolbarButton title={t("editor.outline.title")} shortcut={shortcutLabel("outline")} active={outlineOpen} onClick={() => setOutlineOpen(true)}><ListTree className="size-4" /></ToolbarButton>
     <ToolbarButton title={t("inlineComment")} shortcut={shortcutLabel("inlineComment")} onClick={prepareComment}><MessageSquareText className="size-4" /></ToolbarButton>
+    <ToolbarButton title={tTasks("createTask")} shortcut={tTasks("globalShortcut")} onClick={() => requestWikiTask(activeEditor)}><ClipboardCheck className="size-4" /></ToolbarButton>
+    <ToolbarButton title={tDeadlines("createDeadline")} shortcut={tDeadlines("globalShortcut")} onClick={() => requestWikiDeadline(activeEditor)}><CalendarClock className="size-4" /></ToolbarButton>
     <ToolbarButton title={commentsVisible ? t("hideComments") : t("showComments")} shortcut={shortcutLabel("toggleComments")} active={commentsVisible} onClick={() => setCommentsVisible((value) => !value)}>{commentsVisible ? <EyeOff className="size-4" /> : <Eye className="size-4" />}</ToolbarButton>
     <Button
       type="button"
@@ -953,10 +1174,18 @@ export function WikiEditor({
     <div
       ref={editorRootRef}
       className={documentMode ? "wiki-document-workspace relative min-w-0" : "relative min-w-0"}
+      onKeyDownCapture={(event) => {
+        if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLocaleLowerCase() === "a") {
+          event.preventDefault();
+          event.stopPropagation();
+          requestWikiTask(activeEditor);
+        }
+      }}
     >
       <BubbleMenu editor={editor} pluginKey="wikiTextCommentMenu" options={{ strategy: "fixed", flip: true, shift: true, offset: 8 }} shouldShow={({ state }) => !state.selection.empty && !(state.selection instanceof NodeSelection)} className="z-40 flex items-center gap-1 rounded-lg border bg-background p-1 shadow-lg">
         <Button type="button" size="sm" variant={activeEditor.isActive("highlight") ? "secondary" : "ghost"} onClick={() => activeEditor.chain().focus().toggleMark("highlight", { createdBy: currentUserId }).run()}><Highlighter className="size-4" />{t("highlightSelection")}</Button>
         <Button type="button" size="sm" variant="ghost" onClick={prepareComment}><MessageSquareText className="size-4" />{t("commentSelection")}</Button>
+        <Button type="button" size="sm" variant="ghost" onClick={() => requestWikiTask(activeEditor)}><ClipboardCheck className="size-4" />{tTasks("createTask")}</Button>
       </BubbleMenu>
       <BubbleMenu editor={editor} pluginKey="wikiImageCommentMenu" options={{ strategy: "fixed", placement: "bottom", flip: true, shift: true, offset: 8 }} shouldShow={({ state }) => state.selection instanceof NodeSelection && ["commentableImage", "pdfEvidence"].includes(state.selection.node.type.name)} className="z-40 flex items-center gap-1 rounded-lg border bg-background p-1 shadow-lg">
         <Button type="button" size="sm" variant="ghost" onClick={() => prepareImageComment("whole")}><MessageSquareText className="size-4" />{t("commentWholeImage")}</Button>
