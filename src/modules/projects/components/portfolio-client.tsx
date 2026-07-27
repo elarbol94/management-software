@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -44,6 +45,7 @@ import {
   fitTaskToChildren,
   moveContextualDeadline,
   reparentTask,
+  reapplyPortfolioScheduleChange,
   revertPortfolioScheduleChange,
   upsertProject,
   upsertTask,
@@ -1478,6 +1480,8 @@ export function PortfolioClient({
   const activePreview = dragPreview?.preview ?? null;
   const [undoChangeSetId, setUndoChangeSetId] = useState<string | null>(null);
   const [undoPending, setUndoPending] = useState(false);
+  const [redoChangeSetId, setRedoChangeSetId] = useState<string | null>(null);
+  const [redoPending, setRedoPending] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<{
     task: PortfolioTask;
     descendantCount: number;
@@ -1846,22 +1850,6 @@ export function PortfolioClient({
         : new Set<string>(),
     [effectiveSchedule, criticalVisible],
   );
-  const dragImpact = useMemo(() => {
-    if (!draft && !projectDraft) return null;
-    const impact = activePreview?.impact;
-    return {
-      days: impact?.dayDelta ?? 0,
-      taskCount: impact?.affectedTaskCount ?? 0,
-      containerCount:
-        (impact?.expandedTaskCount ?? 0) +
-        (impact?.expandedProjectCount ?? 0),
-      constrained: Boolean(
-        activePreview?.constraints.some(
-          (constraint) => constraint.clampedStart || constraint.clampedEnd,
-        ),
-      ),
-    };
-  }, [draft, projectDraft, activePreview]);
   const tasksByProject = useMemo(() => {
     const map = new Map<string, PortfolioTask[]>();
     for (const task of effectiveSchedule.tasks) {
@@ -2826,12 +2814,13 @@ export function PortfolioClient({
     setDragPreview(null);
   }
 
-  async function undoScheduleChange(changeSetId = undoChangeSetId) {
+  const undoScheduleChange = useCallback(async (changeSetId = undoChangeSetId) => {
     if (!changeSetId || undoPending) return;
     setUndoPending(true);
     try {
       await revertPortfolioScheduleChange(changeSetId);
       setUndoChangeSetId(null);
+      setRedoChangeSetId(changeSetId);
       router.refresh();
       toast.success(t("scheduleRestored"));
     } catch {
@@ -2839,12 +2828,84 @@ export function PortfolioClient({
     } finally {
       setUndoPending(false);
     }
+  }, [router, t, undoChangeSetId, undoPending]);
+
+  const redoScheduleChange = useCallback(async (changeSetId = redoChangeSetId) => {
+    if (!changeSetId || redoPending) return;
+    setRedoPending(true);
+    try {
+      await reapplyPortfolioScheduleChange(changeSetId);
+      setRedoChangeSetId(null);
+      setUndoChangeSetId(changeSetId);
+      router.refresh();
+      toast.success(t("scheduleSaved"));
+    } catch {
+      toast.error(t("redoUnavailable"));
+    } finally {
+      setRedoPending(false);
+    }
+  }, [redoChangeSetId, redoPending, router, t]);
+
+  useEffect(() => {
+    function handleUndoShortcut(event: KeyboardEvent) {
+      if ((!event.ctrlKey && !event.metaKey) || event.altKey) {
+        return;
+      }
+
+      const key = event.key.toLocaleLowerCase();
+      const isUndo = key === "z" && !event.shiftKey;
+      const isRedo = key === "y" || (key === "z" && event.shiftKey);
+      if (!isUndo && !isRedo) return;
+
+      const target = event.target;
+      if (
+        target instanceof HTMLElement &&
+        (target.isContentEditable ||
+          target.closest("input, textarea, select, [contenteditable='true'], [role='textbox']"))
+      ) {
+        return;
+      }
+
+      if (isUndo && (!undoChangeSetId || undoPending)) return;
+      if (isRedo && (!redoChangeSetId || redoPending)) return;
+      event.preventDefault();
+      if (isUndo) void undoScheduleChange();
+      else void redoScheduleChange();
+    }
+
+    window.addEventListener("keydown", handleUndoShortcut);
+    return () => window.removeEventListener("keydown", handleUndoShortcut);
+  }, [
+    redoChangeSetId,
+    redoPending,
+    redoScheduleChange,
+    undoChangeSetId,
+    undoPending,
+    undoScheduleChange,
+  ]);
+
+  function scheduleImpactDescription(preview: SchedulePreview) {
+    const impact = preview.impact;
+    return t("dragImpact", {
+      days: impact.dayDelta,
+      tasks: impact.affectedTaskCount,
+      containers: impact.expandedTaskCount + impact.expandedProjectCount,
+    });
   }
 
-  function offerScheduleUndo(changeSetId: string | null) {
+  function offerScheduleUndo(
+    changeSetId: string | null,
+    description?: string,
+  ) {
     if (!changeSetId) return;
     setUndoChangeSetId(changeSetId);
-    toast.success(t("scheduleSaved"), {
+    setRedoChangeSetId(null);
+    toast(t("scheduleSaved"), {
+      description,
+      duration: 5000,
+      icon: <GitBranch className="size-4" />,
+      className:
+        "!border-amber-200 !bg-amber-50 !text-amber-950 dark:!border-amber-700/40 dark:!bg-amber-950/30 dark:!text-amber-100",
       action: {
         label: t("undo"),
         onClick: () => {
@@ -2869,7 +2930,10 @@ export function PortfolioClient({
         expectedPreview: { changes: preview.changes },
       });
       router.refresh();
-      offerScheduleUndo(result.changeSetId);
+      offerScheduleUndo(
+        result.changeSetId,
+        scheduleImpactDescription(preview),
+      );
     } catch (error) {
       clearDrag();
       router.refresh();
@@ -3938,28 +4002,6 @@ export function PortfolioClient({
               >
                 {tCommon("cancel")}
               </Button>
-            </div>
-          )}
-          {!dependencySourceId && dragImpact && (
-            <div
-              className="flex min-h-8 items-center gap-2 border-b bg-amber-50/80 px-3 font-mono text-[11px] tabular-nums text-amber-950 dark:bg-amber-950/30 dark:text-amber-100"
-              role="status"
-              aria-live="polite"
-              data-testid="schedule-impact-strip"
-            >
-              <GitBranch className="size-3.5" />
-              <span>
-                {t("dragImpact", {
-                  days: dragImpact.days,
-                  tasks: dragImpact.taskCount,
-                  containers: dragImpact.containerCount,
-                })}
-              </span>
-              {dragImpact.constrained && (
-                <span className="rounded-sm border border-amber-600/30 bg-amber-100/80 px-1.5 py-0.5 font-sans font-medium dark:bg-amber-900/50">
-                  {t("limitedByChildren")}
-                </span>
-              )}
             </div>
           )}
           <div className="grid gap-2 p-2 md:hidden" role="tree" aria-label={t("workBreakdown")}>

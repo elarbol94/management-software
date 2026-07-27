@@ -707,6 +707,7 @@
     "scheduleChanged": "Der Terminplan wurde zwischenzeitlich geändert. Prüfe ihn erneut.",
     "undo": "Rückgängig",
     "undoUnavailable": "Diese Änderung kann nicht mehr rückgängig gemacht werden.",
+    "redoUnavailable": "Diese Änderung kann nicht mehr wiederholt werden.",
     "focusMode": "Fokussierte Planung",
     "focusTask": "Auf Aufgabe fokussieren",
     "focusedTask": "Fokussierte Aufgabe",

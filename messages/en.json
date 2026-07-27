@@ -707,6 +707,7 @@
     "outdentChildrenInstead": "Move subtasks up, then delete",
     "undo": "Undo",
     "undoUnavailable": "This change can no longer be undone.",
+    "redoUnavailable": "This change can no longer be redone.",
     "focusMode": "Focused planning",
     "focusTask": "Focus on task",
     "focusedTask": "Focused task",

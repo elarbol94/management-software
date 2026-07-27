@@ -1967,3 +1967,133 @@ export async function revertPortfolioScheduleChange(changeSetId: string) {
   });
   revalidatePath("/projects");
 }
+
+/** Reapplies a change set that was just reverted, with the same safeguards as undo. */
+export async function reapplyPortfolioScheduleChange(changeSetId: string) {
+  await requireUserOrThrow();
+  db.transaction((tx) => {
+    const set = tx
+      .select()
+      .from(scheduleChangeSets)
+      .where(eq(scheduleChangeSets.id, changeSetId))
+      .get();
+    if (!set || set.status !== "reverted") {
+      throw new Error("Change cannot be redone");
+    }
+    const items = tx
+      .select()
+      .from(scheduleChangeItems)
+      .where(eq(scheduleChangeItems.changeSetId, changeSetId))
+      .all();
+    const projectItems = tx
+      .select()
+      .from(projectScheduleChangeItems)
+      .where(eq(projectScheduleChangeItems.changeSetId, changeSetId))
+      .all();
+    const currentTasks = tx
+      .select({
+        id: tasks.id,
+        projectId: sql<string>`${tasks.projectId}`,
+        parentTaskId: tasks.parentTaskId,
+        startDate: tasks.startDate,
+        dueDate: tasks.dueDate,
+        progress: tasks.progress,
+        isMilestone: tasks.isMilestone,
+        constraintType: tasks.constraintType,
+        constraintDate: tasks.constraintDate,
+      })
+      .from(tasks)
+      .where(isNotNull(tasks.projectId))
+      .all();
+    const currentProjects = tx
+      .select({
+        id: projects.id,
+        startDate: projects.plannedStartDate,
+        dueDate: projects.targetEndDate,
+      })
+      .from(projects)
+      .all();
+    const dependencies = tx.select().from(taskDependencies).all();
+    const currentTaskById = new Map(currentTasks.map((task) => [task.id, task]));
+    const currentProjectById = new Map(
+      currentProjects.map((project) => [project.id, project]),
+    );
+
+    for (const item of items) {
+      const current = currentTaskById.get(item.taskId);
+      if (
+        !current ||
+        current.startDate !== item.beforeStartDate ||
+        current.dueDate !== item.beforeDueDate
+      ) {
+        throw new Error("A later edit prevents redo");
+      }
+    }
+    for (const item of projectItems) {
+      const current = currentProjectById.get(item.projectId);
+      if (
+        !current ||
+        current.startDate !== item.beforeStartDate ||
+        current.dueDate !== item.beforeDueDate
+      ) {
+        throw new Error("A later edit prevents redo");
+      }
+    }
+
+    const taskItemById = new Map(items.map((item) => [item.taskId, item]));
+    const projectItemById = new Map(
+      projectItems.map((item) => [item.projectId, item]),
+    );
+    const reappliedTasks = currentTasks.map((task) => {
+      const item = taskItemById.get(task.id);
+      return item
+        ? { ...task, startDate: item.afterStartDate, dueDate: item.afterDueDate }
+        : task;
+    });
+    const reappliedProjects = currentProjects.map((project) => {
+      const item = projectItemById.get(project.id);
+      return item
+        ? { ...project, startDate: item.afterStartDate, dueDate: item.afterDueDate }
+        : project;
+    });
+    if (hasScheduleCycle(reappliedTasks, dependencies)) {
+      throw new Error("A later hierarchy edit prevents redo");
+    }
+    if (scheduleContainmentViolations(reappliedTasks, reappliedProjects).length > 0) {
+      throw new Error("Newly nested work prevents redo");
+    }
+    const currentConflicts = dependencyConflictEdgeKeys(currentTasks, dependencies);
+    const reappliedConflicts = dependencyConflictEdgeKeys(reappliedTasks, dependencies);
+    if (
+      [...reappliedConflicts].some((conflict) => !currentConflicts.has(conflict))
+    ) {
+      throw new Error("A later dependency prevents redo");
+    }
+
+    for (const item of items) {
+      tx.update(tasks)
+        .set({
+          startDate: item.afterStartDate,
+          dueDate: item.afterDueDate,
+          updatedAt: new Date(),
+        })
+        .where(eq(tasks.id, item.taskId))
+        .run();
+    }
+    for (const item of projectItems) {
+      tx.update(projects)
+        .set({
+          plannedStartDate: item.afterStartDate,
+          targetEndDate: item.afterDueDate,
+          updatedAt: new Date(),
+        })
+        .where(eq(projects.id, item.projectId))
+        .run();
+    }
+    tx.update(scheduleChangeSets)
+      .set({ status: "applied", revertedAt: null })
+      .where(eq(scheduleChangeSets.id, changeSetId))
+      .run();
+  });
+  revalidatePath("/projects");
+}
