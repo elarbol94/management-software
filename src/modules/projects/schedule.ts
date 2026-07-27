@@ -31,11 +31,25 @@ export type ScheduleRollup = {
   unscheduledCount: number;
 };
 
+export const DEPENDENCY_TYPES = [
+  "finish_to_start",
+  "start_to_start",
+  "finish_to_finish",
+  "start_to_finish",
+] as const;
+
+export type DependencyType = (typeof DEPENDENCY_TYPES)[number];
+
 export type ScheduleDependency = {
   id?: string;
   predecessorTaskId: string;
   successorTaskId: string;
-  lagWorkdays: number;
+  dependencyType: DependencyType;
+  lagDays: number;
+};
+
+type ScheduleDependencyLike = Omit<ScheduleDependency, "dependencyType"> & {
+  dependencyType?: DependencyType;
 };
 
 export type ScheduleChange = {
@@ -96,7 +110,7 @@ export type ScheduleEntityChange = {
 };
 
 export type ScheduleImpact = {
-  workdayDelta: number;
+  dayDelta: number;
   affectedTaskCount: number;
   affectedProjectCount: number;
   expandedTaskCount: number;
@@ -176,71 +190,34 @@ function toIsoDate(date: Date): string {
   return date.toISOString().slice(0, 10);
 }
 
-export function isWorkday(value: string): boolean {
-  const day = parseIsoDate(value).getUTCDay();
-  return day !== 0 && day !== 6;
-}
-
-export function normalizeToWorkday(
-  value: string,
-  direction: "forward" | "backward" = "forward",
-): string {
+export function addCalendarDays(value: string, amount: number): string {
+  if (!Number.isInteger(amount)) throw new Error("Day offset must be an integer");
   const date = parseIsoDate(value);
-  const step = direction === "forward" ? DAY_MS : -DAY_MS;
-  while (date.getUTCDay() === 0 || date.getUTCDay() === 6) {
-    date.setTime(date.getTime() + step);
-  }
+  date.setUTCDate(date.getUTCDate() + amount);
   return toIsoDate(date);
 }
 
-export function addWorkdays(value: string, amount: number): string {
-  if (!Number.isInteger(amount)) throw new Error("Workday offset must be an integer");
-  let date = parseIsoDate(value);
-  if (amount === 0) return normalizeToWorkday(value);
-  const direction = amount > 0 ? 1 : -1;
-  let remaining = Math.abs(amount);
-  while (remaining > 0) {
-    date = new Date(date.getTime() + direction * DAY_MS);
-    const day = date.getUTCDay();
-    if (day !== 0 && day !== 6) remaining -= 1;
-  }
-  return toIsoDate(date);
-}
-
-export function workdaysInclusive(startDate: string, dueDate: string): number {
-  const start = parseIsoDate(normalizeToWorkday(startDate));
-  const end = parseIsoDate(normalizeToWorkday(dueDate, "backward"));
+export function calendarDaysInclusive(startDate: string, dueDate: string): number {
+  const start = parseIsoDate(startDate);
+  const end = parseIsoDate(dueDate);
   if (end < start) return 0;
-  let total = 0;
-  for (let cursor = start; cursor <= end; cursor = new Date(cursor.getTime() + DAY_MS)) {
-    const day = cursor.getUTCDay();
-    if (day !== 0 && day !== 6) total += 1;
-  }
-  return total;
+  return Math.floor((end.getTime() - start.getTime()) / DAY_MS) + 1;
 }
 
-export function dueDateForDuration(startDate: string, workdays: number): string {
-  const start = normalizeToWorkday(startDate);
-  return addWorkdays(start, Math.max(1, Math.round(workdays)) - 1);
+export function dueDateForDuration(startDate: string, days: number): string {
+  parseIsoDate(startDate);
+  return addCalendarDays(startDate, Math.max(1, Math.round(days)) - 1);
 }
 
-export function workdayDistance(fromDate: string, toDate: string): number {
-  const from = normalizeToWorkday(fromDate);
-  const to = normalizeToWorkday(toDate);
-  if (from === to) return 0;
-  const direction = to > from ? 1 : -1;
-  let cursor = from;
-  let distance = 0;
-  while (cursor !== to) {
-    cursor = addWorkdays(cursor, direction);
-    distance += direction;
-  }
-  return distance;
+export function calendarDayDistance(fromDate: string, toDate: string): number {
+  const from = parseIsoDate(fromDate);
+  const to = parseIsoDate(toDate);
+  return Math.round((to.getTime() - from.getTime()) / DAY_MS);
 }
 
 /**
  * Interprets an exact-date form edit as the equivalent timeline gesture.
- * Moving both edges by the same workday offset is a subtree move; changing one
+ * Moving both edges by the same calendar-day offset is a subtree move; changing one
  * edge is a resize; all other edits author both container bounds.
  */
 export function inferScheduleEditOperation(
@@ -248,8 +225,8 @@ export function inferScheduleEditOperation(
   after: { startDate: string; dueDate: string },
 ): Exclude<ScheduleOperation, "fit"> {
   if (before.startDate && before.dueDate) {
-    const startDelta = workdayDistance(before.startDate, after.startDate);
-    const dueDelta = workdayDistance(before.dueDate, after.dueDate);
+    const startDelta = calendarDayDistance(before.startDate, after.startDate);
+    const dueDelta = calendarDayDistance(before.dueDate, after.dueDate);
     if (startDelta === dueDelta && startDelta !== 0) return "move";
     if (before.startDate === after.startDate) return "resize-end";
     if (before.dueDate === after.dueDate) return "resize-start";
@@ -259,9 +236,55 @@ export function inferScheduleEditOperation(
 
 export function dependencyStartDate(
   predecessorDueDate: string,
-  lagWorkdays: number,
+  lagDays: number,
 ): string {
-  return addWorkdays(predecessorDueDate, lagWorkdays + 1);
+  return addCalendarDays(predecessorDueDate, lagDays + 1);
+}
+
+export function dependencyTypeOf(
+  dependency: Pick<ScheduleDependencyLike, "dependencyType">,
+): DependencyType {
+  return dependency.dependencyType ?? "finish_to_start";
+}
+
+export function dependencyEndpoints(
+  dependency: Pick<ScheduleDependencyLike, "dependencyType">,
+): {
+  predecessor: "start" | "finish";
+  successor: "start" | "finish";
+} {
+  switch (dependencyTypeOf(dependency)) {
+    case "start_to_start":
+      return { predecessor: "start", successor: "start" };
+    case "finish_to_finish":
+      return { predecessor: "finish", successor: "finish" };
+    case "start_to_finish":
+      return { predecessor: "start", successor: "finish" };
+    default:
+      return { predecessor: "finish", successor: "start" };
+  }
+}
+
+/**
+ * Returns the earliest permitted successor endpoint. Finish-to-start adds one
+ * day because task ranges are inclusive; every other relationship compares its
+ * endpoint dates directly.
+ */
+export function dependencyRequiredDate(
+  predecessor: Pick<ScheduleTask, "startDate" | "dueDate">,
+  dependency: Pick<ScheduleDependencyLike, "dependencyType" | "lagDays">,
+): string | null {
+  const endpoints = dependencyEndpoints(dependency);
+  const predecessorDate =
+    endpoints.predecessor === "start"
+      ? predecessor.startDate
+      : predecessor.dueDate;
+  if (!predecessorDate) return null;
+  const offset =
+    dependencyTypeOf(dependency) === "finish_to_start"
+      ? dependency.lagDays + 1
+      : dependency.lagDays;
+  return addCalendarDays(predecessorDate, offset);
 }
 
 function pushEdge(
@@ -292,7 +315,7 @@ function pushEdge(
  */
 function buildConstraintGraph(
   tasks: { id: string; parentTaskId?: string | null }[],
-  dependencies: ScheduleDependency[],
+  dependencies: ScheduleDependencyLike[],
 ): { nodes: string[]; edges: Map<string, string[]> } {
   const ids = new Set(tasks.map((task) => task.id));
   const nodes: string[] = [];
@@ -310,10 +333,11 @@ function buildConstraintGraph(
     if (!ids.has(dependency.predecessorTaskId) || !ids.has(dependency.successorTaskId)) {
       continue;
     }
+    const endpoints = dependencyEndpoints(dependency);
     pushEdge(
       edges,
-      `${dependency.predecessorTaskId}:finish`,
-      `${dependency.successorTaskId}:start`,
+      `${dependency.predecessorTaskId}:${endpoints.predecessor}`,
+      `${dependency.successorTaskId}:${endpoints.successor}`,
     );
   }
   return { nodes, edges };
@@ -321,7 +345,7 @@ function buildConstraintGraph(
 
 export function hasScheduleCycle(
   tasks: { id: string; parentTaskId?: string | null }[],
-  dependencies: ScheduleDependency[],
+  dependencies: ScheduleDependencyLike[],
 ): boolean {
   const { nodes, edges } = buildConstraintGraph(tasks, dependencies);
   const indegree = new Map(nodes.map((node) => [node, 0]));
@@ -343,7 +367,46 @@ export function hasScheduleCycle(
       if (degree === 0) queue.push(next);
     }
   }
-  return visited !== nodes.length;
+  if (visited !== nodes.length) return true;
+
+  // The cascade planner settles whole task ranges in dependency order. A mixed
+  // endpoint loop can be mathematically feasible at node level while still
+  // leaving no stable whole-task order, so reject that ambiguous authoring
+  // pattern as a cycle as well.
+  const taskIds = new Set(tasks.map((task) => task.id));
+  const taskOutgoing = new Map<string, string[]>();
+  const taskIndegree = new Map(tasks.map((task) => [task.id, 0]));
+  for (const dependency of dependencies) {
+    if (
+      !taskIds.has(dependency.predecessorTaskId) ||
+      !taskIds.has(dependency.successorTaskId)
+    ) {
+      continue;
+    }
+    pushEdge(
+      taskOutgoing,
+      dependency.predecessorTaskId,
+      dependency.successorTaskId,
+    );
+    taskIndegree.set(
+      dependency.successorTaskId,
+      (taskIndegree.get(dependency.successorTaskId) ?? 0) + 1,
+    );
+  }
+  const taskQueue = [...taskIndegree.entries()]
+    .filter(([, degree]) => degree === 0)
+    .map(([id]) => id);
+  let taskVisited = 0;
+  while (taskQueue.length > 0) {
+    const id = taskQueue.shift()!;
+    taskVisited += 1;
+    for (const next of taskOutgoing.get(id) ?? []) {
+      const degree = (taskIndegree.get(next) ?? 0) - 1;
+      taskIndegree.set(next, degree);
+      if (degree === 0) taskQueue.push(next);
+    }
+  }
+  return taskVisited !== tasks.length;
 }
 
 /**
@@ -376,17 +439,26 @@ export function assertDependencyEndpoints<
 function dependencyFloor(
   taskId: string,
   tasks: Map<string, ScheduleTask>,
-  dependencies: ScheduleDependency[],
+  dependencies: ScheduleDependencyLike[],
 ): string | null {
   let latest: string | null = null;
   for (const dependency of dependencies) {
     if (dependency.successorTaskId !== taskId) continue;
     const predecessor = tasks.get(dependency.predecessorTaskId);
-    if (!predecessor?.dueDate) continue;
-    const constraint = dependencyStartDate(
-      predecessor.dueDate,
-      dependency.lagWorkdays,
-    );
+    const successor = tasks.get(taskId);
+    if (!predecessor || !successor?.startDate || !successor.dueDate) continue;
+    const requiredDate = dependencyRequiredDate(predecessor, dependency);
+    if (!requiredDate) continue;
+    const constraint =
+      dependencyEndpoints(dependency).successor === "start"
+        ? requiredDate
+        : addCalendarDays(
+            requiredDate,
+            -(Math.max(
+              1,
+              calendarDaysInclusive(successor.startDate, successor.dueDate),
+            ) - 1),
+          );
     if (latest === null || constraint > latest) latest = constraint;
   }
   return latest;
@@ -403,13 +475,13 @@ function constrainedStart(
 ): string | null {
   const constraintType = task.constraintType ?? "asap";
   if (constraintType === "must_start_on") {
-    return task.constraintDate ? normalizeToWorkday(task.constraintDate) : null;
+    return task.constraintDate ? toIsoDate(parseIsoDate(task.constraintDate)) : null;
   }
   if (!floor) return null;
   if (constraintType === "start_no_earlier_than") {
     const anchor = task.constraintDate ?? originalStart;
     if (!anchor) return floor;
-    const normalizedAnchor = normalizeToWorkday(anchor);
+    const normalizedAnchor = toIsoDate(parseIsoDate(anchor));
     return floor > normalizedAnchor ? floor : normalizedAnchor;
   }
   return floor;
@@ -430,7 +502,7 @@ function directChildren<T extends { id: string; parentTaskId?: string | null }>(
 
 function dependencyOrder(
   tasks: ScheduleTask[],
-  dependencies: ScheduleDependency[],
+  dependencies: ScheduleDependencyLike[],
 ): string[] {
   const ids = new Set(tasks.map((task) => task.id));
   const outgoing = new Map<string, string[]>();
@@ -511,7 +583,7 @@ function rollupAncestorsInPlace(
  */
 export function previewScheduleCascade(
   sourceTasks: ScheduleTask[],
-  dependencies: ScheduleDependency[],
+  dependencies: ScheduleDependencyLike[],
   rootChange: {
     taskId: string;
     startDate?: string | null;
@@ -551,7 +623,7 @@ export function previewScheduleCascade(
       const envelope = descendantEnvelope(descendants);
       const currentStart = task.startDate ?? envelope.startDate;
       if (!currentStart) return;
-      const offset = workdayDistance(currentStart, startDate);
+      const offset = calendarDayDistance(currentStart, startDate);
       if (offset === 0) return;
       for (const member of [
         task,
@@ -561,8 +633,8 @@ export function previewScheduleCascade(
         if (!member.startDate || !member.dueDate) continue;
         working.set(member.id, {
           ...member,
-          startDate: addWorkdays(member.startDate, offset),
-          dueDate: addWorkdays(member.dueDate, offset),
+          startDate: addCalendarDays(member.startDate, offset),
+          dueDate: addCalendarDays(member.dueDate, offset),
         });
         touched.add(member.id);
       }
@@ -571,7 +643,7 @@ export function previewScheduleCascade(
     if (!task.startDate || !task.dueDate) return;
     const duration = task.isMilestone
       ? 1
-      : Math.max(1, workdaysInclusive(task.startDate, task.dueDate));
+      : Math.max(1, calendarDaysInclusive(task.startDate, task.dueDate));
     working.set(taskId, {
       ...task,
       startDate,
@@ -602,10 +674,10 @@ export function previewScheduleCascade(
     if (!rootChange.startDate || !rootChange.dueDate) {
       throw new Error("Schedule dates are required");
     }
-    const normalizedStart = normalizeToWorkday(rootChange.startDate);
+    const normalizedStart = toIsoDate(parseIsoDate(rootChange.startDate));
     const normalizedDue = root.isMilestone
       ? normalizedStart
-      : normalizeToWorkday(rootChange.dueDate, "backward");
+      : toIsoDate(parseIsoDate(rootChange.dueDate));
     if (normalizedDue < normalizedStart) {
       throw new Error("Due date precedes start date");
     }
@@ -700,10 +772,10 @@ function normalizedEditDates(
   if (!edit.startDate || !edit.dueDate) {
     throw new Error("Schedule dates are required");
   }
-  const startDate = normalizeToWorkday(edit.startDate);
+  const startDate = toIsoDate(parseIsoDate(edit.startDate));
   const dueDate = milestone
     ? startDate
-    : normalizeToWorkday(edit.dueDate, "backward");
+    : toIsoDate(parseIsoDate(edit.dueDate));
   if (dueDate < startDate) throw new Error("Due date precedes start date");
   return { startDate, dueDate };
 }
@@ -853,7 +925,7 @@ export function previewScheduleEdit(input: SchedulePlanInput): SchedulePreview {
         if (!currentStart) {
           throw new Error("Place the project before moving it");
         }
-        const offset = workdayDistance(currentStart, dates.startDate);
+        const offset = calendarDayDistance(currentStart, dates.startDate);
         for (const shifted of shiftScheduledTasks(members, offset)) {
           const task = workingTasks.get(shifted.id)!;
           workingTasks.set(shifted.id, { ...task, ...shifted });
@@ -869,7 +941,7 @@ export function previewScheduleEdit(input: SchedulePlanInput): SchedulePreview {
           ...project,
           startDate: dates.startDate,
           dueDate: currentDue
-            ? addWorkdays(currentDue, offset)
+            ? addCalendarDays(currentDue, offset)
             : dates.dueDate,
         });
 
@@ -1019,11 +1091,11 @@ export function previewScheduleEdit(input: SchedulePlanInput): SchedulePreview {
     edit.entityType === "task"
       ? workingTasks.get(edit.entityId)
       : workingProjects.get(edit.entityId);
-  const workdayDelta =
+  const dayDelta =
     directBefore?.startDate && directAfter?.startDate
-      ? workdayDistance(directBefore.startDate, directAfter.startDate)
+      ? calendarDayDistance(directBefore.startDate, directAfter.startDate)
       : directBefore?.dueDate && directAfter?.dueDate
-        ? workdayDistance(directBefore.dueDate, directAfter.dueDate)
+        ? calendarDayDistance(directBefore.dueDate, directAfter.dueDate)
         : 0;
 
   return {
@@ -1031,7 +1103,7 @@ export function previewScheduleEdit(input: SchedulePlanInput): SchedulePreview {
     changes,
     constraints,
     impact: {
-      workdayDelta,
+      dayDelta,
       affectedTaskCount: taskChanges.length,
       affectedProjectCount: projectChanges.length,
       expandedTaskCount: taskChanges.filter(
@@ -1047,18 +1119,21 @@ export function previewScheduleEdit(input: SchedulePlanInput): SchedulePreview {
 
 export function dependencyConflicts(
   tasks: ScheduleTask[],
-  dependencies: ScheduleDependency[],
+  dependencies: ScheduleDependencyLike[],
 ): Set<string> {
   const byId = new Map(tasks.map((task) => [task.id, task]));
   const conflicts = new Set<string>();
   for (const dependency of dependencies) {
     const predecessor = byId.get(dependency.predecessorTaskId);
     const successor = byId.get(dependency.successorTaskId);
-    if (!predecessor?.dueDate || !successor?.startDate) continue;
-    if (
-      successor.startDate <
-      dependencyStartDate(predecessor.dueDate, dependency.lagWorkdays)
-    ) {
+    if (!predecessor || !successor) continue;
+    const requiredDate = dependencyRequiredDate(predecessor, dependency);
+    const endpoints = dependencyEndpoints(dependency);
+    const actualDate =
+      endpoints.successor === "start"
+        ? successor.startDate
+        : successor.dueDate;
+    if (requiredDate && actualDate && actualDate < requiredDate) {
       conflicts.add(successor.id);
     }
   }
@@ -1067,21 +1142,24 @@ export function dependencyConflicts(
 
 export function dependencyConflictEdgeKeys(
   tasks: ScheduleTask[],
-  dependencies: ScheduleDependency[],
+  dependencies: ScheduleDependencyLike[],
 ): Set<string> {
   const byId = new Map(tasks.map((task) => [task.id, task]));
   const conflicts = new Set<string>();
   for (const dependency of dependencies) {
     const predecessor = byId.get(dependency.predecessorTaskId);
     const successor = byId.get(dependency.successorTaskId);
-    if (!predecessor?.dueDate || !successor?.startDate) continue;
-    if (
-      successor.startDate <
-      dependencyStartDate(predecessor.dueDate, dependency.lagWorkdays)
-    ) {
+    if (!predecessor || !successor) continue;
+    const requiredDate = dependencyRequiredDate(predecessor, dependency);
+    const endpoints = dependencyEndpoints(dependency);
+    const actualDate =
+      endpoints.successor === "start"
+        ? successor.startDate
+        : successor.dueDate;
+    if (requiredDate && actualDate && actualDate < requiredDate) {
       conflicts.add(
         dependency.id ??
-          `${dependency.predecessorTaskId}:${dependency.successorTaskId}:${dependency.lagWorkdays}`,
+          `${dependency.predecessorTaskId}:${dependency.successorTaskId}:${dependencyTypeOf(dependency)}:${dependency.lagDays}`,
       );
     }
   }
@@ -1090,16 +1168,18 @@ export function dependencyConflictEdgeKeys(
 
 export function criticalPathTaskIds(
   tasks: ScheduleTask[],
-  dependencies: ScheduleDependency[],
+  dependencies: ScheduleDependencyLike[],
 ): Set<string> {
   if (hasScheduleCycle(tasks, dependencies)) return new Set();
   const byId = new Map(tasks.map((task) => [task.id, task]));
-  const incoming = new Map<string, string[]>();
+  const incoming = new Map<string, ScheduleDependencyLike[]>();
   const outgoing = new Map<string, string[]>();
   const indegree = new Map(tasks.map((task) => [task.id, 0]));
   for (const dependency of dependencies) {
     if (!byId.has(dependency.predecessorTaskId) || !byId.has(dependency.successorTaskId)) continue;
-    pushEdge(incoming, dependency.successorTaskId, dependency.predecessorTaskId);
+    const existingIncoming = incoming.get(dependency.successorTaskId);
+    if (existingIncoming) existingIncoming.push(dependency);
+    else incoming.set(dependency.successorTaskId, [dependency]);
     pushEdge(outgoing, dependency.predecessorTaskId, dependency.successorTaskId);
     indegree.set(dependency.successorTaskId, (indegree.get(dependency.successorTaskId) ?? 0) + 1);
   }
@@ -1112,20 +1192,56 @@ export function criticalPathTaskIds(
     const task = byId.get(id)!;
     const weight =
       task.startDate && task.dueDate
-        ? Math.max(1, workdaysInclusive(task.startDate, task.dueDate))
+        ? Math.max(1, calendarDaysInclusive(task.startDate, task.dueDate))
         : 1;
     let bestDistance = 0;
     let bestPrevious: string | null = null;
-    for (const predecessorId of incoming.get(id) ?? []) {
-      const candidate = distance.get(predecessorId) ?? 0;
+    for (const dependency of incoming.get(id) ?? []) {
+      const predecessorId = dependency.predecessorTaskId;
+      const predecessor = byId.get(predecessorId);
+      if (!predecessor) continue;
+      const predecessorDuration =
+        predecessor.startDate && predecessor.dueDate
+          ? Math.max(
+              1,
+              calendarDaysInclusive(
+                predecessor.startDate,
+                predecessor.dueDate,
+              ),
+            )
+          : 1;
+      const type = dependencyTypeOf(dependency);
+      const edgeOffset =
+        type === "finish_to_start"
+          ? predecessorDuration + dependency.lagDays
+          : type === "start_to_start"
+            ? dependency.lagDays
+            : type === "finish_to_finish"
+              ? predecessorDuration - weight + dependency.lagDays
+              : 1 - weight + dependency.lagDays;
+      const candidate = (distance.get(predecessorId) ?? 0) + edgeOffset;
       if (candidate > bestDistance) {
         bestDistance = candidate;
         bestPrevious = predecessorId;
       }
     }
-    distance.set(id, bestDistance + weight);
+    distance.set(id, bestDistance);
     previous.set(id, bestPrevious);
-    if (endId === null || (distance.get(id) ?? 0) > (distance.get(endId) ?? 0)) {
+    const finishDistance = bestDistance + weight;
+    const currentEnd = endId ? byId.get(endId) : null;
+    const currentEndDistance = endId
+      ? (distance.get(endId) ?? 0) +
+        (currentEnd?.startDate && currentEnd.dueDate
+          ? Math.max(
+              1,
+              calendarDaysInclusive(
+                currentEnd.startDate,
+                currentEnd.dueDate,
+              ),
+            )
+          : 1)
+      : Number.NEGATIVE_INFINITY;
+    if (endId === null || finishDistance > currentEndDistance) {
       endId = id;
     }
     for (const successorId of outgoing.get(id) ?? []) {
@@ -1151,7 +1267,7 @@ export function weightedProgress(tasks: ScheduleTask[]): number {
       task.isMilestone
         ? 1
         : task.startDate && task.dueDate
-          ? Math.max(1, workdaysInclusive(task.startDate, task.dueDate))
+          ? Math.max(1, calendarDaysInclusive(task.startDate, task.dueDate))
           : 1;
     weighted += Math.min(100, Math.max(0, task.progress ?? 0)) * weight;
     weightTotal += weight;
@@ -1249,13 +1365,13 @@ export function taskSubtree<
 
 export function shiftScheduledTasks<
   T extends Pick<ScheduleTask, "startDate" | "dueDate">,
->(tasks: T[], workdayOffset: number): T[] {
+>(tasks: T[], dayOffset: number): T[] {
   return tasks.map((task) =>
     task.startDate && task.dueDate
       ? {
           ...task,
-          startDate: addWorkdays(task.startDate, workdayOffset),
-          dueDate: addWorkdays(task.dueDate, workdayOffset),
+          startDate: addCalendarDays(task.startDate, dayOffset),
+          dueDate: addCalendarDays(task.dueDate, dayOffset),
         }
       : { ...task },
   );
@@ -1443,14 +1559,14 @@ export function suggestTaskPlacement(input: {
   today: string;
   parent?: Pick<ScheduleTask, "startDate" | "dueDate"> | null;
   siblings: Pick<ScheduleTask, "startDate" | "dueDate">[];
-  workdays?: number;
+  days?: number;
 }): PlacementSuggestion {
-  const duration = Math.max(1, Math.round(input.workdays ?? 5));
+  const duration = Math.max(1, Math.round(input.days ?? 5));
   const parentStart = input.parent?.startDate
-    ? normalizeToWorkday(input.parent.startDate)
+    ? toIsoDate(parseIsoDate(input.parent.startDate))
     : null;
   const parentDue = input.parent?.dueDate
-    ? normalizeToWorkday(input.parent.dueDate, "backward")
+    ? toIsoDate(parseIsoDate(input.parent.dueDate))
     : null;
   const ranges = input.siblings
     .filter(
@@ -1458,11 +1574,11 @@ export function suggestTaskPlacement(input: {
         Boolean(task.startDate && task.dueDate),
     )
     .map((task) => ({
-      startDate: normalizeToWorkday(task.startDate),
-      dueDate: normalizeToWorkday(task.dueDate, "backward"),
+      startDate: toIsoDate(parseIsoDate(task.startDate)),
+      dueDate: toIsoDate(parseIsoDate(task.dueDate)),
     }))
     .sort((left, right) => left.startDate.localeCompare(right.startDate));
-  let cursor = parentStart ?? normalizeToWorkday(input.today);
+  let cursor = parentStart ?? toIsoDate(parseIsoDate(input.today));
   for (const range of ranges) {
     const candidateDue = dueDateForDuration(cursor, duration);
     if (candidateDue < range.startDate && (!parentDue || candidateDue <= parentDue)) {
@@ -1473,7 +1589,7 @@ export function suggestTaskPlacement(input: {
         reason: "free-gap",
       };
     }
-    if (range.dueDate >= cursor) cursor = addWorkdays(range.dueDate, 1);
+    if (range.dueDate >= cursor) cursor = addCalendarDays(range.dueDate, 1);
   }
   const dueDate = dueDateForDuration(cursor, duration);
   const expandsAncestors = Boolean(parentDue && dueDate > parentDue);

@@ -181,11 +181,18 @@ export const taskDependencies = sqliteTable(
       .notNull()
       .references(() => tasks.id, { onDelete: "cascade" }),
     dependencyType: text("dependency_type", {
-      enum: ["finish_to_start"],
+      enum: [
+        "finish_to_start",
+        "start_to_start",
+        "finish_to_finish",
+        "start_to_finish",
+      ],
     })
       .notNull()
       .default("finish_to_start"),
-    lagWorkdays: integer("lag_workdays").notNull().default(0),
+    lagDays: integer("lag_days").notNull().default(0),
+    routeOffsetDays: integer("route_offset_days"),
+    routeOffsetRows: integer("route_offset_rows"),
     createdAt: integer("created_at", { mode: "timestamp_ms" })
       .notNull()
       .$defaultFn(() => new Date()),

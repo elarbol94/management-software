@@ -1,7 +1,6 @@
 import {
-  addWorkdays,
+  addCalendarDays,
   dueDateForDuration,
-  normalizeToWorkday,
 } from "@/modules/projects/schedule";
 
 export const PROJECTS_PATH = "/projects";
@@ -105,10 +104,10 @@ export function resolveFocusedTaskSubtree<T extends FocusTask>(
 export function focusDateRange(
   tasks: FocusTask[],
   today: string,
-  options: { paddingWorkdays?: number; fallbackWorkdays?: number } = {},
+  options: { paddingDays?: number; fallbackDays?: number } = {},
 ): FocusDateRange {
-  const paddingWorkdays = Math.max(0, Math.round(options.paddingWorkdays ?? 5));
-  const fallbackWorkdays = Math.max(1, Math.round(options.fallbackWorkdays ?? 20));
+  const paddingDays = Math.max(0, Math.round(options.paddingDays ?? 5));
+  const fallbackDays = Math.max(1, Math.round(options.fallbackDays ?? 20));
   const starts = tasks
     .map((task) => task.startDate ?? task.dueDate)
     .filter((value): value is string => Boolean(value))
@@ -120,18 +119,17 @@ export function focusDateRange(
 
   if (starts.length > 0 && finishes.length > 0) {
     return {
-      startDate: addWorkdays(starts[0], -paddingWorkdays),
-      dueDate: addWorkdays(finishes.at(-1)!, paddingWorkdays),
+      startDate: addCalendarDays(starts[0], -paddingDays),
+      dueDate: addCalendarDays(finishes.at(-1)!, paddingDays),
       isFallback: false,
     };
   }
 
-  const normalizedToday = normalizeToWorkday(today);
-  const daysBeforeToday = Math.floor(fallbackWorkdays / 2);
-  const startDate = addWorkdays(normalizedToday, -daysBeforeToday);
+  const daysBeforeToday = Math.floor(fallbackDays / 2);
+  const startDate = addCalendarDays(today, -daysBeforeToday);
   return {
     startDate,
-    dueDate: dueDateForDuration(startDate, fallbackWorkdays),
+    dueDate: dueDateForDuration(startDate, fallbackDays),
     isFallback: true,
   };
 }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  addWorkdays,
+  addCalendarDays,
   assertDependencyEndpoints,
   assertTaskHierarchy,
   buildTaskForest,
@@ -8,6 +8,7 @@ import {
   criticalPathTaskIds,
   dependencyConflictEdgeKeys,
   dependencyConflicts,
+  dependencyRequiredDate,
   dependencyStartDate,
   hasScheduleCycle,
   inferScheduleEditOperation,
@@ -24,15 +25,15 @@ import {
   scheduleContainmentViolations,
   shiftScheduledTasks,
   weightedProgress,
-  workdaysInclusive,
+  calendarDaysInclusive,
 } from "./schedule";
 
 describe("project schedule", () => {
-  it("skips weekends in workday arithmetic", () => {
-    expect(addWorkdays("2026-07-24", 1)).toBe("2026-07-27");
-    expect(addWorkdays("2026-07-27", -1)).toBe("2026-07-24");
-    expect(workdaysInclusive("2026-07-24", "2026-07-27")).toBe(2);
-    expect(dependencyStartDate("2026-07-24", 0)).toBe("2026-07-27");
+  it("uses every calendar day, including weekends", () => {
+    expect(addCalendarDays("2026-07-24", 1)).toBe("2026-07-25");
+    expect(addCalendarDays("2026-07-27", -1)).toBe("2026-07-26");
+    expect(calendarDaysInclusive("2026-07-24", "2026-07-27")).toBe(4);
+    expect(dependencyStartDate("2026-07-24", 0)).toBe("2026-07-25");
   });
 
   it("maps exact-date form edits to move, resize, or place operations", () => {
@@ -66,8 +67,8 @@ describe("project schedule", () => {
         { id: "c", startDate: "2026-07-30", dueDate: "2026-07-30", isMilestone: true },
       ],
       [
-        { predecessorTaskId: "a", successorTaskId: "b", lagWorkdays: 0 },
-        { predecessorTaskId: "b", successorTaskId: "c", lagWorkdays: 0 },
+        { predecessorTaskId: "a", successorTaskId: "b", lagDays: 0 },
+        { predecessorTaskId: "b", successorTaskId: "c", lagDays: 0 },
       ],
       { taskId: "a", startDate: "2026-07-24", dueDate: "2026-07-27" },
     );
@@ -98,8 +99,8 @@ describe("project schedule", () => {
 
   it("detects cycles and schedule conflicts", () => {
     const dependencies = [
-      { predecessorTaskId: "a", successorTaskId: "b", lagWorkdays: 0 },
-      { predecessorTaskId: "b", successorTaskId: "a", lagWorkdays: 0 },
+      { predecessorTaskId: "a", successorTaskId: "b", lagDays: 0 },
+      { predecessorTaskId: "b", successorTaskId: "a", lagDays: 0 },
     ];
     expect(hasScheduleCycle([{ id: "a" }, { id: "b" }], dependencies)).toBe(true);
     expect(
@@ -121,10 +122,78 @@ describe("project schedule", () => {
           id: "edge",
           predecessorTaskId: "a",
           successorTaskId: "b",
-          lagWorkdays: 0,
+          lagDays: 0,
         }],
       ),
     ).toEqual(new Set(["edge"]));
+  });
+
+  it("supports all four dependency endpoint combinations", () => {
+    const predecessor = {
+      id: "a",
+      startDate: "2026-07-20",
+      dueDate: "2026-07-24",
+    };
+    const successor = {
+      id: "b",
+      startDate: "2026-07-20",
+      dueDate: "2026-07-22",
+    };
+    const cases = [
+      {
+        dependencyType: "finish_to_start" as const,
+        lagDays: 0,
+        requiredDate: "2026-07-25",
+        startDate: "2026-07-25",
+        dueDate: "2026-07-27",
+      },
+      {
+        dependencyType: "start_to_start" as const,
+        lagDays: 2,
+        requiredDate: "2026-07-22",
+        startDate: "2026-07-22",
+        dueDate: "2026-07-24",
+      },
+      {
+        dependencyType: "finish_to_finish" as const,
+        lagDays: 1,
+        requiredDate: "2026-07-25",
+        startDate: "2026-07-23",
+        dueDate: "2026-07-25",
+      },
+      {
+        dependencyType: "start_to_finish" as const,
+        lagDays: 0,
+        requiredDate: "2026-07-20",
+        startDate: "2026-07-18",
+        dueDate: "2026-07-20",
+      },
+    ];
+
+    for (const testCase of cases) {
+      const dependency = {
+        predecessorTaskId: "a",
+        successorTaskId: "b",
+        dependencyType: testCase.dependencyType,
+        lagDays: testCase.lagDays,
+      };
+      expect(dependencyRequiredDate(predecessor, dependency)).toBe(
+        testCase.requiredDate,
+      );
+      const changes = previewScheduleCascade(
+        [predecessor, successor],
+        [dependency],
+        {
+          taskId: "a",
+          startDate: predecessor.startDate,
+          dueDate: predecessor.dueDate,
+        },
+      );
+      expect(changes.find((change) => change.taskId === "b")).toMatchObject({
+        afterStartDate: testCase.startDate,
+        afterDueDate: testCase.dueDate,
+      });
+    }
   });
 
   it("calculates the longest dependency path and weighted progress", () => {
@@ -135,8 +204,8 @@ describe("project schedule", () => {
     ];
     expect(
       criticalPathTaskIds(tasks, [
-        { predecessorTaskId: "a", successorTaskId: "b", lagWorkdays: 0 },
-        { predecessorTaskId: "a", successorTaskId: "c", lagWorkdays: 0 },
+        { predecessorTaskId: "a", successorTaskId: "b", lagDays: 0 },
+        { predecessorTaskId: "a", successorTaskId: "c", lagDays: 0 },
       ]),
     ).toEqual(new Set(["a", "c"]));
     expect(weightedProgress(tasks.slice(0, 2))).toBe(71);
@@ -198,10 +267,10 @@ describe("project schedule", () => {
       today: "2026-07-20",
       parent: { startDate: "2026-07-20", dueDate: "2026-07-31" },
       siblings: [{ startDate: "2026-07-20", dueDate: "2026-07-22" }],
-      workdays: 3,
+      days: 3,
     })).toMatchObject({
       startDate: "2026-07-23",
-      dueDate: "2026-07-27",
+      dueDate: "2026-07-25",
       expandsAncestors: false,
     });
   });
@@ -250,13 +319,13 @@ describe("project schedule", () => {
     // circular even though no single link touches the same branch twice.
     expect(
       hasScheduleCycle(tasks, [
-        { predecessorTaskId: "child", successorTaskId: "other", lagWorkdays: 0 },
-        { predecessorTaskId: "other", successorTaskId: "parent", lagWorkdays: 0 },
+        { predecessorTaskId: "child", successorTaskId: "other", lagDays: 0 },
+        { predecessorTaskId: "other", successorTaskId: "parent", lagDays: 0 },
       ]),
     ).toBe(true);
     expect(
       hasScheduleCycle(tasks, [
-        { predecessorTaskId: "child", successorTaskId: "other", lagWorkdays: 0 },
+        { predecessorTaskId: "child", successorTaskId: "other", lagDays: 0 },
       ]),
     ).toBe(false);
   });
@@ -279,8 +348,8 @@ describe("project schedule", () => {
       },
     ];
     const dependencies = [
-      { predecessorTaskId: "a", successorTaskId: "asap", lagWorkdays: 0 },
-      { predecessorTaskId: "a", successorTaskId: "pinned", lagWorkdays: 0 },
+      { predecessorTaskId: "a", successorTaskId: "asap", lagDays: 0 },
+      { predecessorTaskId: "a", successorTaskId: "pinned", lagDays: 0 },
     ];
     // Moving the predecessor two workdays earlier.
     const changes = previewScheduleCascade(tasks, dependencies, {
@@ -305,22 +374,22 @@ describe("project schedule", () => {
     ];
     const changes = previewScheduleCascade(
       tasks,
-      [{ predecessorTaskId: "lead", successorTaskId: "summary", lagWorkdays: 0 }],
+      [{ predecessorTaskId: "lead", successorTaskId: "summary", lagDays: 0 }],
       { taskId: "lead", startDate: "2026-07-20", dueDate: "2026-07-24" },
     );
     const byId = new Map(changes.map((change) => [change.taskId, change]));
     // The subtree keeps its internal spacing and the summary still spans it.
     expect(byId.get("one")).toMatchObject({
-      afterStartDate: "2026-07-27",
-      afterDueDate: "2026-07-28",
+      afterStartDate: "2026-07-25",
+      afterDueDate: "2026-07-26",
     });
     expect(byId.get("two")).toMatchObject({
-      afterStartDate: "2026-07-29",
-      afterDueDate: "2026-07-29",
+      afterStartDate: "2026-07-27",
+      afterDueDate: "2026-07-27",
     });
     expect(byId.get("summary")).toMatchObject({
-      afterStartDate: "2026-07-27",
-      afterDueDate: "2026-07-29",
+      afterStartDate: "2026-07-25",
+      afterDueDate: "2026-07-27",
     });
   });
 
@@ -496,7 +565,12 @@ describe("project schedule", () => {
       ],
       projects: [{ id: "p", startDate: "2026-07-13", dueDate: "2026-07-31" }],
       dependencies: [
-        { predecessorTaskId: "lead", successorTaskId: "child", lagWorkdays: 0 },
+        {
+          predecessorTaskId: "lead",
+          successorTaskId: "child",
+          dependencyType: "finish_to_start",
+          lagDays: 0,
+        },
       ],
       edit: {
         entityType: "task",
@@ -584,7 +658,7 @@ describe("project schedule", () => {
     });
   });
 
-  it("moves a project and every scheduled task by the same workday offset", () => {
+  it("moves a project and every scheduled task by the same calendar-day offset", () => {
     const preview = previewScheduleEdit({
       tasks: [
         { id: "parent", projectId: "p", parentTaskId: null, startDate: "2026-07-23", dueDate: "2026-07-31" },
@@ -604,18 +678,18 @@ describe("project schedule", () => {
     const byId = new Map(preview.changes.map((change) => [change.entityId, change]));
     expect(byId.get("parent")).toMatchObject({
       afterStartDate: "2026-07-24",
-      afterDueDate: "2026-08-03",
+      afterDueDate: "2026-08-01",
       cause: "subtree",
     });
     expect(byId.get("child")).toMatchObject({
-      afterStartDate: "2026-07-27",
+      afterStartDate: "2026-07-25",
       afterDueDate: "2026-07-28",
       cause: "subtree",
     });
     expect(byId.has("unscheduled")).toBe(false);
     expect(byId.get("p")).toMatchObject({
       afterStartDate: "2026-07-24",
-      afterDueDate: "2026-08-10",
+      afterDueDate: "2026-08-08",
       cause: "direct",
     });
   });
@@ -636,7 +710,7 @@ describe("project schedule", () => {
     expect(outdentTarget(tasks, "second")).toBeUndefined();
   });
 
-  it("moves a complete project task tree by a working-day offset", () => {
+  it("moves a complete project task tree by a calendar-day offset", () => {
     expect(
       shiftScheduledTasks(
         [
@@ -647,8 +721,8 @@ describe("project schedule", () => {
         1,
       ),
     ).toEqual([
-      { id: "parent", startDate: "2026-07-24", dueDate: "2026-08-03" },
-      { id: "child", startDate: "2026-07-27", dueDate: "2026-07-28" },
+      { id: "parent", startDate: "2026-07-24", dueDate: "2026-08-01" },
+      { id: "child", startDate: "2026-07-25", dueDate: "2026-07-28" },
       { id: "unscheduled", startDate: null, dueDate: null },
     ]);
   });

@@ -51,20 +51,20 @@ describe("focused task subtree", () => {
 });
 
 describe("focused date range", () => {
-  it("pads scheduled work by five workdays", () => {
+  it("pads scheduled work by five calendar days", () => {
     expect(focusDateRange(tasks.slice(0, 4), "2026-07-25")).toEqual({
-      startDate: "2026-07-13",
-      dueDate: "2026-08-21",
+      startDate: "2026-07-15",
+      dueDate: "2026-08-19",
       isFallback: false,
     });
   });
 
-  it("provides a twenty-workday fallback for unscheduled work", () => {
+  it("provides a twenty-calendar-day fallback for unscheduled work", () => {
     expect(
       focusDateRange([{ id: "new", startDate: null, dueDate: null }], "2026-07-25"),
     ).toEqual({
-      startDate: "2026-07-13",
-      dueDate: "2026-08-07",
+      startDate: "2026-07-15",
+      dueDate: "2026-08-03",
       isFallback: true,
     });
   });

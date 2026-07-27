@@ -43,7 +43,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { addWorkdays } from "@/modules/projects/schedule";
+import { addCalendarDays } from "@/modules/projects/schedule";
 
 type Project = typeof projectsTable.$inferSelect & { openTasks: number };
 
@@ -346,7 +346,7 @@ export function ProjectsClient({
                 const next = value ?? "none";
                 setPredecessor(next);
                 const selected = predecessorOptions.find((option) => `${option.type}:${option.id}` === next);
-                if (selected?.dueDate) setPlannedStartDate(addWorkdays(selected.dueDate, 1));
+                if (selected?.dueDate) setPlannedStartDate(addCalendarDays(selected.dueDate, 1));
               }}>
                 <SelectTrigger className="w-full"><SelectValue>{predecessor === "none" ? t("choosePredecessor") : predecessorOptions.find((option) => `${option.type}:${option.id}` === predecessor)?.title}</SelectValue></SelectTrigger>
                 <SelectContent>

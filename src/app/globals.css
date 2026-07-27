@@ -6,6 +6,26 @@
   cursor: pointer;
 }
 
+.app-rail-transition {
+  transition-property: width;
+}
+
+.research-rail-transition {
+  transition-property: left, width;
+}
+
+.rail-content-transition {
+  transition-property: padding-left;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-rail-transition,
+  .research-rail-transition,
+  .rail-content-transition {
+    transition: none;
+  }
+}
+
 [data-wiki-collapsible-heading]::before {
   content: "▾";
   display: inline-block;
@@ -635,6 +655,33 @@
   .wiki-document-canvas [data-keep-together] {
     outline: 1px dashed color-mix(in srgb, var(--wiki-muted-color) 42%, transparent);
     outline-offset: 0.3rem;
+  }
+
+  .gantt-scrollbar {
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in oklab, var(--foreground) 28%, transparent)
+      transparent;
+  }
+
+  .gantt-scrollbar::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  .gantt-scrollbar::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .gantt-scrollbar::-webkit-scrollbar-thumb {
+    border: 3px solid transparent;
+    border-radius: 999px;
+    background: color-mix(in oklab, var(--foreground) 25%, transparent);
+    background-clip: content-box;
+  }
+
+  .gantt-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: color-mix(in oklab, var(--foreground) 42%, transparent);
+    background-clip: content-box;
   }
 
   @media (max-width: 720px) {

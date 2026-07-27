@@ -35,8 +35,8 @@ import {
   taskAncestors,
   taskDescendants,
   weightedProgress,
-  addWorkdays,
-  workdayDistance,
+  addCalendarDays,
+  calendarDayDistance,
 } from "@/modules/projects/schedule";
 
 const SORT_GAP = 1000;
@@ -47,20 +47,20 @@ function cascadeProjectSuccessors(predecessorType: "project" | "task", predecess
     ? db.select({ dueDate: projects.targetEndDate }).from(projects).where(eq(projects.id, predecessorId)).get()?.dueDate
     : db.select({ dueDate: tasks.dueDate }).from(tasks).where(eq(tasks.id, predecessorId)).get()?.dueDate;
   if (!predecessorDueDate) return;
-  const requiredStart = addWorkdays(predecessorDueDate, 1);
+  const requiredStart = addCalendarDays(predecessorDueDate, 1);
   const links = db.select().from(projectDependencies).where(and(eq(projectDependencies.predecessorType, predecessorType), eq(projectDependencies.predecessorId, predecessorId))).all();
   for (const link of links) {
     if (visited.has(link.successorProjectId)) continue;
     visited.add(link.successorProjectId);
     const successor = db.select().from(projects).where(eq(projects.id, link.successorProjectId)).get();
     if (!successor?.plannedStartDate || !successor.targetEndDate || successor.plannedStartDate >= requiredStart) continue;
-    const shift = workdayDistance(successor.plannedStartDate, requiredStart);
+    const shift = calendarDayDistance(successor.plannedStartDate, requiredStart);
     db.transaction((tx) => {
-      tx.update(projects).set({ plannedStartDate: requiredStart, targetEndDate: addWorkdays(successor.targetEndDate!, shift), updatedAt: new Date() }).where(eq(projects.id, successor.id)).run();
+      tx.update(projects).set({ plannedStartDate: requiredStart, targetEndDate: addCalendarDays(successor.targetEndDate!, shift), updatedAt: new Date() }).where(eq(projects.id, successor.id)).run();
       const projectTasks = tx.select().from(tasks).where(eq(tasks.projectId, successor.id)).all();
       for (const task of projectTasks) {
         if (!task.startDate || !task.dueDate) continue;
-        tx.update(tasks).set({ startDate: addWorkdays(task.startDate, shift), dueDate: addWorkdays(task.dueDate, shift), updatedAt: new Date() }).where(eq(tasks.id, task.id)).run();
+        tx.update(tasks).set({ startDate: addCalendarDays(task.startDate, shift), dueDate: addCalendarDays(task.dueDate, shift), updatedAt: new Date() }).where(eq(tasks.id, task.id)).run();
       }
     });
     cascadeProjectSuccessors("project", successor.id, visited);
@@ -69,8 +69,8 @@ function cascadeProjectSuccessors(predecessorType: "project" | "task", predecess
     for (const link of db.select().from(projectTaskDependencies).where(eq(projectTaskDependencies.predecessorProjectId, predecessorId)).all()) {
       const successor = db.select().from(tasks).where(eq(tasks.id, link.successorTaskId)).get();
       if (!successor?.startDate || !successor.dueDate || successor.startDate >= requiredStart) continue;
-      const shift = workdayDistance(successor.startDate, requiredStart);
-      db.update(tasks).set({ startDate: requiredStart, dueDate: addWorkdays(successor.dueDate, shift), updatedAt: new Date() }).where(eq(tasks.id, successor.id)).run();
+      const shift = calendarDayDistance(successor.startDate, requiredStart);
+      db.update(tasks).set({ startDate: requiredStart, dueDate: addCalendarDays(successor.dueDate, shift), updatedAt: new Date() }).where(eq(tasks.id, successor.id)).run();
       cascadeProjectSuccessors("task", successor.id, visited);
     }
   }
@@ -770,7 +770,7 @@ export async function upsertTask(input: TaskInput): Promise<{ id: string }> {
       if (data.predecessor?.type === "task") {
         const predecessor = tx.select().from(tasks).where(eq(tasks.id, data.predecessor.id)).get();
         if (!predecessor) throw new Error("Predecessor task not found");
-        const dependency = { predecessorTaskId: predecessor.id, successorTaskId: row.id, lagWorkdays: 0 };
+        const dependency = { predecessorTaskId: predecessor.id, successorTaskId: row.id, lagDays: 0 };
         assertDependencyEndpoints([...hierarchyTasks, { id: row.id, parentTaskId: data.parentTaskId }], dependency);
         const allDependencies = tx.select().from(taskDependencies).all();
         if (hasScheduleCycle([...hierarchyTasks, { id: row.id, parentTaskId: data.parentTaskId }], [...allDependencies, dependency])) throw new Error("Dependency cycle");
@@ -1026,6 +1026,53 @@ export async function upsertContextualDeadline(
     dueDate: input.localDate,
     projectId: null,
   });
+}
+
+const moveContextualDeadlineSchema = z.object({
+  id: z.string().min(1),
+  deadlineDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  deadlineAt: z.string().datetime().nullable(),
+  expectedUpdatedAt: z.string().datetime(),
+});
+
+export async function moveContextualDeadline(
+  input: z.input<typeof moveContextualDeadlineSchema>,
+) {
+  await requireUserOrThrow();
+  const data = moveContextualDeadlineSchema.parse(input);
+  const deadline = db.select().from(tasks).where(eq(tasks.id, data.id)).get();
+  if (!deadline || deadline.kind !== "deadline") {
+    throw new Error("Deadline not found");
+  }
+  if (deadline.updatedAt.toISOString() !== data.expectedUpdatedAt) {
+    throw new Error("Deadline changed in another session");
+  }
+  const deadlineAt = data.deadlineAt ? new Date(data.deadlineAt) : null;
+  const now = new Date();
+  db.update(tasks)
+    .set({
+      startDate: data.deadlineDate,
+      dueDate: data.deadlineDate,
+      deadlineAt,
+      updatedAt: now,
+    })
+    .where(eq(tasks.id, deadline.id))
+    .run();
+  revalidatePath("/projects");
+  revalidatePath("/");
+  return {
+    id: deadline.id,
+    previous: {
+      deadlineDate: deadline.dueDate ?? data.deadlineDate,
+      deadlineAt: deadline.deadlineAt?.toISOString() ?? null,
+      updatedAt: deadline.updatedAt.toISOString(),
+    },
+    current: {
+      deadlineDate: data.deadlineDate,
+      deadlineAt: deadlineAt?.toISOString() ?? null,
+      updatedAt: now.toISOString(),
+    },
+  };
 }
 
 export async function setTaskStatus(id: string, status: "open" | "done") {
@@ -1301,13 +1348,23 @@ export async function moveTask(input: z.infer<typeof moveSchema>) {
   revalidatePath("/projects");
 }
 
-// --- Finish-to-start dependencies ---
+// --- Task dependencies ---
 
 const dependencySchema = z.object({
   id: z.string().optional(),
   predecessorTaskId: z.string().min(1),
   successorTaskId: z.string().min(1),
-  lagWorkdays: z.number().int().min(-365).max(365).default(0),
+  dependencyType: z
+    .enum([
+      "finish_to_start",
+      "start_to_start",
+      "finish_to_finish",
+      "start_to_finish",
+    ])
+    .default("finish_to_start"),
+  lagDays: z.number().int().min(-365).max(365).default(0),
+  routeOffsetDays: z.number().int().min(-3650).max(3650).nullable().default(null),
+  routeOffsetRows: z.number().int().min(-400).max(400).nullable().default(null),
 });
 
 export async function upsertTaskDependency(
@@ -1329,7 +1386,10 @@ export async function upsertTaskDependency(
     {
       predecessorTaskId: data.predecessorTaskId,
       successorTaskId: data.successorTaskId,
-      lagWorkdays: data.lagWorkdays,
+      dependencyType: data.dependencyType,
+      lagDays: data.lagDays,
+      routeOffsetDays: data.routeOffsetDays,
+      routeOffsetRows: data.routeOffsetRows,
     },
   ];
   if (hasScheduleCycle(hierarchyTasks, candidate)) {
@@ -1340,21 +1400,55 @@ export async function upsertTaskDependency(
       .set({
         predecessorTaskId: data.predecessorTaskId,
         successorTaskId: data.successorTaskId,
-        lagWorkdays: data.lagWorkdays,
+        dependencyType: data.dependencyType,
+        lagDays: data.lagDays,
+        routeOffsetDays: data.routeOffsetDays,
+        routeOffsetRows: data.routeOffsetRows,
       })
       .where(eq(taskDependencies.id, data.id))
       .run();
   } else {
-    const duplicate = existing.some(
+    const duplicate = existing.find(
       (dependency) =>
         dependency.predecessorTaskId === data.predecessorTaskId &&
         dependency.successorTaskId === data.successorTaskId,
     );
-    if (!duplicate) {
+    if (duplicate) {
+      db.update(taskDependencies)
+        .set({
+          dependencyType: data.dependencyType,
+          lagDays: data.lagDays,
+          routeOffsetDays: data.routeOffsetDays,
+          routeOffsetRows: data.routeOffsetRows,
+        })
+        .where(eq(taskDependencies.id, duplicate.id))
+        .run();
+    } else {
       db.insert(taskDependencies).values(data).run();
     }
   }
   revalidatePath("/projects");
+  const persisted = data.id
+    ? db
+        .select()
+        .from(taskDependencies)
+        .where(eq(taskDependencies.id, data.id))
+        .get()
+    : db
+        .select()
+        .from(taskDependencies)
+        .where(
+          and(
+            eq(
+              taskDependencies.predecessorTaskId,
+              data.predecessorTaskId,
+            ),
+            eq(taskDependencies.successorTaskId, data.successorTaskId),
+          ),
+        )
+        .get();
+  if (!persisted) throw new Error("Dependency not found after save");
+  return persisted;
 }
 
 export async function deleteTaskDependency(id: string) {

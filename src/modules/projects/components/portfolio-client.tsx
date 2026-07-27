@@ -5,6 +5,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
   type WheelEvent as ReactWheelEvent,
 } from "react";
@@ -41,6 +42,7 @@ import {
   deleteTaskDependency,
   fitProjectToTasks,
   fitTaskToChildren,
+  moveContextualDeadline,
   reparentTask,
   revertPortfolioScheduleChange,
   upsertProject,
@@ -54,10 +56,13 @@ import type {
   PortfolioTask,
 } from "@/modules/projects/queries";
 import {
-  addWorkdays,
   containerOverflow,
   criticalPathTaskIds,
   dependencyConflicts,
+  dependencyEndpoints,
+  dependencyTypeOf,
+  hasScheduleCycle,
+  assertDependencyEndpoints,
   indentTarget,
   leafTasks,
   outdentTarget,
@@ -65,8 +70,8 @@ import {
   taskAncestors,
   taskDescendants,
   weightedProgress,
-  workdayDistance,
   previewScheduleEdit,
+  type DependencyType,
   type ScheduleEdit,
   type SchedulePreview,
 } from "@/modules/projects/schedule";
@@ -76,6 +81,11 @@ import {
   projectsFocusHref,
   resolveFocusedTaskSubtree,
 } from "@/modules/projects/focus";
+import {
+  routeGanttDependency,
+  type GanttRouteObstacle,
+  type GanttRoutePoint,
+} from "@/modules/projects/gantt-routing";
 import { ProjectsClient } from "./projects-client";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -110,6 +120,11 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 import { isDeadlineOverdue, localDateValue } from "@/modules/tasks/deadline-utils";
 
@@ -135,14 +150,32 @@ type Row = {
   overflowStart?: string | null;
   overflowEnd?: string | null;
 };
-type PreviewChange = {
-  entityType: "task" | "project";
-  entityId: string;
-  title: string;
-  beforeStartDate: string | null;
-  beforeDueDate: string | null;
-  afterStartDate: string | null;
-  afterDueDate: string | null;
+type TaskDraft = {
+  taskId: string;
+  startDate: string;
+  dueDate: string;
+  mode: "move" | "resize-start" | "resize-end" | "place";
+};
+type ProjectDraft = {
+  projectId: string;
+  startDate: string;
+  dueDate: string;
+  mode: "move" | "resize-start" | "resize-end" | "place";
+};
+type DragPreview = {
+  preview: SchedulePreview | null;
+  draft: TaskDraft | null;
+  projectDraft: ProjectDraft | null;
+};
+type DeadlinePreview = {
+  id: string;
+  deadlineDate: string;
+  deadlineAt: string | null;
+  updatedAt: string;
+};
+type PortfolioDependency = PortfolioSchedule["dependencies"][number];
+type DependencyDraft = PortfolioDependency & {
+  isNew: boolean;
 };
 type PortfolioViewState = {
   dayWidth: number;
@@ -164,6 +197,8 @@ type StoredPortfolioViewState = {
 const LEFT_WIDTH = 352;
 const ROW_HEIGHT = 44;
 const HEADER_HEIGHT = 54;
+const DEADLINE_LANE_HEIGHT = 36;
+const FIT_PADDING_DAYS = 7;
 const DAY_MS = 86_400_000;
 const ZOOM_WIDTH: Record<Zoom, number> = {
   week: 32,
@@ -174,6 +209,69 @@ const MIN_DAY_WIDTH = 6;
 const MAX_DAY_WIDTH = 44;
 const ZOOM_WHEEL_SENSITIVITY = 0.003;
 const FOCUS_VIEW_STORAGE_KEY = "projects.focusPortfolioView";
+const DEPENDENCY_TYPE_OPTIONS: DependencyType[] = [
+  "finish_to_start",
+  "start_to_start",
+  "finish_to_finish",
+  "start_to_finish",
+];
+
+function dependencyTypeTranslationKey(type: DependencyType) {
+  switch (type) {
+    case "start_to_start":
+      return "dependencyTypeStartStart" as const;
+    case "finish_to_finish":
+      return "dependencyTypeFinishFinish" as const;
+    case "start_to_finish":
+      return "dependencyTypeStartFinish" as const;
+    default:
+      return "dependencyTypeFinishStart" as const;
+  }
+}
+
+function dependencyTypeHintKey(type: DependencyType) {
+  switch (type) {
+    case "start_to_start":
+      return "dependencyTypeStartStartHint" as const;
+    case "finish_to_finish":
+      return "dependencyTypeFinishFinishHint" as const;
+    case "start_to_finish":
+      return "dependencyTypeStartFinishHint" as const;
+    default:
+      return "dependencyTypeFinishStartHint" as const;
+  }
+}
+
+function dependencyTypeCodeKey(type: DependencyType) {
+  switch (type) {
+    case "start_to_start":
+      return "dependencyTypeStartStartCode" as const;
+    case "finish_to_finish":
+      return "dependencyTypeFinishFinishCode" as const;
+    case "start_to_finish":
+      return "dependencyTypeStartFinishCode" as const;
+    default:
+      return "dependencyTypeFinishStartCode" as const;
+  }
+}
+
+function dependencyDraftIsInvalid(
+  tasks: PortfolioTask[],
+  dependencies: PortfolioDependency[],
+  draft: DependencyDraft,
+) {
+  try {
+    assertDependencyEndpoints(tasks, draft);
+    const candidate = draft.isNew
+      ? [...dependencies, draft]
+      : dependencies.map((dependency) =>
+          dependency.id === draft.id ? draft : dependency,
+        );
+    return hasScheduleCycle(tasks, candidate);
+  } catch {
+    return true;
+  }
+}
 
 function useMediaQuery(query: string) {
   const [matches, setMatches] = useState(false);
@@ -211,6 +309,166 @@ function calendarDistance(start: string, end: string) {
   return Math.round((parseDate(end).getTime() - parseDate(start).getTime()) / DAY_MS);
 }
 
+function dependencyPathGeometry({
+  dependency,
+  predecessor,
+  successor,
+  predecessorIndex,
+  successorIndex,
+  rangeStart,
+  dayWidth,
+  sourceOffsetY = 0,
+  targetOffsetY = 0,
+  laneOffset = 0,
+  obstacles = [],
+  occupiedRoutes = [],
+}: {
+  dependency: PortfolioDependency;
+  predecessor: Row;
+  successor: Row;
+  predecessorIndex: number;
+  successorIndex: number;
+  rangeStart: string;
+  dayWidth: number;
+  sourceOffsetY?: number;
+  targetOffsetY?: number;
+  laneOffset?: number;
+  obstacles?: GanttRouteObstacle[];
+  occupiedRoutes?: GanttRoutePoint[][];
+}) {
+  const endpoints = dependencyEndpoints(dependency);
+  const predecessorDate =
+    endpoints.predecessor === "start"
+      ? predecessor.startDate
+      : predecessor.dueDate;
+  const successorDate =
+    endpoints.successor === "start"
+      ? successor.startDate
+      : successor.dueDate;
+  if (!predecessorDate || !successorDate) return null;
+  const x1 =
+    (calendarDistance(rangeStart, predecessorDate) +
+      (endpoints.predecessor === "finish" ? 1 : 0)) *
+    dayWidth;
+  const x2 =
+    (calendarDistance(rangeStart, successorDate) +
+      (endpoints.successor === "finish" ? 1 : 0)) *
+    dayWidth;
+  const y1 =
+    predecessorIndex * ROW_HEIGHT + ROW_HEIGHT / 2 + sourceOffsetY;
+  const y2 =
+    successorIndex * ROW_HEIGHT + ROW_HEIGHT / 2 + targetOffsetY;
+  const sourceDirection = endpoints.predecessor === "finish" ? 1 as const : -1 as const;
+  const targetDirection = endpoints.successor === "start" ? -1 as const : 1 as const;
+  const stub = Math.max(12, Math.min(24, dayWidth));
+  const manual =
+    dependency.routeOffsetDays !== null ||
+    dependency.routeOffsetRows !== null;
+  const route = routeGanttDependency({
+    source: { x: x1, y: y1 },
+    target: { x: x2, y: y2 },
+    sourceDirection,
+    targetDirection,
+    stub,
+    obstacles,
+    occupiedRoutes,
+    excludedObstacleIds: new Set([
+      dependency.predecessorTaskId,
+      dependency.successorTaskId,
+    ]),
+    laneBias: laneOffset,
+    manualOffset: manual
+      ? {
+          x: (dependency.routeOffsetDays ?? 0) * dayWidth,
+          y: (dependency.routeOffsetRows ?? 0) * (ROW_HEIGHT / 4),
+        }
+      : null,
+  });
+  return {
+    path: route.path,
+    points: route.points,
+    labelX: route.handle.x,
+    labelY: route.handle.y,
+    handles: route.handles,
+  };
+}
+
+function DependencyRouteHandle({
+  axis,
+  point,
+  dragging,
+  label,
+  valueText,
+  onPointerDown,
+  onKeyDown,
+}: {
+  axis: "x" | "y";
+  point: GanttRoutePoint;
+  dragging: boolean;
+  label: string;
+  valueText: string;
+  onPointerDown: (
+    axis: "x" | "y",
+    event: ReactPointerEvent<SVGGElement>,
+  ) => void;
+  onKeyDown: (
+    axis: "x" | "y",
+    event: ReactKeyboardEvent<SVGGElement>,
+  ) => void;
+}) {
+  const horizontal = axis === "x";
+  return (
+    <g
+      transform={`translate(${point.x} ${point.y})`}
+      role="slider"
+      tabIndex={0}
+      aria-orientation={horizontal ? "horizontal" : "vertical"}
+      aria-label={label}
+      aria-valuetext={valueText}
+      className="text-indigo-600 outline-none focus-visible:[filter:drop-shadow(0_0_0.2rem_rgb(79_70_229_/_0.45))]"
+      style={{
+        pointerEvents: "all",
+        cursor: dragging
+          ? "grabbing"
+          : horizontal
+            ? "col-resize"
+            : "row-resize",
+      }}
+      onPointerDown={(event) => onPointerDown(axis, event)}
+      onKeyDown={(event) => onKeyDown(axis, event)}
+    >
+      <rect
+        x={horizontal ? -9 : -5}
+        y={horizontal ? -5 : -9}
+        width={horizontal ? 18 : 10}
+        height={horizontal ? 10 : 18}
+        rx="5"
+        fill="var(--card)"
+        stroke="currentColor"
+        strokeWidth="1.75"
+        className={cn(
+          "transition-[filter,transform] duration-150 motion-reduce:transition-none",
+          dragging &&
+            "[filter:drop-shadow(0_2px_3px_rgb(15_23_42_/_0.24))]",
+        )}
+      />
+      <path
+        d={
+          horizontal
+            ? "M -4 0 H 4 M -4 0 L -2 -2 M -4 0 L -2 2 M 4 0 L 2 -2 M 4 0 L 2 2"
+            : "M 0 -4 V 4 M 0 -4 L -2 -2 M 0 -4 L 2 -2 M 0 4 L -2 2 M 0 4 L 2 2"
+        }
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.25"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        pointerEvents="none"
+      />
+    </g>
+  );
+}
+
 function calendarWeek(date: Date) {
   const weekDate = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
   const day = weekDate.getUTCDay() || 7;
@@ -226,6 +484,213 @@ function minDate(values: Array<string | null | undefined>) {
 function maxDate(values: Array<string | null | undefined>) {
   const sorted = values.filter((value): value is string => Boolean(value)).sort();
   return sorted.at(-1) ?? null;
+}
+
+function DependencyEditorPanel({
+  draft,
+  tasks,
+  pending,
+  invalid = false,
+  onChange,
+  onSave,
+  onCancel,
+  onDelete,
+}: {
+  draft: DependencyDraft;
+  tasks: PortfolioTask[];
+  pending: boolean;
+  invalid?: boolean;
+  onChange: (draft: DependencyDraft) => void;
+  onSave: () => void;
+  onCancel: () => void;
+  onDelete?: () => void;
+}) {
+  const t = useTranslations("projects");
+  const tCommon = useTranslations("common");
+  const predecessor = tasks.find(
+    (task) => task.id === draft.predecessorTaskId,
+  );
+  const successor = tasks.find(
+    (task) => task.id === draft.successorTaskId,
+  );
+
+  return (
+    <div className="grid gap-3" data-testid="dependency-editor">
+      <div className="rounded-md border-l-2 border-l-indigo-500 bg-muted/35 px-3 py-2">
+        <p className="truncate text-xs font-medium">{predecessor?.title}</p>
+        <div className="my-1 flex items-center gap-1 text-[10px] font-medium uppercase tracking-[0.08em] text-indigo-600 dark:text-indigo-400">
+          <span>{t(dependencyTypeCodeKey(draft.dependencyType))}</span>
+          <ArrowRight className="size-3" aria-hidden />
+        </div>
+        <p className="truncate text-xs font-medium">{successor?.title}</p>
+      </div>
+
+      <div className="grid gap-1.5">
+        <Label>{t("dependencyType")}</Label>
+        <div
+          className="grid grid-cols-2 gap-1.5"
+          role="radiogroup"
+          aria-label={t("dependencyType")}
+        >
+          {DEPENDENCY_TYPE_OPTIONS.map((type, index) => {
+            const selected = draft.dependencyType === type;
+            return (
+              <button
+                key={type}
+                type="button"
+                role="radio"
+                aria-checked={selected}
+                className={cn(
+                  "group/type rounded-md border px-2.5 py-2 text-left transition-[border-color,background-color,box-shadow] duration-150 motion-reduce:transition-none",
+                  selected
+                    ? "border-indigo-500 bg-indigo-50 shadow-[inset_0_0_0_1px_color-mix(in_oklab,#4f46e5_24%,transparent)] dark:bg-indigo-950/35"
+                    : "border-border bg-card hover:border-indigo-300 hover:bg-muted/45",
+                )}
+                onClick={() =>
+                  onChange({ ...draft, dependencyType: type })
+                }
+                onKeyDown={(event) => {
+                  if (
+                    event.key !== "ArrowLeft" &&
+                    event.key !== "ArrowRight" &&
+                    event.key !== "ArrowUp" &&
+                    event.key !== "ArrowDown"
+                  ) {
+                    return;
+                  }
+                  event.preventDefault();
+                  const delta =
+                    event.key === "ArrowRight" || event.key === "ArrowDown"
+                      ? 1
+                      : -1;
+                  const nextIndex =
+                    (index + delta + DEPENDENCY_TYPE_OPTIONS.length) %
+                    DEPENDENCY_TYPE_OPTIONS.length;
+                  onChange({
+                    ...draft,
+                    dependencyType: DEPENDENCY_TYPE_OPTIONS[nextIndex],
+                  });
+                  const buttons =
+                    event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>(
+                      '[role="radio"]',
+                    );
+                  buttons?.[nextIndex]?.focus();
+                }}
+              >
+                <span className="block font-mono text-[11px] font-semibold text-indigo-700 dark:text-indigo-300">
+                  {t(dependencyTypeCodeKey(type))}
+                </span>
+                <span className="mt-0.5 block text-xs font-medium">
+                  {t(dependencyTypeTranslationKey(type))}
+                </span>
+                <span className="mt-0.5 block text-[10px] leading-tight text-muted-foreground">
+                  {t(dependencyTypeHintKey(type))}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="grid gap-1.5">
+        <Label htmlFor={`dependency-lag-${draft.id}`}>{t("lagDays")}</Label>
+        <Input
+          id={`dependency-lag-${draft.id}`}
+          type="number"
+          min={-365}
+          max={365}
+          value={draft.lagDays}
+          onChange={(event) =>
+            onChange({
+              ...draft,
+              lagDays: Math.min(
+                365,
+                Math.max(-365, Number(event.target.value) || 0),
+              ),
+            })
+          }
+        />
+        <p className="text-[10px] leading-relaxed text-muted-foreground">
+          {t("dependencyLagHint")}
+        </p>
+        {invalid && (
+          <p className="text-xs font-medium text-destructive" role="alert">
+            {t("dependencyInvalid")}
+          </p>
+        )}
+      </div>
+
+      <div className="flex items-center justify-between gap-3 rounded-md border bg-muted/25 px-3 py-2">
+        <div className="min-w-0">
+          <p className="text-xs font-medium">
+            {draft.routeOffsetDays === null && draft.routeOffsetRows === null
+              ? t("dependencyRouteAutomatic")
+              : t("dependencyRouteManual")}
+          </p>
+          <p className="mt-0.5 text-[10px] leading-relaxed text-muted-foreground">
+            {t("dependencyRouteHint")}
+          </p>
+        </div>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="shrink-0"
+          disabled={
+            pending ||
+            (draft.routeOffsetDays === null && draft.routeOffsetRows === null)
+          }
+          onClick={() =>
+            onChange({
+              ...draft,
+              routeOffsetDays: null,
+              routeOffsetRows: null,
+            })
+          }
+        >
+          <LocateFixed className="size-3.5" />
+          {t("dependencyRouteReset")}
+        </Button>
+      </div>
+
+      <div className="flex items-center justify-between gap-2 border-t pt-2">
+        {!draft.isNew && onDelete ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="text-destructive hover:text-destructive"
+            disabled={pending}
+            onClick={onDelete}
+          >
+            <Trash2 className="size-3.5" />
+            {tCommon("delete")}
+          </Button>
+        ) : (
+          <span />
+        )}
+        <div className="flex gap-1.5">
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            disabled={pending}
+            onClick={onCancel}
+          >
+            {tCommon("cancel")}
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            disabled={pending || invalid}
+            onClick={onSave}
+          >
+            {draft.isNew ? t("createDependency") : tCommon("save")}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function storePortfolioView(focusedTaskId: string, view: PortfolioViewState) {
@@ -351,7 +816,12 @@ function ScheduleInspector({
   >("asap");
   const [constraintDate, setConstraintDate] = useState("");
   const [predecessorId, setPredecessorId] = useState("none");
-  const [lagWorkdays, setLagWorkdays] = useState(0);
+  const [dependencyType, setDependencyType] =
+    useState<DependencyType>("finish_to_start");
+  const [lagDays, setLagDays] = useState(0);
+  const [dependencyEditorDraft, setDependencyEditorDraft] =
+    useState<DependencyDraft | null>(null);
+  const [dependencyPending, setDependencyPending] = useState(false);
   const [pending, setPending] = useState(false);
 
   const [syncKey, setSyncKey] = useState<string | null>(null);
@@ -373,7 +843,9 @@ function ScheduleInspector({
       setConstraintType(task?.constraintType ?? "asap");
       setConstraintDate(task?.constraintDate ?? "");
       setPredecessorId("none");
-      setLagWorkdays(0);
+      setDependencyType("finish_to_start");
+      setLagDays(0);
+      setDependencyEditorDraft(null);
     }
   }
 
@@ -431,13 +903,71 @@ function ScheduleInspector({
       await upsertTaskDependency({
         predecessorTaskId: predecessorId,
         successorTaskId: task.id,
-        lagWorkdays,
+        dependencyType,
+        lagDays,
+        routeOffsetDays: null,
+        routeOffsetRows: null,
       });
       setPredecessorId("none");
-      setLagWorkdays(0);
+      setDependencyType("finish_to_start");
+      setLagDays(0);
       router.refresh();
     } catch (error) {
       toast.error(error instanceof Error && error.message.includes("cycle") ? t("dependencyCycle") : tCommon("error"));
+    }
+  }
+
+  async function saveDependencyDraft() {
+    if (!dependencyEditorDraft) return;
+    if (
+      dependencyDraftIsInvalid(
+        schedule.tasks,
+        schedule.dependencies,
+        dependencyEditorDraft,
+      )
+    ) {
+      toast.error(t("dependencyInvalid"));
+      return;
+    }
+    setDependencyPending(true);
+    try {
+      await upsertTaskDependency({
+        id: dependencyEditorDraft.isNew
+          ? undefined
+          : dependencyEditorDraft.id,
+        predecessorTaskId: dependencyEditorDraft.predecessorTaskId,
+        successorTaskId: dependencyEditorDraft.successorTaskId,
+        dependencyType: dependencyEditorDraft.dependencyType,
+        lagDays: dependencyEditorDraft.lagDays,
+        routeOffsetDays: dependencyEditorDraft.routeOffsetDays,
+        routeOffsetRows: dependencyEditorDraft.routeOffsetRows,
+      });
+      setDependencyEditorDraft(null);
+      router.refresh();
+      toast.success(t("dependencySaved"));
+    } catch (error) {
+      toast.error(
+        error instanceof Error && error.message.includes("cycle")
+          ? t("dependencyCycle")
+          : t("dependencySaveError"),
+      );
+    } finally {
+      setDependencyPending(false);
+    }
+  }
+
+  async function deleteDependencyDraft() {
+    if (!dependencyEditorDraft || dependencyEditorDraft.isNew) return;
+    setDependencyPending(true);
+    try {
+      await deleteTaskDependency(dependencyEditorDraft.id);
+      setDependencyEditorDraft(null);
+      router.refresh();
+      toast.success(t("dependencyDeleted"));
+    } catch {
+      toast.error(t("dependencySaveError"));
+    } finally {
+      setDependencyPending(false);
     }
   }
 
@@ -665,10 +1195,25 @@ function ScheduleInspector({
               {incoming.map((dependency) => {
                 const predecessor = schedule.tasks.find((candidate) => candidate.id === dependency.predecessorTaskId);
                 return (
-                  <div key={dependency.id} className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm">
-                    <GitBranch className="size-4 text-muted-foreground" />
-                    <span className="min-w-0 flex-1 truncate">{predecessor?.title}</span>
-                    <span className="font-mono text-xs text-muted-foreground">{dependency.lagWorkdays >= 0 ? "+" : ""}{dependency.lagWorkdays}d</span>
+                  <div key={dependency.id} className="flex items-center gap-1 rounded-md border p-1 text-sm">
+                    <button
+                      type="button"
+                      className="flex min-w-0 flex-1 items-center gap-2 rounded-sm px-2 py-1.5 text-left hover:bg-muted/55 focus-visible:outline-2 focus-visible:outline-ring"
+                      onClick={() =>
+                        setDependencyEditorDraft({
+                          ...dependency,
+                          dependencyType: dependencyTypeOf(dependency),
+                          isNew: false,
+                        })
+                      }
+                    >
+                      <GitBranch className="size-4 shrink-0 text-indigo-500" />
+                      <span className="min-w-0 flex-1 truncate">{predecessor?.title}</span>
+                      <span className="rounded-sm bg-indigo-50 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-indigo-700 dark:bg-indigo-950/50 dark:text-indigo-300">
+                        {t(dependencyTypeCodeKey(dependencyTypeOf(dependency)))}
+                      </span>
+                      <span className="font-mono text-[10px] text-muted-foreground">{dependency.lagDays >= 0 ? "+" : ""}{dependency.lagDays}d</span>
+                    </button>
                     <Button type="button" variant="ghost" size="icon-xs" aria-label={tCommon("delete")} onClick={async () => {
                       await deleteTaskDependency(dependency.id);
                       router.refresh();
@@ -676,7 +1221,7 @@ function ScheduleInspector({
                   </div>
                 );
               })}
-              <div className="grid grid-cols-[1fr_5.5rem_auto] gap-2">
+              <div className="grid gap-2 rounded-md border border-dashed p-2">
                 <Select value={predecessorId} onValueChange={(value) => setPredecessorId(value ?? "none")}>
                   <SelectTrigger className="w-full">
                     <SelectValue>
@@ -693,9 +1238,55 @@ function ScheduleInspector({
                     ))}
                   </SelectContent>
                 </Select>
-                <Input type="number" min={-365} max={365} value={lagWorkdays} onChange={(event) => setLagWorkdays(Number(event.target.value))} aria-label={t("lagWorkdays")} />
-                <Button type="button" variant="outline" size="icon" onClick={addDependency} disabled={predecessorId === "none"} aria-label={t("addDependency")}><Plus className="size-4" /></Button>
+                <div className="grid grid-cols-[1fr_5.5rem_auto] gap-2">
+                  <Select value={dependencyType} onValueChange={(value) => setDependencyType((value ?? "finish_to_start") as DependencyType)}>
+                    <SelectTrigger className="w-full">
+                      <SelectValue>
+                        {t(dependencyTypeTranslationKey(dependencyType))}
+                      </SelectValue>
+                    </SelectTrigger>
+                    <SelectContent>
+                      {DEPENDENCY_TYPE_OPTIONS.map((type) => (
+                        <SelectItem key={type} value={type}>
+                          {t(dependencyTypeTranslationKey(type))}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Input type="number" min={-365} max={365} value={lagDays} onChange={(event) => setLagDays(Number(event.target.value))} aria-label={t("lagDays")} />
+                  <Button type="button" variant="outline" size="icon" onClick={addDependency} disabled={predecessorId === "none"} aria-label={t("addDependency")}><Plus className="size-4" /></Button>
+                </div>
               </div>
+              <Dialog
+                open={Boolean(dependencyEditorDraft)}
+                onOpenChange={(nextOpen) => {
+                  if (!nextOpen && !dependencyPending) {
+                    setDependencyEditorDraft(null);
+                  }
+                }}
+              >
+                <DialogContent className="sm:max-w-md">
+                  <DialogHeader>
+                    <DialogTitle>{t("editDependency")}</DialogTitle>
+                  </DialogHeader>
+                  {dependencyEditorDraft && (
+                    <DependencyEditorPanel
+                      draft={dependencyEditorDraft}
+                      tasks={schedule.tasks}
+                      pending={dependencyPending}
+                      invalid={dependencyDraftIsInvalid(
+                        schedule.tasks,
+                        schedule.dependencies,
+                        dependencyEditorDraft,
+                      )}
+                      onChange={setDependencyEditorDraft}
+                      onSave={() => void saveDependencyDraft()}
+                      onCancel={() => setDependencyEditorDraft(null)}
+                      onDelete={() => void deleteDependencyDraft()}
+                    />
+                  )}
+                </DialogContent>
+              </Dialog>
             </div>
           )}
           <Button type="submit" disabled={pending || !title.trim() || !columnId}>
@@ -846,6 +1437,7 @@ export function PortfolioClient({
   const [zoom, setZoom] = useState<Zoom>("month");
   const [dayWidth, setDayWidth] = useState(ZOOM_WIDTH.month);
   const [treeWidth, setTreeWidth] = useState(LEFT_WIDTH);
+  const [ganttViewportWidth, setGanttViewportWidth] = useState(0);
   const [query, setQuery] = useState("");
   const [owner, setOwner] = useState("all");
   const [health, setHealth] = useState<"all" | "risk" | "track">("all");
@@ -865,10 +1457,25 @@ export function PortfolioClient({
     projectId: string;
     parentTaskId: string | null;
   } | null>(null);
-  // Rows the in-flight drag would move besides the one under the pointer. Shown
-  // as ghost outlines so the ripple is visible before the drop (R8).
-  const [cascade, setCascade] = useState<PreviewChange[]>([]);
-  const [activePreview, setActivePreview] = useState<SchedulePreview | null>(null);
+  const [dragPreview, setDragPreview] = useState<DragPreview | null>(null);
+  const [scheduleCommitPending, setScheduleCommitPending] = useState(false);
+  const [deadlinePreview, setDeadlinePreview] = useState<DeadlinePreview | null>(null);
+  const [deadlineCommitPending, setDeadlineCommitPending] = useState(false);
+  const [dependencySourceId, setDependencySourceId] = useState<string | null>(null);
+  const [dependencyHoverId, setDependencyHoverId] = useState<string | null>(null);
+  const [hoveredDependencyId, setHoveredDependencyId] = useState<string | null>(
+    null,
+  );
+  const [dependencyDraft, setDependencyDraft] =
+    useState<DependencyDraft | null>(null);
+  const [dependencyEditorOpen, setDependencyEditorOpen] = useState(false);
+  const [dependencyCommitPending, setDependencyCommitPending] = useState(false);
+  const [dependencyRouteDragging, setDependencyRouteDragging] = useState<
+    "x" | "y" | null
+  >(null);
+  const draft = dragPreview?.draft ?? null;
+  const projectDraft = dragPreview?.projectDraft ?? null;
+  const activePreview = dragPreview?.preview ?? null;
   const [undoChangeSetId, setUndoChangeSetId] = useState<string | null>(null);
   const [undoPending, setUndoPending] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<{
@@ -876,18 +1483,6 @@ export function PortfolioClient({
     descendantCount: number;
   } | null>(null);
   const [revealTaskId, setRevealTaskId] = useState<string | null>(null);
-  const [draft, setDraft] = useState<{
-    taskId: string;
-    startDate: string;
-    dueDate: string;
-    mode: "move" | "resize-start" | "resize-end" | "place";
-  } | null>(null);
-  const [projectDraft, setProjectDraft] = useState<{
-    projectId: string;
-    startDate: string;
-    dueDate: string;
-    mode: "move" | "resize-start" | "resize-end" | "place";
-  } | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const dayWidthRef = useRef(ZOOM_WIDTH.month);
   const dragRef = useRef<{
@@ -912,13 +1507,91 @@ export function PortfolioClient({
     startX: number;
     width: number;
   } | null>(null);
+  const deadlineDragRef = useRef<{
+    pointerId: number;
+    deadline: PortfolioSchedule["deadlines"][number];
+    startX: number;
+    latestDate: string;
+  } | null>(null);
+  const deadlinePreviewFrameRef = useRef<number | null>(null);
+  const pendingDeadlinePreviewRef = useRef<DeadlinePreview | null>(null);
+  const connectorGestureRef = useRef<{
+    pointerId: number;
+    task: PortfolioTask;
+    startX: number;
+    timelineLeft: number;
+    activatedResize: boolean;
+    timer: ReturnType<typeof setTimeout>;
+  } | null>(null);
+  const dependencyRouteDragRef = useRef<{
+    pointerId: number;
+    axis: "x" | "y";
+    dependency: DependencyDraft;
+    startX: number;
+    startY: number;
+    baseDays: number;
+    baseRows: number;
+    latestDays: number;
+    latestRows: number;
+    frame: number | null;
+  } | null>(null);
   const portfolioViewRef = useRef<PortfolioViewState | null>(null);
+  const fittedPortfolioRef = useRef(false);
   const fittedFocusRef = useRef<string | null>(null);
   const routeFocusedTaskRef = useRef<string | null>(initialFocusedTaskId);
   // A bar is both draggable and clickable, and the browser fires click after
   // pointerup either way. Once the pointer has travelled past the threshold the
   // gesture was a drag, so the click that follows must not open the inspector.
   const draggedRef = useRef(false);
+  const previewFrameRef = useRef<number | null>(null);
+  const pendingPreviewRef = useRef<{
+    edit: ScheduleEdit;
+    draft: TaskDraft | null;
+    projectDraft: ProjectDraft | null;
+  } | null>(null);
+  const confirmedScheduleRef = useRef(schedule);
+
+  useEffect(() => {
+    if (confirmedScheduleRef.current === schedule) return;
+    confirmedScheduleRef.current = schedule;
+    pendingPreviewRef.current = null;
+    if (previewFrameRef.current !== null) {
+      cancelAnimationFrame(previewFrameRef.current);
+      previewFrameRef.current = null;
+    }
+    setDragPreview(null);
+    setDeadlinePreview(null);
+    setDependencyDraft(null);
+    setDependencyEditorOpen(false);
+  }, [schedule]);
+
+  useEffect(
+    () => () => {
+      if (previewFrameRef.current !== null) {
+        cancelAnimationFrame(previewFrameRef.current);
+      }
+      if (deadlinePreviewFrameRef.current !== null) {
+        cancelAnimationFrame(deadlinePreviewFrameRef.current);
+      }
+      if (connectorGestureRef.current) {
+        clearTimeout(connectorGestureRef.current.timer);
+      }
+    },
+    [],
+  );
+
+  useEffect(() => {
+    if (view !== "timeline") return;
+    const scrollContainer = scrollRef.current;
+    if (!scrollContainer) return;
+    const updateViewportWidth = () => {
+      setGanttViewportWidth(scrollContainer.clientWidth);
+    };
+    updateViewportWidth();
+    const observer = new ResizeObserver(updateViewportWidth);
+    observer.observe(scrollContainer);
+    return () => observer.disconnect();
+  }, [view, focusedTaskId]);
 
   useEffect(() => {
     const frame = requestAnimationFrame(() => {
@@ -999,19 +1672,129 @@ export function PortfolioClient({
     };
   }, []);
 
+  const effectiveDependencies = useMemo(
+    () =>
+      dependencyDraft
+        ? dependencyDraft.isNew ||
+          !schedule.dependencies.some(
+            (dependency) => dependency.id === dependencyDraft.id,
+          )
+          ? [...schedule.dependencies, dependencyDraft]
+          : schedule.dependencies.map((dependency) =>
+              dependency.id === dependencyDraft.id
+                ? dependencyDraft
+                : dependency,
+            )
+        : schedule.dependencies,
+    [dependencyDraft, schedule.dependencies],
+  );
+
+  const dependencySchedulePreview = useMemo<SchedulePreview | null>(() => {
+    if (!dependencyDraft) return null;
+    const successor = schedule.tasks.find(
+      (task) => task.id === dependencyDraft.successorTaskId,
+    );
+    if (!successor?.startDate || !successor.dueDate) return null;
+    try {
+      return previewScheduleEdit({
+        tasks: schedule.tasks,
+        projects: schedule.projects.map((project) => ({
+          id: project.id,
+          startDate: project.plannedStartDate,
+          dueDate: project.targetEndDate,
+        })),
+        dependencies: effectiveDependencies,
+        edit: {
+          entityType: "task",
+          entityId: successor.id,
+          operation: "move",
+          startDate: successor.startDate,
+          dueDate: successor.dueDate,
+        },
+      });
+    } catch {
+      return null;
+    }
+  }, [
+    dependencyDraft,
+    effectiveDependencies,
+    schedule.projects,
+    schedule.tasks,
+  ]);
+
+  const effectiveSchedule = useMemo<PortfolioSchedule>(() => {
+    const schedulePreview = dependencyDraft
+      ? dependencySchedulePreview
+      : activePreview;
+    if (!schedulePreview && !deadlinePreview && !dependencyDraft) {
+      return schedule;
+    }
+    const taskChanges = new Map(
+      (schedulePreview?.changes ?? [])
+        .filter((change) => change.entityType === "task")
+        .map((change) => [change.entityId, change]),
+    );
+    const projectChanges = new Map(
+      (schedulePreview?.changes ?? [])
+        .filter((change) => change.entityType === "project")
+        .map((change) => [change.entityId, change]),
+    );
+    return {
+      ...schedule,
+      tasks: schedule.tasks.map((task) => {
+        const change = taskChanges.get(task.id);
+        return change
+          ? {
+              ...task,
+              startDate: change.afterStartDate,
+              dueDate: change.afterDueDate,
+            }
+          : task;
+      }),
+      projects: schedule.projects.map((project) => {
+        const change = projectChanges.get(project.id);
+        return change
+          ? {
+              ...project,
+              plannedStartDate: change.afterStartDate,
+              targetEndDate: change.afterDueDate,
+            }
+          : project;
+      }),
+      deadlines: schedule.deadlines.map((deadline) =>
+        deadlinePreview?.id === deadline.id
+          ? {
+              ...deadline,
+              dueDate: deadlinePreview.deadlineDate,
+              deadlineAt: deadlinePreview.deadlineAt,
+              updatedAt: deadlinePreview.updatedAt,
+            }
+          : deadline,
+      ),
+      dependencies: effectiveDependencies,
+    };
+  }, [
+    activePreview,
+    deadlinePreview,
+    dependencyDraft,
+    dependencySchedulePreview,
+    effectiveDependencies,
+    schedule,
+  ]);
+
   const selectedTask =
-    schedule.tasks.find((task) => task.id === selectedTaskId) ?? null;
+    effectiveSchedule.tasks.find((task) => task.id === selectedTaskId) ?? null;
   const focusedTask =
-    schedule.tasks.find((task) => task.id === focusedTaskId) ?? null;
+    effectiveSchedule.tasks.find((task) => task.id === focusedTaskId) ?? null;
   const focusedProject = focusedTask
-    ? schedule.projects.find((project) => project.id === focusedTask.projectId) ?? null
+    ? effectiveSchedule.projects.find((project) => project.id === focusedTask.projectId) ?? null
     : null;
   const focusedSubtree = useMemo(
     () =>
       focusedTask
-        ? resolveFocusedTaskSubtree(schedule.tasks, focusedTask.id)
+        ? resolveFocusedTaskSubtree(effectiveSchedule.tasks, focusedTask.id)
         : null,
-    [focusedTask, schedule.tasks],
+    [focusedTask, effectiveSchedule.tasks],
   );
   const focusedTaskIds = useMemo(
     () => new Set(focusedSubtree?.taskIds ?? []),
@@ -1019,8 +1802,8 @@ export function PortfolioClient({
   );
   const focusDependencies = useMemo(
     () =>
-      classifyFocusDependencies(schedule.dependencies, focusedTaskIds),
-    [schedule.dependencies, focusedTaskIds],
+      classifyFocusDependencies(effectiveSchedule.dependencies, focusedTaskIds),
+    [effectiveSchedule.dependencies, focusedTaskIds],
   );
   const visibleFocusDependencyIds = useMemo(() => {
     if (!focusedTask) return null;
@@ -1029,8 +1812,8 @@ export function PortfolioClient({
     }
     const branchIds = new Set([
       selectedTask.id,
-      ...taskAncestors(schedule.tasks, selectedTask.id).map((task) => task.id),
-      ...taskDescendants(schedule.tasks, selectedTask.id).map((task) => task.id),
+      ...taskAncestors(effectiveSchedule.tasks, selectedTask.id).map((task) => task.id),
+      ...taskDescendants(effectiveSchedule.tasks, selectedTask.id).map((task) => task.id),
     ]);
     return new Set(
       focusDependencies.internal
@@ -1046,29 +1829,28 @@ export function PortfolioClient({
     focusedTaskIds,
     focusDependencies.internal,
     selectedTask,
-    schedule.tasks,
+    effectiveSchedule.tasks,
     criticalVisible,
   ]);
 
   // Summaries take part in dependencies now (R6), so conflicts and the critical
   // path are computed over the whole tree rather than just its leaves.
   const conflicts = useMemo(
-    () => dependencyConflicts(schedule.tasks, schedule.dependencies),
-    [schedule],
+    () => dependencyConflicts(effectiveSchedule.tasks, effectiveSchedule.dependencies),
+    [effectiveSchedule],
   );
   const critical = useMemo(
-    () => criticalPathTaskIds(schedule.tasks, schedule.dependencies),
-    [schedule],
-  );
-  const cascadeIds = useMemo(
-    () => new Set(cascade.map((change) => `${change.entityType}:${change.entityId}`)),
-    [cascade],
+    () =>
+      criticalVisible
+        ? criticalPathTaskIds(effectiveSchedule.tasks, effectiveSchedule.dependencies)
+        : new Set<string>(),
+    [effectiveSchedule, criticalVisible],
   );
   const dragImpact = useMemo(() => {
     if (!draft && !projectDraft) return null;
     const impact = activePreview?.impact;
     return {
-      workdays: impact?.workdayDelta ?? 0,
+      days: impact?.dayDelta ?? 0,
       taskCount: impact?.affectedTaskCount ?? 0,
       containerCount:
         (impact?.expandedTaskCount ?? 0) +
@@ -1082,19 +1864,19 @@ export function PortfolioClient({
   }, [draft, projectDraft, activePreview]);
   const tasksByProject = useMemo(() => {
     const map = new Map<string, PortfolioTask[]>();
-    for (const task of schedule.tasks) {
+    for (const task of effectiveSchedule.tasks) {
       const list = map.get(task.projectId) ?? [];
       list.push(task);
       map.set(task.projectId, list);
     }
     return map;
-  }, [schedule.tasks]);
+  }, [effectiveSchedule.tasks]);
 
   const visibleProjects = useMemo(() => {
     if (focusedTask) {
-      return schedule.projects.filter((project) => project.id === focusedTask.projectId);
+      return effectiveSchedule.projects.filter((project) => project.id === focusedTask.projectId);
     }
-    return schedule.projects.filter((project) => {
+    return effectiveSchedule.projects.filter((project) => {
       const projectTasks = tasksByProject.get(project.id) ?? [];
       const matchesOwner =
         owner === "all" ||
@@ -1104,45 +1886,33 @@ export function PortfolioClient({
       const matchesHealth = health === "all" || (health === "risk" ? risk : !risk);
       return matchesOwner && matchesHealth;
     });
-  }, [schedule.projects, tasksByProject, owner, health, today, focusedTask]);
+  }, [effectiveSchedule.projects, tasksByProject, owner, health, today, focusedTask]);
 
   const searchResults = useMemo(() => {
     const needle = query.trim().toLocaleLowerCase();
     if (!needle) return { projects: [], tasks: [] };
     return {
-      projects: schedule.projects
+      projects: effectiveSchedule.projects
         .filter((project) => project.name.toLocaleLowerCase().includes(needle))
         .slice(0, 5),
-      tasks: schedule.tasks
+      tasks: effectiveSchedule.tasks
         .filter((task) => task.title.toLocaleLowerCase().includes(needle))
         .slice(0, 8),
     };
-  }, [query, schedule.projects, schedule.tasks]);
+  }, [query, effectiveSchedule.projects, effectiveSchedule.tasks]);
 
   const portfolioRows = useMemo(() => {
     const result: Row[] = [];
     for (const project of visibleProjects) {
       const projectTasks = tasksByProject.get(project.id) ?? [];
       const projectLeaves = leafTasks(projectTasks);
-      const projectDates = project.id === projectDraft?.projectId ? projectDraft : null;
-      const projectBaseStart = minDate([
-        project.plannedStartDate,
-        ...projectTasks.map((task) => task.startDate),
-      ]);
-      const projectOffset =
-        projectDraft?.projectId === project.id && projectDraft.mode === "move" && projectBaseStart
-          ? workdayDistance(projectBaseStart, projectDraft.startDate)
-          : 0;
       // A project bar shows the window that was authored for it, not the span of
       // its work — so work reaching past it is drawn as overflow instead (R3/R4).
-      const projectStart = projectDates?.startDate ?? project.plannedStartDate;
-      const projectDue = projectDates?.dueDate ?? project.targetEndDate;
+      const projectStart = project.plannedStartDate;
+      const projectDue = project.targetEndDate;
       const overflow = containerOverflow(
         { startDate: projectStart, dueDate: projectDue },
-        projectTasks.map((task) => ({
-          startDate: projectOffset && task.startDate ? addWorkdays(task.startDate, projectOffset) : task.startDate,
-          dueDate: projectOffset && task.dueDate ? addWorkdays(task.dueDate, projectOffset) : task.dueDate,
-        })),
+        projectTasks,
       );
       result.push({
         id: `project-${project.id}`,
@@ -1159,7 +1929,7 @@ export function PortfolioClient({
         placement: suggestTaskPlacement({
           today,
           siblings: [],
-          workdays: 20,
+          days: 20,
         }),
       });
       if (!expandedProjects.has(project.id)) continue;
@@ -1170,34 +1940,7 @@ export function PortfolioClient({
         const childTasks = projectTasks.filter(
           (candidate) => candidate.parentTaskId === task.id,
         );
-        const draftTask = draft
-          ? projectTasks.find((candidate) => candidate.id === draft.taskId)
-          : null;
-        const taskDraftOffset =
-          draft?.mode === "move" && draftTask?.startDate
-            ? workdayDistance(draftTask.startDate, draft.startDate)
-            : 0;
-        const draftDescendantIds = new Set(
-          draftTask ? taskDescendants(projectTasks, draftTask.id).map((child) => child.id) : [],
-        );
-        const renderDraftTask = (candidate: PortfolioTask) => {
-          if (candidate.id === draft?.taskId) {
-            return {
-              ...candidate,
-              startDate: projectOffset ? addWorkdays(draft.startDate, projectOffset) : draft.startDate,
-              dueDate: projectOffset ? addWorkdays(draft.dueDate, projectOffset) : draft.dueDate,
-            };
-          }
-          const offset = taskDraftOffset + projectOffset;
-          if (offset && (draftDescendantIds.has(candidate.id) || projectOffset !== 0) && candidate.startDate && candidate.dueDate) {
-            return {
-              ...candidate,
-              startDate: addWorkdays(candidate.startDate, offset),
-              dueDate: addWorkdays(candidate.dueDate, offset),
-            };
-          }
-          return candidate;
-        };
+        const renderDraftTask = (candidate: PortfolioTask) => candidate;
         const descendantTasks = taskDescendants(projectTasks, task.id).map(renderDraftTask);
         const isSummary = childTasks.length > 0;
         const renderedTask = renderDraftTask(task);
@@ -1231,7 +1974,7 @@ export function PortfolioClient({
             today,
             parent,
             siblings,
-            workdays: task.isMilestone ? 1 : 5,
+            days: task.isMilestone ? 1 : 5,
           }),
         });
         if (isSummary && expandedTasks.has(task.id)) {
@@ -1247,7 +1990,7 @@ export function PortfolioClient({
       }
     }
     return result;
-  }, [visibleProjects, tasksByProject, expandedProjects, expandedTasks, draft, projectDraft, today]);
+  }, [visibleProjects, tasksByProject, expandedProjects, expandedTasks, today]);
 
   const rows = useMemo(() => {
     if (!focusedSubtree) return portfolioRows;
@@ -1279,36 +2022,74 @@ export function PortfolioClient({
   }, [focusedSubtree, schedule.tasks]);
 
   const range = useMemo(() => {
-    if (focusedSubtree) {
-      const focusRange = focusDateRange(focusedSubtree.tasks, today, {
-        paddingWorkdays: 5,
-        fallbackWorkdays: 20,
+    if (focusedTaskId) {
+      const confirmedFocus = resolveFocusedTaskSubtree(
+        schedule.tasks,
+        focusedTaskId,
+      );
+      const focusRange = focusDateRange(confirmedFocus?.tasks ?? [], today, {
+        paddingDays: FIT_PADDING_DAYS,
+        fallbackDays: 20,
       });
       return {
         start: focusRange.startDate,
         end: focusRange.dueDate,
       };
     }
+    const visibleProjectIds = new Set(
+      visibleProjects.map((project) => project.id),
+    );
     const scheduled = [
-      ...rows.flatMap((row) => [row.startDate, row.dueDate]),
+      ...schedule.projects
+        .filter((project) => visibleProjectIds.has(project.id))
+        .flatMap((project) => [
+          project.plannedStartDate,
+          project.targetEndDate,
+        ]),
+      ...schedule.tasks
+        .filter((task) => visibleProjectIds.has(task.projectId))
+        .flatMap((task) => [task.startDate, task.dueDate]),
       ...schedule.deadlines.map((deadline) => deadline.dueDate),
     ].filter((value): value is string => Boolean(value));
     const earliest = minDate(scheduled) ?? today;
     const latest = maxDate(scheduled) ?? today;
     return {
-      start: addCalendarDays(earliest < addCalendarDays(today, -14) ? earliest : addCalendarDays(today, -14), -7),
-      end: addCalendarDays(latest > addCalendarDays(today, 90) ? latest : addCalendarDays(today, 90), 14),
+      start: addCalendarDays(earliest, -FIT_PADDING_DAYS),
+      end: addCalendarDays(latest, FIT_PADDING_DAYS),
     };
-  }, [rows, today, focusedSubtree, schedule.deadlines]);
-  const dayCount = calendarDistance(range.start, range.end) + 1;
+  }, [
+    focusedTaskId,
+    schedule.tasks,
+    schedule.projects,
+    schedule.deadlines,
+    visibleProjects,
+    today,
+  ]);
+  const baseDayCount = calendarDistance(range.start, range.end) + 1;
+  const viewportDayCount = Math.max(
+    0,
+    Math.ceil(
+      Math.max(0, ganttViewportWidth - treeWidth) / Math.max(dayWidth, 1),
+    ),
+  );
+  const dayCount = Math.max(baseDayCount, viewportDayCount);
+  const renderedRangeEnd = addCalendarDays(range.start, dayCount - 1);
   const timelineWidth = dayCount * dayWidth;
   const totalWidth = treeWidth + timelineWidth;
-  const deadlineLaneHeight = !focusedTask && schedule.deadlines.length > 0 ? ROW_HEIGHT : 0;
+  const deadlineLaneHeight =
+    !focusedTask && effectiveSchedule.deadlines.length > 0
+      ? DEADLINE_LANE_HEIGHT
+      : 0;
   const totalHeight = HEADER_HEIGHT + deadlineLaneHeight + rows.length * ROW_HEIGHT;
 
   useEffect(() => {
-    if (!focusedTaskId || fittedFocusRef.current === focusedTaskId) return;
-    fittedFocusRef.current = focusedTaskId;
+    if (focusedTaskId) {
+      if (fittedFocusRef.current === focusedTaskId) return;
+      fittedFocusRef.current = focusedTaskId;
+    } else {
+      if (fittedPortfolioRef.current) return;
+      fittedPortfolioRef.current = true;
+    }
     const frame = requestAnimationFrame(() => {
       const scrollContainer = scrollRef.current;
       if (!scrollContainer) return;
@@ -1320,7 +2101,7 @@ export function PortfolioClient({
         MAX_DAY_WIDTH,
         Math.max(
           MIN_DAY_WIDTH,
-          availableTimelineWidth / Math.max(1, dayCount),
+          availableTimelineWidth / Math.max(1, baseDayCount),
         ),
       );
       dayWidthRef.current = fittedDayWidth;
@@ -1334,7 +2115,7 @@ export function PortfolioClient({
       });
     });
     return () => cancelAnimationFrame(frame);
-  }, [focusedTaskId, dayCount, treeWidth, reducedMotion]);
+  }, [focusedTaskId, baseDayCount, treeWidth, reducedMotion]);
 
   useEffect(() => {
     if (!revealTaskId) return;
@@ -1513,30 +2294,47 @@ export function PortfolioClient({
     });
   }
 
-  /** Calculates the full drag ripple synchronously from the same pure planner
-   * used by the server. This keeps the preview pinned to the pointer. */
-  function previewCascade(input: ScheduleEdit) {
+  function atomicPreview(
+    input: ScheduleEdit,
+    taskDraft: TaskDraft | null,
+    nextProjectDraft: ProjectDraft | null,
+  ): DragPreview {
     try {
       const preview = localSchedulePreview(input);
-      setActivePreview(preview);
-      setCascade(
-        preview.changes
-          .filter(
-            (change) =>
-              !(change.entityType === input.entityType && change.entityId === input.entityId),
-          )
-          .map((change) => ({
-            ...change,
-            title:
-              change.entityType === "task"
-                ? schedule.tasks.find((task) => task.id === change.entityId)?.title ?? ""
-                : schedule.projects.find((project) => project.id === change.entityId)?.name ?? "",
-          })),
-      );
+      return { preview, draft: taskDraft, projectDraft: nextProjectDraft };
     } catch {
-      setActivePreview(null);
-      setCascade([]);
+      return { preview: null, draft: taskDraft, projectDraft: nextProjectDraft };
     }
+  }
+
+  function previewCascade(
+    input: ScheduleEdit,
+    taskDraft: TaskDraft | null = null,
+    nextProjectDraft: ProjectDraft | null = null,
+  ) {
+    setDragPreview(atomicPreview(input, taskDraft, nextProjectDraft));
+  }
+
+  function queuePreview(
+    input: ScheduleEdit,
+    taskDraft: TaskDraft | null,
+    nextProjectDraft: ProjectDraft | null,
+  ) {
+    pendingPreviewRef.current = {
+      edit: input,
+      draft: taskDraft,
+      projectDraft: nextProjectDraft,
+    };
+    if (previewFrameRef.current !== null) return;
+    previewFrameRef.current = requestAnimationFrame(() => {
+      previewFrameRef.current = null;
+      const pending = pendingPreviewRef.current;
+      pendingPreviewRef.current = null;
+      if (!pending) return;
+      setDragPreview(
+        atomicPreview(pending.edit, pending.draft, pending.projectDraft),
+      );
+    });
   }
 
   const DRAG_CLICK_THRESHOLD = 4;
@@ -1546,9 +2344,465 @@ export function PortfolioClient({
     if (Math.abs(clientX - startX) > DRAG_CLICK_THRESHOLD) draggedRef.current = true;
   }
 
+  function validDependencyTarget(targetId: string) {
+    const sourceId = dependencySourceId;
+    if (!sourceId || sourceId === targetId) return false;
+    if (
+      effectiveSchedule.dependencies.some(
+        (dependency) =>
+          dependency.predecessorTaskId === sourceId &&
+          dependency.successorTaskId === targetId,
+      )
+    ) {
+      return false;
+    }
+    try {
+      assertDependencyEndpoints(effectiveSchedule.tasks, {
+        predecessorTaskId: sourceId,
+        successorTaskId: targetId,
+      });
+      return !hasScheduleCycle(effectiveSchedule.tasks, [
+        ...effectiveSchedule.dependencies,
+        {
+          predecessorTaskId: sourceId,
+          successorTaskId: targetId,
+          dependencyType: "finish_to_start",
+          lagDays: 0,
+        },
+      ]);
+    } catch {
+      return false;
+    }
+  }
+
+  function createGraphicalDependency(targetId: string) {
+    const sourceId = dependencySourceId;
+    if (!sourceId || !validDependencyTarget(targetId)) return;
+    const nextDraft: DependencyDraft = {
+      id: `draft-${sourceId}-${targetId}`,
+      predecessorTaskId: sourceId,
+      successorTaskId: targetId,
+      dependencyType: "finish_to_start",
+      lagDays: 0,
+      routeOffsetDays: null,
+      routeOffsetRows: null,
+      createdAt: new Date(),
+      isNew: true,
+    };
+    setDependencyDraft(nextDraft);
+    setDependencyEditorOpen(true);
+    setDependencySourceId(null);
+    setDependencyHoverId(null);
+  }
+
+  function openDependencyEditor(dependency: PortfolioDependency) {
+    setDependencyDraft({
+      ...dependency,
+      dependencyType: dependencyTypeOf(dependency),
+      isNew: dependency.id.startsWith("draft-"),
+    });
+    setDependencyEditorOpen(true);
+    setHoveredDependencyId(null);
+  }
+
+  function selectDependency(dependency: PortfolioDependency) {
+    if (
+      dependencyDraft?.id === dependency.id &&
+      !dependencyEditorOpen
+    ) {
+      setDependencyEditorOpen(true);
+      return;
+    }
+    setDependencyDraft({
+      ...dependency,
+      dependencyType: dependencyTypeOf(dependency),
+      isNew: dependency.id.startsWith("draft-"),
+    });
+    setDependencyEditorOpen(false);
+    setHoveredDependencyId(null);
+  }
+
+  function cancelDependencyEditor() {
+    if (dependencyCommitPending || dependencyRouteDragging) return;
+    setDependencyDraft(null);
+    setDependencyEditorOpen(false);
+  }
+
+  async function persistDependencyRoute(
+    dependency: DependencyDraft,
+    routeOffsetDays: number,
+    routeOffsetRows: number,
+  ) {
+    if (dependencyCommitPending || dependency.isNew) return;
+    setDependencyCommitPending(true);
+    try {
+      const persisted = await upsertTaskDependency({
+        id: dependency.id,
+        predecessorTaskId: dependency.predecessorTaskId,
+        successorTaskId: dependency.successorTaskId,
+        dependencyType: dependency.dependencyType,
+        lagDays: dependency.lagDays,
+        routeOffsetDays,
+        routeOffsetRows,
+      });
+      setDependencyDraft({
+        ...persisted,
+        dependencyType: dependencyTypeOf(persisted),
+        isNew: false,
+      });
+      router.refresh();
+      toast.success(t("dependencyRouteSaved"));
+    } catch {
+      setDependencyDraft(dependency);
+      toast.error(t("dependencyRouteSaveError"));
+    } finally {
+      setDependencyCommitPending(false);
+    }
+  }
+
+  function beginDependencyRouteDrag(
+    axis: "x" | "y",
+    event: ReactPointerEvent<SVGGElement>,
+  ) {
+    if (
+      !dependencyDraft ||
+      dependencyDraft.isNew ||
+      dependencyCommitPending
+    ) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    dependencyRouteDragRef.current = {
+      pointerId: event.pointerId,
+      axis,
+      dependency: dependencyDraft,
+      startX: event.clientX,
+      startY: event.clientY,
+      baseDays: dependencyDraft.routeOffsetDays ?? 0,
+      baseRows: dependencyDraft.routeOffsetRows ?? 0,
+      latestDays: dependencyDraft.routeOffsetDays ?? 0,
+      latestRows: dependencyDraft.routeOffsetRows ?? 0,
+      frame: null,
+    };
+    setDependencyRouteDragging(axis);
+  }
+
+  function nudgeDependencyRoute(
+    axis: "x" | "y",
+    event: ReactKeyboardEvent<SVGGElement>,
+  ) {
+    if (
+      !dependencyDraft ||
+      dependencyDraft.isNew ||
+      dependencyCommitPending
+    ) {
+      return;
+    }
+    const negative =
+      axis === "x" ? event.key === "ArrowLeft" : event.key === "ArrowUp";
+    const positive =
+      axis === "x" ? event.key === "ArrowRight" : event.key === "ArrowDown";
+    if (!negative && !positive) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const step = event.shiftKey ? (axis === "x" ? 7 : 4) : 1;
+    const delta = negative ? -step : step;
+    const nextDays =
+      axis === "x"
+        ? Math.max(
+            -3650,
+            Math.min(3650, (dependencyDraft.routeOffsetDays ?? 0) + delta),
+          )
+        : dependencyDraft.routeOffsetDays ?? 0;
+    const nextRows =
+      axis === "y"
+        ? Math.max(
+            -400,
+            Math.min(400, (dependencyDraft.routeOffsetRows ?? 0) + delta),
+          )
+        : dependencyDraft.routeOffsetRows ?? 0;
+    setDependencyDraft({
+      ...dependencyDraft,
+      routeOffsetDays: nextDays,
+      routeOffsetRows: nextRows,
+    });
+    void persistDependencyRoute(dependencyDraft, nextDays, nextRows);
+  }
+
+  function updateDependencyRouteDrag(
+    pointerId: number,
+    clientX: number,
+    clientY: number,
+  ) {
+    const drag = dependencyRouteDragRef.current;
+    if (!drag || drag.pointerId !== pointerId) return;
+    if (drag.axis === "x") {
+      drag.latestDays = Math.max(
+        -3650,
+        Math.min(
+          3650,
+          drag.baseDays +
+            Math.round((clientX - drag.startX) / dayWidthRef.current),
+        ),
+      );
+    } else {
+      drag.latestRows = Math.max(
+        -400,
+        Math.min(
+          400,
+          drag.baseRows +
+            Math.round((clientY - drag.startY) / (ROW_HEIGHT / 4)),
+        ),
+      );
+    }
+    if (drag.frame !== null) return;
+    drag.frame = requestAnimationFrame(() => {
+      const latest = dependencyRouteDragRef.current;
+      if (!latest) return;
+      latest.frame = null;
+      setDependencyDraft((current) =>
+        current?.id === latest.dependency.id
+          ? {
+              ...current,
+              routeOffsetDays: latest.latestDays,
+              routeOffsetRows: latest.latestRows,
+            }
+          : current,
+      );
+    });
+  }
+
+  function completeDependencyRouteDrag(
+    pointerId: number,
+    cancelled = false,
+  ) {
+    const drag = dependencyRouteDragRef.current;
+    if (!drag || drag.pointerId !== pointerId) return;
+    if (drag.frame !== null) cancelAnimationFrame(drag.frame);
+    dependencyRouteDragRef.current = null;
+    setDependencyRouteDragging(null);
+    if (cancelled) {
+      setDependencyDraft(drag.dependency);
+      return;
+    }
+    setDependencyDraft((current) =>
+      current?.id === drag.dependency.id
+        ? {
+            ...current,
+            routeOffsetDays: drag.latestDays,
+            routeOffsetRows: drag.latestRows,
+          }
+        : current,
+    );
+    void persistDependencyRoute(
+      drag.dependency,
+      drag.latestDays,
+      drag.latestRows,
+    );
+  }
+
+  useEffect(() => {
+    function moveDependencyRouteGlobally(event: PointerEvent) {
+      if (!dependencyRouteDragRef.current) return;
+      updateDependencyRouteDrag(
+        event.pointerId,
+        event.clientX,
+        event.clientY,
+      );
+    }
+    function finishDependencyRouteGlobally(event: PointerEvent) {
+      if (!dependencyRouteDragRef.current) return;
+      completeDependencyRouteDrag(
+        event.pointerId,
+        event.type === "pointercancel",
+      );
+    }
+    window.addEventListener("pointermove", moveDependencyRouteGlobally);
+    window.addEventListener("pointerup", finishDependencyRouteGlobally);
+    window.addEventListener("pointercancel", finishDependencyRouteGlobally);
+    return () => {
+      window.removeEventListener("pointermove", moveDependencyRouteGlobally);
+      window.removeEventListener("pointerup", finishDependencyRouteGlobally);
+      window.removeEventListener(
+        "pointercancel",
+        finishDependencyRouteGlobally,
+      );
+    };
+  });
+
+  async function saveGraphicalDependency() {
+    if (!dependencyDraft || dependencyCommitPending) return;
+    if (
+      dependencyDraftIsInvalid(
+        schedule.tasks,
+        schedule.dependencies,
+        dependencyDraft,
+      )
+    ) {
+      toast.error(t("dependencyInvalid"));
+      return;
+    }
+    setDependencyCommitPending(true);
+    try {
+      const persisted = await upsertTaskDependency({
+        id: dependencyDraft.isNew ? undefined : dependencyDraft.id,
+        predecessorTaskId: dependencyDraft.predecessorTaskId,
+        successorTaskId: dependencyDraft.successorTaskId,
+        dependencyType: dependencyDraft.dependencyType,
+        lagDays: dependencyDraft.lagDays,
+        routeOffsetDays: dependencyDraft.routeOffsetDays,
+        routeOffsetRows: dependencyDraft.routeOffsetRows,
+      });
+      setDependencyDraft({
+        ...persisted,
+        dependencyType: dependencyTypeOf(persisted),
+        isNew: false,
+      });
+      setDependencyEditorOpen(false);
+      router.refresh();
+      toast.success(t("dependencySaved"));
+    } catch (error) {
+      toast.error(
+        error instanceof Error && error.message.includes("cycle")
+          ? t("dependencyCycle")
+          : t("dependencySaveError"),
+      );
+    } finally {
+      setDependencyCommitPending(false);
+    }
+  }
+
+  async function deleteGraphicalDependency() {
+    if (
+      !dependencyDraft ||
+      dependencyDraft.isNew ||
+      dependencyCommitPending
+    ) {
+      return;
+    }
+    setDependencyCommitPending(true);
+    try {
+      await deleteTaskDependency(dependencyDraft.id);
+      setDependencyDraft(null);
+      setDependencyEditorOpen(false);
+      router.refresh();
+      toast.success(t("dependencyDeleted"));
+    } catch {
+      toast.error(t("dependencySaveError"));
+    } finally {
+      setDependencyCommitPending(false);
+    }
+  }
+
+  function activateConnectorResize() {
+    const gesture = connectorGestureRef.current;
+    if (
+      !gesture ||
+      gesture.activatedResize ||
+      !gesture.task.startDate ||
+      !gesture.task.dueDate
+    ) {
+      return;
+    }
+    gesture.activatedResize = true;
+    clearTimeout(gesture.timer);
+    draggedRef.current = true;
+    const latest = {
+      taskId: gesture.task.id,
+      startDate: gesture.task.startDate,
+      dueDate: gesture.task.dueDate,
+    };
+    dragRef.current = {
+      pointerId: gesture.pointerId,
+      mode: "end",
+      task: gesture.task,
+      startX: gesture.startX,
+      timelineLeft: gesture.timelineLeft,
+      latest,
+    };
+    setDragPreview({
+      preview: null,
+      draft: { ...latest, mode: "resize-end" },
+      projectDraft: null,
+    });
+  }
+
+  function startConnectorGesture(
+    event: ReactPointerEvent<HTMLElement>,
+    task: PortfolioTask,
+  ) {
+    if (
+      scheduleCommitPending ||
+      dependencyCommitPending ||
+      dependencyEditorOpen ||
+      !task.startDate ||
+      !task.dueDate
+    ) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    const pointerId = event.pointerId;
+    const gesture = {
+      pointerId,
+      task,
+      startX: event.clientX,
+      timelineLeft:
+        event.currentTarget.parentElement?.parentElement?.getBoundingClientRect()
+          .left ?? 0,
+      activatedResize: false,
+      timer: setTimeout(() => {
+        if (connectorGestureRef.current?.pointerId === pointerId) {
+          activateConnectorResize();
+        }
+      }, 180),
+    };
+    connectorGestureRef.current = gesture;
+  }
+
+  function moveConnectorGesture(event: ReactPointerEvent<HTMLElement>) {
+    const gesture = connectorGestureRef.current;
+    if (!gesture || gesture.pointerId !== event.pointerId) return;
+    if (
+      !gesture.activatedResize &&
+      Math.abs(event.clientX - gesture.startX) > DRAG_CLICK_THRESHOLD
+    ) {
+      activateConnectorResize();
+    }
+    if (gesture.activatedResize) moveDrag(event);
+  }
+
+  function endConnectorGesture(event: ReactPointerEvent<HTMLElement>) {
+    const gesture = connectorGestureRef.current;
+    if (!gesture || gesture.pointerId !== event.pointerId) return;
+    clearTimeout(gesture.timer);
+    connectorGestureRef.current = null;
+    if (gesture.activatedResize) {
+      endDrag(event);
+      return;
+    }
+    draggedRef.current = true;
+    setDependencySourceId((current) =>
+      current === gesture.task.id ? null : gesture.task.id,
+    );
+    setDependencyHoverId(null);
+    releaseDragFlag();
+  }
+
   /** Opens the inspector, unless this click is the tail end of a drag. */
   function openTaskFromBar(task: PortfolioTask | undefined) {
     if (draggedRef.current || !task) return;
+    if (dependencySourceId) {
+      if (dependencySourceId === task.id) {
+        setDependencySourceId(null);
+      } else {
+        void createGraphicalDependency(task.id);
+      }
+      return;
+    }
     openTask(task);
   }
 
@@ -1564,10 +2818,12 @@ export function PortfolioClient({
   }
 
   function clearDrag() {
-    setCascade([]);
-    setActivePreview(null);
-    setDraft(null);
-    setProjectDraft(null);
+    pendingPreviewRef.current = null;
+    if (previewFrameRef.current !== null) {
+      cancelAnimationFrame(previewFrameRef.current);
+      previewFrameRef.current = null;
+    }
+    setDragPreview(null);
   }
 
   async function undoScheduleChange(changeSetId = undoChangeSetId) {
@@ -1604,13 +2860,14 @@ export function PortfolioClient({
    * here; a concurrent edit surfaces as a rejected apply rather than silent loss.
    */
   async function commitSchedule(input: ScheduleEdit) {
+    if (scheduleCommitPending) return;
+    setScheduleCommitPending(true);
     try {
       const preview = localSchedulePreview(input);
       const result = await applyPortfolioScheduleChange({
         ...input,
         expectedPreview: { changes: preview.changes },
       });
-      clearDrag();
       router.refresh();
       offerScheduleUndo(result.changeSetId);
     } catch (error) {
@@ -1621,11 +2878,21 @@ export function PortfolioClient({
           ? t("scheduleChanged")
           : tCommon("error"),
       );
+    } finally {
+      setScheduleCommitPending(false);
     }
   }
 
   function startDrag(event: ReactPointerEvent, task: PortfolioTask, mode: "move" | "start" | "end") {
-    if (!task.startDate || !task.dueDate) return;
+    if (
+      scheduleCommitPending ||
+      dependencyCommitPending ||
+      dependencyEditorOpen ||
+      !task.startDate ||
+      !task.dueDate
+    ) {
+      return;
+    }
     event.preventDefault();
     event.stopPropagation();
     event.currentTarget.setPointerCapture(event.pointerId);
@@ -1639,11 +2906,23 @@ export function PortfolioClient({
       timelineLeft: event.currentTarget.parentElement?.getBoundingClientRect().left ?? 0,
       latest,
     };
-    setDraft({ ...latest, mode: mode === "move" ? "move" : mode === "start" ? "resize-start" : "resize-end" });
+    setDragPreview({
+      preview: null,
+      draft: { ...latest, mode: mode === "move" ? "move" : mode === "start" ? "resize-start" : "resize-end" },
+      projectDraft: null,
+    });
   }
 
   function startUnscheduledDrag(event: ReactPointerEvent, task: PortfolioTask) {
-    if (task.startDate || task.dueDate) return;
+    if (
+      scheduleCommitPending ||
+      dependencyCommitPending ||
+      dependencyEditorOpen ||
+      task.startDate ||
+      task.dueDate
+    ) {
+      return;
+    }
     event.preventDefault();
     event.stopPropagation();
     event.currentTarget.setPointerCapture(event.pointerId);
@@ -1652,7 +2931,7 @@ export function PortfolioClient({
     const suggestion = rows.find((row) => row.task?.id === task.id)?.placement;
     const startDate =
       suggestion?.startDate ??
-      addWorkdays(
+      addCalendarDays(
         addCalendarDays(
           range.start,
           Math.max(0, Math.round((event.clientX - timelineLeft) / dayWidth)),
@@ -1660,7 +2939,7 @@ export function PortfolioClient({
         0,
       );
     const dueDate =
-      suggestion?.dueDate ?? (task.isMilestone ? startDate : addWorkdays(startDate, 4));
+      suggestion?.dueDate ?? (task.isMilestone ? startDate : addCalendarDays(startDate, 4));
     const latest = { taskId: task.id, startDate, dueDate };
     dragRef.current = {
       pointerId: event.pointerId,
@@ -1670,8 +2949,8 @@ export function PortfolioClient({
       timelineLeft,
       latest,
     };
-    setDraft({ ...latest, mode: "place" });
-    previewCascade(taskScheduleEdit(task.id, "place", latest));
+    const nextDraft = { ...latest, mode: "place" as const };
+    previewCascade(taskScheduleEdit(task.id, "place", latest), nextDraft);
   }
 
   function moveDrag(event: ReactPointerEvent) {
@@ -1683,14 +2962,14 @@ export function PortfolioClient({
         0,
         Math.round((event.clientX - drag.timelineLeft) / dayWidth),
       );
-      const startDate = addWorkdays(addCalendarDays(range.start, dayOffset), 0);
+      const startDate = addCalendarDays(range.start, dayOffset);
       drag.latest = {
         taskId: drag.task.id,
         startDate,
-        dueDate: drag.task.isMilestone ? startDate : addWorkdays(startDate, 4),
+        dueDate: drag.task.isMilestone ? startDate : addCalendarDays(startDate, 4),
       };
-      setDraft({ ...drag.latest, mode: "place" });
-      previewCascade(taskScheduleEdit(drag.task.id, "place", drag.latest));
+      const nextDraft = { ...drag.latest, mode: "place" as const };
+      queuePreview(taskScheduleEdit(drag.task.id, "place", drag.latest), nextDraft, null);
       return;
     }
     if (!drag.task.startDate || !drag.task.dueDate) return;
@@ -1698,21 +2977,21 @@ export function PortfolioClient({
     let startDate = drag.task.startDate;
     let dueDate = drag.task.dueDate;
     if (drag.mode === "move") {
-      startDate = addWorkdays(drag.task.startDate, delta);
-      dueDate = drag.task.isMilestone ? startDate : addWorkdays(drag.task.dueDate, delta);
+      startDate = addCalendarDays(drag.task.startDate, delta);
+      dueDate = drag.task.isMilestone ? startDate : addCalendarDays(drag.task.dueDate, delta);
     } else if (drag.mode === "start") {
-      startDate = addWorkdays(drag.task.startDate, delta);
+      startDate = addCalendarDays(drag.task.startDate, delta);
       if (startDate > dueDate) startDate = dueDate;
     } else {
-      dueDate = addWorkdays(drag.task.dueDate, delta);
+      dueDate = addCalendarDays(drag.task.dueDate, delta);
       if (dueDate < startDate) dueDate = startDate;
     }
     drag.latest = { taskId: drag.task.id, startDate, dueDate };
-    setDraft({
+    const nextDraft: TaskDraft = {
       ...drag.latest,
       mode: drag.mode === "move" ? "move" : drag.mode === "start" ? "resize-start" : "resize-end",
-    });
-    previewCascade(taskScheduleEdit(drag.task.id, drag.mode, drag.latest));
+    };
+    queuePreview(taskScheduleEdit(drag.task.id, drag.mode, drag.latest), nextDraft, null);
   }
 
   function taskScheduleEdit(
@@ -1742,7 +3021,13 @@ export function PortfolioClient({
       clearDrag();
       return;
     }
-    void commitSchedule(taskScheduleEdit(drag.task.id, drag.mode, drag.latest));
+    const edit = taskScheduleEdit(drag.task.id, drag.mode, drag.latest);
+    const finalDraft: TaskDraft = {
+      ...drag.latest,
+      mode: drag.mode === "move" ? "move" : drag.mode === "start" ? "resize-start" : drag.mode === "end" ? "resize-end" : "place",
+    };
+    setDragPreview(atomicPreview(edit, finalDraft, null));
+    void commitSchedule(edit);
   }
 
   function handleTaskScheduleKey(
@@ -1767,7 +3052,12 @@ export function PortfolioClient({
     }
     if (event.key === "Escape") {
       event.preventDefault();
-      if (draft || projectDraft) clearDrag();
+      if (dependencyEditorOpen || dependencyDraft) {
+        cancelDependencyEditor();
+      } else if (dependencySourceId) {
+        setDependencySourceId(null);
+        setDependencyHoverId(null);
+      } else if (draft || projectDraft) clearDrag();
       else if (inspectorOpen) setInspectorOpen(false);
       else if (focusedTaskId) exitTaskFocus();
       return;
@@ -1794,21 +3084,20 @@ export function PortfolioClient({
         ? draft.dueDate
         : row.dueDate ?? row.placement?.dueDate;
     if (!baseStart || !baseDue) return;
-    const offset = (event.key === "ArrowRight" ? 1 : -1) * (event.shiftKey ? 5 : 1);
+    const offset = (event.key === "ArrowRight" ? 1 : -1) * (event.shiftKey ? 7 : 1);
     const nextDraft = {
       taskId: row.task.id,
-      startDate: addWorkdays(baseStart, offset),
-      dueDate: addWorkdays(baseDue, offset),
+      startDate: addCalendarDays(baseStart, offset),
+      dueDate: addCalendarDays(baseDue, offset),
       mode: "move" as const,
     };
-    setDraft(nextDraft);
     previewCascade({
       entityType: "task",
       entityId: row.task.id,
       operation: row.task.startDate ? "move" : "place",
       startDate: nextDraft.startDate,
       dueDate: nextDraft.dueDate,
-    });
+    }, nextDraft);
   }
 
   /**
@@ -1894,7 +3183,15 @@ export function PortfolioClient({
     row: Row,
     mode: "move" | "start" | "end",
   ) {
-    if (!row.startDate || !row.dueDate) return;
+    if (
+      scheduleCommitPending ||
+      dependencyCommitPending ||
+      dependencyEditorOpen ||
+      !row.startDate ||
+      !row.dueDate
+    ) {
+      return;
+    }
     event.preventDefault();
     event.stopPropagation();
     event.currentTarget.setPointerCapture(event.pointerId);
@@ -1908,10 +3205,14 @@ export function PortfolioClient({
       original,
       latest: original,
     };
-    setProjectDraft({
-      projectId: project.id,
-      ...original,
-      mode: mode === "move" ? "move" : mode === "start" ? "resize-start" : "resize-end",
+    setDragPreview({
+      preview: null,
+      draft: null,
+      projectDraft: {
+        projectId: project.id,
+        ...original,
+        mode: mode === "move" ? "move" : mode === "start" ? "resize-start" : "resize-end",
+      },
     });
   }
 
@@ -1920,7 +3221,7 @@ export function PortfolioClient({
     project: PortfolioSchedule["projects"][number],
     row: Row,
   ) {
-    if (!row.placement) return;
+    if (scheduleCommitPending || !row.placement) return;
     event.preventDefault();
     event.stopPropagation();
     event.currentTarget.setPointerCapture(event.pointerId);
@@ -1937,8 +3238,8 @@ export function PortfolioClient({
       original,
       latest: original,
     };
-    setProjectDraft({ projectId: project.id, ...original, mode: "place" });
-    previewCascade(projectScheduleEdit(project.id, "place", original));
+    const nextProjectDraft = { projectId: project.id, ...original, mode: "place" as const };
+    previewCascade(projectScheduleEdit(project.id, "place", original), null, nextProjectDraft);
   }
 
   function moveProjectDrag(event: ReactPointerEvent) {
@@ -1949,22 +3250,22 @@ export function PortfolioClient({
     let startDate = drag.original.startDate;
     let dueDate = drag.original.dueDate;
     if (drag.mode === "move" || drag.mode === "place") {
-      startDate = addWorkdays(startDate, delta);
-      dueDate = addWorkdays(dueDate, delta);
+      startDate = addCalendarDays(startDate, delta);
+      dueDate = addCalendarDays(dueDate, delta);
     } else if (drag.mode === "start") {
-      startDate = addWorkdays(startDate, delta);
+      startDate = addCalendarDays(startDate, delta);
       if (startDate > dueDate) startDate = dueDate;
     } else {
-      dueDate = addWorkdays(dueDate, delta);
+      dueDate = addCalendarDays(dueDate, delta);
       if (dueDate < startDate) dueDate = startDate;
     }
     drag.latest = { startDate, dueDate };
-    setProjectDraft({
+    const nextProjectDraft: ProjectDraft = {
       projectId: drag.project.id,
       ...drag.latest,
       mode: drag.mode === "move" || drag.mode === "place" ? drag.mode : drag.mode === "start" ? "resize-start" : "resize-end",
-    });
-    previewCascade(projectScheduleEdit(drag.project.id, drag.mode, drag.latest));
+    };
+    queuePreview(projectScheduleEdit(drag.project.id, drag.mode, drag.latest), null, nextProjectDraft);
   }
 
   function projectScheduleEdit(
@@ -1995,7 +3296,170 @@ export function PortfolioClient({
       clearDrag();
       return;
     }
-    void commitSchedule(projectScheduleEdit(drag.project.id, drag.mode, drag.latest));
+    const edit = projectScheduleEdit(drag.project.id, drag.mode, drag.latest);
+    const finalDraft: ProjectDraft = {
+      projectId: drag.project.id,
+      ...drag.latest,
+      mode: drag.mode === "move" || drag.mode === "place" ? drag.mode : drag.mode === "start" ? "resize-start" : "resize-end",
+    };
+    setDragPreview(atomicPreview(edit, null, finalDraft));
+    void commitSchedule(edit);
+  }
+
+  function deadlineTimestampForDate(
+    deadlineAt: string | null,
+    deadlineDate: string,
+  ) {
+    if (!deadlineAt) return null;
+    const original = new Date(deadlineAt);
+    const target = localDateValue(deadlineDate);
+    if (!target || Number.isNaN(original.getTime())) return null;
+    target.setHours(
+      original.getHours(),
+      original.getMinutes(),
+      original.getSeconds(),
+      original.getMilliseconds(),
+    );
+    return target.toISOString();
+  }
+
+  function queueDeadlinePreview(next: DeadlinePreview) {
+    pendingDeadlinePreviewRef.current = next;
+    if (deadlinePreviewFrameRef.current !== null) return;
+    deadlinePreviewFrameRef.current = requestAnimationFrame(() => {
+      deadlinePreviewFrameRef.current = null;
+      const pending = pendingDeadlinePreviewRef.current;
+      pendingDeadlinePreviewRef.current = null;
+      if (pending) setDeadlinePreview(pending);
+    });
+  }
+
+  function startDeadlineDrag(
+    event: ReactPointerEvent<HTMLButtonElement>,
+    deadline: PortfolioSchedule["deadlines"][number],
+  ) {
+    if (
+      deadlineCommitPending ||
+      dependencyCommitPending ||
+      dependencyEditorOpen ||
+      !deadline.dueDate
+    ) {
+      return;
+    }
+    event.stopPropagation();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    draggedRef.current = false;
+    deadlineDragRef.current = {
+      pointerId: event.pointerId,
+      deadline,
+      startX: event.clientX,
+      latestDate: deadline.dueDate,
+    };
+  }
+
+  function moveDeadlineDrag(event: ReactPointerEvent<HTMLButtonElement>) {
+    const drag = deadlineDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    const movement = event.clientX - drag.startX;
+    trackDragMovement(event.clientX, drag.startX);
+    if (Math.abs(movement) <= DRAG_CLICK_THRESHOLD) return;
+    const deadlineDate = addCalendarDays(
+      drag.deadline.dueDate!,
+      Math.round(movement / dayWidth),
+    );
+    drag.latestDate = deadlineDate;
+    queueDeadlinePreview({
+      id: drag.deadline.id,
+      deadlineDate,
+      deadlineAt: deadlineTimestampForDate(
+        drag.deadline.deadlineAt,
+        deadlineDate,
+      ),
+      updatedAt: drag.deadline.updatedAt,
+    });
+  }
+
+  async function commitDeadlineMove(
+    deadline: PortfolioSchedule["deadlines"][number],
+    deadlineDate: string,
+  ) {
+    if (deadlineCommitPending) return;
+    const next: DeadlinePreview = {
+      id: deadline.id,
+      deadlineDate,
+      deadlineAt: deadlineTimestampForDate(deadline.deadlineAt, deadlineDate),
+      updatedAt: deadline.updatedAt,
+    };
+    setDeadlinePreview(next);
+    setDeadlineCommitPending(true);
+    try {
+      const result = await moveContextualDeadline({
+        id: deadline.id,
+        deadlineDate: next.deadlineDate,
+        deadlineAt: next.deadlineAt,
+        expectedUpdatedAt: deadline.updatedAt,
+      });
+      setDeadlinePreview({ id: deadline.id, ...result.current });
+      router.refresh();
+      toast.success(t("scheduleSaved"), {
+        action: {
+          label: t("undo"),
+          onClick: () => {
+            void (async () => {
+              try {
+                setDeadlinePreview({ id: deadline.id, ...result.previous });
+                await moveContextualDeadline({
+                  id: deadline.id,
+                  deadlineDate: result.previous.deadlineDate,
+                  deadlineAt: result.previous.deadlineAt,
+                  expectedUpdatedAt: result.current.updatedAt,
+                });
+                router.refresh();
+              } catch {
+                setDeadlinePreview({ id: deadline.id, ...result.current });
+                toast.error(t("undoUnavailable"));
+              }
+            })();
+          },
+        },
+      });
+    } catch (error) {
+      setDeadlinePreview(null);
+      toast.error(
+        error instanceof Error && error.message.includes("another session")
+          ? t("scheduleChanged")
+          : tCommon("error"),
+      );
+    } finally {
+      setDeadlineCommitPending(false);
+    }
+  }
+
+  function endDeadlineDrag(event: ReactPointerEvent<HTMLButtonElement>) {
+    const drag = deadlineDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    deadlineDragRef.current = null;
+    releaseDragFlag();
+    if (drag.latestDate === drag.deadline.dueDate) {
+      setDeadlinePreview(null);
+      return;
+    }
+    void commitDeadlineMove(drag.deadline, drag.latestDate);
+  }
+
+  function handleDeadlineKey(
+    event: React.KeyboardEvent<HTMLButtonElement>,
+    deadline: PortfolioSchedule["deadlines"][number],
+  ) {
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+    if (!deadline.dueDate) return;
+    event.preventDefault();
+    const offset =
+      (event.key === "ArrowRight" ? 1 : -1) * (event.shiftKey ? 7 : 1);
+    void commitDeadlineMove(
+      deadline,
+      addCalendarDays(deadline.dueDate, offset),
+    );
   }
 
   function scrollToToday() {
@@ -2009,14 +3473,14 @@ export function PortfolioClient({
     });
   }
 
-  function fitFocusedView() {
+  function fitTimelineView() {
     const scrollContainer = scrollRef.current;
-    if (!scrollContainer || !focusedTaskId) return;
+    if (!scrollContainer) return;
     const availableTimelineWidth = Math.max(
       240,
       scrollContainer.clientWidth - treeWidth - 12,
     );
-    setTimelineDayWidth(availableTimelineWidth / Math.max(1, dayCount));
+    setTimelineDayWidth(availableTimelineWidth / Math.max(1, baseDayCount));
     requestAnimationFrame(() => {
       scrollContainer.scrollTo({
         left: 0,
@@ -2062,6 +3526,115 @@ export function PortfolioClient({
     rows.flatMap((row, index) => (row.task ? [[row.id, index] as const] : [])),
   );
   const taskRows = new Map(rows.filter((row) => row.task).map((row) => [row.id, row]));
+  const renderedDependencies = effectiveSchedule.dependencies.filter(
+    (dependency) =>
+      !visibleFocusDependencyIds ||
+      visibleFocusDependencyIds.has(dependency.id) ||
+      dependencyDraft?.id === dependency.id,
+  );
+  const dependencySourceGroups = new Map<string, string[]>();
+  const dependencyTargetGroups = new Map<string, string[]>();
+  for (const dependency of renderedDependencies) {
+    const endpoints = dependencyEndpoints(dependency);
+    const sourceKey = `${dependency.predecessorTaskId}:${endpoints.predecessor}`;
+    const targetKey = `${dependency.successorTaskId}:${endpoints.successor}`;
+    dependencySourceGroups.set(sourceKey, [
+      ...(dependencySourceGroups.get(sourceKey) ?? []),
+      dependency.id,
+    ]);
+    dependencyTargetGroups.set(targetKey, [
+      ...(dependencyTargetGroups.get(targetKey) ?? []),
+      dependency.id,
+    ]);
+  }
+  function endpointFanOffset(
+    groups: Map<string, string[]>,
+    key: string,
+    dependencyId: string,
+  ) {
+    const group = groups.get(key) ?? [];
+    const index = group.indexOf(dependencyId);
+    if (index < 0 || group.length < 2) return 0;
+    return Math.max(
+      -10,
+      Math.min(10, (index - (group.length - 1) / 2) * 10),
+    );
+  }
+  const dependencyRoutes = new Map(
+    renderedDependencies.map((dependency, index) => {
+      const endpoints = dependencyEndpoints(dependency);
+      const laneStep =
+        index === 0
+          ? 0
+          : Math.ceil(index / 2) * 10 * (index % 2 === 1 ? 1 : -1);
+      return [
+        dependency.id,
+        {
+          sourceOffsetY: endpointFanOffset(
+            dependencySourceGroups,
+            `${dependency.predecessorTaskId}:${endpoints.predecessor}`,
+            dependency.id,
+          ),
+          targetOffsetY: endpointFanOffset(
+            dependencyTargetGroups,
+            `${dependency.successorTaskId}:${endpoints.successor}`,
+            dependency.id,
+          ),
+          laneOffset: laneStep,
+        },
+      ] as const;
+    }),
+  );
+  const dependencyObstacles: GanttRouteObstacle[] = rows.flatMap(
+    (row, index) => {
+      if (!row.task || !row.startDate || !row.dueDate) return [];
+      return [
+        {
+          id: row.id,
+          left:
+            calendarDistance(range.start, row.startDate) * dayWidth - 6,
+          right:
+            (calendarDistance(range.start, row.dueDate) + 1) * dayWidth + 6,
+          top: index * ROW_HEIGHT + 8,
+          bottom: (index + 1) * ROW_HEIGHT - 8,
+        },
+      ];
+    },
+  );
+  const dependencyGeometries = new Map<
+    string,
+    NonNullable<ReturnType<typeof dependencyPathGeometry>>
+  >();
+  const occupiedDependencyRoutes: GanttRoutePoint[][] = [];
+  for (const dependency of renderedDependencies) {
+    const fromIndex = rowIndex.get(dependency.predecessorTaskId);
+    const toIndex = rowIndex.get(dependency.successorTaskId);
+    const from = taskRows.get(dependency.predecessorTaskId);
+    const to = taskRows.get(dependency.successorTaskId);
+    if (
+      fromIndex === undefined ||
+      toIndex === undefined ||
+      !from ||
+      !to
+    ) {
+      continue;
+    }
+    const geometry = dependencyPathGeometry({
+      dependency,
+      predecessor: from,
+      successor: to,
+      predecessorIndex: fromIndex,
+      successorIndex: toIndex,
+      rangeStart: range.start,
+      dayWidth,
+      obstacles: dependencyObstacles,
+      occupiedRoutes: occupiedDependencyRoutes,
+      ...dependencyRoutes.get(dependency.id),
+    });
+    if (!geometry) continue;
+    dependencyGeometries.set(dependency.id, geometry);
+    occupiedDependencyRoutes.push(geometry.points);
+  }
 
   return (
     <div
@@ -2072,7 +3645,11 @@ export function PortfolioClient({
       data-focused-task-id={focusedTask?.id}
       onKeyDown={(event) => {
         if (event.key !== "Escape" || event.defaultPrevented) return;
-        if (draft || projectDraft) clearDrag();
+        if (dependencyEditorOpen || dependencyDraft) cancelDependencyEditor();
+        else if (dependencySourceId) {
+          setDependencySourceId(null);
+          setDependencyHoverId(null);
+        } else if (draft || projectDraft) clearDrag();
         else if (inspectorOpen) setInspectorOpen(false);
         else if (focusedTaskId) exitTaskFocus();
       }}
@@ -2184,9 +3761,9 @@ export function PortfolioClient({
                 </DropdownMenu>
               )}
               <Button size="icon-sm" variant="ghost" onClick={copyFocusLink} aria-label={t("copyFocusLink")} title={t("copyFocusLink")}><Copy className="size-4" /></Button>
-              <Button size="sm" variant="outline" onClick={fitFocusedView}><Minimize2 className="size-4" />{t("fitView")}</Button>
-              <Button size="icon-sm" variant="ghost" onClick={scrollToToday} aria-label={t("today")} title={t("today")}><LocateFixed className="size-4" /></Button>
-              <div className="flex rounded-md border p-0.5">
+              <Button size="sm" variant="outline" className="hidden md:inline-flex" onClick={fitTimelineView}><Minimize2 className="size-4" />{t("fitView")}</Button>
+              <Button size="icon-sm" variant="ghost" className="hidden md:inline-flex" onClick={scrollToToday} aria-label={t("today")} title={t("today")}><LocateFixed className="size-4" /></Button>
+              <div className="hidden rounded-md border p-0.5 md:flex">
                 {(["week", "month", "quarter"] as const).map((option) => (
                   <Button
                     key={option}
@@ -2201,6 +3778,7 @@ export function PortfolioClient({
               <Button
                 size="icon-sm"
                 variant={criticalVisible ? "secondary" : "ghost"}
+                className="hidden md:inline-flex"
                 onClick={() => setCriticalVisible((value) => !value)}
                 aria-label={t("criticalPath")}
                 title={t("criticalPath")}
@@ -2311,11 +3889,12 @@ export function PortfolioClient({
             </div>
             <Select value={owner} onValueChange={(value) => setOwner(value ?? "all")}><SelectTrigger className="w-36"><SelectValue>{owner === "all" ? t("allOwners") : schedule.members.find((member) => member.id === owner)?.name ?? t("allOwners")}</SelectValue></SelectTrigger><SelectContent><SelectItem value="all">{t("allOwners")}</SelectItem>{schedule.members.map((member) => <SelectItem key={member.id} value={member.id}>{member.name}</SelectItem>)}</SelectContent></Select>
             <Select value={health} onValueChange={(value) => setHealth((value ?? "all") as typeof health)}><SelectTrigger className="w-32"><SelectValue>{health === "risk" ? t("atRisk") : health === "track" ? t("onTrack") : t("allHealth")}</SelectValue></SelectTrigger><SelectContent><SelectItem value="all">{t("allHealth")}</SelectItem><SelectItem value="track">{t("onTrack")}</SelectItem><SelectItem value="risk">{t("atRisk")}</SelectItem></SelectContent></Select>
-            <div className="ml-auto flex rounded-md border p-0.5">
+            <div className="ml-auto hidden rounded-md border p-0.5 md:flex">
               {(["week", "month", "quarter"] as const).map((option) => <Button key={option} size="xs" variant={zoom === option ? "secondary" : "ghost"} onClick={() => setTimelineZoom(option)}>{t(option)}</Button>)}
             </div>
-            <Button size="sm" variant="outline" onClick={scrollToToday}><LocateFixed className="size-4" />{t("today")}</Button>
-            <Button size="sm" variant={criticalVisible ? "secondary" : "outline"} onClick={() => setCriticalVisible((value) => !value)}><GitBranch className="size-4" />{t("criticalPath")}</Button>
+            <Button size="sm" variant="outline" className="hidden md:inline-flex" onClick={fitTimelineView}><Minimize2 className="size-4" />{t("fitView")}</Button>
+            <Button size="sm" variant="outline" className="hidden md:inline-flex" onClick={scrollToToday}><LocateFixed className="size-4" />{t("today")}</Button>
+            <Button size="sm" variant={criticalVisible ? "secondary" : "outline"} className="hidden md:inline-flex" onClick={() => setCriticalVisible((value) => !value)}><GitBranch className="size-4" />{t("criticalPath")}</Button>
           </>
         )}
       </div>}
@@ -2328,7 +3907,40 @@ export function PortfolioClient({
       ) : (
         <div className="flex min-h-0 min-w-0 overflow-hidden rounded-lg border bg-card">
           <div className="min-w-0 flex-1">
-          {dragImpact && (
+          {dependencySourceId && (
+            <div
+              className="flex min-h-9 items-center gap-2 border-b border-indigo-200 bg-indigo-50/90 px-3 text-xs text-indigo-950 dark:border-indigo-900 dark:bg-indigo-950/35 dark:text-indigo-100"
+              role="status"
+              aria-live="polite"
+              data-testid="dependency-linking-strip"
+            >
+              <GitBranch className="size-3.5 text-indigo-600 dark:text-indigo-400" />
+              <span className="font-medium">
+                {t("dependencyLinkingSource", {
+                  name:
+                    schedule.tasks.find(
+                      (task) => task.id === dependencySourceId,
+                    )?.title ?? "",
+                })}
+              </span>
+              <span className="text-indigo-700/80 dark:text-indigo-300/80">
+                {t("dependencyLinkingHint")}
+              </span>
+              <Button
+                type="button"
+                size="xs"
+                variant="ghost"
+                className="ml-auto"
+                onClick={() => {
+                  setDependencySourceId(null);
+                  setDependencyHoverId(null);
+                }}
+              >
+                {tCommon("cancel")}
+              </Button>
+            </div>
+          )}
+          {!dependencySourceId && dragImpact && (
             <div
               className="flex min-h-8 items-center gap-2 border-b bg-amber-50/80 px-3 font-mono text-[11px] tabular-nums text-amber-950 dark:bg-amber-950/30 dark:text-amber-100"
               role="status"
@@ -2338,7 +3950,7 @@ export function PortfolioClient({
               <GitBranch className="size-3.5" />
               <span>
                 {t("dragImpact", {
-                  workdays: dragImpact.workdays,
+                  days: dragImpact.days,
                   tasks: dragImpact.taskCount,
                   containers: dragImpact.containerCount,
                 })}
@@ -2348,27 +3960,6 @@ export function PortfolioClient({
                   {t("limitedByChildren")}
                 </span>
               )}
-            </div>
-          )}
-          {!dragImpact && undoChangeSetId && (
-            <div
-              className="flex min-h-8 items-center justify-between gap-3 border-b bg-emerald-50/75 px-3 text-[11px] text-emerald-950 dark:bg-emerald-950/25 dark:text-emerald-100"
-              role="status"
-              aria-live="polite"
-              data-testid="schedule-undo-strip"
-            >
-              <span className="font-medium">{t("scheduleSaved")}</span>
-              <Button
-                type="button"
-                size="xs"
-                variant="ghost"
-                disabled={undoPending}
-                onClick={() => {
-                  void undoScheduleChange();
-                }}
-              >
-                {t("undo")}
-              </Button>
             </div>
           )}
           <div className="grid gap-2 p-2 md:hidden" role="tree" aria-label={t("workBreakdown")}>
@@ -2409,12 +4000,12 @@ export function PortfolioClient({
                 onKeyDown={(event) => handleTaskScheduleKey(event, row)}
                 className={cn(
                   "grid grid-cols-[auto_1fr_auto] items-center gap-3 rounded-lg border bg-card p-3 text-left",
-                  row.kind === "subtask" && "border-l-2 border-l-violet-400",
-                  selectedTaskId === row.task?.id && "ring-2 ring-ring",
+                  row.kind === "subtask" && "border-l-2 border-l-indigo-400",
+                  selectedTaskId === row.task?.id && "outline-2 outline-indigo-600",
                 )}
                 style={{ marginLeft: Math.min(row.depth ?? 0, 6) * 16 }}
               >
-                {row.isMilestone ? <Diamond className="size-4 fill-violet-500 text-violet-600" /> : <span className="size-2.5 rounded-full" style={{ backgroundColor: row.color }} />}
+                {row.isMilestone ? <Diamond className="size-4 fill-indigo-500 text-indigo-600" /> : <span className="size-2.5 rounded-full" style={{ backgroundColor: row.color }} />}
                 <span className="min-w-0"><span className="block truncate text-sm font-medium">{row.label}</span><span className="block text-xs text-muted-foreground">{row.startDate ?? t("unscheduled")}{row.dueDate && !row.isMilestone ? ` – ${row.dueDate}` : ""}</span></span>
                 <span className="font-mono text-xs tabular-nums text-muted-foreground">{row.progress}%</span>
               </button>
@@ -2425,7 +4016,7 @@ export function PortfolioClient({
             ref={scrollRef}
             onWheel={handleTimelineWheel}
             className={cn(
-              "hidden overflow-auto bg-card md:block",
+              "gantt-scrollbar hidden overflow-auto bg-card md:block",
               focusedTask
                 ? "max-h-[calc(100dvh-7.5rem)]"
                 : "max-h-[calc(100dvh-15rem)]",
@@ -2491,6 +4082,18 @@ export function PortfolioClient({
                       </span>
                     );
                   })}
+                  {today >= range.start && today <= renderedRangeEnd && (
+                    <span
+                      className="pointer-events-none absolute bottom-1 z-20 -translate-x-1/2 rounded-full bg-red-600 px-1.5 py-0.5 font-sans text-[9px] font-semibold text-white shadow-sm"
+                      style={{
+                        left:
+                          calendarDistance(range.start, today) * dayWidth +
+                          dayWidth / 2,
+                      }}
+                    >
+                      {t("today")}
+                    </span>
+                  )}
                 </div>
               </div>
 
@@ -2498,32 +4101,292 @@ export function PortfolioClient({
                 {Array.from({ length: dayCount }, (_, index) => {
                   const date = addCalendarDays(range.start, index);
                   const day = parseDate(date).getUTCDay();
-                  return day === 0 || day === 6 ? <span key={date} className="absolute inset-y-0 bg-slate-100/80 dark:bg-slate-900/45" style={{ left: index * dayWidth, width: dayWidth }} /> : null;
+                  return day === 0 || day === 6 ? <span key={date} className="absolute inset-y-0 bg-slate-100/45 dark:bg-slate-900/25" style={{ left: index * dayWidth, width: dayWidth }} /> : null;
                 })}
-                {today >= range.start && today <= range.end && <span className="absolute inset-y-0 z-10 w-px bg-red-500" style={{ left: calendarDistance(range.start, today) * dayWidth + dayWidth / 2 }} />}
+                {Array.from({ length: dayCount }, (_, index) => {
+                  const date = addCalendarDays(range.start, index);
+                  if (index === 0 || parseDate(date).getUTCDay() !== 1) {
+                    return null;
+                  }
+                  return (
+                    <span
+                      key={`week-${date}`}
+                      className="absolute inset-y-0 w-px bg-border/80"
+                      style={{ left: index * dayWidth }}
+                    />
+                  );
+                })}
+                {today >= range.start && today <= renderedRangeEnd && <span className="absolute inset-y-0 z-10 w-0.5 -translate-x-1/2 bg-red-500/90" style={{ left: calendarDistance(range.start, today) * dayWidth + dayWidth / 2 }} />}
               </div>
 
-              <svg className="pointer-events-none absolute z-[1] overflow-visible" aria-hidden style={{ left: treeWidth, top: HEADER_HEIGHT + deadlineLaneHeight, width: timelineWidth, height: rows.length * ROW_HEIGHT }}>
-                {schedule.dependencies
-                  .filter(
-                    (dependency) =>
-                      !visibleFocusDependencyIds ||
-                      visibleFocusDependencyIds.has(dependency.id),
-                  )
-                  .map((dependency) => {
+              <svg
+                className="pointer-events-none absolute z-[8] overflow-visible"
+                style={{ left: treeWidth, top: HEADER_HEIGHT + deadlineLaneHeight, width: timelineWidth, height: rows.length * ROW_HEIGHT }}
+              >
+                <defs>
+                  {[
+                    ["gantt-dependency-arrow", "#64748b"],
+                    ["gantt-dependency-arrow-active", "#4f46e5"],
+                    ["gantt-dependency-arrow-conflict", "#ef4444"],
+                  ].map(([id, fill]) => (
+                    <marker
+                      key={id}
+                      id={id}
+                      markerWidth="7"
+                      markerHeight="7"
+                      refX="6"
+                      refY="3.5"
+                      orient="auto"
+                      markerUnits="strokeWidth"
+                    >
+                      <path d="M 0 0 L 7 3.5 L 0 7 Z" fill={fill} />
+                    </marker>
+                  ))}
+                </defs>
+                {renderedDependencies.map((dependency) => {
                   const fromIndex = rowIndex.get(dependency.predecessorTaskId);
                   const toIndex = rowIndex.get(dependency.successorTaskId);
                   const from = taskRows.get(dependency.predecessorTaskId);
                   const to = taskRows.get(dependency.successorTaskId);
-                  if (fromIndex === undefined || toIndex === undefined || !from?.dueDate || !to?.startDate) return null;
-                  const x1 = (calendarDistance(range.start, from.dueDate) + 1) * dayWidth;
-                  const x2 = calendarDistance(range.start, to.startDate) * dayWidth;
-                  const y1 = fromIndex * ROW_HEIGHT + ROW_HEIGHT / 2;
-                  const y2 = toIndex * ROW_HEIGHT + ROW_HEIGHT / 2;
-                  const bend = Math.max(x1 + 12, (x1 + x2) / 2);
-                    return <path key={dependency.id} d={`M ${x1} ${y1} C ${bend} ${y1}, ${bend} ${y2}, ${x2} ${y2}`} fill="none" stroke="currentColor" strokeWidth="1.25" className="text-slate-400 dark:text-slate-600" />;
+                  if (fromIndex === undefined || toIndex === undefined || !from || !to) return null;
+                  const geometry = dependencyGeometries.get(dependency.id);
+                  if (!geometry) return null;
+                  const selected = dependencyDraft?.id === dependency.id;
+                  const hovered = hoveredDependencyId === dependency.id;
+                  const conflict = conflicts.has(dependency.successorTaskId);
+                  const predecessorTitle =
+                    effectiveSchedule.tasks.find(
+                      (task) => task.id === dependency.predecessorTaskId,
+                    )?.title ?? "";
+                  const successorTitle =
+                    effectiveSchedule.tasks.find(
+                      (task) => task.id === dependency.successorTaskId,
+                    )?.title ?? "";
+                  const label = t("dependencyAriaLabel", {
+                    predecessor: predecessorTitle,
+                    successor: successorTitle,
+                    type: t(
+                      dependencyTypeTranslationKey(
+                        dependencyTypeOf(dependency),
+                      ),
+                    ),
+                  });
+                  return (
+                    <g key={dependency.id}>
+                      <path
+                        d={geometry.path}
+                        fill="none"
+                        stroke="currentColor"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={selected || hovered ? 2.25 : 1.4}
+                        markerEnd={
+                          conflict
+                            ? "url(#gantt-dependency-arrow-conflict)"
+                            : selected || hovered
+                              ? "url(#gantt-dependency-arrow-active)"
+                              : "url(#gantt-dependency-arrow)"
+                        }
+                        className={cn(
+                          "transition-[stroke-width,color,opacity] duration-150 motion-reduce:transition-none",
+                          conflict
+                            ? "text-red-500"
+                            : selected || hovered
+                              ? "text-indigo-600 dark:text-indigo-400"
+                              : "text-slate-400 dark:text-slate-600",
+                        )}
+                      />
+                      <path
+                        d={geometry.path}
+                        fill="none"
+                        stroke="transparent"
+                        strokeWidth="14"
+                        role="button"
+                        tabIndex={0}
+                        aria-label={label}
+                        style={{
+                          pointerEvents: "stroke",
+                          cursor: "pointer",
+                        }}
+                        onPointerEnter={() =>
+                          setHoveredDependencyId(dependency.id)
+                        }
+                        onPointerLeave={() =>
+                          setHoveredDependencyId((current) =>
+                            current === dependency.id ? null : current,
+                          )
+                        }
+                        onFocus={() => setHoveredDependencyId(dependency.id)}
+                        onBlur={() => setHoveredDependencyId(null)}
+                        onClick={(event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          selectDependency(dependency);
+                        }}
+                        onKeyDown={(event) => {
+                          if (event.key !== "Enter" && event.key !== " ") return;
+                          event.preventDefault();
+                          event.stopPropagation();
+                          if (event.key === "Enter") {
+                            openDependencyEditor(dependency);
+                          } else {
+                            selectDependency(dependency);
+                          }
+                        }}
+                      />
+                      {selected &&
+                        !dependencyDraft?.isNew &&
+                        (["x", "y"] as const).map((axis) => {
+                          const handle = geometry.handles[axis];
+                          if (!handle) return null;
+                          return (
+                            <DependencyRouteHandle
+                              key={axis}
+                              axis={axis}
+                              point={handle}
+                              dragging={dependencyRouteDragging === axis}
+                              label={t(
+                                axis === "x"
+                                  ? "dependencyRouteHandleX"
+                                  : "dependencyRouteHandleY",
+                              )}
+                              valueText={
+                                dependency.routeOffsetDays === null &&
+                                dependency.routeOffsetRows === null
+                                  ? t("dependencyRouteAutomatic")
+                                  : t("dependencyRouteManual")
+                              }
+                              onPointerDown={beginDependencyRouteDrag}
+                              onKeyDown={nudgeDependencyRoute}
+                            />
+                          );
+                        })}
+                    </g>
+                  );
                   })}
+                {dependencySourceId && dependencyHoverId && (() => {
+                  const fromIndex = rowIndex.get(dependencySourceId);
+                  const toIndex = rowIndex.get(dependencyHoverId);
+                  const from = taskRows.get(dependencySourceId);
+                  const to = taskRows.get(dependencyHoverId);
+                  if (fromIndex === undefined || toIndex === undefined || !from || !to) {
+                    return null;
+                  }
+                  const previewDependency: PortfolioDependency = {
+                    id: `preview-${dependencySourceId}-${dependencyHoverId}`,
+                    predecessorTaskId: dependencySourceId,
+                    successorTaskId: dependencyHoverId,
+                    dependencyType: "finish_to_start",
+                    lagDays: 0,
+                    routeOffsetDays: null,
+                    routeOffsetRows: null,
+                    createdAt: new Date(),
+                  };
+                  const geometry = dependencyPathGeometry({
+                    dependency: previewDependency,
+                    predecessor: from,
+                    successor: to,
+                    predecessorIndex: fromIndex,
+                    successorIndex: toIndex,
+                    rangeStart: range.start,
+                    dayWidth,
+                    obstacles: dependencyObstacles,
+                    occupiedRoutes: occupiedDependencyRoutes,
+                  });
+                  if (!geometry) return null;
+                  return (
+                    <path
+                      d={geometry.path}
+                      fill="none"
+                      stroke="currentColor"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeDasharray="4 3"
+                      strokeWidth="2"
+                      markerEnd="url(#gantt-dependency-arrow-active)"
+                      className="text-indigo-500"
+                    />
+                  );
+                })()}
               </svg>
+
+                {renderedDependencies.map((dependency) => {
+                  const fromIndex = rowIndex.get(dependency.predecessorTaskId);
+                  const toIndex = rowIndex.get(dependency.successorTaskId);
+                  const from = taskRows.get(dependency.predecessorTaskId);
+                  const to = taskRows.get(dependency.successorTaskId);
+                  if (fromIndex === undefined || toIndex === undefined || !from || !to) return null;
+                  const geometry = dependencyGeometries.get(dependency.id);
+                  if (!geometry) return null;
+                  const selected =
+                    dependencyDraft?.id === dependency.id &&
+                    dependencyEditorOpen;
+                  return (
+                    <Popover
+                      key={`label-${dependency.id}`}
+                      open={selected}
+                      onOpenChange={(nextOpen) => {
+                        if (nextOpen) openDependencyEditor(dependency);
+                        else if (selected) cancelDependencyEditor();
+                      }}
+                    >
+                      <PopoverTrigger
+                        render={
+                          <button
+                            type="button"
+                            aria-label={t("dependencyRouteHandle")}
+                            title={t("dependencyRouteHandle")}
+                            className={cn(
+                              "pointer-events-none absolute z-[6] size-1 -translate-x-1/2 -translate-y-1/2 opacity-0",
+                            )}
+                            style={{
+                              left: treeWidth + geometry.labelX,
+                              top:
+                                HEADER_HEIGHT +
+                                deadlineLaneHeight +
+                                geometry.labelY,
+                            }}
+                          />
+                        }
+                      />
+                      <PopoverContent
+                        side="bottom"
+                        align="center"
+                        className="w-[min(25rem,calc(100vw-2rem))] p-3"
+                      >
+                        <div className="mb-1">
+                          <h3 className="text-sm font-semibold">
+                            {dependencyDraft?.isNew
+                              ? t("createDependency")
+                              : t("editDependency")}
+                          </h3>
+                          <p className="text-xs text-muted-foreground">
+                            {t("dependencyEditorDescription")}
+                          </p>
+                        </div>
+                        {dependencyDraft &&
+                          dependencyDraft.id === dependency.id && (
+                            <DependencyEditorPanel
+                              draft={dependencyDraft}
+                              tasks={effectiveSchedule.tasks}
+                              pending={dependencyCommitPending}
+                              invalid={dependencyDraftIsInvalid(
+                                schedule.tasks,
+                                schedule.dependencies,
+                                dependencyDraft,
+                              )}
+                              onChange={setDependencyDraft}
+                              onSave={() => void saveGraphicalDependency()}
+                              onCancel={cancelDependencyEditor}
+                              onDelete={() =>
+                                void deleteGraphicalDependency()
+                              }
+                            />
+                          )}
+                      </PopoverContent>
+                    </Popover>
+                  );
+                })}
 
               {deadlineLaneHeight > 0 && (
                 <div
@@ -2531,20 +4394,20 @@ export function PortfolioClient({
                   role="treeitem"
                   aria-level={1}
                   aria-selected={false}
-                  className="relative z-[2] flex border-b bg-amber-50/35 dark:bg-amber-950/10"
-                  style={{ width: totalWidth, height: ROW_HEIGHT }}
+                  className="relative z-[2] flex border-b bg-amber-50/15 dark:bg-amber-950/5"
+                  style={{ width: totalWidth, height: DEADLINE_LANE_HEIGHT }}
                 >
                   <div
-                    className="sticky left-0 z-20 flex shrink-0 items-center gap-2 border-r bg-amber-50/90 px-3 font-semibold dark:bg-amber-950/40"
+                    className="sticky left-0 z-20 flex shrink-0 items-center gap-2 border-r border-l-2 border-l-amber-500 bg-card/95 px-3 font-semibold"
                     style={{ width: treeWidth }}
                   >
-                    <CalendarClock className="size-4 text-amber-600" />
-                    <span className="truncate text-sm">{tDeadlines("ganttLane")}</span>
-                    <span className="ml-auto font-mono text-[10px] tabular-nums text-muted-foreground">{schedule.deadlines.length}</span>
+                    <CalendarClock className="size-3.5 text-amber-600" />
+                    <span className="truncate text-xs">{tDeadlines("ganttLane")}</span>
+                    <span className="ml-auto font-mono text-[10px] tabular-nums text-muted-foreground">{effectiveSchedule.deadlines.length}</span>
                   </div>
                   <div className="relative" style={{ width: timelineWidth }}>
-                    {schedule.deadlines.map((deadline) => {
-                      if (!deadline.dueDate || deadline.dueDate < range.start || deadline.dueDate > range.end) return null;
+                    {effectiveSchedule.deadlines.map((deadline) => {
+                      if (!deadline.dueDate || deadline.dueDate < range.start || deadline.dueDate > renderedRangeEnd) return null;
                       const overdue = isDeadlineOverdue({
                         deadlineDate: deadline.dueDate,
                         deadlineAt: deadline.deadlineAt,
@@ -2563,9 +4426,16 @@ export function PortfolioClient({
                           key={deadline.id}
                           type="button"
                           data-deadline-id={deadline.id}
-                          onClick={() => router.push(href)}
+                          onClick={() => {
+                            if (!draggedRef.current) router.push(href);
+                          }}
+                          onPointerDown={(event) => startDeadlineDrag(event, deadline)}
+                          onPointerMove={moveDeadlineDrag}
+                          onPointerUp={endDeadlineDrag}
+                          onPointerCancel={endDeadlineDrag}
+                          onKeyDown={(event) => handleDeadlineKey(event, deadline)}
                           className={cn(
-                            "absolute top-1/2 grid size-5 -translate-x-1/2 -translate-y-1/2 rotate-45 place-items-center rounded-[3px] border-2 bg-card shadow-sm transition-transform hover:scale-125 focus-visible:outline-2 focus-visible:outline-ring",
+                            "absolute top-1/2 grid size-4 -translate-x-1/2 -translate-y-1/2 rotate-45 cursor-ew-resize touch-none place-items-center rounded-[2px] border-2 bg-card shadow-xs transition-transform hover:scale-125 focus-visible:outline-2 focus-visible:outline-ring",
                             deadline.status === "done" && "opacity-45",
                           )}
                           style={{
@@ -2584,17 +4454,13 @@ export function PortfolioClient({
               )}
 
               {rows.map((row) => {
-                const project = schedule.projects.find((candidate) => candidate.id === row.projectId)!;
+                const project = effectiveSchedule.projects.find((candidate) => candidate.id === row.projectId)!;
                 const isRisk = row.kind === "project" && projectRisk(project, tasksByProject.get(project.id) ?? [], today);
                 const scheduled = row.startDate && row.dueDate;
                 const left = scheduled ? calendarDistance(range.start, row.startDate!) * dayWidth : 0;
                 const width = scheduled ? Math.max(dayWidth, (calendarDistance(row.startDate!, row.dueDate!) + 1) * dayWidth) : 0;
                 const isCritical = Boolean(row.task && critical.has(row.id));
                 const isConflict = Boolean(row.task && conflicts.has(row.id));
-                // Rows the in-flight drag would drag along with it (R8).
-                const isGhosted = cascadeIds.has(
-                  `${row.task ? "task" : "project"}:${row.task?.id ?? row.projectId}`,
-                );
                 const overflowSpans =
                   row.kind === "project" && scheduled
                     ? [
@@ -2617,6 +4483,48 @@ export function PortfolioClient({
                 const manager = row.kind === "project"
                   ? schedule.members.find((member) => member.id === project.managerId)?.name
                   : null;
+                const isDependencySource = Boolean(
+                  row.task && dependencySourceId === row.task.id,
+                );
+                const isDependencyTarget = Boolean(
+                  row.task && validDependencyTarget(row.task.id),
+                );
+                const dependencyTargetHandle = isDependencyTarget ? (
+                  <span
+                    className="pointer-events-none absolute top-1/2 -left-1 z-20 size-2.5 -translate-y-1/2 rounded-full border-2 border-indigo-600 bg-card shadow-sm"
+                    aria-hidden
+                  />
+                ) : null;
+                const endpointConnector = row.task ? (
+                  <span
+                    role="button"
+                    tabIndex={0}
+                    aria-label={t("dependencyConnector", { name: row.label })}
+                    title={t("dependencyConnectorHint")}
+                    className={cn(
+                      "absolute top-1/2 -right-1.5 z-30 size-3 -translate-y-1/2 rounded-full border-2 bg-card shadow-sm transition-[transform,opacity] duration-150 hover:scale-125 focus-visible:outline-2 focus-visible:outline-ring",
+                      isDependencySource
+                        ? "border-amber-600 opacity-100"
+                        : "border-indigo-600 opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100",
+                    )}
+                    onPointerDown={(event) => startConnectorGesture(event, row.task!)}
+                    onPointerMove={moveConnectorGesture}
+                    onPointerUp={endConnectorGesture}
+                    onPointerCancel={endConnectorGesture}
+                    onClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key !== "Enter" && event.key !== " ") return;
+                      event.preventDefault();
+                      event.stopPropagation();
+                      setDependencySourceId((current) =>
+                        current === row.task!.id ? null : row.task!.id,
+                      );
+                    }}
+                  />
+                ) : null;
                 return (
                   <div
                     key={row.id}
@@ -2642,16 +4550,20 @@ export function PortfolioClient({
                       selectedTaskId === row.task?.id ? "true" : undefined
                     }
                     aria-selected={selectedTaskId === row.task?.id}
-                    className="relative z-[2] flex border-b last:border-b-0"
+                    className={cn(
+                      "group/row relative z-[2] flex border-b last:border-b-0",
+                      row.kind === "project" && "bg-muted/20",
+                    )}
                     style={{ width: totalWidth, height: ROW_HEIGHT }}
                   >
                     <div
                       className={cn(
                         "sticky left-0 z-20 flex shrink-0 items-center gap-2 border-r bg-card px-2.5",
-                        row.kind === "project" && "bg-muted/45 font-semibold",
-                        row.kind === "subtask" && "bg-muted/15",
+                        row.kind === "project" && "bg-muted/55 font-semibold",
+                        row.isSummary && row.kind !== "project" && "font-medium",
+                        row.kind === "subtask" && "bg-muted/10",
                         selectedTaskId === row.task?.id &&
-                          "bg-violet-50/80 dark:bg-violet-950/30",
+                          "bg-indigo-50/90 dark:bg-indigo-950/30",
                       )}
                       style={{
                         width: treeWidth,
@@ -2661,7 +4573,7 @@ export function PortfolioClient({
                             : 36 + Math.min(row.depth ?? 0, 10) * 18,
                         backgroundImage:
                           row.task && (row.depth ?? 0) > 0
-                            ? `repeating-linear-gradient(to right, transparent 0, transparent 16px, color-mix(in oklab, var(--border) 65%, transparent) 16px, color-mix(in oklab, var(--border) 65%, transparent) 17px, transparent 17px, transparent 18px)`
+                            ? `repeating-linear-gradient(to right, transparent 0, transparent 16px, color-mix(in oklab, var(--border) 45%, transparent) 16px, color-mix(in oklab, var(--border) 45%, transparent) 17px, transparent 17px, transparent 18px)`
                             : undefined,
                         backgroundSize:
                           row.task && (row.depth ?? 0) > 0
@@ -2671,7 +4583,7 @@ export function PortfolioClient({
                     >
                       {row.kind === "project" && <Button variant="ghost" size="icon-xs" onClick={() => toggle(setExpandedProjects, row.projectId)} aria-label={t("toggleProject")}>{expandedProjects.has(row.projectId) ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}</Button>}
                       {row.task && row.isSummary && <Button variant="ghost" size="icon-xs" onClick={() => toggle(setExpandedTasks, row.id)} aria-label={t("toggleSubtasks")}>{expandedTasks.has(row.id) ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}</Button>}
-                      {(row.kind === "task" || row.kind === "subtask") && !row.isSummary && (row.isMilestone ? <Diamond className="size-3.5 fill-violet-500 text-violet-600" /> : <CircleDot className="size-3.5 text-muted-foreground" />)}
+                      {(row.kind === "task" || row.kind === "subtask") && !row.isSummary && (row.isMilestone ? <Diamond className="size-3.5 fill-indigo-500 text-indigo-600" /> : <CircleDot className="size-3.5 text-muted-foreground" />)}
                       <button
                         type="button"
                         onClick={() => row.task ? openTask(row.task) : undefined}
@@ -2681,12 +4593,13 @@ export function PortfolioClient({
                           "min-w-0 flex-1 truncate rounded-sm text-left text-sm focus-visible:outline-2 focus-visible:outline-ring",
                           row.task && "hover:underline",
                         )}
+                        title={row.label}
                       >
                         {row.label}
                       </button>
                       {isRisk && <AlertTriangle className="size-3.5 text-amber-600" aria-label={t("atRisk")} />}
                       {isConflict && <GitBranch className="size-3.5 text-red-600" aria-label={t("dependencyConflict")} />}
-                      <span className="font-mono text-[10px] tabular-nums text-muted-foreground">{row.progress}%</span>
+                      <span className="w-10 shrink-0 text-right font-mono text-[10px] tabular-nums text-muted-foreground">{row.progress}%</span>
                       {row.kind === "project" && (
                         <DropdownMenu>
                           <DropdownMenuTrigger
@@ -2694,6 +4607,7 @@ export function PortfolioClient({
                               <Button
                                 variant="ghost"
                                 size="icon-xs"
+                                className="opacity-30 transition-opacity group-hover/row:opacity-100 group-focus-within/row:opacity-100 motion-reduce:transition-none"
                                 aria-label={t("projectActions", { name: row.label })}
                               >
                                 <Ellipsis className="size-3.5" />
@@ -2732,6 +4646,7 @@ export function PortfolioClient({
                               <Button
                                 variant="ghost"
                                 size="icon-xs"
+                                className="opacity-30 transition-opacity group-hover/row:opacity-100 group-focus-within/row:opacity-100 motion-reduce:transition-none"
                                 aria-label={t("taskActions", { name: row.label })}
                               >
                                 <Ellipsis className="size-3.5" />
@@ -2795,10 +4710,19 @@ export function PortfolioClient({
                     </div>
                     <div
                       className="relative h-full"
+                      onClick={(event) => {
+                        if (
+                          dependencySourceId &&
+                          event.target === event.currentTarget
+                        ) {
+                          setDependencySourceId(null);
+                          setDependencyHoverId(null);
+                        }
+                      }}
                       onPointerMove={moveDrag}
                       onPointerUp={endDrag}
                       onPointerCancel={endDrag}
-                      style={{ width: timelineWidth, backgroundImage: `repeating-linear-gradient(to right, transparent 0, transparent ${dayWidth - 1}px, color-mix(in oklab, var(--border) 55%, transparent) ${dayWidth - 1}px, color-mix(in oklab, var(--border) 55%, transparent) ${dayWidth}px)` }}
+                      style={{ width: timelineWidth, backgroundImage: `repeating-linear-gradient(to right, transparent 0, transparent ${dayWidth - 1}px, color-mix(in oklab, var(--border) 22%, transparent) ${dayWidth - 1}px, color-mix(in oklab, var(--border) 22%, transparent) ${dayWidth}px)` }}
                     >
                       {!scheduled && row.kind === "project" && row.placement && (
                         <button
@@ -2827,16 +4751,21 @@ export function PortfolioClient({
                         <button
                           type="button"
                           onClick={() => openTaskFromBar(row.task)}
-                          onPointerDown={(event) => row.task && startUnscheduledDrag(event, row.task)}
+                          onPointerDown={(event) => {
+                            if (row.task && !dependencySourceId) startUnscheduledDrag(event, row.task);
+                          }}
                           onPointerMove={moveDrag}
                           onPointerUp={endDrag}
                           onPointerCancel={endDrag}
+                          onPointerEnter={() => isDependencyTarget && setDependencyHoverId(row.task!.id)}
+                          onPointerLeave={() => setDependencyHoverId((current) => current === row.task?.id ? null : current)}
                           onKeyDown={(event) => handleTaskScheduleKey(event, row)}
                           onFocus={() => row.task && setSelectedTaskId(row.task.id)}
                           aria-current={selectedTaskId === row.task.id ? "true" : undefined}
                           className={cn(
-                            "group absolute top-2 h-7 cursor-grab overflow-hidden rounded-md border border-dashed border-violet-400 bg-violet-50/80 text-left shadow-xs active:cursor-grabbing dark:bg-violet-950/30",
-                            selectedTaskId === row.task.id && "ring-2 ring-ring",
+                            "group absolute top-2 h-7 cursor-grab overflow-visible rounded-md border border-dashed border-indigo-400 bg-indigo-50/80 text-left shadow-xs active:cursor-grabbing dark:bg-indigo-950/30",
+                            isDependencyTarget && "ring-2 ring-indigo-400/70",
+                            selectedTaskId === row.task.id && "outline-2 outline-offset-1 outline-indigo-600",
                           )}
                           style={{
                             left: row.placement
@@ -2852,7 +4781,7 @@ export function PortfolioClient({
                           title={t("dragToSchedule")}
                           aria-label={`${row.label}, ${t("unscheduled")}`}
                         >
-                          <span className="block truncate px-2 text-[10px] font-medium leading-6 text-violet-800 dark:text-violet-200">
+                          <span className="block truncate px-2 text-[10px] font-medium leading-6 text-indigo-800 dark:text-indigo-200">
                             {row.isSummary
                               ? t("unscheduledSubtasks", { count: row.unscheduledCount ?? 0 })
                               : t("unscheduled")}
@@ -2861,49 +4790,66 @@ export function PortfolioClient({
                         </button>
                       )}
                       {scheduled && row.isMilestone && !row.isSummary ? (
-                        <button type="button" onClick={() => openTaskFromBar(row.task)} onPointerDown={(event) => row.task && startDrag(event, row.task, "move")} onPointerMove={moveDrag} onPointerUp={endDrag} onPointerCancel={endDrag} onKeyDown={(event) => handleTaskScheduleKey(event, row)} onFocus={() => row.task && setSelectedTaskId(row.task.id)} className={cn("absolute top-1/2 size-4 -translate-x-1/2 -translate-y-1/2 rotate-45 border-2 border-violet-700 bg-violet-500 shadow-sm focus-visible:ring-2 focus-visible:ring-ring", isCritical && criticalVisible && "border-red-600 bg-red-500", selectedTaskId === row.task?.id && "ring-2 ring-ring")} style={{ left: left + dayWidth / 2 }} aria-current={selectedTaskId === row.task?.id ? "true" : undefined} aria-label={`${row.label}, ${row.startDate}`} />
+                        <button
+                          type="button"
+                          onClick={() => openTaskFromBar(row.task)}
+                          onPointerDown={(event) => {
+                            if (row.task && !dependencySourceId) startDrag(event, row.task, "move");
+                          }}
+                          onPointerMove={moveDrag}
+                          onPointerUp={endDrag}
+                          onPointerCancel={endDrag}
+                          onPointerEnter={() => isDependencyTarget && setDependencyHoverId(row.task!.id)}
+                          onPointerLeave={() => setDependencyHoverId((current) => current === row.task?.id ? null : current)}
+                          onKeyDown={(event) => handleTaskScheduleKey(event, row)}
+                          onFocus={() => row.task && setSelectedTaskId(row.task.id)}
+                          className={cn(
+                            "group absolute top-2 h-7 cursor-grab overflow-visible rounded-md focus-visible:ring-2 focus-visible:ring-ring",
+                            isCritical && criticalVisible && "ring-2 ring-red-500",
+                            isDependencyTarget && "ring-2 ring-indigo-400/70",
+                            selectedTaskId === row.task?.id && "outline-2 outline-offset-1 outline-indigo-600",
+                          )}
+                          style={{ left, width: Math.max(dayWidth, 24) }}
+                          aria-current={selectedTaskId === row.task?.id ? "true" : undefined}
+                          aria-label={`${row.label}, ${row.startDate}`}
+                        >
+                          <span className="absolute top-1/2 left-1/2 size-4 -translate-x-1/2 -translate-y-1/2 rotate-45 border-2 border-indigo-700 bg-indigo-500 shadow-sm" />
+                          {dependencyTargetHandle}
+                          {endpointConnector}
+                        </button>
                       ) : scheduled && row.isSummary ? (
                         <button
                           type="button"
                           onClick={() => openTaskFromBar(row.task)}
-                          onPointerDown={(event) => row.task && startDrag(event, row.task, "move")}
+                          onPointerDown={(event) => {
+                            if (row.task && !dependencySourceId) startDrag(event, row.task, "move");
+                          }}
                           onPointerMove={moveDrag}
                           onPointerUp={endDrag}
                           onPointerCancel={endDrag}
+                          onPointerEnter={() => isDependencyTarget && setDependencyHoverId(row.task!.id)}
+                          onPointerLeave={() => setDependencyHoverId((current) => current === row.task?.id ? null : current)}
                           onKeyDown={(event) => handleTaskScheduleKey(event, row)}
                           onFocus={() => row.task && setSelectedTaskId(row.task.id)}
                           data-summary-bracket="true"
                           className={cn(
-                            "group absolute top-2 h-7 cursor-grab overflow-hidden rounded-md border bg-card/90 shadow-xs focus-visible:outline-2 focus-visible:outline-ring active:cursor-grabbing",
+                            "group absolute top-[13px] h-[18px] cursor-grab overflow-visible rounded-[4px] focus-visible:outline-2 focus-visible:outline-ring active:cursor-grabbing",
                             isCritical && criticalVisible && "ring-2 ring-red-500",
-                            isGhosted && "ring-2 ring-amber-500",
-                            selectedTaskId === row.task?.id && "ring-2 ring-ring",
+                            isDependencyTarget && "ring-2 ring-indigo-400/70",
+                            selectedTaskId === row.task?.id && "outline-2 outline-offset-1 outline-indigo-600",
                           )}
-                          style={{
-                            left,
-                            width,
-                            borderColor: row.color,
-                            backgroundColor: `color-mix(in oklab, ${row.color} 13%, var(--card))`,
-                          }}
+                          style={{ left, width }}
                           aria-label={`${row.label}, ${row.startDate} - ${row.dueDate}`}
                           aria-current={selectedTaskId === row.task?.id ? "true" : undefined}
+                          title={row.label}
                         >
-                          <span className="absolute inset-y-0 left-0 opacity-55" style={{ width: `${row.progress}%`, backgroundColor: row.color }} />
-                          {row.childTasks
-                            ?.flatMap((child) => [child.startDate, child.dueDate])
-                            .filter((date): date is string => Boolean(date))
-                            .map((date, index) => (
-                              <span
-                                key={`${date}-${index}`}
-                                className="pointer-events-none absolute inset-y-1 w-px bg-foreground/35"
-                                style={{
-                                  left:
-                                    calendarDistance(row.startDate!, date) *
-                                    dayWidth,
-                                }}
-                                aria-hidden
-                              />
-                            ))}
+                          <span className="pointer-events-none absolute inset-0 rounded-[4px] border border-indigo-500/75 bg-indigo-100/85 shadow-xs dark:bg-indigo-950/65" />
+                          <span
+                            className="pointer-events-none absolute inset-y-0.5 left-0.5 rounded-[3px] bg-indigo-500/35"
+                            style={{ width: `${row.progress}%` }}
+                          />
+                          <span className="pointer-events-none absolute top-[calc(100%-1px)] left-0 h-1.5 w-0.5 bg-indigo-700 dark:bg-indigo-300" />
+                          <span className="pointer-events-none absolute top-[calc(100%-1px)] right-0 h-1.5 w-0.5 bg-indigo-700 dark:bg-indigo-300" />
                           <span
                             className="absolute inset-y-0 left-0 z-10 flex w-4 cursor-ew-resize items-center justify-center bg-background/75 text-foreground opacity-0 transition-opacity motion-reduce:transition-none group-hover:opacity-100 group-focus-visible:opacity-100"
                             title={t("dragStart")}
@@ -2914,26 +4860,78 @@ export function PortfolioClient({
                           >
                             <ChevronLeft className="size-3" />
                           </span>
-                          <span
-                            className="absolute inset-y-0 right-0 z-10 flex w-4 cursor-ew-resize items-center justify-center bg-background/75 text-foreground opacity-0 transition-opacity motion-reduce:transition-none group-hover:opacity-100 group-focus-visible:opacity-100"
-                            title={t("dragEnd")}
-                            onPointerDown={(event) => {
-                              event.stopPropagation();
-                              if (row.task) startDrag(event, row.task, "end");
-                            }}
-                          >
-                            <ChevronRight className="size-3" />
-                          </span>
-                          {width > 72 && <span className="relative z-[1] block truncate px-5 text-left text-[10px] font-medium leading-6">{row.label}</span>}
+                          {dependencyTargetHandle}
+                          {endpointConnector}
+                          {width > 72 && <span className="pointer-events-none relative z-[1] block truncate px-2 text-left text-[10px] font-semibold leading-[17px] text-indigo-950 dark:text-indigo-100">{row.label}</span>}
                         </button>
                       ) : scheduled && (
-                        <button type="button" onClick={() => openTaskFromBar(row.task)} onPointerDown={(event) => { if (row.task) startDrag(event, row.task, "move"); else startProjectDrag(event, project, row, "move"); }} onPointerMove={(event) => { if (row.task) moveDrag(event); else moveProjectDrag(event); }} onPointerUp={(event) => { if (row.task) endDrag(event); else endProjectDrag(event); }} onKeyDown={(event) => handleTaskScheduleKey(event, row)} onFocus={() => row.task && setSelectedTaskId(row.task.id)} className={cn("group absolute top-2 h-7 overflow-hidden rounded-md border shadow-xs transition-shadow motion-reduce:transition-none focus-visible:ring-2 focus-visible:ring-ring", "cursor-grab active:cursor-grabbing", row.kind === "project" && "opacity-70", isCritical && criticalVisible && "ring-2 ring-red-500", isGhosted && "ring-2 ring-amber-500", selectedTaskId === row.task?.id && "ring-2 ring-ring")} style={{ left, width, borderColor: row.color, backgroundColor: `color-mix(in oklab, ${row.color} 23%, var(--card))` }} title={manager ? t("projectManagerTooltip", { name: manager }) : undefined} aria-current={selectedTaskId === row.task?.id ? "true" : undefined} aria-label={`${row.label}, ${row.startDate} – ${row.dueDate}`}>
-                          <span className="absolute inset-y-0 left-0 opacity-75" style={{ width: `${row.progress}%`, backgroundColor: row.color }} />
+                        <button
+                          type="button"
+                          onClick={() => openTaskFromBar(row.task)}
+                          onPointerDown={(event) => {
+                            if (row.task) {
+                              if (!dependencySourceId) startDrag(event, row.task, "move");
+                            } else {
+                              startProjectDrag(event, project, row, "move");
+                            }
+                          }}
+                          onPointerMove={(event) => {
+                            if (row.task) moveDrag(event);
+                            else moveProjectDrag(event);
+                          }}
+                          onPointerUp={(event) => {
+                            if (row.task) endDrag(event);
+                            else endProjectDrag(event);
+                          }}
+                          onPointerEnter={() => isDependencyTarget && setDependencyHoverId(row.task!.id)}
+                          onPointerLeave={() => setDependencyHoverId((current) => current === row.task?.id ? null : current)}
+                          onKeyDown={(event) => handleTaskScheduleKey(event, row)}
+                          onFocus={() => row.task && setSelectedTaskId(row.task.id)}
+                          className={cn(
+                            "group absolute overflow-visible border transition-shadow motion-reduce:transition-none focus-visible:outline-2 focus-visible:outline-ring",
+                            "cursor-grab active:cursor-grabbing",
+                            row.kind === "project"
+                              ? "top-[15px] h-3.5 rounded-[3px] shadow-none"
+                              : "top-2 h-7 rounded-md shadow-xs",
+                            isCritical && criticalVisible && "ring-2 ring-red-500",
+                            isDependencyTarget && "ring-2 ring-indigo-400/70",
+                            selectedTaskId === row.task?.id && "outline-2 outline-offset-1 outline-indigo-600",
+                          )}
+                          style={{
+                            left,
+                            width,
+                            borderColor:
+                              row.kind === "project" ? row.color : "#6366f1",
+                            backgroundColor:
+                              row.kind === "project"
+                                ? `color-mix(in oklab, ${row.color} 18%, var(--card))`
+                                : "color-mix(in oklab, #4f46e5 18%, var(--card))",
+                          }}
+                          title={manager ? t("projectManagerTooltip", { name: manager }) : undefined}
+                          aria-current={selectedTaskId === row.task?.id ? "true" : undefined}
+                          aria-label={`${row.label}, ${row.startDate} – ${row.dueDate}`}
+                        >
+                          <span
+                            className="absolute inset-y-0 left-0 opacity-75"
+                            style={{
+                              width: `${row.progress}%`,
+                              backgroundColor:
+                                row.kind === "project" ? row.color : "#4f46e5",
+                            }}
+                          />
                           {!row.isMilestone && <>
                             <span className="absolute inset-y-0 left-0 z-10 flex w-4 cursor-ew-resize items-center justify-center bg-background/75 text-foreground opacity-0 transition-opacity motion-reduce:transition-none group-hover:opacity-100" title={t("dragStart")} onPointerDown={(event) => { event.stopPropagation(); if (row.task) startDrag(event, row.task, "start"); else startProjectDrag(event, project, row, "start"); }}><ChevronLeft className="size-3" /></span>
-                            <span className="absolute inset-y-0 right-0 z-10 flex w-4 cursor-ew-resize items-center justify-center bg-background/75 text-foreground opacity-0 transition-opacity motion-reduce:transition-none group-hover:opacity-100" title={t("dragEnd")} onPointerDown={(event) => { event.stopPropagation(); if (row.task) startDrag(event, row.task, "end"); else startProjectDrag(event, project, row, "end"); }}><ChevronRight className="size-3" /></span>
+                            {row.task ? endpointConnector : (
+                              <span className="absolute inset-y-0 right-0 z-10 flex w-4 cursor-ew-resize items-center justify-center bg-background/75 text-foreground opacity-0 transition-opacity motion-reduce:transition-none group-hover:opacity-100" title={t("dragEnd")} onPointerDown={(event) => { event.stopPropagation(); startProjectDrag(event, project, row, "end"); }}><ChevronRight className="size-3" /></span>
+                            )}
                           </>}
-                          {width > 72 && <span className="relative z-[1] block truncate px-2 text-left text-[10px] font-medium leading-6">{row.label}</span>}
+                          {dependencyTargetHandle}
+                          {width > 72 && <span className={cn(
+                            "relative z-[1] block truncate px-2 text-left text-[10px]",
+                            row.kind === "project"
+                              ? "font-semibold leading-[12px]"
+                              : "font-medium leading-6",
+                          )}>{row.label}</span>}
                           {manager && <span className="pointer-events-none absolute right-5 top-1/2 z-[2] max-w-40 -translate-y-1/2 truncate rounded-sm bg-background/90 px-1.5 py-0.5 text-[10px] font-medium text-foreground opacity-0 shadow-sm transition-opacity motion-reduce:transition-none group-hover:opacity-100">{manager}</span>}
                         </button>
                       )}
@@ -2943,7 +4941,7 @@ export function PortfolioClient({
                         <span
                           key={span.key}
                           data-project-overflow={span.key}
-                          className="pointer-events-none absolute top-2 h-7 rounded-sm border border-dashed border-amber-500/80"
+                          className="pointer-events-none absolute top-[15px] h-3.5 rounded-[3px] border border-dashed border-amber-500/80"
                           style={{
                             left: span.left,
                             width: Math.max(2, span.width),

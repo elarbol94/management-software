@@ -142,6 +142,7 @@ export function getPortfolioSchedule() {
       dueDate: tasks.dueDate,
       deadlineAt: tasks.deadlineAt,
       status: tasks.status,
+      updatedAt: tasks.updatedAt,
       contextRoute: taskContexts.route,
       contextLabel: taskContexts.label,
     })
@@ -158,6 +159,7 @@ export function getPortfolioSchedule() {
     .map((deadline) => ({
       ...deadline,
       deadlineAt: deadline.deadlineAt?.toISOString() ?? null,
+      updatedAt: deadline.updatedAt.toISOString(),
     }));
 
   const dependencyRows = db
@@ -215,7 +217,7 @@ export type TaskOverviewFilters = {
 };
 
 export function listTaskOverview(filters: TaskOverviewFilters = {}) {
-  const conditions: SQL[] = [eq(tasks.kind, "task")];
+  const conditions: SQL[] = [eq(tasks.kind, "task"), isNull(tasks.projectId)];
   if (filters.assigneeId && filters.assigneeId !== "all") {
     conditions.push(
       filters.assigneeId === "unassigned"
@@ -410,6 +412,7 @@ export function getPersonalWorkSummary(userId: string) {
     .from(tasks)
     .where(and(
       eq(tasks.kind, "task"),
+      isNull(tasks.projectId),
       eq(tasks.status, "open"),
       eq(tasks.assigneeId, userId),
     ))

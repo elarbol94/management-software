@@ -28,7 +28,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { addWorkdays } from "@/modules/projects/schedule";
+import { addCalendarDays } from "@/modules/projects/schedule";
 
 export type MemberDto = { id: string; name: string };
 export type BoardTaskDto = {
@@ -284,7 +284,7 @@ export function TaskDialog({
                 const next = value ?? "none";
                 setPredecessorTaskId(next);
                 const predecessor = predecessorOptions.find((candidate) => `${candidate.type}:${candidate.id}` === next);
-                if (predecessor?.dueDate) setStartDate(addWorkdays(predecessor.dueDate, 1));
+                if (predecessor?.dueDate) setStartDate(addCalendarDays(predecessor.dueDate, 1));
               }}>
                 <SelectTrigger className="w-full"><SelectValue>{predecessorTaskId === "none" ? t("choosePredecessor") : predecessorOptions.find((candidate) => `${candidate.type}:${candidate.id}` === predecessorTaskId)?.title}</SelectValue></SelectTrigger>
                 <SelectContent>

@@ -49,14 +49,22 @@ function NavLink({
       onClick={onNavigate}
       className={cn(
         "flex h-10 items-center rounded-md text-sm font-medium transition-colors",
-        compact ? "justify-center px-0" : "gap-3 px-3",
+        compact ? "justify-center gap-0 px-0" : "gap-3 px-3",
         active
           ? "bg-accent text-accent-foreground"
           : "text-muted-foreground hover:bg-accent/50 hover:text-accent-foreground",
       )}
     >
       <Icon className="size-5" />
-      {!compact && <span className="truncate">{label}</span>}
+      <span
+        aria-hidden={compact}
+        className={cn(
+          "min-w-0 truncate whitespace-nowrap transition-all duration-[220ms] ease-out motion-reduce:transition-none",
+          compact ? "max-w-0 -translate-x-1 overflow-hidden opacity-0" : "max-w-44 translate-x-0 opacity-100",
+        )}
+      >
+        {label}
+      </span>
     </Link>
   );
 
@@ -129,13 +137,13 @@ function AppNavigation({
               }}
               className={cn(
                 "flex h-10 items-center rounded-md text-sm font-medium text-muted-foreground transition-colors hover:bg-accent/50 hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                compact ? "justify-center px-0" : "gap-3 px-3",
+                compact ? "justify-center gap-0 px-0" : "gap-3 px-3",
               )}
               aria-label={tTasks("createTask")}
               title={`${tTasks("createTask")} · ${tTasks("globalShortcut")}`}
             >
               <ClipboardPlus className="size-5" />
-              {!compact && <span className="truncate">{tTasks("createTask")}</span>}
+              <span aria-hidden={compact} className={cn("min-w-0 truncate whitespace-nowrap transition-all duration-[220ms] ease-out motion-reduce:transition-none", compact ? "max-w-0 -translate-x-1 overflow-hidden opacity-0" : "max-w-44 opacity-100")}>{tTasks("createTask")}</span>
             </button>
             <button
               type="button"
@@ -145,13 +153,13 @@ function AppNavigation({
               }}
               className={cn(
                 "flex h-10 items-center rounded-md text-sm font-medium text-muted-foreground transition-colors hover:bg-accent/50 hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                compact ? "justify-center px-0" : "gap-3 px-3",
+                compact ? "justify-center gap-0 px-0" : "gap-3 px-3",
               )}
               aria-label={tDeadlines("createDeadline")}
               title={`${tDeadlines("createDeadline")} · ${tDeadlines("globalShortcut")}`}
             >
               <CalendarClock className="size-5" />
-              {!compact && <span className="truncate">{tDeadlines("createDeadline")}</span>}
+              <span aria-hidden={compact} className={cn("min-w-0 truncate whitespace-nowrap transition-all duration-[220ms] ease-out motion-reduce:transition-none", compact ? "max-w-0 -translate-x-1 overflow-hidden opacity-0" : "max-w-44 opacity-100")}>{tDeadlines("createDeadline")}</span>
             </button>
           </div>
         </nav>
@@ -228,7 +236,7 @@ export function AppSidebar({ userName, userEmail }: { userName: string; userEmai
         data-testid="app-sidebar"
         data-expanded={expanded}
         className={cn(
-          "fixed inset-y-0 left-0 z-40 hidden h-dvh shrink-0 flex-col border-r bg-sidebar transition-[width] duration-200 ease-out motion-reduce:transition-none md:flex",
+          "app-rail-transition fixed inset-y-0 left-0 z-40 hidden h-dvh shrink-0 flex-col border-r bg-sidebar duration-[220ms] ease-out motion-reduce:transition-none md:flex",
           expanded ? "w-60" : "w-14",
         )}
         onMouseEnter={() => setExpanded(true)}
@@ -238,15 +246,19 @@ export function AppSidebar({ userName, userEmail }: { userName: string; userEmai
           if (!event.currentTarget.contains(event.relatedTarget)) setExpanded(false);
         }}
       >
-        {expanded ? (
-          <div className="flex h-14 shrink-0 items-center border-b px-4">
-            <Link href="/" className="truncate text-base font-semibold tracking-tight">
-              {tCommon("appName")}
-            </Link>
-          </div>
-        ) : (
-          <div aria-hidden="true" className="h-14 shrink-0 border-b" />
-        )}
+        <div className="flex h-14 shrink-0 items-center overflow-hidden border-b px-4">
+          <Link
+            href="/"
+            aria-hidden={!expanded}
+            tabIndex={expanded ? 0 : -1}
+            className={cn(
+              "truncate whitespace-nowrap text-base font-semibold tracking-tight transition-all duration-[220ms] ease-out motion-reduce:transition-none",
+              expanded ? "translate-x-0 opacity-100" : "-translate-x-1 opacity-0",
+            )}
+          >
+            {tCommon("appName")}
+          </Link>
+        </div>
         <AppNavigation
           compact={!expanded}
           navigationId="app-primary-navigation"

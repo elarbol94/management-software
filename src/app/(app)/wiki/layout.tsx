@@ -22,7 +22,7 @@ async function AuthenticatedResearchSidebar() {
 
 export default function WikiLayout({ children }: { children: React.ReactNode }) {
   return (
-    <div className="-m-6 flex min-h-[calc(100vh-0px)] flex-col md:flex-row md:pl-[var(--research-rail-width,3.5rem)]">
+    <div className="rail-content-transition -m-6 flex min-h-[calc(100vh-0px)] flex-col duration-[220ms] ease-out motion-reduce:transition-none md:flex-row md:pl-[var(--research-rail-width,3.5rem)]">
       <Suspense fallback={<aside className="h-14 border-b md:h-screen md:w-64 md:border-r md:border-b-0" />}>
         <AuthenticatedResearchSidebar />
       </Suspense>

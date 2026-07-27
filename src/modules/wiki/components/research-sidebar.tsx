@@ -67,12 +67,20 @@ function NavItem({
       onClick={onNavigate}
       className={cn(
         "relative flex h-10 items-center rounded-md text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground",
-        compact ? "justify-center px-0" : "gap-2 px-2",
+        compact ? "justify-center gap-0 px-0" : "gap-2 px-2",
         active && "bg-indigo-50 text-indigo-950 dark:bg-indigo-950/50 dark:text-indigo-100",
       )}
     >
       <Icon className="size-4" />
-      {!compact && <span className="min-w-0 flex-1 truncate">{label}</span>}
+      <span
+        aria-hidden={compact}
+        className={cn(
+          "min-w-0 flex-1 truncate whitespace-nowrap transition-all duration-[220ms] ease-out motion-reduce:transition-none",
+          compact ? "max-w-0 -translate-x-1 overflow-hidden opacity-0" : "max-w-48 translate-x-0 opacity-100",
+        )}
+      >
+        {label}
+      </span>
       {!!badge && (
         <span className={cn(
           "rounded-full bg-indigo-100 text-[10px] tabular-nums text-indigo-800 dark:bg-indigo-900 dark:text-indigo-200",
@@ -252,7 +260,7 @@ export function ResearchSidebar({
         {results && (
           <div className="absolute top-12 right-3 left-3 z-50 max-h-[28rem] overflow-y-auto rounded-lg border bg-popover p-1 shadow-xl">
             {results.pages.length === 0 && results.sources.length === 0 && results.pdfPages.length === 0 && <p className="p-3 text-xs text-muted-foreground">{t("noResults")}</p>}
-            {results.pages.length > 0 && <p className="px-2 py-1 text-[10px] font-semibold tracking-wider text-muted-foreground uppercase">{t("pages")}</p>}
+            {results.pages.length > 0 && <p className="px-2 py-1 text-[10px] font-semibold tracking-wider text-muted-foreground uppercase">{t("documents")}</p>}
             {results.pages.map((item) => (
               <Link key={item.id} href={`/wiki/pages/${item.slug}`} onClick={() => closeSearch(onNavigate)} className="block rounded-md px-2 py-1.5 hover:bg-accent">
                 <span className="block text-xs font-medium">{item.title}</span>
@@ -301,12 +309,16 @@ export function ResearchSidebar({
             <div className="grid size-8 shrink-0 place-items-center rounded-md bg-indigo-600 text-white">
               <BookOpen className="size-4" />
             </div>
-            {!compact && (
-              <div className="min-w-0 flex-1">
+            <div
+              aria-hidden={compact}
+              className={cn(
+                "min-w-0 flex-1 overflow-hidden whitespace-nowrap transition-all duration-[220ms] ease-out motion-reduce:transition-none",
+                compact ? "max-w-0 -translate-x-1 opacity-0" : "max-w-48 translate-x-0 opacity-100",
+              )}
+            >
                 <p className="text-sm font-semibold">{t("researchWorkspace")}</p>
                 <p className="truncate text-[11px] text-muted-foreground">{t("sharedKnowledge")}</p>
-              </div>
-            )}
+            </div>
             {(!compact || sheet) && (
               <Button
                 type="button"
@@ -355,7 +367,7 @@ export function ResearchSidebar({
             className={cn("flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto", compact ? "p-2" : "p-3")}
           >
             <NavItem href="/wiki/inbox" icon={Inbox} label={t("inbox")} badge={counts.inbox} compact={compact} onNavigate={onNavigate} />
-            <NavItem href="/wiki/pages" icon={FileText} label={t("pages")} compact={compact} onNavigate={onNavigate} />
+            <NavItem href="/wiki/pages" icon={FileText} label={t("documents")} compact={compact} onNavigate={onNavigate} />
             <NavItem href="/wiki/sources" icon={LibraryBig} label={t("sources")} badge={counts.sources} compact={compact} onNavigate={onNavigate} />
             <NavItem href="/wiki/favorites" icon={Star} label={t("favorites")} compact={compact} onNavigate={onNavigate} />
             <NavItem href="/wiki/notifications" icon={Bell} label={t("notifications")} badge={counts.unread} compact={compact} onNavigate={onNavigate} />
@@ -364,7 +376,7 @@ export function ResearchSidebar({
             {!compact && (
               <div className="mt-3 border-t pt-3">
                 <p className="mb-1 flex items-center gap-1 px-2 text-[10px] font-semibold tracking-wider text-muted-foreground uppercase">
-                  <ArchiveRestore className="size-3" />{t("pageTree")}
+                  <ArchiveRestore className="size-3" />{t("documentTree")}
                 </p>
                 <PageTree nodes={tree} onNavigate={onNavigate} />
               </div>
@@ -391,7 +403,7 @@ export function ResearchSidebar({
 
   return (
     <>
-      <header data-testid="research-mobile-header" className="flex h-14 shrink-0 items-center gap-2 border-b bg-[linear-gradient(90deg,rgba(79,70,229,0.07),transparent)] px-3 md:hidden">
+      <header data-testid="research-mobile-header" className="flex h-14 shrink-0 items-center gap-2 border-b bg-sidebar px-3 md:hidden">
         <Button
           type="button"
           variant="ghost"
@@ -438,7 +450,7 @@ export function ResearchSidebar({
         data-testid="research-sidebar"
         data-expanded={expanded}
         className={cn(
-          "fixed inset-y-0 left-[var(--app-rail-width,3.5rem)] z-30 hidden h-dvh shrink-0 flex-col border-r bg-[linear-gradient(180deg,rgba(79,70,229,0.045),transparent_14rem)] transition-[width] duration-200 ease-out motion-reduce:transition-none md:flex",
+          "research-rail-transition fixed inset-y-0 left-[var(--app-rail-width,3.5rem)] z-30 hidden h-dvh shrink-0 flex-col border-r bg-sidebar duration-[220ms] ease-out motion-reduce:transition-none md:flex",
           expanded ? "w-64" : "w-14",
         )}
         onMouseEnter={() => setExpanded(true)}

@@ -225,6 +225,20 @@
       "when": 1785130063935,
       "tag": "0031_contextual_deadlines",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "6",
+      "when": 1785135600000,
+      "tag": "0032_calendar_days",
+      "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "6",
+      "when": 1785166200000,
+      "tag": "0033_dependency_routes",
+      "breakpoints": true
     }
   ]
 }
