@@ -149,11 +149,15 @@ export function getPortfolioSchedule() {
     .leftJoin(user, eq(tasks.assigneeId, user.id))
     .leftJoin(taskContexts, eq(tasks.id, taskContexts.taskId))
     .where(eq(tasks.kind, "deadline"))
-    .orderBy(asc(tasks.deadlineAt))
+    .orderBy(
+      asc(tasks.dueDate),
+      sql`${tasks.deadlineAt} IS NOT NULL`,
+      asc(tasks.deadlineAt),
+    )
     .all()
     .map((deadline) => ({
       ...deadline,
-      deadlineAt: deadline.deadlineAt?.toISOString() ?? "",
+      deadlineAt: deadline.deadlineAt?.toISOString() ?? null,
     }));
 
   const dependencyRows = db
@@ -300,6 +304,7 @@ export function listDeadlineOverview(filters: DeadlineOverviewFilters = {}) {
       description: tasks.description,
       assigneeId: tasks.assigneeId,
       assigneeName: user.name,
+      deadlineDate: tasks.dueDate,
       deadlineAt: tasks.deadlineAt,
       status: tasks.status,
       contextType: taskContexts.type,
@@ -312,13 +317,18 @@ export function listDeadlineOverview(filters: DeadlineOverviewFilters = {}) {
     .leftJoin(user, eq(tasks.assigneeId, user.id))
     .leftJoin(taskContexts, eq(tasks.id, taskContexts.taskId))
     .where(and(...conditions))
-    .orderBy(asc(tasks.deadlineAt))
+    .orderBy(
+      asc(tasks.dueDate),
+      sql`${tasks.deadlineAt} IS NOT NULL`,
+      asc(tasks.deadlineAt),
+    )
     .all()
     .map((deadline) => {
       const separator = deadline.contextRoute?.includes("?") ? "&" : "?";
       return {
         ...deadline,
-        deadlineAt: deadline.deadlineAt?.toISOString() ?? "",
+        deadlineDate: deadline.deadlineDate ?? "",
+        deadlineAt: deadline.deadlineAt?.toISOString() ?? null,
         href: deadline.contextRoute
           ? `${deadline.contextRoute}${separator}deadline=${encodeURIComponent(deadline.id)}`
           : "/",
@@ -366,6 +376,7 @@ export function listDeadlinesForContext(
       description: tasks.description,
       assigneeId: tasks.assigneeId,
       assigneeName: user.name,
+      deadlineDate: tasks.dueDate,
       deadlineAt: tasks.deadlineAt,
       status: tasks.status,
       route: taskContexts.route,
@@ -380,12 +391,69 @@ export function listDeadlinesForContext(
       eq(taskContexts.entityId, entityId),
       eq(tasks.kind, "deadline"),
     ))
-    .orderBy(asc(tasks.deadlineAt))
+    .orderBy(
+      asc(tasks.dueDate),
+      sql`${tasks.deadlineAt} IS NOT NULL`,
+      asc(tasks.deadlineAt),
+    )
     .all()
     .map((deadline) => ({
       ...deadline,
-      deadlineAt: deadline.deadlineAt?.toISOString() ?? "",
+      deadlineDate: deadline.deadlineDate ?? "",
+      deadlineAt: deadline.deadlineAt?.toISOString() ?? null,
     }));
+}
+
+export function getPersonalWorkSummary(userId: string) {
+  const taskRows = db
+    .select({ dueDate: tasks.dueDate })
+    .from(tasks)
+    .where(and(
+      eq(tasks.kind, "task"),
+      eq(tasks.status, "open"),
+      eq(tasks.assigneeId, userId),
+    ))
+    .all();
+
+  const deadlineRows = db
+    .select({
+      id: tasks.id,
+      title: tasks.title,
+      deadlineDate: tasks.dueDate,
+      deadlineAt: tasks.deadlineAt,
+      contextRoute: taskContexts.route,
+    })
+    .from(tasks)
+    .leftJoin(taskContexts, eq(tasks.id, taskContexts.taskId))
+    .where(and(
+      eq(tasks.kind, "deadline"),
+      eq(tasks.status, "open"),
+      eq(tasks.assigneeId, userId),
+    ))
+    .orderBy(
+      asc(tasks.dueDate),
+      sql`${tasks.deadlineAt} IS NOT NULL`,
+      asc(tasks.deadlineAt),
+    )
+    .all()
+    .map((deadline) => {
+      const separator = deadline.contextRoute?.includes("?") ? "&" : "?";
+      return {
+        id: deadline.id,
+        title: deadline.title,
+        deadlineDate: deadline.deadlineDate ?? "",
+        deadlineAt: deadline.deadlineAt?.toISOString() ?? null,
+        href: deadline.contextRoute
+          ? `${deadline.contextRoute}${separator}deadline=${encodeURIComponent(deadline.id)}`
+          : "/",
+      };
+    });
+
+  return {
+    openTaskCount: taskRows.length,
+    taskDueDates: taskRows.map((task) => task.dueDate),
+    deadlines: deadlineRows,
+  };
 }
 
 /** Open tasks assigned to a user across all active projects (for the dashboard). */

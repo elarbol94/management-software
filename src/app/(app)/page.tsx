@@ -1,8 +1,13 @@
-import { getTranslations } from "next-intl/server";
 import { requireUser } from "@/lib/auth";
-import { listDeadlineOverview, listMembers, listTaskOverview } from "@/modules/projects/queries";
+import {
+  getPersonalWorkSummary,
+  listDeadlineOverview,
+  listMembers,
+  listTaskOverview,
+} from "@/modules/projects/queries";
 import { TaskOverview } from "@/modules/tasks/components/task-overview";
 import { DeadlineOverview } from "@/modules/tasks/components/deadline-overview";
+import { WorkCockpitHeader } from "@/modules/tasks/components/work-cockpit-header";
 
 export default async function DashboardPage({
   searchParams,
@@ -17,9 +22,8 @@ export default async function DashboardPage({
     deadlineStatus?: string;
   }>;
 }) {
-  const [user, t, query] = await Promise.all([
+  const [user, query] = await Promise.all([
     requireUser(),
-    getTranslations("dashboard"),
     searchParams,
   ]);
   const assignee = query.assignee || user.id;
@@ -44,21 +48,25 @@ export default async function DashboardPage({
     status: deadlineStatus as "open" | "done" | "all",
   });
   const members = listMembers();
+  const summary = getPersonalWorkSummary(user.id);
 
   return (
-    <div className="mx-auto flex w-full max-w-6xl flex-col gap-6">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">{t("title")}</h1>
-        <p className="text-muted-foreground">
-          {t("welcome", { name: user.name })}
-        </p>
+    <div className="mx-auto flex w-full max-w-[90rem] flex-col gap-5">
+      <WorkCockpitHeader userName={user.name} summary={summary} />
+      <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,7fr)_minmax(24rem,5fr)]">
+        <TaskOverview
+          tasks={tasks}
+          members={members}
+          defaultAssignee={user.id}
+          filters={{ assignee, priority, status }}
+        />
+        <DeadlineOverview
+          deadlines={deadlines}
+          members={members}
+          defaultAssignee={user.id}
+          filters={{ assignee: deadlineAssignee, from: deadlineFrom, to: deadlineTo, status: deadlineStatus }}
+        />
       </div>
-      <TaskOverview tasks={tasks} members={members} filters={{ assignee, priority, status }} />
-      <DeadlineOverview
-        deadlines={deadlines}
-        members={members}
-        filters={{ assignee: deadlineAssignee, from: deadlineFrom, to: deadlineTo, status: deadlineStatus }}
-      />
     </div>
   );
 }

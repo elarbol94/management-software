@@ -111,6 +111,7 @@ import {
 } from "@/components/ui/sheet";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
+import { isDeadlineOverdue, localDateValue } from "@/modules/tasks/deadline-utils";
 
 type ProjectCard = PortfolioSchedule["projects"][number] & { openTasks: number };
 type Zoom = "week" | "month" | "quarter";
@@ -839,7 +840,7 @@ export function PortfolioClient({
   const desktopInspector = useMediaQuery("(min-width: 960px)");
   const compactInspector = useMediaQuery("(max-width: 767px)");
   const reducedMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
-  const [renderedAt] = useState(() => Date.now());
+  const [renderedAt] = useState(() => new Date());
   const today = new Date().toISOString().slice(0, 10);
   const [view, setView] = useState<"timeline" | "projects">("timeline");
   const [zoom, setZoom] = useState<Zoom>("month");
@@ -2376,6 +2377,10 @@ export function PortfolioClient({
               const href = deadline.contextRoute
                 ? `${deadline.contextRoute}${separator}deadline=${encodeURIComponent(deadline.id)}`
                 : "/";
+              const localDate = localDateValue(deadline.dueDate ?? "");
+              const deadlineLabel = deadline.deadlineAt
+                ? format.dateTime(new Date(deadline.deadlineAt), { dateStyle: "medium", timeStyle: "short" })
+                : `${localDate ? format.dateTime(localDate, { dateStyle: "medium" }) : deadline.dueDate} · ${tDeadlines("allDay")}`;
               return (
                 <button
                   key={deadline.id}
@@ -2386,7 +2391,7 @@ export function PortfolioClient({
                   <Diamond className="size-4 rotate-45 fill-amber-500 text-amber-600" />
                   <span className="min-w-0">
                     <span className="block truncate text-sm font-medium">{deadline.title}</span>
-                    <span className="block text-xs text-muted-foreground">{format.dateTime(new Date(deadline.deadlineAt), { dateStyle: "medium", timeStyle: "short" })}</span>
+                    <span className="block text-xs text-muted-foreground">{deadlineLabel}</span>
                   </span>
                 </button>
               );
@@ -2540,11 +2545,19 @@ export function PortfolioClient({
                   <div className="relative" style={{ width: timelineWidth }}>
                     {schedule.deadlines.map((deadline) => {
                       if (!deadline.dueDate || deadline.dueDate < range.start || deadline.dueDate > range.end) return null;
-                      const overdue = deadline.status === "open" && new Date(deadline.deadlineAt).getTime() < renderedAt;
+                      const overdue = isDeadlineOverdue({
+                        deadlineDate: deadline.dueDate,
+                        deadlineAt: deadline.deadlineAt,
+                        status: deadline.status,
+                      }, renderedAt);
                       const separator = deadline.contextRoute?.includes("?") ? "&" : "?";
                       const href = deadline.contextRoute
                         ? `${deadline.contextRoute}${separator}deadline=${encodeURIComponent(deadline.id)}`
                         : "/";
+                      const localDate = localDateValue(deadline.dueDate);
+                      const deadlineLabel = deadline.deadlineAt
+                        ? format.dateTime(new Date(deadline.deadlineAt), { dateStyle: "medium", timeStyle: "short" })
+                        : `${localDate ? format.dateTime(localDate, { dateStyle: "medium" }) : deadline.dueDate} · ${tDeadlines("allDay")}`;
                       return (
                         <button
                           key={deadline.id}
@@ -2559,8 +2572,8 @@ export function PortfolioClient({
                             left: calendarDistance(range.start, deadline.dueDate) * dayWidth + dayWidth / 2,
                             borderColor: deadline.status === "done" ? "#059669" : overdue ? "#dc2626" : "#d97706",
                           }}
-                          title={`${deadline.title} · ${format.dateTime(new Date(deadline.deadlineAt), { dateStyle: "medium", timeStyle: "short" })} · ${deadline.assigneeName || tDeadlines("unassigned")}`}
-                          aria-label={`${deadline.title}, ${format.dateTime(new Date(deadline.deadlineAt), { dateStyle: "medium", timeStyle: "short" })}`}
+                          title={`${deadline.title} · ${deadlineLabel} · ${deadline.assigneeName || tDeadlines("unassigned")}`}
+                          aria-label={`${deadline.title}, ${deadlineLabel}`}
                         >
                           <span className="size-1.5 -rotate-45 rounded-full bg-current" />
                         </button>

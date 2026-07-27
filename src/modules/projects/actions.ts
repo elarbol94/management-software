@@ -819,11 +819,11 @@ const contextualTaskSchema = z.object({
     anchorJson: z.string().max(20_000).default("{}"),
   }).nullable().default(null),
 }).superRefine((data, context) => {
-  if (data.kind === "deadline" && (!data.deadlineAt || !data.localDate)) {
+  if (data.kind === "deadline" && !data.localDate) {
     context.addIssue({
       code: "custom",
-      path: ["deadlineAt"],
-      message: "Deadline timestamp and local date are required",
+      path: ["localDate"],
+      message: "Deadline date is required",
     });
   }
 });
@@ -833,7 +833,7 @@ export type ContextualDeadlineInput = Omit<
   ContextualTaskInput,
   "kind" | "priority" | "dueDate" | "projectId"
 > & {
-  deadlineAt: string;
+  deadlineAt: string | null;
   localDate: string;
 };
 
@@ -959,7 +959,9 @@ export async function upsertContextualTask(
       assigneeId: data.assigneeId,
       dueDate: data.kind === "deadline" ? data.localDate : data.dueDate,
       startDate: data.kind === "deadline" ? data.localDate : existing?.startDate ?? null,
-      deadlineAt: data.kind === "deadline" ? new Date(data.deadlineAt!) : null,
+      deadlineAt: data.kind === "deadline" && data.deadlineAt
+        ? new Date(data.deadlineAt)
+        : null,
       isMilestone: data.kind === "deadline" ? true : existing?.isMilestone ?? false,
       priority: data.priority,
       status: data.status,

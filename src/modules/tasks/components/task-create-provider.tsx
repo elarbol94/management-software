@@ -12,7 +12,7 @@ import {
 import { usePathname } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
-import { Check, Loader2, MapPin, Save } from "lucide-react";
+import { Check, ClipboardPlus, Loader2, Save } from "lucide-react";
 import {
   getContextualTaskOptions,
   upsertContextualTask,
@@ -34,6 +34,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  WorkItemFieldError,
+  WorkItemOriginCard,
+  WorkItemSaveError,
+} from "./work-item-form";
 import type {
   EditableTask,
   TaskOrigin,
@@ -86,6 +91,7 @@ export function TaskCreateProvider({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState<TaskStatus>("open");
   const [projectId, setProjectId] = useState(NONE);
   const [pending, setPending] = useState(false);
+  const [errors, setErrors] = useState<{ title?: string; save?: string }>({});
 
   const openTaskCreator = useCallback((next: OpenTaskOptions = {}) => {
     setRequest(next);
@@ -95,6 +101,7 @@ export function TaskCreateProvider({ children }: { children: ReactNode }) {
     setDueDate(next.task?.dueDate ?? "");
     setStatus(next.task?.status ?? "open");
     setProjectId(next.task?.projectId ?? NONE);
+    setErrors({});
     setOpen(true);
     if (!options) {
       void getContextualTaskOptions()
@@ -124,10 +131,21 @@ export function TaskCreateProvider({ children }: { children: ReactNode }) {
     pathname,
     typeof window === "undefined" ? "" : window.location.search.slice(1),
   );
+  const assigneeLabel = assigneeId === NONE
+    ? t("unassigned")
+    : options?.members.find((member) => member.id === assigneeId)?.name ?? assigneeId;
+  const projectLabel = projectId === NONE
+    ? t("noProject")
+    : options?.projects.find((project) => project.id === projectId)?.name ?? projectId;
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
+    if (!title.trim()) {
+      setErrors({ title: t("titleRequired") });
+      return;
+    }
     setPending(true);
+    setErrors({});
     try {
       const result = await upsertContextualTask({
         id: request.task?.id,
@@ -148,7 +166,7 @@ export function TaskCreateProvider({ children }: { children: ReactNode }) {
       toast.success(request.task ? t("updated") : t("created"));
       setOpen(false);
     } catch {
-      toast.error(tCommon("error"));
+      setErrors({ save: t("saveError") });
     } finally {
       setPending(false);
     }
@@ -158,19 +176,22 @@ export function TaskCreateProvider({ children }: { children: ReactNode }) {
     <TaskCreatorContext.Provider value={value}>
       {children}
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="sm:max-w-lg">
-          <DialogHeader>
-            <DialogTitle>{request.task ? t("editTask") : t("createTask")}</DialogTitle>
-          </DialogHeader>
-          <form onSubmit={submit} className="space-y-5">
-            <div className="flex items-start gap-3 rounded-lg border border-indigo-200/70 bg-indigo-50/60 px-3 py-2.5 text-sm dark:border-indigo-900 dark:bg-indigo-950/25">
-              <MapPin className="mt-0.5 size-4 shrink-0 text-indigo-600 dark:text-indigo-400" />
-              <div className="min-w-0">
-                <p className="font-medium">{t(`origins.${origin.type}`)}</p>
-                <p className="truncate text-xs text-muted-foreground">{origin.label || origin.route}</p>
-              </div>
+        <DialogContent className="flex max-h-[min(92dvh,46rem)] flex-col gap-0 overflow-hidden p-0 sm:max-w-xl">
+          <DialogHeader className="shrink-0 space-y-1 px-6 pb-5 pt-6">
+            <div className="mb-2 grid size-10 place-items-center rounded-xl bg-indigo-50 text-indigo-600 dark:bg-indigo-950/50 dark:text-indigo-300">
+              <ClipboardPlus className="size-5" />
             </div>
-            <div className="space-y-2">
+            <DialogTitle className="text-xl">{request.task ? t("editTask") : t("createTask")}</DialogTitle>
+            <p className="text-sm text-muted-foreground">{t("dialogDescription")}</p>
+          </DialogHeader>
+          <form noValidate onSubmit={submit} className="flex min-h-0 flex-1 flex-col">
+            <div className="space-y-5 overflow-y-auto px-6 pb-5">
+              <WorkItemOriginCard
+                origin={origin}
+                typeLabel={t(`origins.${origin.type}`)}
+                tone="task"
+              />
+              <div className="space-y-2">
               <Label htmlFor="context-task-title">{t("title")}</Label>
               <Input
                 id="context-task-title"
@@ -178,15 +199,20 @@ export function TaskCreateProvider({ children }: { children: ReactNode }) {
                 required
                 maxLength={300}
                 value={title}
-                onChange={(event) => setTitle(event.target.value)}
+                aria-invalid={Boolean(errors.title)}
+                onChange={(event) => {
+                  setTitle(event.target.value);
+                  setErrors((current) => ({ ...current, title: undefined, save: undefined }));
+                }}
                 placeholder={t("titlePlaceholder")}
               />
-            </div>
-            <div className="grid gap-4 sm:grid-cols-2">
+              <WorkItemFieldError>{errors.title}</WorkItemFieldError>
+              </div>
+              <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2">
                 <Label>{t("assignee")}</Label>
                 <Select value={assigneeId} onValueChange={(value) => setAssigneeId(value ?? NONE)}>
-                  <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+                  <SelectTrigger className="w-full"><SelectValue>{assigneeLabel}</SelectValue></SelectTrigger>
                   <SelectContent>
                     <SelectItem value={NONE}>{t("unassigned")}</SelectItem>
                     {options?.members.map((member) => (
@@ -198,7 +224,7 @@ export function TaskCreateProvider({ children }: { children: ReactNode }) {
               <div className="space-y-2">
                 <Label>{t("priority")}</Label>
                 <Select value={priority} onValueChange={(value) => setPriority(value as TaskPriority)}>
-                  <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+                  <SelectTrigger className="w-full"><SelectValue>{t(`priorities.${priority}`)}</SelectValue></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="low">{t("priorities.low")}</SelectItem>
                     <SelectItem value="medium">{t("priorities.medium")}</SelectItem>
@@ -213,18 +239,18 @@ export function TaskCreateProvider({ children }: { children: ReactNode }) {
               <div className="space-y-2">
                 <Label>{t("status")}</Label>
                 <Select value={status} onValueChange={(value) => setStatus(value as TaskStatus)}>
-                  <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+                  <SelectTrigger className="w-full"><SelectValue>{t(`statuses.${status}`)}</SelectValue></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="open">{t("statuses.open")}</SelectItem>
                     <SelectItem value="done">{t("statuses.done")}</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
-            </div>
-            <div className="space-y-2">
+              </div>
+              <div className="space-y-2">
               <Label>{t("project")}</Label>
               <Select value={projectId} onValueChange={(value) => setProjectId(value ?? NONE)}>
-                <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+                <SelectTrigger className="w-full"><SelectValue>{projectLabel}</SelectValue></SelectTrigger>
                 <SelectContent>
                   <SelectItem value={NONE}>{t("noProject")}</SelectItem>
                   {options?.projects.map((project) => (
@@ -232,10 +258,12 @@ export function TaskCreateProvider({ children }: { children: ReactNode }) {
                   ))}
                 </SelectContent>
               </Select>
+              </div>
+              <WorkItemSaveError>{errors.save}</WorkItemSaveError>
             </div>
-            <DialogFooter>
+            <DialogFooter className="shrink-0 border-t bg-background px-6 py-4">
               <Button type="button" variant="outline" onClick={() => setOpen(false)}>{tCommon("cancel")}</Button>
-              <Button type="submit" disabled={pending || !title.trim()}>
+              <Button type="submit" disabled={pending}>
                 {pending ? <Loader2 className="animate-spin" /> : request.task ? <Save /> : <Check />}
                 {request.task ? t("save") : t("create")}
               </Button>

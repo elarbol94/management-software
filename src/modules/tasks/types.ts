@@ -39,7 +39,8 @@ export type EditableDeadline = {
   title: string;
   description: string;
   assigneeId: string | null;
-  deadlineAt: string;
+  deadlineDate: string;
+  deadlineAt: string | null;
   status: TaskStatus;
 };
 
@@ -49,7 +50,8 @@ export type ContextDeadlineMarker = {
   description: string;
   assigneeId: string | null;
   assigneeName: string | null;
-  deadlineAt: string;
+  deadlineDate: string;
+  deadlineAt: string | null;
   status: TaskStatus;
   route: string;
   label: string;

@@ -47,6 +47,7 @@ import {
 } from "@/lib/user-mark-colors";
 import { useTaskCreator } from "@/modules/tasks/components/task-create-provider";
 import { useDeadlineCreator } from "@/modules/tasks/components/deadline-create-provider";
+import { isDeadlineOverdue, localDateValue } from "@/modules/tasks/deadline-utils";
 import type { ContextDeadlineMarker, ContextTaskMarker } from "@/modules/tasks/types";
 
 type ReaderPage = {
@@ -161,6 +162,7 @@ export function PdfReader({
   user: { id: string; name: string; role?: string | null; markColor: UserMarkColor };
 }) {
   const t = useTranslations("wiki"); const tTasks = useTranslations("tasks"); const tDeadlines = useTranslations("deadlines"); const tMarkColor = useTranslations("settings.profile.colors"); const format = useFormatter(); const router = useRouter(); const { openTaskCreator } = useTaskCreator(); const { openDeadlineCreator } = useDeadlineCreator();
+  const [renderedAt] = useState(() => new Date());
   const pdfLoadFailedMessage = t("pdfLoadFailed");
   const { isFocused, toggleFocused } = useFocusMode();
   const [showThumbnails, setShowThumbnails] = useState(true);
@@ -1316,14 +1318,18 @@ export function PdfReader({
       if ((anchor.pageNumber ?? 1) !== targetPage) return [];
       const rects = anchor.rects ?? [];
       const top = rects.length ? Math.min(...rects.map((rect) => rect.y)) : 0.035;
-      const overdue = deadline.status === "open" && new Date(deadline.deadlineAt).getTime() < Date.now();
+      const overdue = isDeadlineOverdue(deadline, renderedAt);
       const color = deadline.status === "done" ? "#059669" : overdue ? "#dc2626" : "#d97706";
       const active = initialDeadlineId === deadline.id;
+      const localDate = localDateValue(deadline.deadlineDate);
+      const deadlineLabel = deadline.deadlineAt
+        ? format.dateTime(new Date(deadline.deadlineAt), { dateStyle: "medium", timeStyle: "short" })
+        : `${localDate ? format.dateTime(localDate, { dateStyle: "medium" }) : deadline.deadlineDate} · ${tDeadlines("allDay")}`;
       return [<button
         type="button"
         key={`${deadline.id}-deadline-marker`}
         data-deadline-marker={deadline.id}
-        title={`${deadline.title} · ${format.dateTime(new Date(deadline.deadlineAt), { dateStyle: "medium", timeStyle: "short" })} · ${deadline.assigneeName || tDeadlines("unassigned")}`}
+        title={`${deadline.title} · ${deadlineLabel} · ${deadline.assigneeName || tDeadlines("unassigned")}`}
         aria-label={`${tDeadlines("markerLabel")}: ${deadline.title}`}
         className="pointer-events-auto absolute grid size-7 place-items-center rounded-full border-2 bg-background shadow-sm transition-transform hover:scale-105"
         style={{
@@ -1344,6 +1350,7 @@ export function PdfReader({
             title: deadline.title,
             description: deadline.description,
             assigneeId: deadline.assigneeId,
+            deadlineDate: deadline.deadlineDate,
             deadlineAt: deadline.deadlineAt,
             status: deadline.status,
           },

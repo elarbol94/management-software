@@ -2,7 +2,7 @@
 
 import { useEffect, useEffectEvent, useMemo, useRef, useState, type CSSProperties } from "react";
 import { useRouter } from "next/navigation";
-import { useTranslations } from "next-intl";
+import { useFormatter, useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { EditorContent, useEditor, type Editor } from "@tiptap/react";
 import { BubbleMenu } from "@tiptap/react/menus";
@@ -72,6 +72,7 @@ import {
 } from "../lib/wiki-shortcuts";
 import { useTaskCreator } from "@/modules/tasks/components/task-create-provider";
 import { useDeadlineCreator } from "@/modules/tasks/components/deadline-create-provider";
+import { localDateValue } from "@/modules/tasks/deadline-utils";
 import type { ContextDeadlineMarker, ContextTaskMarker } from "@/modules/tasks/types";
 
 type PageRef = { id: string; title: string; slug: string };
@@ -529,7 +530,7 @@ export function WikiEditor({
   typographyTemplates,
   isPrimaryAuthor,
 }: WikiEditorProps) {
-  const t = useTranslations("wiki"); const tTasks = useTranslations("tasks"); const tDeadlines = useTranslations("deadlines"); const router = useRouter(); const { openTaskCreator } = useTaskCreator(); const { openDeadlineCreator } = useDeadlineCreator(); const [saveState, setSaveState] = useState<"idle" | "unsaved" | "saving" | "saved" | "offline" | "error" | "conflict">("idle");
+  const t = useTranslations("wiki"); const tTasks = useTranslations("tasks"); const tDeadlines = useTranslations("deadlines"); const format = useFormatter(); const router = useRouter(); const { openTaskCreator } = useTaskCreator(); const { openDeadlineCreator } = useDeadlineCreator(); const [saveState, setSaveState] = useState<"idle" | "unsaved" | "saving" | "saved" | "offline" | "error" | "conflict">("idle");
   const [conflictRevision, setConflictRevision] = useState<string | null>(null); const [activeThreadId, setActiveThreadId] = useState<string | null>(null); const [optimisticCommentThreads, setOptimisticCommentThreads] = useState<CommentThread[]>([]); const [commentFocusRequest, setCommentFocusRequest] = useState(0); const [imagePickerRequest, setImagePickerRequest] = useState(0); const [commentOpen, setCommentOpen] = useState(false); const [commentBody, setCommentBody] = useState(""); const [pendingAnchor, setPendingAnchor] = useState<CommentAnchor | null>(null); const [regionTarget, setRegionTarget] = useState<{ nodeId: string; label: string } | null>(null); const [imageError, setImageError] = useState(""); const [imageUploading, setImageUploading] = useState(false); const [assigneeId, setAssigneeId] = useState("none");
   const commentThreads = useMemo(
     () => [...optimisticCommentThreads.filter((thread) => !comments.some((item) => item.id === thread.id)), ...comments],
@@ -918,13 +919,20 @@ export function WikiEditor({
       if (node.type.name !== "deadlineReference") return;
       const deadline = byId.get(String(node.attrs.deadlineId));
       if (!deadline) return;
+      const localDate = localDateValue(deadline.deadlineDate);
+      const dateLabel = localDate
+        ? format.dateTime(localDate, { dateStyle: "medium" })
+        : deadline.deadlineDate;
+      const timeLabel = deadline.deadlineAt
+        ? format.dateTime(new Date(deadline.deadlineAt), { timeStyle: "short" })
+        : "";
       const nextAttrs = {
         ...node.attrs,
         title: deadline.title,
         description: deadline.description,
         status: deadline.status,
         assigneeName: deadline.assigneeName ?? "",
-        deadlineAt: new Date(deadline.deadlineAt).toLocaleString(),
+        deadlineAt: [dateLabel, timeLabel].filter(Boolean).join(", "),
       };
       if (JSON.stringify(nextAttrs) !== JSON.stringify(node.attrs)) {
         transaction.setNodeMarkup(position, undefined, nextAttrs);
@@ -932,7 +940,7 @@ export function WikiEditor({
       }
     });
     if (changed) editor.view.dispatch(transaction);
-  }, [contextDeadlines, editor]);
+  }, [contextDeadlines, editor, format]);
 
   useEffect(() => {
     if (!editor || !focusTaskId) return;
