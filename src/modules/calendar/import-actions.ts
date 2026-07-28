@@ -174,11 +174,7 @@ export async function analyzeCalendarText(input: {
       fileName: z.string().max(240).optional(),
     })
     .parse(input);
-  const fileTitle = data.fileName
-    ?.replace(/\.[^.]+$/, "")
-    .replace(/[_-]+/g, " ")
-    .trim();
-  return parseCalendarImport(data.text, { titleHint: fileTitle });
+  return parseCalendarImport(data.text);
 }
 
 export async function analyzeCalendarUrl(input: {

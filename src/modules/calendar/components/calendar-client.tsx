@@ -1738,7 +1738,10 @@ export function CalendarClient({
                       disabled={importBusy}
                       placeholder={t("importUrlPlaceholder")}
                       className="pl-8"
-                      onChange={(event) => setImportUrl(event.target.value)}
+                      onChange={(event) => {
+                        setImportUrl(event.target.value);
+                        if (importError) setImportError("");
+                      }}
                       onKeyDown={(event) => {
                         if (event.key === "Enter") {
                           event.preventDefault();
