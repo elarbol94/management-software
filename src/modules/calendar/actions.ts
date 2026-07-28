@@ -632,14 +632,14 @@ export async function respondToCalendarEvent(input: {
 export async function createCalendar(input: {
   name: string;
   color: string;
-  visibility: "private" | "company";
+  visibility: "private" | "busy" | "company";
 }) {
   const currentUser = await requireUserOrThrow();
   const data = z
     .object({
       name: z.string().trim().min(1).max(120),
       color: z.string().regex(/^#[0-9a-fA-F]{6}$/),
-      visibility: z.enum(["private", "company"]),
+      visibility: z.enum(["private", "busy", "company"]),
     })
     .parse(input);
   const calendar = db
@@ -652,6 +652,31 @@ export async function createCalendar(input: {
     .run();
   revalidatePath("/calendar");
   return calendar.id;
+}
+
+export async function updateCalendar(input: {
+  calendarId: string;
+  name: string;
+  color: string;
+  visibility: "private" | "busy" | "company";
+}) {
+  const currentUser = await requireUserOrThrow();
+  const data = z
+    .object({
+      calendarId: z.string().min(1),
+      name: z.string().trim().min(1).max(120),
+      color: z.string().regex(/^#[0-9a-fA-F]{6}$/),
+      visibility: z.enum(["private", "busy", "company"]),
+    })
+    .parse(input);
+  if (calendarRoleForUser(data.calendarId, currentUser.id) !== "owner") {
+    throw new Error("Only the owner can edit this calendar");
+  }
+  db.update(calendars)
+    .set({ name: data.name, color: data.color, visibility: data.visibility, updatedAt: new Date() })
+    .where(eq(calendars.id, data.calendarId))
+    .run();
+  revalidatePath("/calendar");
 }
 
 export async function setCalendarMember(input: {
@@ -688,6 +713,7 @@ export async function saveCalendarView(input: {
     sources?: string[];
     people?: string[];
     projects?: string[];
+    calendars?: string[];
     query?: string;
   };
   isDefault?: boolean;
@@ -702,6 +728,7 @@ export async function saveCalendarView(input: {
         sources: z.array(z.string()).optional(),
         people: z.array(z.string()).optional(),
         projects: z.array(z.string()).optional(),
+        calendars: z.array(z.string()).optional(),
         query: z.string().max(200).optional(),
       }),
       isDefault: z.boolean().default(false),

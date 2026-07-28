@@ -77,6 +77,7 @@ export function calendarRoleForUser(
     .get();
   if (!calendar) return null;
   if (calendar.ownerId === userId) return "owner";
+  if (calendar.visibility === "private") return null;
   const membership = db
     .select({ role: calendarMemberships.role })
     .from(calendarMemberships)
@@ -88,7 +89,9 @@ export function calendarRoleForUser(
     )
     .get();
   if (membership) return membership.role;
-  return calendar.visibility === "company" ? "viewer" : null;
+  return calendar.visibility === "company" || calendar.visibility === "busy"
+    ? "viewer"
+    : null;
 }
 
 function listAccessibleCalendars(userId: string) {
@@ -180,6 +183,7 @@ export function listCalendarWorkspace(input: {
   for (const event of eventRows) {
     const calendar = calendarById.get(event.calendarId);
     if (!calendar) continue;
+    const detailsHidden = calendar.visibility === "busy" && calendar.role === "viewer";
     const occurrences = expandEventOccurrences(
       event,
       exceptionsByEvent.get(event.id) ?? [],
@@ -209,9 +213,9 @@ export function listCalendarWorkspace(input: {
         id: `${event.id}:${occurrence.occurrenceKey}`,
         sourceId: event.id,
         kind: event.kind === "focus" ? "focus" : "event",
-        title: occurrence.title,
-        description: occurrence.description,
-        location: event.location,
+        title: detailsHidden ? "Busy" : occurrence.title,
+        description: detailsHidden ? "" : occurrence.description,
+        location: detailsHidden ? "" : event.location,
         color: calendar.color,
         allDay: event.allDay,
         startDate: occurrence.startDate,
@@ -219,19 +223,22 @@ export function listCalendarWorkspace(input: {
         startAt: occurrence.startAt?.toISOString() ?? null,
         endAt: occurrence.endAt?.toISOString() ?? null,
         timezone: event.timezone,
-        href: event.linkedTaskId
+        href: detailsHidden
+          ? null
+          : event.linkedTaskId
           ? taskHref(event.linkedTaskId, null, null, "task")
           : null,
         editable: calendar.role === "owner" || calendar.role === "editor",
         availability: event.availability,
         calendarId: event.calendarId,
         projectId: null,
-        assigneeId: event.createdBy,
+        assigneeId: detailsHidden ? null : event.createdBy,
         assigneeName: null,
-        attendeeIds: attendeesByEvent.get(event.id) ?? [],
+        attendeeIds: detailsHidden ? [] : attendeesByEvent.get(event.id) ?? [],
         occurrenceKey: occurrence.occurrenceKey,
         recurring: Boolean(event.recurrenceRule),
-        recurrenceRule: event.recurrenceRule,
+        recurrenceRule: detailsHidden ? null : event.recurrenceRule,
+        detailsHidden,
         updatedAt: event.updatedAt.toISOString(),
       });
     }

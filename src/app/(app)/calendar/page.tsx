@@ -21,6 +21,7 @@ export default async function CalendarPage({
     sources?: string;
     people?: string;
     projects?: string;
+    calendars?: string;
     query?: string;
     new?: string;
   }>;
@@ -66,6 +67,7 @@ export default async function CalendarPage({
         sources: query.sources?.split(",").filter(Boolean) ?? [],
         people: query.people?.split(",").filter(Boolean) ?? [],
         projects: query.projects?.split(",").filter(Boolean) ?? [],
+        calendars: query.calendars?.split(",").filter(Boolean) ?? [],
         query: query.query ?? "",
       }}
       openNewEvent={query.new === "event"}

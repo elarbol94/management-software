@@ -43,6 +43,7 @@ export type CalendarItem = {
   occurrenceKey: string | null;
   recurring: boolean;
   recurrenceRule: string | null;
+  detailsHidden?: boolean;
   updatedAt: string;
 };
 
@@ -51,7 +52,7 @@ export type CalendarSource = {
   name: string;
   color: string;
   role: CalendarRole;
-  visibility: "private" | "company";
+  visibility: "private" | "busy" | "company";
 };
 
 export type CalendarPreferencesValue = {
@@ -71,6 +72,7 @@ export type CalendarSavedViewValue = {
     sources?: string[];
     people?: string[];
     projects?: string[];
+    calendars?: string[];
     query?: string;
   };
   isDefault: boolean;
