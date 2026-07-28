@@ -1202,6 +1202,8 @@
     },
     "document": {
       "toggle": "Dokumentmodus",
+      "showLayout": "Dokumentlayout anzeigen",
+      "hideLayout": "Dokumentlayout ausblenden",
       "panelTitle": "Dokumentlayout",
       "panelDescription": "A4-Gestaltung, Inhalte und Exportprüfung.",
       "tabs": { "page": "Seite", "content": "Inhalt", "check": "Prüfung" },
@@ -1282,7 +1284,9 @@
         "undo": "Rückgängig", "redo": "Wiederholen", "bold": "Fett", "italic": "Kursiv",
         "heading1": "Überschrift 1", "heading2": "Überschrift 2", "heading3": "Überschrift 3",
         "bulletList": "Aufzählung", "orderedList": "Nummerierte Liste", "taskList": "Aufgabenliste",
-        "format": "Format", "insert": "Einfügen", "underline": "Unterstreichen", "highlight": "Hervorheben",
+        "format": "Format", "insert": "Einfügen", "more": "Mehr", "actions": "Aktionen", "settings": "Ansicht und Einstellungen",
+        "groups": { "history": "Verlauf", "writing": "Text gestalten", "insert": "Inhalte einfügen", "review": "Prüfen und kommentieren", "document": "Dokumentansicht" },
+        "underline": "Unterstreichen", "highlight": "Hervorheben",
         "strike": "Durchstreichen", "inlineCode": "Inline-Code", "blockquote": "Zitatblock", "codeBlock": "Codeblock"
       },
       "link": {

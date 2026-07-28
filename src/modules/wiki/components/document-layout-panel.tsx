@@ -16,6 +16,7 @@ import {
   ScissorsLineDashed,
   Settings2,
   Variable,
+  X,
 } from "lucide-react";
 import { applyDocumentTemplate, savePageAsDocumentTemplate } from "../document-actions";
 import type { StoredDocumentTemplate } from "../document-queries";
@@ -39,6 +40,7 @@ type Props = {
   issues: DocumentPreflightIssue[];
   outline: OutlineItem[];
   onOpenTypographySettings: () => void;
+  onClose: () => void;
 };
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
@@ -64,6 +66,7 @@ export function DocumentLayoutPanel({
   issues,
   outline,
   onOpenTypographySettings,
+  onClose,
 }: Props) {
   const t = useTranslations("wiki.document");
   const router = useRouter();
@@ -132,9 +135,14 @@ export function DocumentLayoutPanel({
   }
 
   return <aside data-testid="document-layout-panel" className="sticky top-14 max-h-[calc(100vh-5rem)] overflow-y-auto rounded-xl border bg-background/96 shadow-sm">
-    <div className="border-b px-3 py-3">
-      <p className="text-xs font-semibold">{t("panelTitle")}</p>
-      <p className="mt-0.5 text-[11px] leading-4 text-muted-foreground">{t("panelDescription")}</p>
+    <div className="flex items-start gap-2 border-b px-3 py-3">
+      <div className="min-w-0 flex-1">
+        <p className="text-xs font-semibold">{t("panelTitle")}</p>
+        <p className="mt-0.5 text-[11px] leading-4 text-muted-foreground">{t("panelDescription")}</p>
+      </div>
+      <Button type="button" size="icon-sm" variant="ghost" aria-label={t("hideLayout")} title={t("hideLayout")} onClick={onClose}>
+        <X />
+      </Button>
     </div>
     <Tabs defaultValue="page" className="gap-0">
       <TabsList className="mx-2 mt-2 grid grid-cols-3">

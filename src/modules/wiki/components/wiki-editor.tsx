@@ -13,7 +13,7 @@ import Placeholder from "@tiptap/extension-placeholder";
 import TaskList from "@tiptap/extension-task-list";
 import TaskItem from "@tiptap/extension-task-item";
 import { Fragment, Slice } from "@tiptap/pm/model";
-import { AlertCircle, AlignCenter, AlignLeft, AlignRight, Bold, BookMarked, CalendarClock, Check, ClipboardCheck, CloudOff, Code, Columns2, Eye, EyeOff, FileText, Heading1, Heading2, Heading3, Highlighter, ImagePlus, Italic, Keyboard, Languages, Link2, List, ListOrdered, ListTree, ListTodo, MessageSquareText, Minus, MoreHorizontal, Paperclip, Pilcrow, Quote, Redo2, RotateCcw, Rows3, Scan, ScissorsLineDashed, Search, Settings2, Strikethrough, Trash2, Underline as UnderlineIcon, Undo2, WifiOff } from "lucide-react";
+import { AlertCircle, AlignCenter, AlignLeft, AlignRight, Bold, BookMarked, CalendarClock, Check, ClipboardCheck, CloudOff, Code, Columns2, Eye, EyeOff, FileText, Heading1, Heading2, Heading3, Highlighter, ImagePlus, Italic, Keyboard, Languages, Link2, List, ListOrdered, ListTree, ListTodo, MessageSquareText, Minus, MoreHorizontal, PanelRightClose, PanelRightOpen, Paperclip, Pilcrow, Quote, Redo2, RotateCcw, Rows3, Scan, ScissorsLineDashed, Search, Settings2, Strikethrough, Trash2, Underline as UnderlineIcon, Undo2, WifiOff } from "lucide-react";
 import { addComment, restorePageRevision } from "../research-actions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -161,6 +161,13 @@ function loadWikiShortcutBindings() {
   } catch {
     return { ...DEFAULT_WIKI_SHORTCUT_BINDINGS };
   }
+}
+
+function loadBooleanPreference(key: string, fallback: boolean) {
+  if (typeof window === "undefined") return fallback;
+  const stored = window.localStorage.getItem(key);
+  if (stored === null) return fallback;
+  return stored === "true";
 }
 
 const Citation = Node.create({
@@ -327,6 +334,12 @@ function ToolbarMenu({ label, icon, children, onPointerDown }: { label: string; 
     <DropdownMenuTrigger render={<Button type="button" variant="ghost" size="sm" className="gap-1 px-2" aria-label={label} onFocus={onPointerDown} onPointerDown={onPointerDown} />}>{icon}<span className="hidden text-xs sm:inline">{label}</span></DropdownMenuTrigger>
     <DropdownMenuContent className="w-56">{children}</DropdownMenuContent>
   </DropdownMenu>;
+}
+
+function ToolbarGroup({ label, children }: { label: string; children: React.ReactNode }) {
+  return <div role="group" aria-label={label} className="flex items-center gap-0.5 rounded-lg bg-muted/55 p-0.5">
+    {children}
+  </div>;
 }
 
 function addThreadMark(editor: Editor, range: { from: number; to: number }, threadId: string) {
@@ -590,7 +603,12 @@ export function WikiEditor({
   const [wikiShortcuts, setWikiShortcuts] = useState(loadWikiShortcutBindings);
   const [initialPreferences] = useState(loadEditorPreferences);
   const [statusVisible, setStatusVisible] = useState(initialPreferences.statusVisible); const [minimalToolbar, setMinimalToolbar] = useState(initialPreferences.minimalToolbar); const [typewriterMode, setTypewriterMode] = useState(initialPreferences.typewriterMode); const typewriterModeRef = useRef(initialPreferences.typewriterMode);
-  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null); const version = useRef(pageVersion); const lastServerContent = useRef(initialContent); const lastServerDocumentMode = useRef(initialDocumentMode); const lastServerDocumentSettings = useRef(serializeDocumentSettings(parseDocumentSettings(initialDocumentSettings))); const documentModeRef = useRef(initialDocumentMode); const documentSettingsRef = useRef(parseDocumentSettings(initialDocumentSettings)); const pendingSave = useRef<string | null>(null); const persistContentRef = useRef<(json: string) => Promise<void>>(async () => {}); const conflictBlocked = useRef(false); const selection = useRef<{ from: number; to: number } | null>(null); const toolbarSelection = useRef<{ from: number; to: number } | null>(null); const imageInputRef = useRef<HTMLInputElement>(null); const editorRootRef = useRef<HTMLDivElement>(null); const commentRailRef = useRef<CommentRailHandle>(null); const [commentsVisible, setCommentsVisible] = useState(!focused); const previousFocused = useRef(focused); const storageKey = `wiki-draft:${pageId}`; const preferencesKey = `wiki-editor-preferences`;
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null); const version = useRef(pageVersion); const lastServerContent = useRef(initialContent); const lastServerDocumentMode = useRef(initialDocumentMode); const lastServerDocumentSettings = useRef(serializeDocumentSettings(parseDocumentSettings(initialDocumentSettings))); const documentModeRef = useRef(initialDocumentMode); const documentSettingsRef = useRef(parseDocumentSettings(initialDocumentSettings)); const pendingSave = useRef<string | null>(null); const persistContentRef = useRef<(json: string) => Promise<void>>(async () => {}); const conflictBlocked = useRef(false); const selection = useRef<{ from: number; to: number } | null>(null); const toolbarSelection = useRef<{ from: number; to: number } | null>(null); const imageInputRef = useRef<HTMLInputElement>(null); const editorRootRef = useRef<HTMLDivElement>(null); const commentRailRef = useRef<CommentRailHandle>(null);
+  const commentsPreferenceKey = `wiki:page:${pageId}:comments-visible`;
+  const layoutPreferenceKey = `wiki:page:${pageId}:document-layout-visible`;
+  const [commentsVisible, setCommentsVisible] = useState(() => loadBooleanPreference(commentsPreferenceKey, false));
+  const [documentLayoutVisible, setDocumentLayoutVisible] = useState(() => loadBooleanPreference(layoutPreferenceKey, false));
+  const storageKey = `wiki-draft:${pageId}`; const preferencesKey = `wiki-editor-preferences`;
   let content: object | undefined; try { content = initialContent ? JSON.parse(initialContent) : undefined; } catch { content = undefined; }
   if (typeof window !== "undefined") { const draft = window.localStorage.getItem(storageKey); if (draft && draft !== initialContent) { try { content = JSON.parse(draft); } catch { /* ignore damaged recovery */ } } }
 
@@ -962,11 +980,6 @@ export function WikiEditor({
       editor.off("update", schedule);
     };
   }, [editor, pageId, proofingDictionary, proofingDictionaryLoaded, proofingLanguage]);
-  useEffect(() => {
-    if (previousFocused.current === focused) return;
-    previousFocused.current = focused;
-    setCommentsVisible(!focused);
-  }, [focused]);
   useEffect(() => { if (!conflictBlocked.current && pageVersion > version.current) version.current = pageVersion; }, [pageVersion]);
   useEffect(() => { if (commentFocusRequest > 0) commentRailRef.current?.focusGeneralComment(); }, [commentFocusRequest]);
   useEffect(() => { if (imagePickerRequest > 0) imageInputRef.current?.click(); }, [imagePickerRequest]);
@@ -974,6 +987,8 @@ export function WikiEditor({
     typewriterModeRef.current = typewriterMode;
     localStorage.setItem(preferencesKey, JSON.stringify({ statusVisible, minimalToolbar, typewriterMode }));
   }, [minimalToolbar, preferencesKey, statusVisible, typewriterMode]);
+  useEffect(() => { window.localStorage.setItem(commentsPreferenceKey, String(commentsVisible)); }, [commentsPreferenceKey, commentsVisible]);
+  useEffect(() => { window.localStorage.setItem(layoutPreferenceKey, String(documentLayoutVisible)); }, [documentLayoutVisible, layoutPreferenceKey]);
   useEffect(() => { window.localStorage.setItem(WIKI_SHORTCUTS_KEY, JSON.stringify(wikiShortcuts)); }, [wikiShortcuts]);
   useEffect(() => {
     const online = () => { if (pendingSave.current) void persistContentRef.current(pendingSave.current); };
@@ -1347,20 +1362,23 @@ export function WikiEditor({
   const proofingButtonTitle = proofingStatus === "error"
     ? t("editor.proofing.unavailable")
     : t("editor.proofing.switch", { language: proofingLanguageLabel, nextLanguage: nextProofingLanguageLabel });
+  const layoutVisible = documentMode && documentLayoutVisible;
 
-  return <div className="relative flex flex-col gap-3"><div className="sticky top-0 z-40 flex flex-wrap items-center gap-0.5 rounded-lg border bg-background/95 p-1 shadow-sm backdrop-blur supports-[backdrop-filter]:bg-background/80">
-    <ToolbarButton title={t("editor.toolbar.undo")} shortcut={shortcutLabel("undo")} onClick={() => activeEditor.chain().focus().undo().run()}><Undo2 className="size-4" /></ToolbarButton>
-    <ToolbarButton title={t("editor.toolbar.redo")} shortcut={shortcutLabel("redo")} onClick={() => activeEditor.chain().focus().redo().run()}><Redo2 className="size-4" /></ToolbarButton>
-    <span className="mx-1 h-5 w-px bg-border" />
-    <ToolbarButton title={t("editor.toolbar.bold")} shortcut={shortcutLabel("bold")} active={activeEditor.isActive("bold")} onClick={() => activeEditor.chain().focus().toggleBold().run()}><Bold className="size-4" /></ToolbarButton>
-    <ToolbarButton title={t("editor.toolbar.italic")} shortcut={shortcutLabel("italic")} active={activeEditor.isActive("italic")} onClick={() => activeEditor.chain().focus().toggleItalic().run()}><Italic className="size-4" /></ToolbarButton>
-    {!minimalToolbar && <>
-      <ToolbarButton title={t("editor.toolbar.heading1")} shortcut={shortcutLabel("heading1")} active={activeEditor.isActive("heading", { level: 1 })} onClick={() => activeEditor.chain().focus().toggleHeading({ level: 1 }).run()}><Heading1 className="size-4" /></ToolbarButton>
-      <ToolbarButton title={t("editor.toolbar.heading2")} shortcut={shortcutLabel("heading2")} active={activeEditor.isActive("heading", { level: 2 })} onClick={() => activeEditor.chain().focus().toggleHeading({ level: 2 }).run()}><Heading2 className="size-4" /></ToolbarButton>
-      <ToolbarButton title={t("editor.toolbar.bulletList")} shortcut={shortcutLabel("bulletList")} active={activeEditor.isActive("bulletList")} onClick={() => activeEditor.chain().focus().toggleBulletList().run()}><List className="size-4" /></ToolbarButton>
-      <ToolbarButton title={t("editor.toolbar.orderedList")} shortcut={shortcutLabel("orderedList")} active={activeEditor.isActive("orderedList")} onClick={() => activeEditor.chain().focus().toggleOrderedList().run()}><ListOrdered className="size-4" /></ToolbarButton>
-    </>}
-    <ToolbarMenu label={t("editor.toolbar.format")} icon={<MoreHorizontal className="size-4" />} onPointerDown={rememberToolbarSelection}>
+  return <div className="relative flex flex-col gap-3"><div className="sticky top-0 z-40 flex flex-wrap items-center gap-1.5 rounded-xl border bg-background/95 p-1.5 shadow-sm backdrop-blur supports-[backdrop-filter]:bg-background/80">
+    <ToolbarGroup label={t("editor.toolbar.groups.history")}>
+      <ToolbarButton title={t("editor.toolbar.undo")} shortcut={shortcutLabel("undo")} onClick={() => activeEditor.chain().focus().undo().run()}><Undo2 className="size-4" /></ToolbarButton>
+      <ToolbarButton title={t("editor.toolbar.redo")} shortcut={shortcutLabel("redo")} onClick={() => activeEditor.chain().focus().redo().run()}><Redo2 className="size-4" /></ToolbarButton>
+    </ToolbarGroup>
+    <ToolbarGroup label={t("editor.toolbar.groups.writing")}>
+      <ToolbarButton title={t("editor.toolbar.bold")} shortcut={shortcutLabel("bold")} active={activeEditor.isActive("bold")} onClick={() => activeEditor.chain().focus().toggleBold().run()}><Bold className="size-4" /></ToolbarButton>
+      <ToolbarButton title={t("editor.toolbar.italic")} shortcut={shortcutLabel("italic")} active={activeEditor.isActive("italic")} onClick={() => activeEditor.chain().focus().toggleItalic().run()}><Italic className="size-4" /></ToolbarButton>
+      {!minimalToolbar && <>
+        <ToolbarButton title={t("editor.toolbar.heading1")} shortcut={shortcutLabel("heading1")} active={activeEditor.isActive("heading", { level: 1 })} onClick={() => activeEditor.chain().focus().toggleHeading({ level: 1 }).run()}><Heading1 className="size-4" /></ToolbarButton>
+        <ToolbarButton title={t("editor.toolbar.heading2")} shortcut={shortcutLabel("heading2")} active={activeEditor.isActive("heading", { level: 2 })} onClick={() => activeEditor.chain().focus().toggleHeading({ level: 2 }).run()}><Heading2 className="size-4" /></ToolbarButton>
+        <ToolbarButton title={t("editor.toolbar.bulletList")} shortcut={shortcutLabel("bulletList")} active={activeEditor.isActive("bulletList")} onClick={() => activeEditor.chain().focus().toggleBulletList().run()}><List className="size-4" /></ToolbarButton>
+        <ToolbarButton title={t("editor.toolbar.orderedList")} shortcut={shortcutLabel("orderedList")} active={activeEditor.isActive("orderedList")} onClick={() => activeEditor.chain().focus().toggleOrderedList().run()}><ListOrdered className="size-4" /></ToolbarButton>
+      </>}
+      <ToolbarMenu label={t("editor.toolbar.format")} icon={<MoreHorizontal className="size-4" />} onPointerDown={rememberToolbarSelection}>
       <DropdownMenuGroup>
         <DropdownMenuLabel>{t("editor.toolbar.format")}</DropdownMenuLabel>
         <DropdownMenuItem onClick={() => toolbarChain().toggleHeading({ level: 3 }).run()}><Heading3 />{t("editor.toolbar.heading3")}<DropdownMenuShortcut>{shortcutLabel("heading3")}</DropdownMenuShortcut></DropdownMenuItem>
@@ -1373,46 +1391,62 @@ export function WikiEditor({
         <DropdownMenuItem onClick={() => toolbarChain().toggleBlockquote().run()}><Quote />{t("editor.toolbar.blockquote")}<DropdownMenuShortcut>{shortcutLabel("blockquote")}</DropdownMenuShortcut></DropdownMenuItem>
         <DropdownMenuItem onClick={() => toolbarChain().toggleCodeBlock().run()}><Code />{t("editor.toolbar.codeBlock")}<DropdownMenuShortcut>{shortcutLabel("codeBlock")}</DropdownMenuShortcut></DropdownMenuItem>
       </DropdownMenuGroup>
-    </ToolbarMenu>
-    <EditorLinkPopover editor={activeEditor} pages={allPages} request={linkEditorRequest} />
-    <PageLinkPicker editor={editor} pages={allPages} open={pageLinkOpen} onOpenChange={setPageLinkOpen} /><CitationPicker editor={editor} sources={sources} locale={citationLocale} open={citationOpen} onOpenChange={setCitationOpen} /><EvidencePicker editor={editor} pageId={pageId} locale={citationLocale} open={evidenceOpen} onOpenChange={setEvidenceOpen} />
-    <ToolbarMenu label={t("editor.toolbar.insert")} icon={<ImagePlus className="size-4" />} onPointerDown={rememberToolbarSelection}>
+      </ToolbarMenu>
+    </ToolbarGroup>
+    <ToolbarGroup label={t("editor.toolbar.groups.insert")}>
+      <EditorLinkPopover editor={activeEditor} pages={allPages} request={linkEditorRequest} />
+      <PageLinkPicker editor={editor} pages={allPages} open={pageLinkOpen} onOpenChange={setPageLinkOpen} /><CitationPicker editor={editor} sources={sources} locale={citationLocale} open={citationOpen} onOpenChange={setCitationOpen} /><EvidencePicker editor={editor} pageId={pageId} locale={citationLocale} open={evidenceOpen} onOpenChange={setEvidenceOpen} />
+      <ToolbarMenu label={t("editor.toolbar.insert")} icon={<ImagePlus className="size-4" />} onPointerDown={rememberToolbarSelection}>
       <DropdownMenuItem onClick={() => imageInputRef.current?.click()}><ImagePlus />{t("insertImage")}<DropdownMenuShortcut>{shortcutLabel("image")}</DropdownMenuShortcut></DropdownMenuItem>
       <DropdownMenuItem onClick={() => toolbarChain().setHorizontalRule().run()}><Minus />{t("slash.commands.horizontalRule.label")}<DropdownMenuShortcut>{shortcutLabel("horizontalRule")}</DropdownMenuShortcut></DropdownMenuItem>
       <DropdownMenuItem onClick={() => pageActions.addAttachment()}><Paperclip />{t("slash.commands.attachment.label")}<DropdownMenuShortcut>{shortcutLabel("attachment")}</DropdownMenuShortcut></DropdownMenuItem>
       <DropdownMenuItem onClick={() => pageActions.linkSupportingSource()}><BookMarked />{t("slash.commands.supportingSource.label")}<DropdownMenuShortcut>{shortcutLabel("supportingSource")}</DropdownMenuShortcut></DropdownMenuItem>
-    </ToolbarMenu>
+      </ToolbarMenu>
+    </ToolbarGroup>
     <input ref={imageInputRef} data-testid="wiki-inline-image-input" hidden type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => { const file = event.target.files?.[0]; if (file) void insertInlineImage(file); event.target.value = ""; }} />
-    <Tooltip>
-      <TooltipTrigger render={<Button type="button" data-testid="proofing-language-toggle" size="sm" variant="ghost" className="gap-1 px-2 text-xs" aria-label={proofingButtonTitle} aria-busy={proofingStatus === "checking" || proofingSaving} disabled={proofingSaving} onClick={() => void toggleProofingLanguage()} />}>
-        {proofingStatus === "checking" || proofingSaving ? <RotateCcw className="size-3.5 animate-spin" /> : proofingStatus === "error" ? <AlertCircle className="size-3.5 text-destructive" /> : <Languages className="size-3.5" />}
-        <span>{proofingLanguage === "de-DE" ? "DE" : "EN"}</span>
-      </TooltipTrigger>
-      <TooltipContent>{proofingButtonTitle}{proofingStatus === "checking" && <span> · {t("editor.proofing.checking")}</span>}</TooltipContent>
-    </Tooltip>
-    <span className="mx-1 h-5 w-px bg-border" />
-    <ToolbarButton title={t("editor.search.title")} shortcut={shortcutLabel("search")} active={searchOpen} onClick={() => setSearchOpen((value) => !value)}><Search className="size-4" /></ToolbarButton>
-    <ToolbarButton title={t("editor.outline.title")} shortcut={shortcutLabel("outline")} active={outlineOpen} onClick={() => setOutlineOpen(true)}><ListTree className="size-4" /></ToolbarButton>
-    <ToolbarButton title={t("inlineComment")} shortcut={shortcutLabel("inlineComment")} onClick={prepareComment}><MessageSquareText className="size-4" /></ToolbarButton>
-    <ToolbarButton title={tTasks("createTask")} shortcut={tTasks("globalShortcut")} onClick={() => requestWikiTask(activeEditor)}><ClipboardCheck className="size-4" /></ToolbarButton>
-    <ToolbarButton title={tDeadlines("createDeadline")} shortcut={tDeadlines("globalShortcut")} onClick={() => requestWikiDeadline(activeEditor)}><CalendarClock className="size-4" /></ToolbarButton>
-    <ToolbarButton title={commentsVisible ? t("hideComments") : t("showComments")} shortcut={shortcutLabel("toggleComments")} active={commentsVisible} onClick={() => setCommentsVisible((value) => !value)}>{commentsVisible ? <EyeOff className="size-4" /> : <Eye className="size-4" />}</ToolbarButton>
-    <Button
-      type="button"
-      data-testid="document-mode-toggle"
-      size="sm"
-      variant={documentMode ? "secondary" : "ghost"}
-      className="gap-1.5 px-2 text-xs"
-      aria-pressed={documentMode}
-      onClick={() => changeDocumentMode(!documentMode)}
-    >
-      <FileText className="size-3.5" />{t("document.toggle")}
-    </Button>
-    <Button type="button" data-testid="markdown-help-button" size="sm" variant="ghost" className="gap-1.5 px-2 text-xs" title={shortcutLabel("markdownHelp")} onClick={() => setMarkdownHelpOpen(true)}><BookMarked className="size-3.5" />{t("markdownHelp.button")}</Button>
-    <ToolbarButton title={t("editor.preferences.title")} shortcut={shortcutLabel("typography")} active={typographyOpen} onClick={() => setTypographyOpen(true)}>
-      <Settings2 className="size-4" />
-    </ToolbarButton>
-    <ToolbarButton title={t("shortcuts.title")} shortcut={shortcutLabel("shortcuts")} active={shortcutsOpen} onClick={() => setShortcutsOpen(true)}><Keyboard className="size-4" /></ToolbarButton>
+    <ToolbarGroup label={t("editor.toolbar.groups.review")}>
+      <Tooltip>
+        <TooltipTrigger render={<Button type="button" data-testid="proofing-language-toggle" size="sm" variant="ghost" className="gap-1 px-2 text-xs" aria-label={proofingButtonTitle} aria-busy={proofingStatus === "checking" || proofingSaving} disabled={proofingSaving} onClick={() => void toggleProofingLanguage()} />}>
+          {proofingStatus === "checking" || proofingSaving ? <RotateCcw className="size-3.5 animate-spin" /> : proofingStatus === "error" ? <AlertCircle className="size-3.5 text-destructive" /> : <Languages className="size-3.5" />}
+          <span>{proofingLanguage === "de-DE" ? "DE" : "EN"}</span>
+        </TooltipTrigger>
+        <TooltipContent>{proofingButtonTitle}{proofingStatus === "checking" && <span> · {t("editor.proofing.checking")}</span>}</TooltipContent>
+      </Tooltip>
+      <ToolbarButton title={t("editor.search.title")} shortcut={shortcutLabel("search")} active={searchOpen} onClick={() => setSearchOpen((value) => !value)}><Search className="size-4" /></ToolbarButton>
+      <ToolbarButton title={t("editor.outline.title")} shortcut={shortcutLabel("outline")} active={outlineOpen} onClick={() => setOutlineOpen(true)}><ListTree className="size-4" /></ToolbarButton>
+      <ToolbarButton title={t("inlineComment")} shortcut={shortcutLabel("inlineComment")} onClick={prepareComment}><MessageSquareText className="size-4" /></ToolbarButton>
+      <ToolbarButton title={commentsVisible ? t("hideComments") : t("showComments")} shortcut={shortcutLabel("toggleComments")} active={commentsVisible} onClick={() => setCommentsVisible((value) => !value)}>{commentsVisible ? <EyeOff className="size-4" /> : <Eye className="size-4" />}</ToolbarButton>
+    </ToolbarGroup>
+    <ToolbarGroup label={t("editor.toolbar.groups.document")}>
+      <Button
+        type="button"
+        data-testid="document-mode-toggle"
+        size="sm"
+        variant={documentMode ? "secondary" : "ghost"}
+        className="gap-1.5 px-2 text-xs"
+        aria-pressed={documentMode}
+        onClick={() => changeDocumentMode(!documentMode)}
+      >
+        <FileText className="size-3.5" />{t("document.toggle")}
+      </Button>
+      {documentMode && <ToolbarButton title={layoutVisible ? t("document.hideLayout") : t("document.showLayout")} active={layoutVisible} onClick={() => setDocumentLayoutVisible((value) => !value)}>
+        {layoutVisible ? <PanelRightClose className="size-4" /> : <PanelRightOpen className="size-4" />}
+      </ToolbarButton>}
+    </ToolbarGroup>
+    <ToolbarMenu label={t("editor.toolbar.more")} icon={<MoreHorizontal className="size-4" />}>
+      <DropdownMenuGroup>
+        <DropdownMenuLabel>{t("editor.toolbar.actions")}</DropdownMenuLabel>
+        <DropdownMenuItem onClick={() => requestWikiTask(activeEditor)}><ClipboardCheck />{tTasks("createTask")}<DropdownMenuShortcut>{tTasks("globalShortcut")}</DropdownMenuShortcut></DropdownMenuItem>
+        <DropdownMenuItem onClick={() => requestWikiDeadline(activeEditor)}><CalendarClock />{tDeadlines("createDeadline")}<DropdownMenuShortcut>{tDeadlines("globalShortcut")}</DropdownMenuShortcut></DropdownMenuItem>
+      </DropdownMenuGroup>
+      <DropdownMenuSeparator />
+      <DropdownMenuGroup>
+        <DropdownMenuLabel>{t("editor.toolbar.settings")}</DropdownMenuLabel>
+        <DropdownMenuItem data-testid="markdown-help-button" onClick={() => setMarkdownHelpOpen(true)}><BookMarked />{t("markdownHelp.button")}<DropdownMenuShortcut>{shortcutLabel("markdownHelp")}</DropdownMenuShortcut></DropdownMenuItem>
+        <DropdownMenuItem onClick={() => setTypographyOpen(true)}><Settings2 />{t("editor.preferences.title")}<DropdownMenuShortcut>{shortcutLabel("typography")}</DropdownMenuShortcut></DropdownMenuItem>
+        <DropdownMenuItem onClick={() => setShortcutsOpen(true)}><Keyboard />{t("shortcuts.title")}<DropdownMenuShortcut>{shortcutLabel("shortcuts")}</DropdownMenuShortcut></DropdownMenuItem>
+      </DropdownMenuGroup>
+    </ToolbarMenu>
     <span role={saveState === "error" || saveState === "conflict" ? "alert" : "status"} aria-live={saveState === "error" || saveState === "conflict" ? "assertive" : "polite"} className={`ml-auto flex items-center gap-1 px-2 text-xs ${savePresentation.className}`}>{savePresentation.icon}{savePresentation.label}</span>
     {(saveState === "error" || saveState === "offline") && pendingSave.current && <Button type="button" size="xs" variant="ghost" onClick={() => void persistContent(pendingSave.current!)}>{t("editor.save.retry")}</Button>}
   </div>
@@ -1422,9 +1456,11 @@ export function WikiEditor({
   {saveState === "conflict" && conflictRevision && <div className="flex flex-wrap items-center gap-3 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950 dark:bg-amber-950/30 dark:text-amber-100"><RotateCcw className="size-4" /><span className="flex-1">{t("editConflictDescription")}</span><Button size="sm" variant="outline" onClick={discardDraftAndReload}>{t("loadCurrent")}</Button><Button size="sm" onClick={() => void restoreConflictDraft()}>{t("restoreMine")}</Button></div>}
   <div className={
     documentMode
-      ? commentsVisible
+      ? commentsVisible && layoutVisible
         ? "grid items-start gap-5 2xl:grid-cols-[minmax(0,1fr)_18rem_18rem]"
-        : "grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_18rem]"
+        : commentsVisible || layoutVisible
+          ? "grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_18rem]"
+          : "block"
       : commentsVisible
         ? focused
           ? "grid items-start justify-center gap-8 xl:grid-cols-[minmax(0,56rem)_18rem]"
@@ -1488,7 +1524,7 @@ export function WikiEditor({
       <CommentAnchorOverlay visible={commentsVisible} comments={commentThreads} editor={editor} rootRef={editorRootRef} activeThreadId={activeThreadId} onActiveThreadChange={setActiveThreadId} />
     </div>
     <CommentRail ref={commentRailRef} visible={commentsVisible} onVisibleChange={setCommentsVisible} pageId={pageId} comments={commentThreads} currentUserId={currentUserId} editor={editor} editorRootRef={editorRootRef} activeThreadId={activeThreadId} onActiveThreadChange={setActiveThreadId} />
-    {documentMode && <DocumentLayoutPanel
+    {layoutVisible && <DocumentLayoutPanel
       pageId={pageId}
       editor={activeEditor}
       settings={documentSettings}
@@ -1497,6 +1533,7 @@ export function WikiEditor({
       issues={documentIssues}
       outline={outline}
       onOpenTypographySettings={() => setTypographyOpen(true)}
+      onClose={() => setDocumentLayoutVisible(false)}
     />}
   </div>
   {statusVisible && <footer data-testid="editor-writing-status" className="flex flex-wrap items-center gap-x-4 gap-y-1 border-t px-1 pt-2 text-[11px] text-muted-foreground">

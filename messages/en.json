@@ -1202,6 +1202,8 @@
     },
     "document": {
       "toggle": "Document mode",
+      "showLayout": "Show document layout",
+      "hideLayout": "Hide document layout",
       "panelTitle": "Document layout",
       "panelDescription": "Page design, content structure and export preflight.",
       "tabs": { "page": "Page", "content": "Content", "check": "Check" },
@@ -1282,7 +1284,9 @@
         "undo": "Undo", "redo": "Redo", "bold": "Bold", "italic": "Italic",
         "heading1": "Heading 1", "heading2": "Heading 2", "heading3": "Heading 3",
         "bulletList": "Bullet list", "orderedList": "Numbered list", "taskList": "Task list",
-        "format": "Format", "insert": "Insert", "underline": "Underline", "highlight": "Highlight",
+        "format": "Format", "insert": "Insert", "more": "More", "actions": "Actions", "settings": "View and settings",
+        "groups": { "history": "History", "writing": "Format text", "insert": "Insert content", "review": "Review and comment", "document": "Document view" },
+        "underline": "Underline", "highlight": "Highlight",
         "strike": "Strikethrough", "inlineCode": "Inline code", "blockquote": "Block quote", "codeBlock": "Code block"
       },
       "link": {
