@@ -42,6 +42,7 @@ test("desktop navigation rails expand on hover, collapse on leave, and survive f
   await expectWidth(researchSidebar, 56);
 
   await expect(appSidebar.getByRole("link", { name: "Wiki" })).toBeVisible();
+  await expect(appSidebar.getByRole("link", { name: "Kalender" })).toBeVisible();
   await expect(researchSidebar.getByRole("link", { name: /Eingang/ })).toBeVisible();
   await expect(appSidebar.getByRole("button", { name: /E2E Admin/ })).toBeVisible();
 
