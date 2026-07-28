@@ -25,6 +25,7 @@ import type { WikiTypographySettingsV1, WikiTypographyTemplate } from "../lib/wi
 import { extractText, parseStoredDocument } from "../lib/tiptap";
 import { RevisionDiffView } from "./revision-diff-view";
 import type { ContextDeadlineMarker, ContextTaskMarker } from "@/modules/tasks/types";
+import { ContextPanel } from "@/modules/context/components/context-panel";
 
 type PageRef = { id: string; title: string; slug: string };
 type SourceRef = { id: string; title: string; issuedDate: string; contributors: string };
@@ -87,6 +88,13 @@ export function WikiShell({ page, backlinks, allPages, sources, citationSources,
           </div>
           <div className="flex items-center gap-1"><Input value={tags} onChange={(event) => setTags(event.target.value)} onBlur={() => void saveMeta()} placeholder={t("tagsHint")} className="h-8 min-w-0 text-xs" />{metaSaved && <Check className="size-4 shrink-0 text-emerald-600" />}</div>
         </section>
+        <ContextPanel
+          subjectType="wikiPage"
+          subjectId={page.id}
+          subjectLabel={page.title}
+          subjectHref={`/wiki/pages/${page.slug}`}
+          compact
+        />
         <AttachmentPanel ref={attachmentRef} entityType="wikiPage" entityId={page.id} initial={attachments} />
         <EvidencePanel targetType="wikiPage" targetId={page.id} compact />
         <section ref={supportingSourceSectionRef}><h3 className="mb-2 flex items-center gap-2 text-sm font-medium"><BookMarked className="size-4 text-indigo-500" />{t("supportingSources")}</h3><div className="flex gap-1"><Select open={supportingSourceOpen} onOpenChange={setSupportingSourceOpen} value={sourceToLink} onValueChange={(value) => setSourceToLink(value ?? "")}><SelectTrigger data-testid="supporting-source-picker" ref={supportingSourceTriggerRef} className="min-w-0 flex-1"><SelectValue placeholder={t("chooseSource")} /></SelectTrigger><SelectContent>{sources.filter((source) => !research.supportingSources.some((linked) => linked.id === source.id)).map((source) => <SelectItem key={source.id} value={source.id}>{source.title}</SelectItem>)}</SelectContent></Select><Button size="icon" variant="outline" disabled={!sourceToLink} onClick={async () => { await linkSupportingSource(page.id, sourceToLink); setSourceToLink(""); router.refresh(); }}><Plus className="size-4" /></Button></div><div className="mt-2 space-y-1">{research.supportingSources.map((source) => <div key={source.id} className="group flex items-center gap-1 rounded-md border p-2 text-xs"><Link href={`/wiki/sources/${source.id}`} className="min-w-0 flex-1 truncate font-medium">{source.title}</Link><button onClick={async () => { await unlinkSupportingSource(page.id, source.id); router.refresh(); }} className="opacity-0 group-hover:opacity-100"><X className="size-3" /></button></div>)}</div></section>

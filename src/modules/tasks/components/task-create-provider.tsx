@@ -6,15 +6,17 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
-import { usePathname } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { Check, ClipboardPlus, Loader2, Save } from "lucide-react";
 import {
   getContextualTaskOptions,
+  getContextualTaskForEdit,
   upsertContextualTask,
 } from "@/modules/projects/actions";
 import { Button } from "@/components/ui/button";
@@ -45,6 +47,8 @@ import type {
   TaskPriority,
   TaskStatus,
 } from "../types";
+import { ContextPanel } from "@/modules/context/components/context-panel";
+import { canonicalTaskHref } from "@/modules/context/routes";
 
 type OpenTaskOptions = {
   origin?: TaskOrigin;
@@ -81,6 +85,9 @@ export function TaskCreateProvider({ children }: { children: ReactNode }) {
   const t = useTranslations("tasks");
   const tCommon = useTranslations("common");
   const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const deepLinkedTaskId = pathname === "/" ? searchParams.get("task") : null;
+  const lastDeepLink = useRef<string | null>(null);
   const [open, setOpen] = useState(false);
   const [options, setOptions] = useState<Awaited<ReturnType<typeof getContextualTaskOptions>> | null>(null);
   const [request, setRequest] = useState<OpenTaskOptions>({});
@@ -109,6 +116,24 @@ export function TaskCreateProvider({ children }: { children: ReactNode }) {
         .catch(() => toast.error(tCommon("error")));
     }
   }, [options, tCommon]);
+
+  useEffect(() => {
+    if (!deepLinkedTaskId || lastDeepLink.current === deepLinkedTaskId) return;
+    lastDeepLink.current = deepLinkedTaskId;
+    void getContextualTaskForEdit(deepLinkedTaskId)
+      .then((task) => openTaskCreator({ task }))
+      .catch(() => toast.error(tCommon("error")));
+  }, [deepLinkedTaskId, openTaskCreator, tCommon]);
+
+  function setDialogOpen(next: boolean) {
+    setOpen(next);
+    if (next || pathname !== "/") return;
+    const params = new URLSearchParams(window.location.search);
+    params.delete("task");
+    const query = params.toString();
+    window.history.replaceState(null, "", `/${query ? `?${query}` : ""}`);
+    lastDeepLink.current = null;
+  }
 
   useEffect(() => {
     function onShortcut(event: KeyboardEvent) {
@@ -164,7 +189,7 @@ export function TaskCreateProvider({ children }: { children: ReactNode }) {
       });
       request.onCreated?.(result.id);
       toast.success(request.task ? t("updated") : t("created"));
-      setOpen(false);
+      setDialogOpen(false);
     } catch {
       setErrors({ save: t("saveError") });
     } finally {
@@ -175,7 +200,7 @@ export function TaskCreateProvider({ children }: { children: ReactNode }) {
   return (
     <TaskCreatorContext.Provider value={value}>
       {children}
-      <Dialog open={open} onOpenChange={setOpen}>
+      <Dialog open={open} onOpenChange={setDialogOpen}>
         <DialogContent className="flex max-h-[min(92dvh,46rem)] flex-col gap-0 overflow-hidden p-0 sm:max-w-xl">
           <DialogHeader className="shrink-0 space-y-1 px-6 pb-5 pt-6">
             <div className="mb-2 grid size-10 place-items-center rounded-xl bg-indigo-50 text-indigo-600 dark:bg-indigo-950/50 dark:text-indigo-300">
@@ -186,11 +211,25 @@ export function TaskCreateProvider({ children }: { children: ReactNode }) {
           </DialogHeader>
           <form noValidate onSubmit={submit} className="flex min-h-0 flex-1 flex-col">
             <div className="space-y-5 overflow-y-auto px-6 pb-5">
-              <WorkItemOriginCard
-                origin={origin}
-                typeLabel={t(`origins.${origin.type}`)}
-                tone="task"
-              />
+              {(!request.task || request.origin) && (
+                <WorkItemOriginCard
+                  origin={origin}
+                  typeLabel={t(`origins.${origin.type}`)}
+                  tone="task"
+                />
+              )}
+              {request.task && (
+                <ContextPanel
+                  subjectType="task"
+                  subjectId={request.task.id}
+                  subjectLabel={request.task.title}
+                  subjectHref={canonicalTaskHref(
+                    request.task.id,
+                    request.task.projectId,
+                  )}
+                  compact
+                />
+              )}
               <div className="space-y-2">
               <Label htmlFor="context-task-title">{t("title")}</Label>
               <Input
@@ -262,7 +301,7 @@ export function TaskCreateProvider({ children }: { children: ReactNode }) {
               <WorkItemSaveError>{errors.save}</WorkItemSaveError>
             </div>
             <DialogFooter className="shrink-0 border-t bg-background px-6 py-4">
-              <Button type="button" variant="outline" onClick={() => setOpen(false)}>{tCommon("cancel")}</Button>
+              <Button type="button" variant="outline" onClick={() => setDialogOpen(false)}>{tCommon("cancel")}</Button>
               <Button type="submit" disabled={pending}>
                 {pending ? <Loader2 className="animate-spin" /> : request.task ? <Save /> : <Check />}
                 {request.task ? t("save") : t("create")}

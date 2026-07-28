@@ -5,6 +5,7 @@ import { and, asc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { db } from "@/db";
 import {
+  contextLinks,
   projectColumns,
   projectDependencies,
   projectTaskDependencies,
@@ -271,7 +272,17 @@ export async function setProjectStatus(id: string, status: "active" | "archived"
 
 export async function deleteProject(id: string) {
   await requireUserOrThrow();
-  db.delete(projects).where(eq(projects.id, id)).run();
+  db.transaction((tx) => {
+    tx.delete(contextLinks)
+      .where(
+        and(
+          eq(contextLinks.ownerType, "project"),
+          eq(contextLinks.ownerId, id),
+        ),
+      )
+      .run();
+    tx.delete(projects).where(eq(projects.id, id)).run();
+  });
   revalidatePath("/projects");
 }
 
@@ -854,6 +865,26 @@ export async function getContextualTaskOptions() {
   };
 }
 
+export async function getContextualTaskForEdit(id: string) {
+  await requireUserOrThrow();
+  const taskId = z.string().min(1).parse(id);
+  const task = db
+    .select({
+      id: tasks.id,
+      title: tasks.title,
+      assigneeId: tasks.assigneeId,
+      priority: tasks.priority,
+      dueDate: tasks.dueDate,
+      status: tasks.status,
+      projectId: tasks.projectId,
+    })
+    .from(tasks)
+    .where(and(eq(tasks.id, taskId), eq(tasks.kind, "task")))
+    .get();
+  if (!task) throw new Error("Task not found");
+  return task;
+}
+
 function safeInternalRoute(route: string) {
   if (!route.startsWith("/") || route.startsWith("//")) {
     throw new Error("Task context must use an internal route");
@@ -995,6 +1026,28 @@ export async function upsertContextualTask(
         target: taskContexts.taskId,
         set: context,
       }).run();
+      tx.delete(contextLinks)
+        .where(
+          and(
+            eq(contextLinks.ownerType, "task"),
+            eq(contextLinks.ownerId, id),
+            eq(contextLinks.relation, "origin"),
+          ),
+        )
+        .run();
+      const contextLink = {
+        ownerType: "task" as const,
+        ownerId: id,
+        targetType: data.context.type,
+        targetId: data.context.entityId,
+        relation: "origin" as const,
+        route: safeInternalRoute(data.context.route),
+        label: data.context.label,
+        anchorJson: data.context.anchorJson,
+        createdBy: currentUser.id,
+        updatedAt: now,
+      };
+      tx.insert(contextLinks).values(contextLink).run();
     }
   });
 
@@ -1126,8 +1179,16 @@ export async function deleteTask(id: string) {
   await requireUserOrThrow();
   const task = db.select().from(tasks).where(eq(tasks.id, id)).get();
   if (!task) return;
-  db.transaction(() => {
-    db.delete(tasks).where(eq(tasks.id, id)).run();
+  db.transaction((tx) => {
+    tx.delete(contextLinks)
+      .where(
+        and(
+          eq(contextLinks.ownerType, "task"),
+          eq(contextLinks.ownerId, id),
+        ),
+      )
+      .run();
+    tx.delete(tasks).where(eq(tasks.id, id)).run();
     if (task.parentTaskId) syncTaskAncestors(task.parentTaskId);
     if (task.projectId) syncProjectBounds(task.projectId);
   });

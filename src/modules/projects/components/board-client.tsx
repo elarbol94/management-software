@@ -1,8 +1,8 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useFormatter, useTranslations } from "next-intl";
 import {
   DndContext,
@@ -47,6 +47,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { TaskDialog, type BoardTaskDto, type MemberDto } from "./task-dialog";
+import { cn } from "@/lib/utils";
 
 type Project = typeof projectsTable.$inferSelect;
 type ColumnDto = {
@@ -475,6 +476,7 @@ export function BoardClient({
   subtasksByParent,
   members,
   predecessorOptions = [],
+  hideHeader = false,
 }: {
   project: Project;
   columns: ColumnDto[];
@@ -482,10 +484,12 @@ export function BoardClient({
   subtasksByParent: Record<string, BoardTaskDto[]>;
   members: MemberDto[];
   predecessorOptions?: Array<{ id: string; title: string; dueDate: string | null; type: "project" | "task" }>;
+  hideHeader?: boolean;
 }) {
   const t = useTranslations("projects");
   const tCommon = useTranslations("common");
   const router = useRouter();
+  const searchParams = useSearchParams();
 
   // Local optimistic copy of the board, refreshed from the server props
   // via render-time state adjustment.
@@ -519,6 +523,23 @@ export function BoardClient({
     }
     return map;
   }, [board, subtasksByParent]);
+
+  const focusedTaskId = searchParams.get("task");
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      if (!focusedTaskId) {
+        setTaskDialogOpen(false);
+        return;
+      }
+      const task = taskIndex.get(focusedTaskId);
+      if (!task) return;
+      setEditingTask(task);
+      setNewTaskColumnId(task.columnId);
+      setNewTaskParentId(task.parentTaskId);
+      setTaskDialogOpen(true);
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [focusedTaskId, taskIndex]);
 
   function findColumnOf(taskId: string): string | undefined {
     for (const [columnId, list] of Object.entries(board)) {
@@ -631,6 +652,22 @@ export function BoardClient({
     setNewTaskColumnId(task.columnId);
     setNewTaskParentId(task.parentTaskId);
     setTaskDialogOpen(true);
+    const params = new URLSearchParams(window.location.search);
+    params.set("task", task.id);
+    window.history.pushState(null, "", `${window.location.pathname}?${params.toString()}`);
+  }
+
+  function setDialogOpen(nextOpen: boolean) {
+    setTaskDialogOpen(nextOpen);
+    if (nextOpen) return;
+    const params = new URLSearchParams(window.location.search);
+    params.delete("task");
+    const query = params.toString();
+    window.history.replaceState(
+      null,
+      "",
+      `${window.location.pathname}${query ? `?${query}` : ""}`,
+    );
   }
 
   function toggleTask(taskId: string) {
@@ -654,7 +691,9 @@ export function BoardClient({
 
   return (
     <div className="flex h-full min-w-0 w-full flex-col gap-4">
-      <div className="flex min-w-0 w-full items-center gap-2">
+      <div className={cn("flex min-w-0 w-full items-center gap-2", hideHeader && "justify-end")}>
+        {!hideHeader && (
+          <>
         <Button
           variant="ghost"
           size="icon-sm"
@@ -668,9 +707,11 @@ export function BoardClient({
           style={{ backgroundColor: project.color }}
         />
         <h1 className="min-w-0 truncate text-2xl font-semibold tracking-tight">{project.name}</h1>
+          </>
+        )}
         <Button
           size="sm"
-          className="ml-auto"
+          className={hideHeader ? "" : "ml-auto"}
           onClick={() => {
             openNewTask(columns[0]?.id ?? "");
           }}
@@ -737,7 +778,7 @@ export function BoardClient({
 
       <TaskDialog
         open={taskDialogOpen}
-        onOpenChange={setTaskDialogOpen}
+        onOpenChange={setDialogOpen}
         projectId={project.id}
         columns={columns}
         members={members}

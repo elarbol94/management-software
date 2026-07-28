@@ -15,6 +15,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { EvidencePanel } from "@/modules/wiki/components/evidence-panel";
+import { ContextPanel } from "@/modules/context/components/context-panel";
+import { canonicalTaskHref } from "@/modules/context/routes";
 import {
   Dialog,
   DialogContent,
@@ -165,7 +167,7 @@ export function TaskDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="max-h-[calc(100vh-2rem)] overflow-y-auto sm:max-w-md">
         <DialogHeader>
           <DialogTitle>
             {task ? t("editTask") : isSubtask ? t("newSubtask") : t("newTask")}
@@ -372,7 +374,18 @@ export function TaskDialog({
             </div>
           )}
 
-          {task && <EvidencePanel targetType="task" targetId={task.id} compact />}
+          {task && (
+            <>
+              <ContextPanel
+                subjectType="task"
+                subjectId={task.id}
+                subjectLabel={task.title}
+                subjectHref={canonicalTaskHref(task.id, task.projectId)}
+                compact
+              />
+              <EvidencePanel targetType="task" targetId={task.id} compact />
+            </>
+          )}
 
           <div className="flex items-center justify-between gap-2">
             {task ? (

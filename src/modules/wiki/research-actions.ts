@@ -8,6 +8,7 @@ import { and, eq, inArray, isNull } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { db, sqlite } from "@/db";
 import {
+  contextLinks,
   evidenceLinks,
   user,
   wikiCommentThreads,
@@ -174,7 +175,33 @@ export async function unlinkSupportingSource(pageId: string, sourceId: string) {
 
 export async function deleteSource(id: string) {
   const currentUser = await requireUserOrThrow();
-  db.update(wikiSources).set({ deletedAt: new Date(), updatedAt: new Date(), updatedBy: currentUser.id }).where(eq(wikiSources.id, id)).run();
+  const documentIds = db
+    .select({ id: wikiPdfDocuments.id })
+    .from(wikiPdfDocuments)
+    .where(eq(wikiPdfDocuments.sourceId, id))
+    .all()
+    .map((document) => document.id);
+  db.transaction((tx) => {
+    tx.delete(contextLinks)
+      .where(
+        and(
+          eq(contextLinks.targetType, "wikiSource"),
+          eq(contextLinks.targetId, id),
+        ),
+      )
+      .run();
+    if (documentIds.length) {
+      tx.delete(contextLinks)
+        .where(
+          and(
+            eq(contextLinks.targetType, "pdf"),
+            inArray(contextLinks.targetId, documentIds),
+          ),
+        )
+        .run();
+    }
+    tx.update(wikiSources).set({ deletedAt: new Date(), updatedAt: new Date(), updatedBy: currentUser.id }).where(eq(wikiSources.id, id)).run();
+  });
   sqlite.prepare("DELETE FROM wiki_sources_fts WHERE source_id = ?").run(id);
   revalidateWiki();
 }

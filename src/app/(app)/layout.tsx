@@ -12,6 +12,7 @@ export const unstable_instant = {
       cookies: [{ name: "locale", value: "de" }],
       headers: [["rsc", "1"], ["next-action", null]],
       params: { slug: "sample", id: "sample", projectId: "sample", documentId: "sample", page: "1" },
+      searchParams: { task: null },
     },
   ],
 };

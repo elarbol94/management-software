@@ -1152,6 +1152,7 @@
     "duplicateSource": "Possible duplicate: {title}",
     "backToSources": "Back to sources",
     "linkedPages": "Linked documents",
+    "usedIn": "Used in",
     "history": "History",
     "noHistory": "No earlier versions.",
     "historyComparisonDescription": "Compare an earlier version with the current document. Changed lines are highlighted.",

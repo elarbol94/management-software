@@ -135,6 +135,7 @@ export function getPortfolioSchedule() {
   const deadlineRows = db
     .select({
       id: tasks.id,
+      projectId: tasks.projectId,
       title: tasks.title,
       description: tasks.description,
       assigneeId: tasks.assigneeId,
@@ -345,6 +346,7 @@ export function listTasksForContext(
   return db
     .select({
       id: tasks.id,
+      projectId: tasks.projectId,
       title: tasks.title,
       assigneeId: tasks.assigneeId,
       assigneeName: user.name,

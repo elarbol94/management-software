@@ -1152,6 +1152,7 @@
     "duplicateSource": "Mögliches Duplikat: {title}",
     "backToSources": "Zurück zu Quellen",
     "linkedPages": "Verknüpfte Dokumente",
+    "usedIn": "Verwendet in",
     "history": "Verlauf",
     "noHistory": "Keine früheren Versionen.",
     "historyComparisonDescription": "Vergleiche eine frühere Version mit dem aktuellen Dokument. Abweichende Zeilen sind farbig markiert.",

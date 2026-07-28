@@ -23,6 +23,7 @@ export type EditableTask = {
 
 export type ContextTaskMarker = {
   id: string;
+  projectId: string | null;
   title: string;
   assigneeId: string | null;
   assigneeName: string | null;

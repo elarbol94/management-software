@@ -10,6 +10,7 @@ import {
   ClipboardPlus,
   LayoutDashboard,
   Menu,
+  Search,
   Settings,
   X,
 } from "lucide-react";
@@ -34,6 +35,7 @@ import { cn } from "@/lib/utils";
 import { moduleNav } from "@/modules/registry";
 import { useTaskCreator } from "@/modules/tasks/components/task-create-provider";
 import { useDeadlineCreator } from "@/modules/tasks/components/deadline-create-provider";
+import { WorkspaceSearch } from "@/modules/context/components/workspace-search";
 
 function NavLink({
   href,
@@ -92,6 +94,7 @@ function AppNavigation({
   userEmail,
   onNavigate,
   navigationId,
+  onOpenSearch,
 }: {
   compact: boolean;
   pathname: string;
@@ -99,8 +102,10 @@ function AppNavigation({
   userEmail: string;
   onNavigate?: () => void;
   navigationId: string;
+  onOpenSearch: () => void;
 }) {
   const t = useTranslations("nav");
+  const tCommon = useTranslations("common");
   const tCalendar = useTranslations("calendar");
   const tTasks = useTranslations("tasks");
   const tDeadlines = useTranslations("deadlines");
@@ -117,6 +122,37 @@ function AppNavigation({
           aria-label={t("navigationLabel")}
           className={cn("flex flex-1 flex-col gap-1 overflow-y-auto", compact ? "px-2 py-3" : "p-3")}
         >
+          <button
+            type="button"
+            onClick={() => {
+              onOpenSearch();
+              onNavigate?.();
+            }}
+            className={cn(
+              "mb-2 flex h-10 items-center rounded-md border border-dashed text-sm font-medium text-muted-foreground transition-colors hover:border-indigo-300 hover:bg-indigo-50/60 hover:text-foreground dark:hover:bg-indigo-950/20",
+              compact ? "justify-center px-0" : "gap-3 px-3",
+            )}
+            aria-label={tCommon("search")}
+            title={`${tCommon("search")} · Ctrl+K`}
+          >
+            <Search className="size-5" />
+            <span
+              aria-hidden={compact}
+              className={cn(
+                "min-w-0 truncate whitespace-nowrap transition-all duration-[220ms]",
+                compact
+                  ? "max-w-0 overflow-hidden opacity-0"
+                  : "max-w-44 opacity-100",
+              )}
+            >
+              {tCommon("search")}
+            </span>
+            {!compact && (
+              <kbd className="ml-auto rounded border bg-background px-1 py-0.5 text-[9px]">
+                Ctrl K
+              </kbd>
+            )}
+          </button>
           {moduleNav.map((item) => (
             <NavLink
               key={item.key}
@@ -221,6 +257,7 @@ export function AppSidebar({ userName, userEmail }: { userName: string; userEmai
   const { isFocused } = useFocusMode();
   const [expanded, setExpanded] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
   useEffect(() => {
     document.documentElement.style.setProperty("--app-rail-width", expanded ? "15rem" : "3.5rem");
     return () => { document.documentElement.style.removeProperty("--app-rail-width"); };
@@ -271,6 +308,7 @@ export function AppSidebar({ userName, userEmail }: { userName: string; userEmai
             userName={userName}
             userEmail={userEmail}
             onNavigate={() => setMobileOpen(false)}
+            onOpenSearch={() => setSearchOpen(true)}
           />
         </SheetContent>
       </Sheet>
@@ -308,8 +346,10 @@ export function AppSidebar({ userName, userEmail }: { userName: string; userEmai
           pathname={pathname}
           userName={userName}
           userEmail={userEmail}
+          onOpenSearch={() => setSearchOpen(true)}
         />
       </aside>
+      <WorkspaceSearch open={searchOpen} onOpenChange={setSearchOpen} />
     </>
   );
 }

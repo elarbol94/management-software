@@ -5,6 +5,7 @@ import { and, eq, inArray, isNull } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { db, sqlite } from "@/db";
 import {
+  contextLinks,
   evidenceLinks,
   wikiCommentThreads,
   wikiLinks,
@@ -350,6 +351,14 @@ export async function deletePage(id: string) {
   }
 
   db.transaction(() => {
+    db.delete(contextLinks)
+      .where(
+        and(
+          eq(contextLinks.targetType, "wikiPage"),
+          inArray(contextLinks.targetId, toDelete),
+        ),
+      )
+      .run();
     db.update(wikiPages)
       .set({ deletedAt: new Date(), updatedBy: user.id })
       .where(inArray(wikiPages.id, toDelete))

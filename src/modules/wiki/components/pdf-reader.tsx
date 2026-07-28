@@ -29,6 +29,7 @@ import {
   restorePdfAnnotation, updatePdfAnnotation, updatePdfAnnotationComment,
 } from "../pdf-actions";
 import type { PdfRect } from "../lib/pdf-evidence";
+import { canonicalTaskHref } from "@/modules/context/routes";
 import {
   calculateFitScale, findSearchOccurrences, formatPdfCitation,
   normalizePdfSearchText, parsePdfReaderPreferences, PDF_READER_PREFERENCES_KEY, resolveInitialPage, type FitMode,
@@ -1399,24 +1400,7 @@ export function PdfReader({
         onMouseLeave={() => setHoveredTaskId((current) => current === task.id ? null : current)}
         onFocus={() => setHoveredTaskId(task.id)}
         onBlur={() => setHoveredTaskId((current) => current === task.id ? null : current)}
-        onClick={() => openTaskCreator({
-          task: {
-            id: task.id,
-            title: task.title,
-            assigneeId: task.assigneeId,
-            priority: task.priority,
-            dueDate: task.dueDate,
-            status: task.status,
-            projectId: null,
-          },
-          origin: {
-            type: "pdf",
-            entityId: documentId,
-            route: task.route,
-            label: task.label,
-            anchor,
-          },
-        })}
+        onClick={() => router.push(canonicalTaskHref(task.id, task.projectId))}
       ><ClipboardPlus className="size-3.5" /></button>];
       }),
     ];

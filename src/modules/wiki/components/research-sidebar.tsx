@@ -169,11 +169,6 @@ export function ResearchSidebar({
         event.preventDefault();
         void createNote();
       }
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
-        event.preventDefault();
-        if (window.matchMedia("(min-width: 768px)").matches) openDesktopSearch();
-        else openMobileSearch();
-      }
     }
     window.addEventListener("keydown", shortcut);
     return () => window.removeEventListener("keydown", shortcut);
@@ -204,11 +199,6 @@ export function ResearchSidebar({
   function openDesktopSearch() {
     setExpanded(true);
     focusAfterLayout(desktopSearchRef);
-  }
-
-  function openMobileSearch() {
-    setMobileOpen(true);
-    focusAfterLayout(mobileSearchRef);
   }
 
   function updateSearch(value: string) {
