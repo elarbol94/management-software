@@ -56,6 +56,7 @@ function syncFts(pageId: string, title: string, contentText: string) {
 const createSchema = z.object({
   title: z.string().min(1).max(200),
   parentId: z.string().nullable().default(null),
+  proofingLanguage: z.enum(["de-DE", "en-US"]).default("de-DE"),
 });
 
 export async function createPage(
@@ -71,6 +72,7 @@ export async function createPage(
       title: data.title,
       slug,
       parentId: data.parentId,
+      proofingLanguage: data.proofingLanguage,
       createdBy: user.id,
       updatedBy: user.id,
     })
@@ -80,6 +82,24 @@ export async function createPage(
   syncFts(row.id, data.title, "");
   revalidatePath("/wiki", "layout");
   return { slug };
+}
+
+const proofingLanguageSchema = z.object({
+  pageId: z.string().min(1),
+  language: z.enum(["de-DE", "en-US"]),
+});
+
+export async function updatePageProofingLanguage(input: z.infer<typeof proofingLanguageSchema>) {
+  await requireUserOrThrow();
+  const data = proofingLanguageSchema.parse(input);
+  const result = db.update(wikiPages)
+    .set({ proofingLanguage: data.language })
+    .where(and(eq(wikiPages.id, data.pageId), isNull(wikiPages.deletedAt)))
+    .returning({ proofingLanguage: wikiPages.proofingLanguage })
+    .get();
+  if (!result) throw new Error("Page not found");
+  revalidatePath("/wiki", "layout");
+  return result;
 }
 
 export async function renamePage(id: string, title: string) {

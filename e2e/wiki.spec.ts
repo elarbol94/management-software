@@ -521,3 +521,55 @@ test("workspace groups notes and applies local filters", async ({ page }) => {
   await page.getByPlaceholder("Notizen durchsuchen…").fill("sortiert");
   await expect(working).toContainText("Arbeitsansicht");
 });
+
+test("proofing language persists and spelling and writing issues use distinct styles", async ({ page }) => {
+  test.setTimeout(120_000);
+  const requestedLanguages: string[] = [];
+  await page.route("**/api/wiki/spellcheck", async (route) => {
+    const payload = route.request().postDataJSON() as { paragraphs: string[]; language: string; dictionary?: string[] };
+    requestedLanguages.push(payload.language);
+    const paragraph = payload.paragraphs.findIndex((text) => /Feler|grammar|Zweii/.test(text));
+    const text = paragraph < 0 ? "" : payload.paragraphs[paragraph];
+    const matches = paragraph < 0 ? [] : [
+      ...(text.includes("Feler") && !payload.dictionary?.includes("Feler") ? [{ paragraph, offset: text.indexOf("Feler"), length: 5, message: "Spelling", kind: "spelling", category: "Typos", ruleId: "SPELL", replacements: ["Fehler"] }] : []),
+      ...(text.includes("grammar") ? [{ paragraph, offset: text.indexOf("grammar"), length: 7, message: "Grammar", kind: "writing", category: "Grammar", ruleId: "GRAMMAR", replacements: ["grammar correction"] }] : []),
+      ...(text.includes("Zweii") && !payload.dictionary?.includes("Zweii") ? [{ paragraph, offset: text.indexOf("Zweii"), length: 5, message: "Second spelling", kind: "spelling", category: "Typos", ruleId: "SPELL_2", replacements: ["Zwei"] }] : []),
+    ];
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ matches }),
+    });
+  });
+
+  const signup = await page.request.post("/api/auth/sign-up/email", { data: { name: "E2E Admin", username: "admin", displayUsername: "admin", email: "admin" + String.fromCharCode(64) + "example.com", password: "super-secret-1" } });
+  if (signup.ok()) {
+    await page.goto("/");
+    await expect(page.getByText("Willkommen, E2E Admin!")).toBeVisible({ timeout: 30_000 });
+  } else {
+    await login(page);
+  }
+  await quickNote(page, "Proofing language", "Feler grammar Zweii");
+  const toggle = page.getByTestId("proofing-language-toggle");
+  await expect(toggle).toContainText("DE");
+  await expect(page.locator(".ProseMirror")).toHaveAttribute("spellcheck", "false");
+  await expect(page.locator(".wiki-spellcheck-issue--spelling")).toHaveCount(2, { timeout: 10_000 });
+  await expect(page.locator(".wiki-spellcheck-issue--writing")).toHaveCount(1);
+  const requestsBeforeAcceptance = requestedLanguages.length;
+  await page.locator(".wiki-spellcheck-issue--spelling").first().click();
+  await page.getByRole("button", { name: "Fehler", exact: true }).click();
+  await page.waitForTimeout(700);
+  expect(requestedLanguages).toHaveLength(requestsBeforeAcceptance);
+  await expect(page.locator(".wiki-spellcheck-issue--spelling")).toHaveCount(1);
+  await expect(page.locator(".wiki-spellcheck-issue--writing")).toHaveCount(1);
+  await page.locator(".wiki-spellcheck-issue--spelling").click();
+  await page.getByRole("button", { name: "Zum gemeinsamen Wörterbuch hinzufügen" }).click();
+  await expect(page.locator(".wiki-spellcheck-issue--spelling")).toHaveCount(0, { timeout: 10_000 });
+  await expect(page.locator(".wiki-spellcheck-issue--writing")).toHaveCount(1);
+
+  await toggle.click();
+  await expect(toggle).toContainText("EN");
+  await expect.poll(() => requestedLanguages.includes("en-US")).toBe(true);
+  await page.reload();
+  await expect(page.getByTestId("proofing-language-toggle")).toContainText("EN");
+});

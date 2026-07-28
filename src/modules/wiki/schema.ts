@@ -56,6 +56,7 @@ export const wikiPages = sqliteTable(
     icon: text("icon"),
     status: text("status", { enum: wikiPageStatuses }).notNull().default("inbox"),
     citationLocale: text("citation_locale").notNull().default("de-DE"),
+    proofingLanguage: text("proofing_language", { enum: ["de-DE", "en-US"] }).notNull().default("de-DE"),
     documentMode: integer("document_mode", { mode: "boolean" }).notNull().default(false),
     documentSettingsJson: text("document_settings_json").notNull().default(""),
     documentTemplateId: text("document_template_id").references(() => wikiDocumentTemplates.id, { onDelete: "set null" }),
@@ -83,6 +84,22 @@ export const wikiPages = sqliteTable(
     ),
   ],
 );
+
+export const wikiProofingWords = sqliteTable(
+  "wiki_proofing_words",
+  {
+    id: text("id").primaryKey().$defaultFn(() => createId()),
+    language: text("language", { enum: ["de-DE", "en-US"] }).notNull(),
+    word: text("word").notNull(),
+    normalizedWord: text("normalized_word").notNull(),
+    createdBy: text("created_by").notNull().references(() => user.id),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex("wiki_proofing_words_language_word_unique").on(table.language, table.normalizedWord),
+  ],
+);
+
 
 export const wikiSources = sqliteTable(
   "wiki_sources",

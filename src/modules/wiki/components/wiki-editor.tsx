@@ -13,8 +13,7 @@ import Placeholder from "@tiptap/extension-placeholder";
 import TaskList from "@tiptap/extension-task-list";
 import TaskItem from "@tiptap/extension-task-item";
 import { Fragment, Slice } from "@tiptap/pm/model";
-import { AlertCircle, AlignCenter, AlignLeft, AlignRight, Bold, BookMarked, CalendarClock, Check, ClipboardCheck, CloudOff, Code, Columns2, Eye, EyeOff, FileText, Heading1, Heading2, Heading3, Highlighter, ImagePlus, Italic, Keyboard, Link2, List, ListOrdered, ListTree, ListTodo, MessageSquareText, Minus, MoreHorizontal, Paperclip, Pilcrow, Quote, Redo2, RotateCcw, Rows3, Scan, ScissorsLineDashed, Search, Settings2, Strikethrough, Trash2, Underline as UnderlineIcon, Undo2, WifiOff } from "lucide-react";
-import { savePageContent } from "../actions";
+import { AlertCircle, AlignCenter, AlignLeft, AlignRight, Bold, BookMarked, CalendarClock, Check, ClipboardCheck, CloudOff, Code, Columns2, Eye, EyeOff, FileText, Heading1, Heading2, Heading3, Highlighter, ImagePlus, Italic, Keyboard, Languages, Link2, List, ListOrdered, ListTree, ListTodo, MessageSquareText, Minus, MoreHorizontal, Paperclip, Pilcrow, Quote, Redo2, RotateCcw, Rows3, Scan, ScissorsLineDashed, Search, Settings2, Strikethrough, Trash2, Underline as UnderlineIcon, Undo2, WifiOff } from "lucide-react";
 import { addComment, restorePageRevision } from "../research-actions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -34,7 +33,7 @@ import { WikiShortcutsDialog } from "./wiki-shortcuts-dialog";
 import { EditorLinkPopover, EditorOutlineSheet, EditorSearchPanel, type OutlineItem } from "./editor-tools";
 import { mergeCommentThreadIds, normalizeImageRect, type CommentAnchor } from "../lib/comment-anchors";
 import { EditorSearchExtension } from "../lib/editor-search";
-import { collectSpellcheckParagraphs, createSpellcheckExtension, mapSpellcheckMatches, setSpellcheckIssues, type SpellcheckIssue, type SpellcheckResponseMatch } from "../lib/spellcheck";
+import { collectSpellcheckParagraphs, createSpellcheckBatches, createSpellcheckExtension, getSpellcheckIssues, mapSpellcheckMatches, remapSpellcheckBatchMatches, replaceAllSpellcheckOccurrences, setSpellcheckIssues, type ProofingLanguage, type SpellcheckIssue, type SpellcheckResponseMatch } from "../lib/spellcheck";
 import { looksLikeMarkdown, parseMarkdownDocument } from "../lib/markdown-import";
 import { calculateWritingStats, type WritingStats } from "../lib/editor-writing";
 import { userMarkColorStyle, type UserMarkColor } from "@/lib/user-mark-colors";
@@ -79,6 +78,36 @@ import type { ContextDeadlineMarker, ContextTaskMarker } from "@/modules/tasks/t
 type PageRef = { id: string; title: string; slug: string };
 type SourceRef = { id: string; title: string; issuedDate: string; contributors: string };
 type WikiEditorPageActions = { addAttachment: () => void; linkSupportingSource: () => void };
+type CachedSpellcheckMatch = Omit<SpellcheckResponseMatch, "paragraph">;
+type WikiSaveInput = {
+  id: string;
+  contentJson: string;
+  baseContentJson?: string;
+  documentMode?: boolean;
+  documentSettingsJson?: string;
+  baseDocumentMode?: boolean;
+  baseDocumentSettingsJson?: string;
+  expectedVersion?: number;
+};
+type WikiSaveResult =
+  | { saved: true; conflict: false; version: number }
+  | { saved: false; conflict?: false }
+  | { saved: false; conflict: true; version: number; revisionId: string; contentJson: string; documentMode: boolean; documentSettingsJson: string };
+
+async function savePageContentRequest(input: WikiSaveInput): Promise<WikiSaveResult> {
+  const response = await fetch(`/api/wiki/pages/${encodeURIComponent(input.id)}/content`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) throw new Error("Save failed");
+  return response.json() as Promise<WikiSaveResult>;
+}
+
+function proofingIssueKey(issue: SpellcheckIssue) {
+  return `${issue.ruleId}\u0000${issue.from}\u0000${issue.to}\u0000${issue.message}`;
+}
+
 const WIKI_SHORTCUTS_KEY = "wiki:editor-shortcuts:v1";
 // These are TipTap's built-in editing combinations. Capture them as well when
 // a user has moved the corresponding action, otherwise TipTap would still run
@@ -94,6 +123,7 @@ type WikiEditorProps = {
   pageSlug: string;
   pageVersion: number;
   initialContent: string;
+  initialProofingLanguage: ProofingLanguage;
   initialDocumentMode: boolean;
   initialDocumentSettings: string;
   documentTemplates: StoredDocumentTemplate[];
@@ -512,6 +542,7 @@ export function WikiEditor({
   pageSlug,
   pageVersion,
   initialContent,
+  initialProofingLanguage,
   initialDocumentMode,
   initialDocumentSettings,
   documentTemplates,
@@ -548,6 +579,14 @@ export function WikiEditor({
   const [personalTypographyTemplates, setPersonalTypographyTemplates] = useState(typographyTemplates);
   const [typographyOpen, setTypographyOpen] = useState(false);
   const [spellcheckIssue, setSpellcheckIssue] = useState<{ issue: SpellcheckIssue; rect: DOMRect } | null>(null);
+  const [proofingLanguage, setProofingLanguage] = useState<ProofingLanguage>(initialProofingLanguage);
+  const [proofingStatus, setProofingStatus] = useState<"ready" | "checking" | "error">("checking");
+  const [proofingSaving, setProofingSaving] = useState(false);
+  const proofingCache = useRef(new Map<string, CachedSpellcheckMatch[]>());
+  const [proofingDictionary, setProofingDictionary] = useState<string[]>([]);
+  const [proofingDictionaryLoaded, setProofingDictionaryLoaded] = useState(false);
+  const ignoredProofingIssues = useRef(new Set<string>());
+  const preserveProofingOnNextUpdate = useRef(false);
   const [wikiShortcuts, setWikiShortcuts] = useState(loadWikiShortcutBindings);
   const [initialPreferences] = useState(loadEditorPreferences);
   const [statusVisible, setStatusVisible] = useState(initialPreferences.statusVisible); const [minimalToolbar, setMinimalToolbar] = useState(initialPreferences.minimalToolbar); const [typewriterMode, setTypewriterMode] = useState(initialPreferences.typewriterMode); const typewriterModeRef = useRef(initialPreferences.typewriterMode);
@@ -574,7 +613,7 @@ export function WikiEditor({
     setSaveState("saving");
     try {
       const settingsJson = serializeDocumentSettings(documentSettingsRef.current);
-      let result = await savePageContent({
+      let result = await savePageContentRequest({
         id: pageId,
         contentJson: json,
         baseContentJson: lastServerContent.current,
@@ -589,7 +628,7 @@ export function WikiEditor({
         && result.documentMode === lastServerDocumentMode.current
         && result.documentSettingsJson === lastServerDocumentSettings.current) {
         version.current = result.version;
-        result = await savePageContent({
+        result = await savePageContentRequest({
           id: pageId,
           contentJson: json,
           baseContentJson: lastServerContent.current,
@@ -710,7 +749,7 @@ export function WikiEditor({
 
   const editor = useEditor({ immediatelyRender: false, enableInputRules: ["blockquote", "bulletList", "codeBlock", "heading", "orderedList", "taskItem"], extensions: [StarterKit.configure({ bold: false, code: false, heading: false, listItem: false, italic: false, link: { openOnClick: false }, strike: false }), CollapsibleHeading.configure({ levels: [1, 2, 3] }), HeadingListItem, ...MarkdownShortcutMarks, ...MarkdownDocumentExtensions, ...DocumentExtensions, TaskList, TaskItem.configure({ nested: true }), Citation, PdfEvidence, TaskReference, DeadlineReference, CommentableImage, CommentMark, Highlight, Placeholder.configure({ placeholder: ({ node }) => node.type.name === "heading" ? t("editor.placeholder.heading") : t("editor.placeholder.empty") }), EditorSearchExtension, createSpellcheckExtension((issue, target) => setSpellcheckIssue({ issue, rect: target.getBoundingClientRect() })), MarkdownShortcuts, slashExtension], content,
     editorProps: {
-      attributes: { class: "prose prose-neutral dark:prose-invert max-w-none min-h-[28rem] focus:outline-none" },
+      attributes: { class: "prose prose-neutral dark:prose-invert max-w-none min-h-[28rem] focus:outline-none", spellcheck: "false" },
       handlePaste(view, event) {
         const files = [...(event.clipboardData?.files ?? [])].filter((file) => INLINE_IMAGE_TYPES.has(file.type));
         if (files.length) {
@@ -798,33 +837,131 @@ export function WikiEditor({
 
   useEffect(() => () => { if (saveTimer.current) clearTimeout(saveTimer.current); }, []);
   useEffect(() => {
-    if (!editor) return;
+    const controller = new AbortController();
+    void fetch(`/api/wiki/proofing-dictionary?language=${encodeURIComponent(proofingLanguage)}`, { signal: controller.signal })
+      .then(async (response) => {
+        if (!response.ok) throw new Error("Dictionary unavailable");
+        return response.json() as Promise<{ words: string[] }>;
+      })
+      .then(({ words }) => {
+        proofingCache.current.clear();
+        setProofingDictionary(words);
+        setProofingDictionaryLoaded(true);
+      })
+      .catch((error: unknown) => {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        proofingCache.current.clear();
+        setProofingDictionary([]);
+        setProofingDictionaryLoaded(true);
+      });
+    return () => controller.abort();
+  }, [proofingLanguage]);
+
+  useEffect(() => {
+    if (!editor || !proofingDictionaryLoaded) return;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let controller: AbortController | undefined;
-    const check = () => {
-      const paragraphs = collectSpellcheckParagraphs(editor.state.doc);
-      if (!paragraphs.length) { setSpellcheckIssues(editor, []); return; }
-      controller?.abort();
-      controller = new AbortController();
-      void fetch("/api/wiki/spellcheck", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ paragraphs: paragraphs.map((paragraph) => paragraph.text) }),
-        signal: controller.signal,
-      }).then(async (response) => {
+    let generation = 0;
+
+    const requestProofing = async (paragraphs: ReturnType<typeof collectSpellcheckParagraphs>, activeController: AbortController) => {
+      const matches: SpellcheckResponseMatch[] = [];
+      for (const batch of createSpellcheckBatches(paragraphs)) {
+        const uncachedItems = batch.items.filter((item) => {
+          const cached = proofingCache.current.get(`${proofingLanguage}\u0000${item.text}`);
+          if (!cached) return true;
+          matches.push(...cached.map((match) => ({ ...match, paragraph: item.paragraph, offset: item.offset + match.offset })));
+          return false;
+        });
+        if (!uncachedItems.length) continue;
+        const requestBatch = { items: uncachedItems };
+        const response = await fetch("/api/wiki/spellcheck", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            paragraphs: requestBatch.items.map((item) => item.text),
+            language: proofingLanguage,
+            dictionary: proofingDictionary,
+          }),
+          signal: activeController.signal,
+        });
         if (!response.ok) throw new Error("Spellcheck unavailable");
-        return response.json() as Promise<{ matches: SpellcheckResponseMatch[] }>;
-      }).then(({ matches }) => {
-        if (!controller?.signal.aborted) setSpellcheckIssues(editor, mapSpellcheckMatches(paragraphs, matches));
-      }).catch((error: unknown) => {
-        if (!(error instanceof DOMException && error.name === "AbortError")) setSpellcheckIssues(editor, []);
-      });
+        const payload = await response.json() as { matches: SpellcheckResponseMatch[] };
+        for (const [paragraph, item] of requestBatch.items.entries()) {
+          const itemMatches = payload.matches
+            .filter((match) => match.paragraph === paragraph)
+            .map((match): CachedSpellcheckMatch => ({
+              offset: match.offset,
+              length: match.length,
+              message: match.message,
+              kind: match.kind,
+              category: match.category,
+              ruleId: match.ruleId,
+              replacements: match.replacements,
+            }));
+          proofingCache.current.set(`${proofingLanguage}\u0000${item.text}`, itemMatches);
+          if (proofingCache.current.size > 500) {
+            const oldestKey = proofingCache.current.keys().next().value;
+            if (typeof oldestKey === "string") proofingCache.current.delete(oldestKey);
+          }
+        }
+        matches.push(...remapSpellcheckBatchMatches(requestBatch, payload.matches));
+      }
+      return mapSpellcheckMatches(paragraphs, matches).filter((issue) => !ignoredProofingIssues.current.has(proofingIssueKey(issue)));
     };
-    const schedule = () => { if (timer) clearTimeout(timer); timer = setTimeout(check, 650); };
+
+    const check = async (checkGeneration: number) => {
+      const paragraphs = collectSpellcheckParagraphs(editor.state.doc);
+      setSpellcheckIssue(null);
+      if (!paragraphs.length) {
+        setSpellcheckIssues(editor, []);
+        setProofingStatus("ready");
+        return;
+      }
+
+      const activeController = new AbortController();
+      controller = activeController;
+      setProofingStatus("checking");
+      try {
+        const cursor = editor.state.selection.from;
+        const priorityIndex = paragraphs.findIndex((paragraph) => paragraph.from <= cursor && cursor <= paragraph.from + paragraph.text.length);
+        const priorityParagraphs = [paragraphs[priorityIndex >= 0 ? priorityIndex : 0]];
+        const priorityIssues = await requestProofing(priorityParagraphs, activeController);
+        if (checkGeneration !== generation || activeController.signal.aborted) return;
+        setSpellcheckIssues(editor, priorityIssues);
+
+        const fullIssues = paragraphs.length === 1 ? priorityIssues : await requestProofing(paragraphs, activeController);
+        if (checkGeneration !== generation || activeController.signal.aborted) return;
+        setSpellcheckIssues(editor, fullIssues);
+        setProofingStatus("ready");
+      } catch (error: unknown) {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        if (checkGeneration !== generation) return;
+        setSpellcheckIssues(editor, []);
+        setProofingStatus("error");
+      }
+    };
+
+    const schedule = () => {
+      if (preserveProofingOnNextUpdate.current) {
+        preserveProofingOnNextUpdate.current = false;
+        return;
+      }
+      if (timer) clearTimeout(timer);
+      controller?.abort();
+      generation += 1;
+      setSpellcheckIssue(null);
+      setSpellcheckIssues(editor, []);
+      timer = setTimeout(() => void check(generation), 420);
+    };
     editor.on("update", schedule);
-    schedule();
-    return () => { if (timer) clearTimeout(timer); controller?.abort(); editor.off("update", schedule); };
-  }, [editor, pageId]);
+    void check(++generation);
+    return () => {
+      generation += 1;
+      if (timer) clearTimeout(timer);
+      controller?.abort();
+      editor.off("update", schedule);
+    };
+  }, [editor, pageId, proofingDictionary, proofingDictionaryLoaded, proofingLanguage]);
   useEffect(() => {
     if (previousFocused.current === focused) return;
     previousFocused.current = focused;
@@ -1122,6 +1259,79 @@ export function WikiEditor({
     location.reload();
   }
 
+  async function toggleProofingLanguage() {
+    const previous = proofingLanguage;
+    const next: ProofingLanguage = previous === "de-DE" ? "en-US" : "de-DE";
+    setProofingSaving(true);
+    setProofingDictionaryLoaded(false);
+    setProofingDictionary([]);
+    proofingCache.current.clear();
+    setProofingLanguage(next);
+    setSpellcheckIssue(null);
+    try {
+      const response = await fetch("/api/wiki/pages/" + encodeURIComponent(pageId) + "/proofing-language", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ language: next }),
+      });
+      if (!response.ok) throw new Error("Proofing language save failed");
+    } catch {
+      setProofingLanguage(previous);
+      toast.error(t("editor.proofing.saveFailed"));
+    } finally {
+      setProofingSaving(false);
+    }
+  }
+
+  function ignoreCurrentProofingIssue() {
+    if (!spellcheckIssue) return;
+    ignoredProofingIssues.current.add(proofingIssueKey(spellcheckIssue.issue));
+    setSpellcheckIssues(activeEditor, getSpellcheckIssues(activeEditor).filter((issue) => proofingIssueKey(issue) !== proofingIssueKey(spellcheckIssue.issue)));
+    setSpellcheckIssue(null);
+  }
+
+  async function addCurrentWordToDictionary() {
+    if (!spellcheckIssue || spellcheckIssue.issue.kind !== "spelling") return;
+    const word = activeEditor.state.doc.textBetween(spellcheckIssue.issue.from, spellcheckIssue.issue.to).trim();
+    if (!word) return;
+    try {
+      const response = await fetch("/api/wiki/proofing-dictionary", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ language: proofingLanguage, word }),
+      });
+      if (!response.ok) throw new Error("Dictionary save failed");
+      const payload = await response.json() as { word: string };
+      proofingCache.current.clear();
+      setProofingDictionary((current) => current.some((item) => item.toLocaleLowerCase(proofingLanguage) === payload.word.toLocaleLowerCase(proofingLanguage)) ? current : [...current, payload.word]);
+      setSpellcheckIssue(null);
+      toast.success(t("editor.proofing.dictionaryAdded", { word: payload.word }));
+    } catch {
+      toast.error(t("editor.proofing.dictionaryFailed"));
+    }
+  }
+
+  function replaceAllCurrentProofingIssue(replacement: string) {
+    if (!spellcheckIssue) return;
+    const source = activeEditor.state.doc.textBetween(spellcheckIssue.issue.from, spellcheckIssue.issue.to);
+    if (!source || source === replacement) return;
+    preserveProofingOnNextUpdate.current = true;
+    const count = replaceAllSpellcheckOccurrences(activeEditor, source, replacement);
+    if (!count) preserveProofingOnNextUpdate.current = false;
+    setSpellcheckIssue(null);
+    if (count > 0) toast.success(t("editor.proofing.replacedAll", { count }));
+  }
+
+  function replaceCurrentProofingIssue(replacement: string) {
+    if (!spellcheckIssue) return;
+    const { issue } = spellcheckIssue;
+    const source = activeEditor.state.doc.textBetween(issue.from, issue.to);
+    if (!source || source === replacement) return;
+    preserveProofingOnNextUpdate.current = true;
+    activeEditor.chain().focus().insertContentAt({ from: issue.from, to: issue.to }, replacement).run();
+    setSpellcheckIssue(null);
+  }
+
   const savePresentation = {
     idle: { label: "", icon: null, className: "" },
     unsaved: { label: t("editor.save.unsaved"), icon: <Pilcrow className="size-3.5" />, className: "text-muted-foreground" },
@@ -1132,6 +1342,11 @@ export function WikiEditor({
     conflict: { label: t("editConflict"), icon: <CloudOff className="size-3.5" />, className: "text-amber-700 dark:text-amber-400" },
   }[saveState];
   const shortcutLabel = (action: WikiShortcutAction) => displayWikiShortcut(wikiShortcuts[action]);
+  const proofingLanguageLabel = proofingLanguage === "de-DE" ? t("editor.proofing.languages.de") : t("editor.proofing.languages.en");
+  const nextProofingLanguageLabel = proofingLanguage === "de-DE" ? t("editor.proofing.languages.en") : t("editor.proofing.languages.de");
+  const proofingButtonTitle = proofingStatus === "error"
+    ? t("editor.proofing.unavailable")
+    : t("editor.proofing.switch", { language: proofingLanguageLabel, nextLanguage: nextProofingLanguageLabel });
 
   return <div className="relative flex flex-col gap-3"><div className="sticky top-0 z-40 flex flex-wrap items-center gap-0.5 rounded-lg border bg-background/95 p-1 shadow-sm backdrop-blur supports-[backdrop-filter]:bg-background/80">
     <ToolbarButton title={t("editor.toolbar.undo")} shortcut={shortcutLabel("undo")} onClick={() => activeEditor.chain().focus().undo().run()}><Undo2 className="size-4" /></ToolbarButton>
@@ -1168,6 +1383,13 @@ export function WikiEditor({
       <DropdownMenuItem onClick={() => pageActions.linkSupportingSource()}><BookMarked />{t("slash.commands.supportingSource.label")}<DropdownMenuShortcut>{shortcutLabel("supportingSource")}</DropdownMenuShortcut></DropdownMenuItem>
     </ToolbarMenu>
     <input ref={imageInputRef} data-testid="wiki-inline-image-input" hidden type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => { const file = event.target.files?.[0]; if (file) void insertInlineImage(file); event.target.value = ""; }} />
+    <Tooltip>
+      <TooltipTrigger render={<Button type="button" data-testid="proofing-language-toggle" size="sm" variant="ghost" className="gap-1 px-2 text-xs" aria-label={proofingButtonTitle} aria-busy={proofingStatus === "checking" || proofingSaving} disabled={proofingSaving} onClick={() => void toggleProofingLanguage()} />}>
+        {proofingStatus === "checking" || proofingSaving ? <RotateCcw className="size-3.5 animate-spin" /> : proofingStatus === "error" ? <AlertCircle className="size-3.5 text-destructive" /> : <Languages className="size-3.5" />}
+        <span>{proofingLanguage === "de-DE" ? "DE" : "EN"}</span>
+      </TooltipTrigger>
+      <TooltipContent>{proofingButtonTitle}{proofingStatus === "checking" && <span> · {t("editor.proofing.checking")}</span>}</TooltipContent>
+    </Tooltip>
     <span className="mx-1 h-5 w-px bg-border" />
     <ToolbarButton title={t("editor.search.title")} shortcut={shortcutLabel("search")} active={searchOpen} onClick={() => setSearchOpen((value) => !value)}><Search className="size-4" /></ToolbarButton>
     <ToolbarButton title={t("editor.outline.title")} shortcut={shortcutLabel("outline")} active={outlineOpen} onClick={() => setOutlineOpen(true)}><ListTree className="size-4" /></ToolbarButton>
@@ -1252,10 +1474,16 @@ export function WikiEditor({
       >
         <EditorContent editor={editor} data-testid="wiki-editor" data-document-mode={documentMode ? "true" : "false"} />
       </div>
-      {spellcheckIssue && <div role="dialog" aria-label="Rechtschreibvorschläge" className="fixed z-50 w-64 rounded-lg border bg-popover p-2 shadow-lg" style={{ left: Math.min(spellcheckIssue.rect.left, window.innerWidth - 272), top: Math.min(spellcheckIssue.rect.bottom + 8, window.innerHeight - 160) }}>
+      {spellcheckIssue && <div role="dialog" aria-label={t("editor.proofing.dialog")} className="fixed z-50 max-h-[min(28rem,calc(100vh-2rem))] w-72 overflow-y-auto rounded-lg border bg-popover p-2 shadow-lg" style={{ left: Math.min(spellcheckIssue.rect.left, window.innerWidth - 304), top: Math.min(spellcheckIssue.rect.bottom + 8, window.innerHeight - 210) }}>
+        <p className="px-2 pb-1 text-xs font-medium">{t(spellcheckIssue.issue.kind === "spelling" ? "editor.proofing.types.spelling" : "editor.proofing.types.writing")}{spellcheckIssue.issue.category && <span className="font-normal text-muted-foreground"> · {spellcheckIssue.issue.category}</span>}</p>
         <p className="px-2 pb-1 text-xs text-muted-foreground">{spellcheckIssue.issue.message}</p>
-        {spellcheckIssue.issue.replacements.length ? spellcheckIssue.issue.replacements.map((replacement) => <Button key={replacement} type="button" variant="ghost" size="sm" className="w-full justify-start" onClick={() => { editor.chain().focus().insertContentAt({ from: spellcheckIssue.issue.from, to: spellcheckIssue.issue.to }, replacement).run(); setSpellcheckIssue(null); }}>{replacement}</Button>) : <p className="px-2 py-1 text-xs text-muted-foreground">Keine Ersetzung vorgeschlagen.</p>}
-        <Button type="button" variant="ghost" size="sm" className="w-full justify-start" onClick={() => setSpellcheckIssue(null)}>Schließen</Button>
+        {spellcheckIssue.issue.replacements.length ? spellcheckIssue.issue.replacements.map((replacement) => <Button key={replacement} type="button" variant="ghost" size="sm" className="w-full justify-start" onClick={() => replaceCurrentProofingIssue(replacement)}>{replacement}</Button>) : <p className="px-2 py-1 text-xs text-muted-foreground">{t("editor.proofing.noReplacement")}</p>}
+        <div className="mt-1 border-t pt-1">
+          {spellcheckIssue.issue.replacements[0] && <Button type="button" variant="ghost" size="sm" className="w-full justify-start" onClick={() => replaceAllCurrentProofingIssue(spellcheckIssue.issue.replacements[0])}>{t("editor.proofing.replaceAll")}</Button>}
+          <Button type="button" variant="ghost" size="sm" className="w-full justify-start" onClick={ignoreCurrentProofingIssue}>{t("editor.proofing.ignore")}</Button>
+          {spellcheckIssue.issue.kind === "spelling" && <Button type="button" variant="ghost" size="sm" className="w-full justify-start" onClick={() => void addCurrentWordToDictionary()}>{t("editor.proofing.addToDictionary")}</Button>}
+          <Button type="button" variant="ghost" size="sm" className="w-full justify-start" onClick={() => setSpellcheckIssue(null)}>{t("editor.proofing.close")}</Button>
+        </div>
       </div>}
       <CommentAnchorOverlay visible={commentsVisible} comments={commentThreads} editor={editor} rootRef={editorRootRef} activeThreadId={activeThreadId} onActiveThreadChange={setActiveThreadId} />
     </div>

@@ -14,7 +14,7 @@ export default async function WikiPage({ params, searchParams }: { params: Promi
   const meta = getPageMeta(page.id);
   const currentUserTypography = getWikiTypographyProfileForUser(currentUser.id);
   return <WikiShell
-    page={{ id: page.id, title: page.title, slug: page.slug, contentJson: page.contentJson, status: page.status, citationLocale: page.citationLocale, version: page.version, documentMode: page.documentMode, documentSettingsJson: page.documentSettingsJson, createdBy: page.createdBy }}
+    page={{ id: page.id, title: page.title, slug: page.slug, contentJson: page.contentJson, status: page.status, citationLocale: page.citationLocale, proofingLanguage: page.proofingLanguage, version: page.version, documentMode: page.documentMode, documentSettingsJson: page.documentSettingsJson, createdBy: page.createdBy }}
     backlinks={getBacklinks(page.id)} allPages={listPagesFlat().filter((item) => item.id !== page.id)}
     sources={listSources({ limit: 500 }).map((source) => ({ id: source.id, title: source.title, issuedDate: source.issuedDate, contributors: source.contributors }))}
     citationSources={getCitationSourcesForPage(page.id)} research={getPageResearchMeta(page.id, currentUser.id)}

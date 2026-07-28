@@ -1261,6 +1261,23 @@
       }
     },
     "editor": {
+      "proofing": {
+        "languages": { "de": "German", "en": "English" },
+        "switch": "Proofing language: {language}. Switch to {nextLanguage}.",
+        "checking": "Checking",
+        "unavailable": "Spelling and grammar checking is currently unavailable",
+        "saveFailed": "The proofing language could not be saved.",
+        "dialog": "Correction suggestions",
+        "types": { "spelling": "Spelling", "writing": "Grammar & style" },
+        "noReplacement": "No replacement suggested.",
+        "replaceAll": "Replace all matching occurrences",
+        "ignore": "Ignore this suggestion",
+        "addToDictionary": "Add to shared dictionary",
+        "dictionaryAdded": "“{word}” was added to the dictionary.",
+        "dictionaryFailed": "The word could not be added to the dictionary.",
+        "replacedAll": "{count, plural, one {# occurrence replaced} other {# occurrences replaced}}",
+        "close": "Close"
+      },
       "toolbar": {
         "undo": "Undo", "redo": "Redo", "bold": "Bold", "italic": "Italic",
         "heading1": "Heading 1", "heading2": "Heading 2", "heading3": "Heading 3",

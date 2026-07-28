@@ -661,9 +661,16 @@
     cursor: pointer;
     text-decoration-line: underline;
     text-decoration-style: wavy;
-    text-decoration-color: color-mix(in oklab, var(--destructive) 82%, transparent);
     text-decoration-thickness: 1.5px;
     text-underline-offset: 0.18em;
+  }
+
+  .wiki-spellcheck-issue--spelling {
+    text-decoration-color: color-mix(in oklab, var(--destructive) 82%, transparent);
+  }
+
+  .wiki-spellcheck-issue--writing {
+    text-decoration-color: color-mix(in oklab, #2563eb 86%, transparent);
   }
 
   .gantt-scrollbar {

@@ -1261,6 +1261,23 @@
       }
     },
     "editor": {
+      "proofing": {
+        "languages": { "de": "Deutsch", "en": "Englisch" },
+        "switch": "Prüfsprache: {language}. Zu {nextLanguage} wechseln.",
+        "checking": "Prüfung läuft",
+        "unavailable": "Rechtschreib- und Grammatikprüfung momentan nicht erreichbar",
+        "saveFailed": "Die Prüfsprache konnte nicht gespeichert werden.",
+        "dialog": "Korrekturvorschläge",
+        "types": { "spelling": "Rechtschreibung", "writing": "Grammatik & Stil" },
+        "noReplacement": "Keine Ersetzung vorgeschlagen.",
+        "replaceAll": "Alle gleichen Stellen ersetzen",
+        "ignore": "Diesen Hinweis ignorieren",
+        "addToDictionary": "Zum gemeinsamen Wörterbuch hinzufügen",
+        "dictionaryAdded": "„{word}“ wurde zum Wörterbuch hinzugefügt.",
+        "dictionaryFailed": "Das Wort konnte nicht zum Wörterbuch hinzugefügt werden.",
+        "replacedAll": "{count, plural, one {# Stelle ersetzt} other {# Stellen ersetzt}}",
+        "close": "Schließen"
+      },
       "toolbar": {
         "undo": "Rückgängig", "redo": "Wiederholen", "bold": "Fett", "italic": "Kursiv",
         "heading1": "Überschrift 1", "heading2": "Überschrift 2", "heading3": "Überschrift 3",
