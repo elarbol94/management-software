@@ -75,7 +75,10 @@ import {
   analyzeCalendarText,
   analyzeCalendarUrl,
 } from "../import-actions";
-import type { CalendarImportSuggestion } from "../import-parser";
+import {
+  normalizeCalendarUrl,
+  type CalendarImportSuggestion,
+} from "../import-parser";
 import {
   addDays,
   dateRange,
@@ -85,6 +88,11 @@ import {
   zonedDateTimeToUtc,
   zonedParts,
 } from "../date-utils";
+import {
+  formatAustrianDate,
+  parseAustrianDate,
+  parseAustrianTime,
+} from "../localized-date-time";
 import type {
   CalendarItem,
   CalendarView,
@@ -119,6 +127,7 @@ type EventDraft = {
   title: string;
   description: string;
   location: string;
+  address: string;
   allDay: boolean;
   startDate: string;
   endDate: string;
@@ -134,6 +143,19 @@ type EventDraft = {
   recurring: boolean;
   scope: "occurrence" | "future" | "series";
 };
+
+type ImportableDraftField =
+  | "title"
+  | "description"
+  | "location"
+  | "address"
+  | "allDay"
+  | "startDate"
+  | "endDate"
+  | "startTime"
+  | "endTime"
+  | "timezone"
+  | "repeat";
 
 function localDate(date = new Date()) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
@@ -172,6 +194,7 @@ function blankDraft(
     title: "",
     description: "",
     location: "",
+    address: "",
     allDay: false,
     startDate: date,
     endDate: addDays(date, 1),
@@ -213,6 +236,7 @@ function itemDraft(
     title: item.title,
     description: item.description,
     location: item.location,
+    address: item.address,
     allDay: item.allDay,
     startDate: item.startDate ?? timedStartDate,
     endDate: item.endDate ?? timedEndDate,
@@ -238,6 +262,112 @@ function itemDraft(
     recurring: item.recurring,
     scope: item.recurring ? "occurrence" : "series",
   };
+}
+
+function AustrianDateInput({
+  value,
+  onChange,
+  label,
+  invalidMessage,
+  min,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  label: string;
+  invalidMessage: string;
+  min?: string;
+}) {
+  const [display, setDisplay] = useState(() => formatAustrianDate(value));
+  const pickerRef = useRef<HTMLInputElement>(null);
+
+  function update(raw: string, input: HTMLInputElement) {
+    setDisplay(raw);
+    const parsed = parseAustrianDate(raw);
+    const valid = Boolean(parsed && (!min || parsed >= min));
+    input.setCustomValidity(valid ? "" : invalidMessage);
+    if (valid && parsed) onChange(parsed);
+  }
+
+  return (
+    <div className="relative min-w-0">
+      <Input
+        required
+        aria-label={label}
+        inputMode="numeric"
+        autoComplete="off"
+        placeholder="TT.MM.JJJJ"
+        pattern="[0-9]{2}\.[0-9]{2}\.[0-9]{4}"
+        value={display}
+        onChange={(event) => update(event.target.value, event.currentTarget)}
+        onBlur={(event) => update(event.currentTarget.value, event.currentTarget)}
+        className="min-w-[9.5rem] pr-9 font-mono tabular-nums"
+      />
+      <input
+        ref={pickerRef}
+        type="date"
+        tabIndex={-1}
+        aria-hidden="true"
+        value={value}
+        min={min}
+        onChange={(event) => {
+          if (event.target.value) onChange(event.target.value);
+        }}
+        className="pointer-events-none absolute right-2 top-1/2 size-px -translate-y-1/2 opacity-0"
+      />
+      <button
+        type="button"
+        aria-label={`${label} wählen`}
+        onClick={() => {
+          try {
+            pickerRef.current?.showPicker();
+          } catch {
+            pickerRef.current?.click();
+          }
+        }}
+        className="absolute right-1 top-1/2 grid size-7 -translate-y-1/2 place-items-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        <CalendarDays className="size-4" />
+      </button>
+    </div>
+  );
+}
+
+function AustrianTimeInput({
+  value,
+  onChange,
+  label,
+  invalidMessage,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  label: string;
+  invalidMessage: string;
+}) {
+  const [display, setDisplay] = useState(value);
+
+  function update(raw: string, input: HTMLInputElement, normalize = false) {
+    const parsed = parseAustrianTime(raw);
+    setDisplay(normalize && parsed ? parsed : raw);
+    input.setCustomValidity(parsed ? "" : invalidMessage);
+    if (parsed) onChange(parsed);
+  }
+
+  return (
+    <Input
+      required
+      aria-label={label}
+      inputMode="numeric"
+      autoComplete="off"
+      placeholder="HH:mm"
+      pattern="[0-9]{1,2}:[0-9]{2}"
+      value={display}
+      onChange={(event) => update(event.target.value, event.currentTarget)}
+      onBlur={(event) =>
+        update(event.currentTarget.value, event.currentTarget, true)
+      }
+      className="w-full min-w-[6.5rem] font-mono tabular-nums"
+    />
+  );
 }
 
 function formatMinutes(minutes: number) {
@@ -393,7 +523,11 @@ export function CalendarClient({
   const [importResult, setImportResult] = useState<{
     label: string;
     fields: string[];
+    method: "ai" | "parser";
   } | null>(null);
+  const [manuallyEditedFields, setManuallyEditedFields] = useState<
+    Set<ImportableDraftField>
+  >(() => new Set());
   const [draft, setDraft] = useState<EventDraft>(() =>
     blankDraft(
       workspace.calendars[0]?.id ?? "",
@@ -446,7 +580,7 @@ export function CalendarClient({
       }
       if (
         query &&
-        !`${item.title} ${item.description} ${item.location}`
+        !`${item.title} ${item.description} ${item.location} ${item.address}`
           .toLocaleLowerCase()
           .includes(query)
       ) {
@@ -546,6 +680,15 @@ export function CalendarClient({
     setImportBusy(false);
     setImportError("");
     setImportResult(null);
+    setManuallyEditedFields(new Set());
+  }
+
+  function editDraft<K extends ImportableDraftField>(
+    field: K,
+    value: EventDraft[K],
+  ) {
+    setDraft((current) => ({ ...current, [field]: value }));
+    setManuallyEditedFields((current) => new Set(current).add(field));
   }
 
   function applyImportSuggestion(
@@ -554,50 +697,86 @@ export function CalendarClient({
   ) {
     const next = { ...draft };
     const fields: string[] = [];
-    if (suggestion.title && !next.title.trim()) {
+    if (
+      suggestion.title &&
+      !manuallyEditedFields.has("title") &&
+      !next.title.trim()
+    ) {
       next.title = suggestion.title;
       fields.push("title");
     }
-    if (suggestion.location && !next.location.trim()) {
+    if (
+      suggestion.location &&
+      !manuallyEditedFields.has("location") &&
+      !next.location.trim()
+    ) {
       next.location = suggestion.location;
       fields.push("location");
     }
-    if (suggestion.description && !next.description.trim()) {
+    if (
+      suggestion.address &&
+      !manuallyEditedFields.has("address") &&
+      !next.address.trim()
+    ) {
+      next.address = suggestion.address;
+      fields.push("address");
+    }
+    if (
+      suggestion.description &&
+      !manuallyEditedFields.has("description") &&
+      !next.description.trim()
+    ) {
       next.description = suggestion.description;
       fields.push("description");
     }
-    if (suggestion.startDate) {
+    if (suggestion.startDate && !manuallyEditedFields.has("startDate")) {
       next.startDate = suggestion.startDate;
       fields.push("date");
     }
-    if (suggestion.allDay !== undefined) {
+    if (suggestion.allDay !== undefined && !manuallyEditedFields.has("allDay")) {
       next.allDay = suggestion.allDay;
     }
-    if (suggestion.startTime) {
+    if (suggestion.startTime && !manuallyEditedFields.has("startTime")) {
       next.startTime = suggestion.startTime;
       fields.push("startTime");
     }
-    if (suggestion.endTime) {
+    if (suggestion.endTime && !manuallyEditedFields.has("endTime")) {
       next.endTime = suggestion.endTime;
       fields.push("endTime");
     }
-    if (suggestion.endDate && suggestion.allDay) {
+    if (
+      suggestion.endDate &&
+      suggestion.allDay &&
+      !manuallyEditedFields.has("endDate")
+    ) {
       next.endDate = suggestion.endDate;
       fields.push("endDate");
-    } else if (suggestion.startDate && suggestion.allDay) {
+    } else if (
+      suggestion.startDate &&
+      suggestion.allDay &&
+      !manuallyEditedFields.has("endDate")
+    ) {
       next.endDate = addDays(suggestion.startDate, 1);
     }
-    if (suggestion.timezone) {
+    if (suggestion.timezone && !manuallyEditedFields.has("timezone")) {
       next.timezone = suggestion.timezone;
       fields.push("timezone");
     }
-    if (suggestion.repeat && suggestion.repeat !== "none") {
+    if (
+      suggestion.repeat &&
+      suggestion.repeat !== "none" &&
+      !manuallyEditedFields.has("repeat")
+    ) {
       next.repeat = suggestion.repeat;
       fields.push("repeat");
     }
     setDraft(next);
     setImportError("");
-    setImportResult({ label, fields: [...new Set(fields)] });
+    setImportResult({
+      label,
+      fields: [...new Set(fields)],
+      method: suggestion.analysisMethod ?? "parser",
+    });
   }
 
   function importErrorMessage(error: unknown) {
@@ -617,6 +796,7 @@ export function CalendarClient({
       const suggestion = await analyzeCalendarText({
         text,
         fileName: file.name,
+        timezone: draft.timezone,
       });
       applyImportSuggestion(suggestion, file.name);
     } catch (error) {
@@ -627,8 +807,10 @@ export function CalendarClient({
   }
 
   async function importFromUrl(value = importUrl) {
-    const url = value.trim();
-    if (!/^https?:\/\//i.test(url)) {
+    let url: string;
+    try {
+      url = normalizeCalendarUrl(value);
+    } catch {
       setImportError(t("importInvalidUrl"));
       return;
     }
@@ -637,7 +819,10 @@ export function CalendarClient({
     setImportError("");
     setImportResult(null);
     try {
-      const suggestion = await analyzeCalendarUrl({ url });
+      const suggestion = await analyzeCalendarUrl({
+        url,
+        timezone: draft.timezone,
+      });
       applyImportSuggestion(suggestion, new URL(url).hostname);
     } catch (error) {
       setImportError(importErrorMessage(error));
@@ -807,12 +992,16 @@ export function CalendarClient({
           ? {
               title: draft.title,
               description: draft.description,
+              location: draft.location,
+              address: draft.address,
               startDate: draft.startDate,
               endDate: draft.endDate,
             }
           : {
               title: draft.title,
               description: draft.description,
+              location: draft.location,
+              address: draft.address,
               startAt: startAt!,
               endAt: endAt!,
             },
@@ -829,6 +1018,7 @@ export function CalendarClient({
       title: draft.title,
       description: draft.description,
       location: draft.location,
+      address: draft.address,
       allDay: draft.allDay,
       startDate: draft.allDay ? draft.startDate : null,
       endDate: draft.allDay ? draft.endDate : null,
@@ -1115,6 +1305,7 @@ export function CalendarClient({
   const importFieldLabels: Record<string, string> = {
     title: t("eventTitle"),
     location: t("location"),
+    address: t("address"),
     description: t("descriptionLabel"),
     date: t("start"),
     startTime: t("start"),
@@ -1449,7 +1640,7 @@ export function CalendarClient({
                   required
                   value={draft.title}
                   onChange={(event) =>
-                    setDraft({ ...draft, title: event.target.value })
+                    editDraft("title", event.target.value)
                   }
                   placeholder={t("eventTitlePlaceholder")}
                 />
@@ -1481,18 +1672,29 @@ export function CalendarClient({
                   <Input
                     value={draft.location}
                     onChange={(event) =>
-                      setDraft({ ...draft, location: event.target.value })
+                      editDraft("location", event.target.value)
                     }
-                    placeholder="Room, address or link"
+                    placeholder={t("locationPlaceholder")}
                   />
                 </label>
               </div>
+              <label className="grid gap-1.5">
+                <span className="text-xs font-medium">{t("address")}</span>
+                <Input
+                  value={draft.address}
+                  onChange={(event) =>
+                    editDraft("address", event.target.value)
+                  }
+                  placeholder={t("addressPlaceholder")}
+                  autoComplete="street-address"
+                />
+              </label>
               <label className="flex items-center gap-2 text-sm">
                 <input
                   type="checkbox"
                   checked={draft.allDay}
                   onChange={(event) =>
-                    setDraft({ ...draft, allDay: event.target.checked })
+                    editDraft("allDay", event.target.checked)
                   }
                   className="size-4 accent-foreground"
                 />
@@ -1501,51 +1703,60 @@ export function CalendarClient({
               <div className="grid gap-4 sm:grid-cols-2">
                 <label className="grid gap-1.5">
                   <span className="text-xs font-medium">{t("start")}</span>
-                  <div className="flex gap-2">
-                    <Input
-                      type="date"
-                      required
+                  <div
+                    className={cn(
+                      "grid min-w-0 gap-2",
+                      draft.allDay
+                        ? "grid-cols-1"
+                        : "grid-cols-[minmax(9.5rem,1fr)_minmax(6.5rem,7rem)]",
+                    )}
+                  >
+                    <AustrianDateInput
+                      key={`start-date-${draft.startDate}`}
                       value={draft.startDate}
-                      onChange={(event) =>
-                        setDraft({ ...draft, startDate: event.target.value })
+                      onChange={(value) =>
+                        editDraft("startDate", value)
                       }
+                      label={t("startDate")}
+                      invalidMessage={t("invalidDate")}
                     />
                     {!draft.allDay && (
-                      <Input
-                        type="time"
-                        required
+                      <AustrianTimeInput
+                        key={`start-time-${draft.startTime}`}
                         value={draft.startTime}
-                        onChange={(event) =>
-                          setDraft({ ...draft, startTime: event.target.value })
+                        onChange={(value) =>
+                          editDraft("startTime", value)
                         }
-                        className="w-28 font-mono"
+                        label={t("startTime")}
+                        invalidMessage={t("invalidTime")}
                       />
                     )}
                   </div>
                 </label>
                 <label className="grid gap-1.5">
                   <span className="text-xs font-medium">{t("end")}</span>
-                  <div className="flex gap-2">
+                  <div className="grid min-w-0 grid-cols-1 gap-2">
                     {draft.allDay && (
-                      <Input
-                        type="date"
-                        required
+                      <AustrianDateInput
+                        key={`end-date-${draft.endDate}`}
                         value={draft.endDate}
                         min={addDays(draft.startDate, 1)}
-                        onChange={(event) =>
-                          setDraft({ ...draft, endDate: event.target.value })
+                        onChange={(value) =>
+                          editDraft("endDate", value)
                         }
+                        label={t("endDate")}
+                        invalidMessage={t("invalidDate")}
                       />
                     )}
                     {!draft.allDay && (
-                      <Input
-                        type="time"
-                        required
+                      <AustrianTimeInput
+                        key={`end-time-${draft.endTime}`}
                         value={draft.endTime}
-                        onChange={(event) =>
-                          setDraft({ ...draft, endTime: event.target.value })
+                        onChange={(value) =>
+                          editDraft("endTime", value)
                         }
-                        className="w-28 font-mono"
+                        label={t("endTime")}
+                        invalidMessage={t("invalidTime")}
                       />
                     )}
                   </div>
@@ -1558,10 +1769,10 @@ export function CalendarClient({
                     className="h-8 rounded-lg border bg-background px-2.5 text-sm"
                     value={draft.repeat}
                     onChange={(event) =>
-                      setDraft({
-                        ...draft,
-                        repeat: event.target.value as EventDraft["repeat"],
-                      })
+                      editDraft(
+                        "repeat",
+                        event.target.value as EventDraft["repeat"],
+                      )
                     }
                   >
                     <option value="none">{t("repeatNone")}</option>
@@ -1613,7 +1824,7 @@ export function CalendarClient({
                 <Input
                   value={draft.timezone}
                   onChange={(event) =>
-                    setDraft({ ...draft, timezone: event.target.value })
+                    editDraft("timezone", event.target.value)
                   }
                   className="font-mono text-xs"
                 />
@@ -1660,7 +1871,7 @@ export function CalendarClient({
                 <Textarea
                   value={draft.description}
                   onChange={(event) =>
-                    setDraft({ ...draft, description: event.target.value })
+                    editDraft("description", event.target.value)
                   }
                   rows={3}
                 />
@@ -1733,7 +1944,10 @@ export function CalendarClient({
                   <label className="relative min-w-0 flex-1">
                     <Link2 className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
                     <Input
-                      type="url"
+                      type="text"
+                      inputMode="url"
+                      autoCapitalize="none"
+                      autoCorrect="off"
                       value={importUrl}
                       disabled={importBusy}
                       placeholder={t("importUrlPlaceholder")}
@@ -1775,6 +1989,11 @@ export function CalendarClient({
                     <div className="flex flex-wrap items-center gap-1.5 text-xs">
                       <Check className="size-3.5 text-[#059669]" />
                       <span className="font-medium">{importResult.label}</span>
+                      <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+                        {importResult.method === "ai"
+                          ? t("importMethodAi")
+                          : t("importMethodParser")}
+                      </span>
                       {importResult.fields.length > 0 ? (
                         importResult.fields.map((field) => (
                           <span
@@ -2603,17 +2822,24 @@ function Inspector({
           <Clock3 className="mt-0.5 size-3.5 text-muted-foreground" />
           <span>
             {item.allDay
-              ? `${item.startDate} – ${addDays(item.endDate!, -1)}`
+              ? `${formatAustrianDate(item.startDate!)} – ${formatAustrianDate(addDays(item.endDate!, -1))}`
               : new Intl.DateTimeFormat(locale, {
                   dateStyle: "medium",
                   timeStyle: "short",
+                  hourCycle: "h23",
                 }).format(new Date(item.startAt!))}
           </span>
         </p>
         {item.location && (
           <p className="flex items-start gap-2">
-            <MapPin className="mt-0.5 size-3.5 text-muted-foreground" />
+            <BriefcaseBusiness className="mt-0.5 size-3.5 text-muted-foreground" />
             <span>{item.location}</span>
+          </p>
+        )}
+        {item.address && (
+          <p className="flex items-start gap-2">
+            <MapPin className="mt-0.5 size-3.5 text-muted-foreground" />
+            <span>{item.address}</span>
           </p>
         )}
         {item.recurring && (

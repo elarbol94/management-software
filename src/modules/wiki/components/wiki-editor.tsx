@@ -34,6 +34,7 @@ import { WikiShortcutsDialog } from "./wiki-shortcuts-dialog";
 import { EditorLinkPopover, EditorOutlineSheet, EditorSearchPanel, type OutlineItem } from "./editor-tools";
 import { mergeCommentThreadIds, normalizeImageRect, type CommentAnchor } from "../lib/comment-anchors";
 import { EditorSearchExtension } from "../lib/editor-search";
+import { collectSpellcheckParagraphs, createSpellcheckExtension, mapSpellcheckMatches, setSpellcheckIssues, type SpellcheckIssue, type SpellcheckResponseMatch } from "../lib/spellcheck";
 import { looksLikeMarkdown, parseMarkdownDocument } from "../lib/markdown-import";
 import { calculateWritingStats, type WritingStats } from "../lib/editor-writing";
 import { userMarkColorStyle, type UserMarkColor } from "@/lib/user-mark-colors";
@@ -546,6 +547,7 @@ export function WikiEditor({
   const [personalTypography, setPersonalTypography] = useState(() => normalizeWikiTypography(editableTypography));
   const [personalTypographyTemplates, setPersonalTypographyTemplates] = useState(typographyTemplates);
   const [typographyOpen, setTypographyOpen] = useState(false);
+  const [spellcheckIssue, setSpellcheckIssue] = useState<{ issue: SpellcheckIssue; rect: DOMRect } | null>(null);
   const [wikiShortcuts, setWikiShortcuts] = useState(loadWikiShortcutBindings);
   const [initialPreferences] = useState(loadEditorPreferences);
   const [statusVisible, setStatusVisible] = useState(initialPreferences.statusVisible); const [minimalToolbar, setMinimalToolbar] = useState(initialPreferences.minimalToolbar); const [typewriterMode, setTypewriterMode] = useState(initialPreferences.typewriterMode); const typewriterModeRef = useRef(initialPreferences.typewriterMode);
@@ -706,7 +708,7 @@ export function WikiEditor({
   ];
   const slashExtension = createSlashCommandExtension({ commands: slashCommands, ariaLabel: t("slash.ariaLabel"), emptyLabel: t("slash.empty") });
 
-  const editor = useEditor({ immediatelyRender: false, enableInputRules: ["blockquote", "bulletList", "codeBlock", "heading", "orderedList", "taskItem"], extensions: [StarterKit.configure({ bold: false, code: false, heading: false, listItem: false, italic: false, link: { openOnClick: false }, strike: false }), CollapsibleHeading.configure({ levels: [1, 2, 3] }), HeadingListItem, ...MarkdownShortcutMarks, ...MarkdownDocumentExtensions, ...DocumentExtensions, TaskList, TaskItem.configure({ nested: true }), Citation, PdfEvidence, TaskReference, DeadlineReference, CommentableImage, CommentMark, Highlight, Placeholder.configure({ placeholder: ({ node }) => node.type.name === "heading" ? t("editor.placeholder.heading") : t("editor.placeholder.empty") }), EditorSearchExtension, MarkdownShortcuts, slashExtension], content,
+  const editor = useEditor({ immediatelyRender: false, enableInputRules: ["blockquote", "bulletList", "codeBlock", "heading", "orderedList", "taskItem"], extensions: [StarterKit.configure({ bold: false, code: false, heading: false, listItem: false, italic: false, link: { openOnClick: false }, strike: false }), CollapsibleHeading.configure({ levels: [1, 2, 3] }), HeadingListItem, ...MarkdownShortcutMarks, ...MarkdownDocumentExtensions, ...DocumentExtensions, TaskList, TaskItem.configure({ nested: true }), Citation, PdfEvidence, TaskReference, DeadlineReference, CommentableImage, CommentMark, Highlight, Placeholder.configure({ placeholder: ({ node }) => node.type.name === "heading" ? t("editor.placeholder.heading") : t("editor.placeholder.empty") }), EditorSearchExtension, createSpellcheckExtension((issue, target) => setSpellcheckIssue({ issue, rect: target.getBoundingClientRect() })), MarkdownShortcuts, slashExtension], content,
     editorProps: {
       attributes: { class: "prose prose-neutral dark:prose-invert max-w-none min-h-[28rem] focus:outline-none" },
       handlePaste(view, event) {
@@ -795,6 +797,34 @@ export function WikiEditor({
   }, [currentUserId, editor, users]);
 
   useEffect(() => () => { if (saveTimer.current) clearTimeout(saveTimer.current); }, []);
+  useEffect(() => {
+    if (!editor) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let controller: AbortController | undefined;
+    const check = () => {
+      const paragraphs = collectSpellcheckParagraphs(editor.state.doc);
+      if (!paragraphs.length) { setSpellcheckIssues(editor, []); return; }
+      controller?.abort();
+      controller = new AbortController();
+      void fetch("/api/wiki/spellcheck", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ paragraphs: paragraphs.map((paragraph) => paragraph.text) }),
+        signal: controller.signal,
+      }).then(async (response) => {
+        if (!response.ok) throw new Error("Spellcheck unavailable");
+        return response.json() as Promise<{ matches: SpellcheckResponseMatch[] }>;
+      }).then(({ matches }) => {
+        if (!controller?.signal.aborted) setSpellcheckIssues(editor, mapSpellcheckMatches(paragraphs, matches));
+      }).catch((error: unknown) => {
+        if (!(error instanceof DOMException && error.name === "AbortError")) setSpellcheckIssues(editor, []);
+      });
+    };
+    const schedule = () => { if (timer) clearTimeout(timer); timer = setTimeout(check, 650); };
+    editor.on("update", schedule);
+    schedule();
+    return () => { if (timer) clearTimeout(timer); controller?.abort(); editor.off("update", schedule); };
+  }, [editor, pageId]);
   useEffect(() => {
     if (previousFocused.current === focused) return;
     previousFocused.current = focused;
@@ -1222,6 +1252,11 @@ export function WikiEditor({
       >
         <EditorContent editor={editor} data-testid="wiki-editor" data-document-mode={documentMode ? "true" : "false"} />
       </div>
+      {spellcheckIssue && <div role="dialog" aria-label="Rechtschreibvorschläge" className="fixed z-50 w-64 rounded-lg border bg-popover p-2 shadow-lg" style={{ left: Math.min(spellcheckIssue.rect.left, window.innerWidth - 272), top: Math.min(spellcheckIssue.rect.bottom + 8, window.innerHeight - 160) }}>
+        <p className="px-2 pb-1 text-xs text-muted-foreground">{spellcheckIssue.issue.message}</p>
+        {spellcheckIssue.issue.replacements.length ? spellcheckIssue.issue.replacements.map((replacement) => <Button key={replacement} type="button" variant="ghost" size="sm" className="w-full justify-start" onClick={() => { editor.chain().focus().insertContentAt({ from: spellcheckIssue.issue.from, to: spellcheckIssue.issue.to }, replacement).run(); setSpellcheckIssue(null); }}>{replacement}</Button>) : <p className="px-2 py-1 text-xs text-muted-foreground">Keine Ersetzung vorgeschlagen.</p>}
+        <Button type="button" variant="ghost" size="sm" className="w-full justify-start" onClick={() => setSpellcheckIssue(null)}>Schließen</Button>
+      </div>}
       <CommentAnchorOverlay visible={commentsVisible} comments={commentThreads} editor={editor} rootRef={editorRootRef} activeThreadId={activeThreadId} onActiveThreadChange={setActiveThreadId} />
     </div>
     <CommentRail ref={commentRailRef} visible={commentsVisible} onVisibleChange={setCommentsVisible} pageId={pageId} comments={commentThreads} currentUserId={currentUserId} editor={editor} editorRootRef={editorRootRef} activeThreadId={activeThreadId} onActiveThreadChange={setActiveThreadId} />

@@ -246,6 +246,13 @@
       "when": 1785170400000,
       "tag": "0034_unified_flow_calendar",
       "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "6",
+      "when": 1785232274925,
+      "tag": "0035_calendar_event_address",
+      "breakpoints": true
     }
   ]
 }

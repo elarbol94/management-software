@@ -215,7 +215,8 @@ export function listCalendarWorkspace(input: {
         kind: event.kind === "focus" ? "focus" : "event",
         title: detailsHidden ? "Busy" : occurrence.title,
         description: detailsHidden ? "" : occurrence.description,
-        location: detailsHidden ? "" : event.location,
+        location: detailsHidden ? "" : occurrence.location,
+        address: detailsHidden ? "" : occurrence.address,
         color: calendar.color,
         allDay: event.allDay,
         startDate: occurrence.startDate,
@@ -287,6 +288,7 @@ export function listCalendarWorkspace(input: {
           title: task.title,
           description: task.description,
           location: "",
+          address: "",
           color: "#D97706",
           allDay: false,
           startDate: null,
@@ -330,6 +332,7 @@ export function listCalendarWorkspace(input: {
       title: task.title,
       description: task.description,
       location: "",
+      address: "",
       color:
         task.kind === "deadline"
           ? "#D97706"
@@ -389,6 +392,7 @@ export function listCalendarWorkspace(input: {
       title: project.name,
       description: "",
       location: "",
+      address: "",
       color: project.color,
       allDay: true,
       startDate: project.startDate,

@@ -25,6 +25,7 @@ export type CalendarItem = {
   title: string;
   description: string;
   location: string;
+  address: string;
   color: string;
   allDay: boolean;
   startDate: string | null;

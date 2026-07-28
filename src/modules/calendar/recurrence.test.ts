@@ -8,6 +8,8 @@ describe("calendar recurrence", () => {
         id: "weekly",
         title: "Operations review",
         description: "",
+        location: "",
+        address: "",
         allDay: false,
         startDate: null,
         endDate: null,
@@ -34,6 +36,8 @@ describe("calendar recurrence", () => {
         id: "monthly",
         title: "Close books",
         description: "",
+        location: "",
+        address: "",
         allDay: true,
         startDate: "2026-07-01",
         endDate: "2026-07-02",
@@ -51,7 +55,11 @@ describe("calendar recurrence", () => {
         {
           occurrenceKey: "2026-07-03",
           cancelled: false,
-          overrideJson: JSON.stringify({ title: "Close and report" }),
+          overrideJson: JSON.stringify({
+            title: "Close and report",
+            location: "Room 3",
+            address: "Hauptplatz 1",
+          }),
         },
       ],
       new Date("2026-07-01T00:00:00.000Z"),
@@ -62,6 +70,10 @@ describe("calendar recurrence", () => {
       ["2026-07-01", "Close books"],
       ["2026-07-03", "Close and report"],
     ]);
+    expect(occurrences[1]).toMatchObject({
+      location: "Room 3",
+      address: "Hauptplatz 1",
+    });
   });
 
   it("rejects recurrence strings without a frequency", () => {

@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useMemo, useSyncExternalStore } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useSyncExternalStore } from "react";
 import { usePathname } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { Maximize2, Minimize2 } from "lucide-react";
@@ -45,12 +45,42 @@ export function FocusModeProvider({ children }: { children: React.ReactNode }) {
   const scope = focusScopeForPathname(pathname);
   const snapshot = useSyncExternalStore(subscribeToFocusPreferences, focusPreferencesSnapshot, () => SERVER_SNAPSHOT);
   const [pdfPreference, notePreference] = snapshot.split(":").map((value) => value === "true");
+  const scopeRef = useRef(scope);
+  const fullscreenToggleRef = useRef(false);
+
+  useEffect(() => {
+    scopeRef.current = scope;
+  }, [scope]);
+
+  useEffect(() => {
+    const leaveFocusWhenFullscreenEnds = () => {
+      if (document.fullscreenElement || fullscreenToggleRef.current || !scopeRef.current) return;
+      const key = FOCUS_MODE_STORAGE_KEYS[scopeRef.current];
+      if (window.localStorage.getItem(key) === "true") {
+        window.localStorage.setItem(key, "false");
+        window.dispatchEvent(new Event("focus-mode-change"));
+      }
+    };
+    document.addEventListener("fullscreenchange", leaveFocusWhenFullscreenEnds);
+    return () => document.removeEventListener("fullscreenchange", leaveFocusWhenFullscreenEnds);
+  }, []);
 
   const value = useMemo<FocusModeContextValue>(() => {
     const setFocused = (focused: boolean) => {
       if (!scope) return;
       window.localStorage.setItem(FOCUS_MODE_STORAGE_KEYS[scope], String(focused));
       window.dispatchEvent(new Event("focus-mode-change"));
+      fullscreenToggleRef.current = true;
+      const fullscreen = focused
+        ? document.documentElement.requestFullscreen?.()
+        : document.fullscreenElement
+          ? document.exitFullscreen?.()
+          : undefined;
+      // Fullscreen needs a user gesture and can be rejected by browser policy.
+      // The existing distraction-free layout remains the deliberate fallback.
+      Promise.resolve(fullscreen).catch(() => undefined).finally(() => {
+        fullscreenToggleRef.current = false;
+      });
     };
 
     const isFocused = scope === "pdf" ? pdfPreference : scope === "note" ? notePreference : false;

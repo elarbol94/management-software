@@ -80,6 +80,7 @@ export const calendarEvents = sqliteTable(
     title: text("title").notNull(),
     description: text("description").notNull().default(""),
     location: text("location").notNull().default(""),
+    address: text("address").notNull().default(""),
     allDay: integer("all_day", { mode: "boolean" }).notNull().default(false),
     startDate: text("start_date"),
     endDate: text("end_date"),

@@ -2,15 +2,35 @@
 
 import { isIP } from "node:net";
 import { lookup } from "node:dns/promises";
+import { createHash, createHmac } from "node:crypto";
 import { z } from "zod";
 import { requireUserOrThrow } from "@/lib/auth";
+import { analyzeCalendarImportWithAi } from "./calendar-ai";
 import {
+  mergeCalendarImportSuggestions,
+  normalizeCalendarUrl,
   parseCalendarImport,
   type CalendarImportSuggestion,
 } from "./import-parser";
 
 const MAX_TEXT_LENGTH = 250_000;
 const MAX_URL_BYTES = 1_500_000;
+
+const timezoneSchema = z.string().trim().min(1).max(120).refine((timezone) => {
+  try {
+    new Intl.DateTimeFormat("en", { timeZone: timezone });
+    return true;
+  } catch {
+    return false;
+  }
+});
+
+function safetyIdentifier(userId: string) {
+  const secret = process.env.BETTER_AUTH_SECRET;
+  return secret
+    ? createHmac("sha256", secret).update(userId).digest("hex")
+    : createHash("sha256").update(userId).digest("hex");
+}
 
 function isPrivateAddress(address: string) {
   const normalized = address.toLowerCase();
@@ -36,7 +56,7 @@ function isPrivateAddress(address: string) {
 }
 
 async function assertPublicUrl(value: string) {
-  const url = new URL(value);
+  const url = new URL(normalizeCalendarUrl(value));
   if (!["http:", "https:"].includes(url.protocol)) {
     throw new Error("Only HTTP and HTTPS URLs are supported");
   }
@@ -150,7 +170,10 @@ function extractHtml(html: string) {
       .replace(/<script[\s\S]*?<\/script>/gi, " ")
       .replace(/<style[\s\S]*?<\/style>/gi, " ")
       .replace(/<br\s*\/?>/gi, "\n")
-      .replace(/<\/(?:p|div|li|h[1-6])>/gi, "\n")
+      .replace(
+        /<\/(?:p|div|li|h[1-6]|dt|dd|section|article|tr|td)>/gi,
+        "\n",
+      )
       .replace(/<[^>]+>/g, " "),
   )
     .replace(/[ \t]+/g, " ")
@@ -166,30 +189,74 @@ function extractHtml(html: string) {
 export async function analyzeCalendarText(input: {
   text: string;
   fileName?: string;
+  timezone: string;
 }): Promise<CalendarImportSuggestion> {
-  await requireUserOrThrow();
+  const currentUser = await requireUserOrThrow();
   const data = z
     .object({
       text: z.string().min(1).max(MAX_TEXT_LENGTH),
       fileName: z.string().max(240).optional(),
+      timezone: timezoneSchema,
     })
     .parse(input);
-  return parseCalendarImport(data.text);
+  const parserSuggestion = parseCalendarImport(data.text, {
+    targetTimezone: data.timezone,
+  });
+  if (/BEGIN:VEVENT/i.test(data.text)) {
+    return { ...parserSuggestion, analysisMethod: "parser" };
+  }
+  const aiSuggestion = await analyzeCalendarImportWithAi({
+    text: data.text,
+    timezone: data.timezone,
+    safetyIdentifier: safetyIdentifier(currentUser.id),
+  });
+  const primarySuggestion =
+    aiSuggestion && Object.keys(aiSuggestion).length > 0 ? aiSuggestion : null;
+  return {
+    ...mergeCalendarImportSuggestions(primarySuggestion ?? {}, parserSuggestion),
+    analysisMethod: primarySuggestion ? "ai" : "parser",
+  };
 }
 
 export async function analyzeCalendarUrl(input: {
   url: string;
+  timezone: string;
 }): Promise<CalendarImportSuggestion> {
-  await requireUserOrThrow();
-  const data = z.object({ url: z.string().url().max(2_000) }).parse(input);
+  const currentUser = await requireUserOrThrow();
+  const data = z
+    .object({
+      url: z.string().trim().min(1).max(2_000),
+      timezone: timezoneSchema,
+    })
+    .parse(input);
   const result = await fetchPublicPage(data.url);
   if (/text\/calendar/i.test(result.contentType) || /BEGIN:VEVENT/i.test(result.body)) {
-    return parseCalendarImport(result.body, { sourceUrl: result.finalUrl });
+    return {
+      ...parseCalendarImport(result.body, {
+        sourceUrl: result.finalUrl,
+        targetTimezone: data.timezone,
+      }),
+      analysisMethod: "parser",
+    };
   }
   const html = extractHtml(result.body);
-  return parseCalendarImport(html.text, {
+  const parserSuggestion = parseCalendarImport(html.text, {
     titleHint: html.title,
     jsonLd: html.jsonLd,
     sourceUrl: result.finalUrl,
+    targetTimezone: data.timezone,
   });
+  const aiSuggestion = await analyzeCalendarImportWithAi({
+    text: html.text,
+    title: html.title,
+    metadata: html.jsonLd,
+    timezone: data.timezone,
+    safetyIdentifier: safetyIdentifier(currentUser.id),
+  });
+  const primarySuggestion =
+    aiSuggestion && Object.keys(aiSuggestion).length > 0 ? aiSuggestion : null;
+  return {
+    ...mergeCalendarImportSuggestions(primarySuggestion ?? {}, parserSuggestion),
+    analysisMethod: primarySuggestion ? "ai" : "parser",
+  };
 }

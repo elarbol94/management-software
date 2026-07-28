@@ -12,9 +12,22 @@ services:
       BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET}
       # Public URL of the app (behind your reverse proxy).
       BETTER_AUTH_URL: ${BETTER_AUTH_URL:-https://startup.elarbol.me}
+      # Internal-only endpoint; never expose LanguageTool on a host port.
+      LANGUAGETOOL_URL: ${LANGUAGETOOL_URL:-http://languagetool:8010}
+      # Optional AI-assisted calendar import; deterministic parsing remains the fallback.
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_CALENDAR_MODEL: ${OPENAI_CALENDAR_MODEL:-gpt-5.6-luna}
     volumes:
       - app_data:/data
     restart: unless-stopped
+
+  languagetool:
+    image: collabora/languagetool:6.6
+    restart: unless-stopped
+    environment:
+      langtool_languageModel: ""
+      Java_Xms: 256m
+      Java_Xmx: 768m
 
   # Opt in with: docker compose --profile cloudflare up --build -d
   # The remotely managed tunnel route is http://localhost:3007. Host network

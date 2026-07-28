@@ -12,6 +12,8 @@ export type RecurringEvent = {
   id: string;
   title: string;
   description: string;
+  location: string;
+  address: string;
   allDay: boolean;
   startDate: string | null;
   endDate: string | null;
@@ -31,6 +33,8 @@ export type ExpandedOccurrence = {
   occurrenceKey: string;
   title: string;
   description: string;
+  location: string;
+  address: string;
   startDate: string | null;
   endDate: string | null;
   startAt: Date | null;
@@ -87,6 +91,8 @@ export function expandEventOccurrences(
         : event.startAt?.toISOString() ?? event.id,
       title: event.title,
       description: event.description,
+      location: event.location,
+      address: event.address,
       startDate: event.startDate,
       endDate: event.endDate,
       startAt: event.startAt,
@@ -114,6 +120,8 @@ export function expandEventOccurrences(
           occurrenceKey: occurrenceDate,
           title: event.title,
           description: event.description,
+          location: event.location,
+          address: event.address,
           startDate: occurrenceDate,
           endDate: addDays(occurrenceDate, durationDays),
           startAt: null,
@@ -161,6 +169,8 @@ export function expandEventOccurrences(
         occurrenceKey: date.toISOString(),
         title: event.title,
         description: event.description,
+        location: event.location,
+        address: event.address,
         startDate: null,
         endDate: null,
         startAt: date,
