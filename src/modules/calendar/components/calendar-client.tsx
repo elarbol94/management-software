@@ -3,6 +3,7 @@
 import {
   useEffect,
   useMemo,
+  useRef,
   useState,
   useSyncExternalStore,
   useTransition,
@@ -24,7 +25,11 @@ import {
   Clock3,
   ExternalLink,
   Focus,
+  FileUp,
   GripVertical,
+  Link2,
+  Loader2,
+  MoreHorizontal,
   MapPin,
   Plus,
   Repeat2,
@@ -55,15 +60,22 @@ import {
 } from "@/modules/projects/actions";
 import {
   claimDueCalendarReminders,
+  createCalendar,
   createTaskFocusBlock,
   deleteCalendarEvent,
   moveCalendarEvent,
   saveCalendarView,
   splitCalendarEventSeries,
+  updateCalendar,
   truncateCalendarEventSeries,
   upsertCalendarEvent,
   upsertCalendarOccurrence,
 } from "../actions";
+import {
+  analyzeCalendarText,
+  analyzeCalendarUrl,
+} from "../import-actions";
+import type { CalendarImportSuggestion } from "../import-parser";
 import {
   addDays,
   dateRange,
@@ -81,7 +93,7 @@ import type {
 import { cn } from "@/lib/utils";
 
 const SOURCE_TYPES = ["event", "focus", "deadline", "task", "project"] as const;
-const HOURS = Array.from({ length: 14 }, (_, index) => index + 7);
+const HOURS = Array.from({ length: 24 }, (_, index) => index);
 const PX_PER_MINUTE = 1;
 const subscribeToClock = () => () => undefined;
 
@@ -89,7 +101,15 @@ type FilterState = {
   sources: string[];
   people: string[];
   projects: string[];
+  calendars: string[];
   query: string;
+};
+
+type CalendarDraft = {
+  id?: string;
+  name: string;
+  color: string;
+  visibility: "private" | "busy" | "company";
 };
 
 type EventDraft = {
@@ -224,6 +244,47 @@ function formatMinutes(minutes: number) {
   return `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
 }
 
+function isoWeekNumber(date: string) {
+  const value = parseDate(date);
+  const weekday = value.getUTCDay() || 7;
+  value.setUTCDate(value.getUTCDate() + 4 - weekday);
+  const yearStart = new Date(Date.UTC(value.getUTCFullYear(), 0, 1));
+  return Math.ceil(((value.getTime() - yearStart.getTime()) / 86_400_000 + 1) / 7);
+}
+
+async function extractImportFileText(file: File) {
+  if (file.size > 8 * 1024 * 1024) {
+    throw new Error("file_too_large");
+  }
+  if (file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf")) {
+    const pdfjs = await import("pdfjs-dist");
+    pdfjs.GlobalWorkerOptions.workerSrc = new URL(
+      "pdfjs-dist/build/pdf.worker.min.mjs",
+      import.meta.url,
+    ).toString();
+    const document = await pdfjs.getDocument({
+      data: new Uint8Array(await file.arrayBuffer()),
+    }).promise;
+    const pages: string[] = [];
+    for (let pageNumber = 1; pageNumber <= Math.min(document.numPages, 30); pageNumber += 1) {
+      const page = await document.getPage(pageNumber);
+      const content = await page.getTextContent();
+      pages.push(
+        content.items
+          .map((item) => ("str" in item ? item.str : ""))
+          .join(" "),
+      );
+      if (pages.join("\n").length >= 240_000) break;
+    }
+    return pages.join("\n").slice(0, 240_000);
+  }
+  const supported =
+    file.type.startsWith("text/") ||
+    /\.(?:ics|txt|md|csv|json)$/i.test(file.name);
+  if (!supported) throw new Error("unsupported_file");
+  return (await file.text()).slice(0, 240_000);
+}
+
 function MiniMonth({
   date,
   today,
@@ -319,6 +380,20 @@ export function CalendarClient({
   const [pending, startTransition] = useTransition();
   const [filters, setFilters] = useState<FilterState>(initialFilters);
   const [eventOpen, setEventOpen] = useState(shouldOpenNewEvent);
+  const [calendarOpen, setCalendarOpen] = useState(false);
+  const [calendarDraft, setCalendarDraft] = useState<CalendarDraft>({
+    name: "",
+    color: "#6D5EF7",
+    visibility: "private",
+  });
+  const importFileInput = useRef<HTMLInputElement>(null);
+  const [importUrl, setImportUrl] = useState("");
+  const [importBusy, setImportBusy] = useState(false);
+  const [importError, setImportError] = useState("");
+  const [importResult, setImportResult] = useState<{
+    label: string;
+    fields: string[];
+  } | null>(null);
   const [draft, setDraft] = useState<EventDraft>(() =>
     blankDraft(
       workspace.calendars[0]?.id ?? "",
@@ -336,14 +411,6 @@ export function CalendarClient({
     () => localDate(),
     () => null,
   );
-  const outsideWorkingHours =
-    !draft.allDay &&
-    (!workspace.preferences.workingDays.includes(
-      parseDate(draft.startDate).getUTCDay(),
-    ) ||
-      draft.startTime < workspace.preferences.workingDayStart ||
-      draft.endTime > workspace.preferences.workingDayEnd);
-
   const visibleSources = useMemo(
     () =>
       filters.sources.length > 0
@@ -355,6 +422,13 @@ export function CalendarClient({
     const query = filters.query.trim().toLocaleLowerCase();
     return workspace.items.filter((item) => {
       if (!visibleSources.has(typeSource(item))) return false;
+      if (
+        filters.calendars.length > 0 &&
+        item.calendarId &&
+        !filters.calendars.includes(item.calendarId)
+      ) {
+        return false;
+      }
       if (
         filters.people.length > 0 &&
         !filters.people.some(
@@ -448,6 +522,8 @@ export function CalendarClient({
     if (values.people.length > 0) params.set("people", values.people.join(","));
     if (values.projects.length > 0)
       params.set("projects", values.projects.join(","));
+    if (values.calendars.length > 0)
+      params.set("calendars", values.calendars.join(","));
     if (values.query) params.set("query", values.query);
     return `/calendar?${params.toString()}`;
   }
@@ -465,13 +541,130 @@ export function CalendarClient({
     if (shouldOpenNewEvent) router.replace(buildUrl({}));
   }
 
+  function resetImport() {
+    setImportUrl("");
+    setImportBusy(false);
+    setImportError("");
+    setImportResult(null);
+  }
+
+  function applyImportSuggestion(
+    suggestion: CalendarImportSuggestion,
+    label: string,
+  ) {
+    const next = { ...draft };
+    const fields: string[] = [];
+    if (suggestion.title && !next.title.trim()) {
+      next.title = suggestion.title;
+      fields.push("title");
+    }
+    if (suggestion.location && !next.location.trim()) {
+      next.location = suggestion.location;
+      fields.push("location");
+    }
+    if (suggestion.description && !next.description.trim()) {
+      next.description = suggestion.description;
+      fields.push("description");
+    }
+    if (suggestion.startDate) {
+      next.startDate = suggestion.startDate;
+      fields.push("date");
+    }
+    if (suggestion.allDay !== undefined) {
+      next.allDay = suggestion.allDay;
+    }
+    if (suggestion.startTime) {
+      next.startTime = suggestion.startTime;
+      fields.push("startTime");
+    }
+    if (suggestion.endTime) {
+      next.endTime = suggestion.endTime;
+      fields.push("endTime");
+    }
+    if (suggestion.endDate && suggestion.allDay) {
+      next.endDate = suggestion.endDate;
+      fields.push("endDate");
+    } else if (suggestion.startDate && suggestion.allDay) {
+      next.endDate = addDays(suggestion.startDate, 1);
+    }
+    if (suggestion.timezone) {
+      next.timezone = suggestion.timezone;
+      fields.push("timezone");
+    }
+    if (suggestion.repeat && suggestion.repeat !== "none") {
+      next.repeat = suggestion.repeat;
+      fields.push("repeat");
+    }
+    setDraft(next);
+    setImportError("");
+    setImportResult({ label, fields: [...new Set(fields)] });
+  }
+
+  function importErrorMessage(error: unknown) {
+    const message = error instanceof Error ? error.message : "";
+    if (message === "file_too_large") return t("importFileTooLarge");
+    if (message === "unsupported_file") return t("importUnsupportedFile");
+    return t("importFailed");
+  }
+
+  async function importFile(file: File) {
+    setImportBusy(true);
+    setImportError("");
+    setImportResult(null);
+    try {
+      const text = await extractImportFileText(file);
+      if (!text.trim()) throw new Error("unsupported_file");
+      const suggestion = await analyzeCalendarText({
+        text,
+        fileName: file.name,
+      });
+      applyImportSuggestion(suggestion, file.name);
+    } catch (error) {
+      setImportError(importErrorMessage(error));
+    } finally {
+      setImportBusy(false);
+    }
+  }
+
+  async function importFromUrl(value = importUrl) {
+    const url = value.trim();
+    if (!/^https?:\/\//i.test(url)) {
+      setImportError(t("importInvalidUrl"));
+      return;
+    }
+    setImportUrl(url);
+    setImportBusy(true);
+    setImportError("");
+    setImportResult(null);
+    try {
+      const suggestion = await analyzeCalendarUrl({ url });
+      applyImportSuggestion(suggestion, new URL(url).hostname);
+    } catch (error) {
+      setImportError(importErrorMessage(error));
+    } finally {
+      setImportBusy(false);
+    }
+  }
+
+  function acceptImportTransfer(transfer: DataTransfer) {
+    const file = transfer.files?.[0];
+    if (file) {
+      void importFile(file);
+      return;
+    }
+    const url =
+      transfer.getData("text/uri-list").split("\n").find(Boolean) ??
+      transfer.getData("text/plain");
+    if (url) void importFromUrl(url);
+  }
+
   function updateFilters(next: FilterState) {
     setFilters(next);
     router.replace(buildUrl({ filters: next }));
   }
 
   function toggleFilter(
-    group: "sources" | "people" | "projects",
+    group: "sources" | "people" | "projects" | "calendars",
     value: string,
   ) {
     const current =
@@ -503,7 +696,47 @@ export function CalendarClient({
         hour,
       ),
     );
+    resetImport();
     setEventOpen(true);
+  }
+
+  function openNewCalendar() {
+    setCalendarDraft({ name: "", color: "#6D5EF7", visibility: "private" });
+    setCalendarOpen(true);
+  }
+
+  function openEditCalendar(calendar: CalendarWorkspace["calendars"][number]) {
+    setCalendarDraft({
+      id: calendar.id,
+      name: calendar.name,
+      color: calendar.color,
+      visibility: calendar.visibility,
+    });
+    setCalendarOpen(true);
+  }
+
+  function submitCalendar(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    startTransition(() => {
+      void (calendarDraft.id
+        ? updateCalendar({
+            calendarId: calendarDraft.id,
+            name: calendarDraft.name,
+            color: calendarDraft.color,
+            visibility: calendarDraft.visibility,
+          })
+        : createCalendar({
+            name: calendarDraft.name,
+            color: calendarDraft.color,
+            visibility: calendarDraft.visibility,
+          })
+      )
+        .then(() => {
+          setCalendarOpen(false);
+          router.refresh();
+        })
+        .catch(() => toast.error(t("calendarSaveError")));
+    });
   }
 
   function openEditEvent(item: CalendarItem) {
@@ -516,6 +749,7 @@ export function CalendarClient({
         workspace.preferences.timezone,
       ),
     );
+    resetImport();
     setEventOpen(true);
   }
 
@@ -872,6 +1106,23 @@ export function CalendarClient({
           year: "numeric",
           timeZone: "UTC",
         }).format(parseDate(addDays(range.to, -1)))}`;
+  const periodActionLabel =
+    view === "week"
+      ? t("calendarWeek", { week: isoWeekNumber(range.from) })
+      : view === "month"
+        ? periodLabel
+        : t(view);
+  const importFieldLabels: Record<string, string> = {
+    title: t("eventTitle"),
+    location: t("location"),
+    description: t("descriptionLabel"),
+    date: t("start"),
+    startTime: t("start"),
+    endTime: t("end"),
+    endDate: t("end"),
+    timezone: t("timezone"),
+    repeat: t("repeat"),
+  };
 
   return (
     <div className="mx-auto flex w-full max-w-[112rem] flex-col gap-4">
@@ -903,7 +1154,7 @@ export function CalendarClient({
               size="sm"
               onClick={() => navigate({ date: localDate() })}
             >
-              {t("today")}
+              {periodActionLabel}
             </Button>
             <Button
               variant="ghost"
@@ -976,6 +1227,48 @@ export function CalendarClient({
               />
             ))}
           </FilterGroup>
+          <FilterGroup title={t("calendars")}>
+            {workspace.calendars.map((calendar) => {
+              const checked =
+                filters.calendars.length === 0 ||
+                filters.calendars.includes(calendar.id);
+              return (
+                <div key={calendar.id} className="flex items-center gap-1">
+                  <FilterToggle
+                    checked={checked}
+                    label={calendar.name}
+                    color={calendar.color}
+                    onChange={() => toggleFilter("calendars", calendar.id)}
+                    detail={
+                      calendar.visibility === "private"
+                        ? t("calendarPrivate")
+                        : calendar.visibility === "busy"
+                          ? t("calendarBusyOnly")
+                          : t("calendarShared")
+                    }
+                  />
+                  {calendar.role === "owner" && (
+                    <button
+                      type="button"
+                      className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+                      aria-label={t("editCalendar")}
+                      onClick={() => openEditCalendar(calendar)}
+                    >
+                      <MoreHorizontal className="size-3.5" />
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+            <button
+              type="button"
+              className="mt-1 flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
+              onClick={openNewCalendar}
+            >
+              <Plus className="size-3.5" />
+              {t("addCalendar")}
+            </button>
+          </FilterGroup>
           <FilterGroup title={t("people")}>
             {workspace.members.map((member) => (
               <FilterToggle
@@ -999,6 +1292,7 @@ export function CalendarClient({
                       sources: saved.filters.sources ?? [],
                       people: saved.filters.people ?? [],
                       projects: saved.filters.projects ?? [],
+                      calendars: saved.filters.calendars ?? [],
                       query: saved.filters.query ?? "",
                     });
                     navigate({
@@ -1007,6 +1301,7 @@ export function CalendarClient({
                         sources: saved.filters.sources ?? [],
                         people: saved.filters.people ?? [],
                         projects: saved.filters.projects ?? [],
+                        calendars: saved.filters.calendars ?? [],
                         query: saved.filters.query ?? "",
                       },
                     });
@@ -1056,6 +1351,7 @@ export function CalendarClient({
             <MonthView
               days={days}
               date={date}
+              today={clientToday}
               items={filteredItems}
               locale={locale}
               t={t}
@@ -1369,21 +1665,131 @@ export function CalendarClient({
                   rows={3}
                 />
               </label>
-              {outsideWorkingHours && (
-                <div className="flex gap-2 rounded-xl border border-[#D97706]/30 bg-[#D97706]/5 p-3">
-                  <Clock3 className="mt-0.5 size-4 shrink-0 text-[#D97706]" />
-                  <div>
-                    <p className="text-sm font-semibold">{t("outsideHours")}</p>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      {t("workingHours")}:{" "}
-                      <span className="font-mono">
-                        {workspace.preferences.workingDayStart}–
-                        {workspace.preferences.workingDayEnd}
-                      </span>
+              <section
+                className={cn(
+                  "rounded-xl border border-dashed bg-muted/15 p-3 transition-colors",
+                  importBusy
+                    ? "border-[#6D5EF7]/60 bg-[#6D5EF7]/5"
+                    : "border-border hover:border-[#6D5EF7]/40",
+                )}
+                onDragOver={(event) => {
+                  event.preventDefault();
+                  event.dataTransfer.dropEffect = "copy";
+                }}
+                onDrop={(event) => {
+                  event.preventDefault();
+                  acceptImportTransfer(event.dataTransfer);
+                }}
+                onPaste={(event) => {
+                  const file = event.clipboardData.files?.[0];
+                  if (file) {
+                    event.preventDefault();
+                    void importFile(file);
+                    return;
+                  }
+                  const value = event.clipboardData.getData("text/plain");
+                  if (/^https?:\/\//i.test(value.trim())) {
+                    event.preventDefault();
+                    void importFromUrl(value);
+                  }
+                }}
+              >
+                <div className="flex items-start gap-3">
+                  <span className="grid size-9 shrink-0 place-items-center rounded-lg border bg-background text-[#6D5EF7]">
+                    {importBusy ? (
+                      <Loader2 className="size-4 animate-spin motion-reduce:animate-none" />
+                    ) : (
+                      <FileUp className="size-4" />
+                    )}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-semibold">{t("importTitle")}</p>
+                    <p className="mt-0.5 text-xs text-muted-foreground">
+                      {t("importDescription")}
                     </p>
                   </div>
+                  <input
+                    ref={importFileInput}
+                    type="file"
+                    accept=".ics,.txt,.md,.csv,.json,.pdf,text/calendar,text/plain,application/pdf"
+                    className="hidden"
+                    onChange={(event) => {
+                      const file = event.currentTarget.files?.[0];
+                      if (file) void importFile(file);
+                      event.currentTarget.value = "";
+                    }}
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={importBusy}
+                    onClick={() => importFileInput.current?.click()}
+                  >
+                    {t("chooseFile")}
+                  </Button>
                 </div>
-              )}
+                <div className="mt-3 flex gap-2">
+                  <label className="relative min-w-0 flex-1">
+                    <Link2 className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+                    <Input
+                      type="url"
+                      value={importUrl}
+                      disabled={importBusy}
+                      placeholder={t("importUrlPlaceholder")}
+                      className="pl-8"
+                      onChange={(event) => setImportUrl(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") {
+                          event.preventDefault();
+                          void importFromUrl();
+                        }
+                      }}
+                    />
+                  </label>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    disabled={importBusy || !importUrl.trim()}
+                    onClick={() => void importFromUrl()}
+                  >
+                    {t("analyze")}
+                  </Button>
+                </div>
+                <div className="mt-2 min-h-5" aria-live="polite">
+                  {importBusy && (
+                    <p className="text-xs text-muted-foreground">
+                      {t("importAnalyzing")}
+                    </p>
+                  )}
+                  {importError && (
+                    <p className="text-xs font-medium text-destructive">
+                      {importError}
+                    </p>
+                  )}
+                  {importResult && (
+                    <div className="flex flex-wrap items-center gap-1.5 text-xs">
+                      <Check className="size-3.5 text-[#059669]" />
+                      <span className="font-medium">{importResult.label}</span>
+                      {importResult.fields.length > 0 ? (
+                        importResult.fields.map((field) => (
+                          <span
+                            key={field}
+                            className="rounded-full border bg-background px-2 py-0.5 text-[10px] text-muted-foreground"
+                          >
+                            {importFieldLabels[field]}
+                          </span>
+                        ))
+                      ) : (
+                        <span className="text-muted-foreground">
+                          {t("importNoNewFields")}
+                        </span>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </section>
               {conflicts.length > 0 && (
                 <div className="rounded-xl border border-[#E11D48]/30 bg-[#E11D48]/5 p-3">
                   <div className="flex gap-2">
@@ -1437,30 +1843,99 @@ export function CalendarClient({
                   {t("saveAnyway")}
                 </Button>
               )}
-              {outsideWorkingHours && conflicts.length === 0 && (
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() =>
-                    startTransition(() => {
-                      void saveEvent().catch(() =>
-                        toast.error(t("conflictDescription")),
-                      );
-                    })
-                  }
-                  disabled={pending}
-                >
-                  {t("saveAnyway")}
-                </Button>
-              )}
-              <Button type="submit" disabled={pending || outsideWorkingHours}>
+              <Button type="submit" disabled={pending}>
                 {t("saveEvent")}
               </Button>
             </DialogFooter>
           </form>
         </DialogContent>
       </Dialog>
+      <CalendarSettingsDialog
+        open={calendarOpen}
+        onOpenChange={setCalendarOpen}
+        draft={calendarDraft}
+        setDraft={setCalendarDraft}
+        onSubmit={submitCalendar}
+        pending={pending}
+        t={t}
+      />
     </div>
+  );
+}
+
+function CalendarSettingsDialog({
+  open,
+  onOpenChange,
+  draft,
+  setDraft,
+  onSubmit,
+  pending,
+  t,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  draft: CalendarDraft;
+  setDraft: (draft: CalendarDraft) => void;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+  pending: boolean;
+  t: ReturnType<typeof useTranslations<"calendar">>;
+}) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-md">
+        <form onSubmit={onSubmit}>
+          <DialogHeader>
+            <DialogTitle>{draft.id ? t("editCalendar") : t("addCalendar")}</DialogTitle>
+            <DialogDescription>{t("calendarVisibilityDescription")}</DialogDescription>
+          </DialogHeader>
+          <div className="mt-5 grid gap-4">
+            <label className="grid gap-1.5">
+              <span className="text-xs font-medium">{t("calendarName")}</span>
+              <Input
+                required
+                value={draft.name}
+                onChange={(event) => setDraft({ ...draft, name: event.target.value })}
+                placeholder={t("calendarNamePlaceholder")}
+              />
+            </label>
+            <label className="grid gap-1.5">
+              <span className="text-xs font-medium">{t("calendarColor")}</span>
+              <Input
+                type="color"
+                value={draft.color}
+                onChange={(event) => setDraft({ ...draft, color: event.target.value })}
+                className="h-9 w-20 p-1"
+              />
+            </label>
+            <label className="grid gap-1.5">
+              <span className="text-xs font-medium">{t("calendarVisibility")}</span>
+              <select
+                className="h-9 rounded-lg border bg-background px-2.5 text-sm"
+                value={draft.visibility}
+                onChange={(event) =>
+                  setDraft({
+                    ...draft,
+                    visibility: event.target.value as CalendarDraft["visibility"],
+                  })
+                }
+              >
+                <option value="private">{t("calendarPrivate")}</option>
+                <option value="busy">{t("calendarBusyOnly")}</option>
+                <option value="company">{t("calendarShared")}</option>
+              </select>
+            </label>
+          </div>
+          <DialogFooter className="mt-5">
+            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+              {t("cancel")}
+            </Button>
+            <Button type="submit" disabled={pending}>
+              {t("saveCalendar")}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -1486,11 +1961,13 @@ function FilterToggle({
   label,
   color,
   onChange,
+  detail,
 }: {
   checked: boolean;
   label: string;
   color: string;
   onChange: () => void;
+  detail?: string;
 }) {
   return (
     <label className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-xs hover:bg-muted">
@@ -1512,7 +1989,14 @@ function FilterToggle({
       >
         {checked && <Check className="size-2.5" />}
       </span>
-      <span className="truncate">{label}</span>
+      <span className="min-w-0 truncate">
+        <span className="block truncate">{label}</span>
+        {detail && (
+          <span className="block truncate text-[10px] text-muted-foreground">
+            {detail}
+          </span>
+        )}
+      </span>
     </label>
   );
 }
@@ -1796,6 +2280,7 @@ function FlowWeek({
 function MonthView({
   days,
   date,
+  today,
   items,
   locale,
   t,
@@ -1806,6 +2291,7 @@ function MonthView({
 }: {
   days: string[];
   date: string;
+  today: string | null;
   items: CalendarItem[];
   locale: string;
   t: ReturnType<typeof useTranslations<"calendar">>;
@@ -1815,9 +2301,26 @@ function MonthView({
   onDragStart: (event: DragEvent, item: CalendarItem) => void;
 }) {
   const month = parseDate(date).getUTCMonth();
+  const weekdayLabels = days.slice(0, 7).map((day) =>
+    new Intl.DateTimeFormat(locale, {
+      weekday: "short",
+      timeZone: "UTC",
+    }).format(parseDate(day)),
+  );
   return (
     <div className="overflow-x-auto">
       <div className="grid min-h-[44rem] min-w-[52rem] grid-cols-7">
+      {weekdayLabels.map((label, index) => (
+        <div
+          key={`${label}-${index}`}
+          className={cn(
+            "border-b border-r bg-muted/[0.18] px-2 py-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground",
+            index === 6 && "border-r-0",
+          )}
+        >
+          {label}
+        </div>
+      ))}
       {days.map((day) => {
         const value = parseDate(day);
         const dayItems = items.filter((item) =>
@@ -1831,13 +2334,21 @@ function MonthView({
             className={cn(
               "min-h-28 border-b border-r p-2 last:border-r-0",
               value.getUTCMonth() !== month && "bg-muted/20 text-muted-foreground",
+              day === today && "bg-[#6D5EF7]/[0.08] ring-1 ring-inset ring-[#6D5EF7]/45",
             )}
             onDragOver={(event) => event.preventDefault()}
             onDrop={(event) => onDrop(event, day)}
             onDoubleClick={() => onNew(day)}
           >
             <div className="mb-2 flex items-center justify-between">
-              <span className="text-xs font-semibold">{value.getUTCDate()}</span>
+              <span
+                className={cn(
+                  "grid size-6 place-items-center rounded-full text-xs font-semibold",
+                  day === today && "bg-[#6D5EF7] text-white shadow-sm",
+                )}
+              >
+                {value.getUTCDate()}
+              </span>
               <span className="font-mono text-[9px] text-muted-foreground">
                 {t("monthSummary", { count: dayItems.length })}
               </span>

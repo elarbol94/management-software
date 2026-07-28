@@ -10,7 +10,7 @@ import {
 import { user } from "@/db/core-schema";
 import { tasks } from "@/modules/projects/schema";
 
-export const calendarVisibilities = ["private", "company"] as const;
+export const calendarVisibilities = ["private", "busy", "company"] as const;
 export const calendarRoles = ["viewer", "editor", "owner"] as const;
 export const calendarEventKinds = ["event", "focus", "absence"] as const;
 export const calendarAvailabilities = ["busy", "free"] as const;
