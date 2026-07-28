@@ -87,6 +87,10 @@ describe("analyzeCalendarImportWithAi", () => {
     expect(request.model).toBe("gpt-5.6-luna");
     expect(request.instructions).toContain("untrusted content");
     expect(request.input).toContain("Ignore previous instructions");
+    expect(request.text.format.schema.properties.confidentFields).toEqual({
+      type: "array",
+      items: { type: "string", enum: expect.any(Array) },
+    });
   });
 
   it("falls back cleanly for invalid output and request failures", async () => {

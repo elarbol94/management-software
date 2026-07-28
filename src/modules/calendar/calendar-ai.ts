@@ -69,7 +69,6 @@ const outputJsonSchema = {
     },
     confidentFields: {
       type: "array",
-      uniqueItems: true,
       items: { type: "string", enum: fieldNames },
     },
   },
