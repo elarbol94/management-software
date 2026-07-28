@@ -168,6 +168,11 @@ type DragPreview = {
   preview: SchedulePreview | null;
   draft: TaskDraft | null;
   projectDraft: ProjectDraft | null;
+  dependencies?: PortfolioDependency[];
+};
+type DependencyLagAdjustment = {
+  dependency: PortfolioDependency;
+  lagDays: number;
 };
 type DeadlinePreview = {
   id: string;
@@ -1552,6 +1557,7 @@ export function PortfolioClient({
     edit: ScheduleEdit;
     draft: TaskDraft | null;
     projectDraft: ProjectDraft | null;
+    dependencies?: PortfolioDependency[];
   } | null>(null);
   const confirmedScheduleRef = useRef(schedule);
 
@@ -1677,20 +1683,24 @@ export function PortfolioClient({
   }, []);
 
   const effectiveDependencies = useMemo(
-    () =>
+    () => {
+      const baseDependencies = dragPreview?.dependencies ?? schedule.dependencies;
+      return (
       dependencyDraft
         ? dependencyDraft.isNew ||
-          !schedule.dependencies.some(
+          !baseDependencies.some(
             (dependency) => dependency.id === dependencyDraft.id,
           )
-          ? [...schedule.dependencies, dependencyDraft]
-          : schedule.dependencies.map((dependency) =>
+          ? [...baseDependencies, dependencyDraft]
+          : baseDependencies.map((dependency) =>
               dependency.id === dependencyDraft.id
                 ? dependencyDraft
                 : dependency,
             )
-        : schedule.dependencies,
-    [dependencyDraft, schedule.dependencies],
+        : baseDependencies
+      );
+    },
+    [dependencyDraft, dragPreview?.dependencies, schedule.dependencies],
   );
 
   const dependencySchedulePreview = useMemo<SchedulePreview | null>(() => {
@@ -2269,7 +2279,10 @@ export function PortfolioClient({
     setInspectorOpen(true);
   }
 
-  function localSchedulePreview(edit: ScheduleEdit) {
+  function localSchedulePreview(
+    edit: ScheduleEdit,
+    dependencies: PortfolioDependency[] = schedule.dependencies,
+  ) {
     return previewScheduleEdit({
       tasks: schedule.tasks,
       projects: schedule.projects.map((project) => ({
@@ -2277,7 +2290,7 @@ export function PortfolioClient({
         startDate: project.plannedStartDate,
         dueDate: project.targetEndDate,
       })),
-      dependencies: schedule.dependencies,
+      dependencies,
       edit,
     });
   }
@@ -2286,12 +2299,13 @@ export function PortfolioClient({
     input: ScheduleEdit,
     taskDraft: TaskDraft | null,
     nextProjectDraft: ProjectDraft | null,
+    dependencies?: PortfolioDependency[],
   ): DragPreview {
     try {
-      const preview = localSchedulePreview(input);
-      return { preview, draft: taskDraft, projectDraft: nextProjectDraft };
+      const preview = localSchedulePreview(input, dependencies);
+      return { preview, draft: taskDraft, projectDraft: nextProjectDraft, dependencies };
     } catch {
-      return { preview: null, draft: taskDraft, projectDraft: nextProjectDraft };
+      return { preview: null, draft: taskDraft, projectDraft: nextProjectDraft, dependencies };
     }
   }
 
@@ -2299,19 +2313,22 @@ export function PortfolioClient({
     input: ScheduleEdit,
     taskDraft: TaskDraft | null = null,
     nextProjectDraft: ProjectDraft | null = null,
+    dependencies?: PortfolioDependency[],
   ) {
-    setDragPreview(atomicPreview(input, taskDraft, nextProjectDraft));
+    setDragPreview(atomicPreview(input, taskDraft, nextProjectDraft, dependencies));
   }
 
   function queuePreview(
     input: ScheduleEdit,
     taskDraft: TaskDraft | null,
     nextProjectDraft: ProjectDraft | null,
+    dependencies?: PortfolioDependency[],
   ) {
     pendingPreviewRef.current = {
       edit: input,
       draft: taskDraft,
       projectDraft: nextProjectDraft,
+      dependencies,
     };
     if (previewFrameRef.current !== null) return;
     previewFrameRef.current = requestAnimationFrame(() => {
@@ -2320,7 +2337,7 @@ export function PortfolioClient({
       pendingPreviewRef.current = null;
       if (!pending) return;
       setDragPreview(
-        atomicPreview(pending.edit, pending.draft, pending.projectDraft),
+        atomicPreview(pending.edit, pending.draft, pending.projectDraft, pending.dependencies),
       );
     });
   }
@@ -2906,6 +2923,7 @@ export function PortfolioClient({
       icon: <GitBranch className="size-4" />,
       className:
         "!border-amber-200 !bg-amber-50 !text-amber-950 dark:!border-amber-700/40 dark:!bg-amber-950/30 dark:!text-amber-100",
+      descriptionClassName: "!text-amber-900 dark:!text-amber-100",
       action: {
         label: t("undo"),
         onClick: () => {
@@ -2920,11 +2938,77 @@ export function PortfolioClient({
    * recomputes the cascade itself, so nothing from the live preview is trusted
    * here; a concurrent edit surfaces as a rejected apply rather than silent loss.
    */
-  async function commitSchedule(input: ScheduleEdit) {
+  async function saveDependencyLag(
+    dependency: PortfolioDependency,
+    lagDays: number,
+  ) {
+    await upsertTaskDependency({
+      id: dependency.id,
+      predecessorTaskId: dependency.predecessorTaskId,
+      successorTaskId: dependency.successorTaskId,
+      dependencyType: dependencyTypeOf(dependency),
+      lagDays,
+      routeOffsetDays: dependency.routeOffsetDays,
+      routeOffsetRows: dependency.routeOffsetRows,
+    });
+  }
+
+  /**
+   * A direct bar move is explicit scheduling intent. When an FS successor is
+   * dropped into its predecessor's span, retain the FS relationship and encode
+   * that overlap as a negative lag (lead), rather than snapping the bar back.
+   */
+  function fsLeadAdjustments(
+    taskId: string,
+    startDate: string,
+  ): DependencyLagAdjustment[] {
+    return schedule.dependencies.flatMap((dependency) => {
+      if (
+        dependency.successorTaskId !== taskId ||
+        dependencyTypeOf(dependency) !== "finish_to_start"
+      ) {
+        return [];
+      }
+      const predecessor = schedule.tasks.find(
+        (task) => task.id === dependency.predecessorTaskId,
+      );
+      if (!predecessor?.dueDate || startDate > predecessor.dueDate) return [];
+      const lagDays = calendarDistance(predecessor.dueDate, startDate) - 1;
+      if (lagDays < -365 || lagDays > 365 || lagDays === dependency.lagDays) {
+        return [];
+      }
+      return [{ dependency, lagDays }];
+    });
+  }
+
+  function withLagAdjustments(adjustments: DependencyLagAdjustment[]) {
+    if (adjustments.length === 0) return schedule.dependencies;
+    const lagById = new Map(
+      adjustments.map((adjustment) => [adjustment.dependency.id, adjustment.lagDays]),
+    );
+    return schedule.dependencies.map((dependency) =>
+      lagById.has(dependency.id)
+        ? { ...dependency, lagDays: lagById.get(dependency.id)! }
+        : dependency,
+    );
+  }
+
+  async function commitSchedule(
+    input: ScheduleEdit,
+    lagAdjustments: DependencyLagAdjustment[] = [],
+  ) {
     if (scheduleCommitPending) return;
     setScheduleCommitPending(true);
+    let savedAdjustments: DependencyLagAdjustment[] = [];
     try {
-      const preview = localSchedulePreview(input);
+      for (const adjustment of lagAdjustments) {
+        await saveDependencyLag(adjustment.dependency, adjustment.lagDays);
+        savedAdjustments = [...savedAdjustments, adjustment];
+      }
+      const preview = localSchedulePreview(
+        input,
+        withLagAdjustments(lagAdjustments),
+      );
       const result = await applyPortfolioScheduleChange({
         ...input,
         expectedPreview: { changes: preview.changes },
@@ -2935,6 +3019,16 @@ export function PortfolioClient({
         scheduleImpactDescription(preview),
       );
     } catch (error) {
+      for (const adjustment of savedAdjustments) {
+        try {
+          await saveDependencyLag(
+            adjustment.dependency,
+            adjustment.dependency.lagDays,
+          );
+        } catch {
+          // Refresh below exposes any concurrent update that prevented rollback.
+        }
+      }
       clearDrag();
       router.refresh();
       toast.error(
@@ -3055,7 +3149,16 @@ export function PortfolioClient({
       ...drag.latest,
       mode: drag.mode === "move" ? "move" : drag.mode === "start" ? "resize-start" : "resize-end",
     };
-    queuePreview(taskScheduleEdit(drag.task.id, drag.mode, drag.latest), nextDraft, null);
+    const lagAdjustments =
+      drag.mode === "move"
+        ? fsLeadAdjustments(drag.task.id, startDate)
+        : [];
+    queuePreview(
+      taskScheduleEdit(drag.task.id, drag.mode, drag.latest),
+      nextDraft,
+      null,
+      withLagAdjustments(lagAdjustments),
+    );
   }
 
   function taskScheduleEdit(
@@ -3090,8 +3193,14 @@ export function PortfolioClient({
       ...drag.latest,
       mode: drag.mode === "move" ? "move" : drag.mode === "start" ? "resize-start" : drag.mode === "end" ? "resize-end" : "place",
     };
-    setDragPreview(atomicPreview(edit, finalDraft, null));
-    void commitSchedule(edit);
+    const lagAdjustments =
+      drag.mode === "move"
+        ? fsLeadAdjustments(drag.task.id, drag.latest.startDate)
+        : [];
+    setDragPreview(
+      atomicPreview(edit, finalDraft, null, withLagAdjustments(lagAdjustments)),
+    );
+    void commitSchedule(edit, lagAdjustments);
   }
 
   function handleTaskScheduleKey(

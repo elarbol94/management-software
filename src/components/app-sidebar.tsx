@@ -4,7 +4,15 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useTranslations } from "next-intl";
-import { CalendarClock, ClipboardPlus, LayoutDashboard, Menu, Settings, X } from "lucide-react";
+import {
+  CalendarClock,
+  CalendarPlus,
+  ClipboardPlus,
+  LayoutDashboard,
+  Menu,
+  Settings,
+  X,
+} from "lucide-react";
 import { useFocusMode } from "@/components/focus-mode";
 import { UserMenu } from "@/components/user-menu";
 import { Button } from "@/components/ui/button";
@@ -93,6 +101,7 @@ function AppNavigation({
   navigationId: string;
 }) {
   const t = useTranslations("nav");
+  const tCalendar = useTranslations("calendar");
   const tTasks = useTranslations("tasks");
   const tDeadlines = useTranslations("deadlines");
   const { openTaskCreator } = useTaskCreator();
@@ -139,12 +148,46 @@ function AppNavigation({
                 "flex h-10 items-center rounded-md text-sm font-medium text-muted-foreground transition-colors hover:bg-accent/50 hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                 compact ? "justify-center gap-0 px-0" : "gap-3 px-3",
               )}
-              aria-label={tTasks("createTask")}
-              title={`${tTasks("createTask")} · ${tTasks("globalShortcut")}`}
+              aria-label={tTasks("quickAction")}
+              title={tTasks("quickAction")}
             >
               <ClipboardPlus className="size-5" />
-              <span aria-hidden={compact} className={cn("min-w-0 truncate whitespace-nowrap transition-all duration-[220ms] ease-out motion-reduce:transition-none", compact ? "max-w-0 -translate-x-1 overflow-hidden opacity-0" : "max-w-44 opacity-100")}>{tTasks("createTask")}</span>
+              <span aria-hidden={compact} className={cn("min-w-0 truncate whitespace-nowrap transition-all duration-[220ms] ease-out motion-reduce:transition-none", compact ? "max-w-0 -translate-x-1 overflow-hidden opacity-0" : "max-w-44 opacity-100")}>{tTasks("quickAction")}</span>
             </button>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Link
+                    href="/calendar?new=event"
+                    onClick={onNavigate}
+                    aria-label={tCalendar("quickAction")}
+                    title={tCalendar("quickAction")}
+                    className={cn(
+                      "flex h-10 items-center rounded-md text-sm font-medium text-muted-foreground transition-colors hover:bg-accent/50 hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                      compact ? "justify-center gap-0 px-0" : "gap-3 px-3",
+                    )}
+                  >
+                    <CalendarPlus className="size-5" />
+                    <span
+                      aria-hidden={compact}
+                      className={cn(
+                        "min-w-0 truncate whitespace-nowrap transition-all duration-[220ms] ease-out motion-reduce:transition-none",
+                        compact
+                          ? "max-w-0 -translate-x-1 overflow-hidden opacity-0"
+                          : "max-w-44 opacity-100",
+                      )}
+                    >
+                      {tCalendar("quickAction")}
+                    </span>
+                  </Link>
+                }
+              />
+              {compact && (
+                <TooltipContent side="right" sideOffset={8}>
+                  {tCalendar("quickAction")}
+                </TooltipContent>
+              )}
+            </Tooltip>
             <button
               type="button"
               onClick={() => {
@@ -155,11 +198,11 @@ function AppNavigation({
                 "flex h-10 items-center rounded-md text-sm font-medium text-muted-foreground transition-colors hover:bg-accent/50 hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                 compact ? "justify-center gap-0 px-0" : "gap-3 px-3",
               )}
-              aria-label={tDeadlines("createDeadline")}
-              title={`${tDeadlines("createDeadline")} · ${tDeadlines("globalShortcut")}`}
+              aria-label={tDeadlines("quickAction")}
+              title={tDeadlines("quickAction")}
             >
               <CalendarClock className="size-5" />
-              <span aria-hidden={compact} className={cn("min-w-0 truncate whitespace-nowrap transition-all duration-[220ms] ease-out motion-reduce:transition-none", compact ? "max-w-0 -translate-x-1 overflow-hidden opacity-0" : "max-w-44 opacity-100")}>{tDeadlines("createDeadline")}</span>
+              <span aria-hidden={compact} className={cn("min-w-0 truncate whitespace-nowrap transition-all duration-[220ms] ease-out motion-reduce:transition-none", compact ? "max-w-0 -translate-x-1 overflow-hidden opacity-0" : "max-w-44 opacity-100")}>{tDeadlines("quickAction")}</span>
             </button>
           </div>
         </nav>
