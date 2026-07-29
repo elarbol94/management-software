@@ -12,6 +12,15 @@ export function parseDate(date: string) {
   return value;
 }
 
+export function isValidDate(date: string) {
+  try {
+    parseDate(date);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function addDays(date: string, amount: number) {
   const value = parseDate(date);
   value.setUTCDate(value.getUTCDate() + amount);
@@ -71,6 +80,14 @@ export function localDateInZone(date: Date, timezone: string) {
   }).formatToParts(date);
   const value = Object.fromEntries(parts.map((part) => [part.type, part.value]));
   return `${value.year}-${value.month}-${value.day}`;
+}
+
+export function dateAndMinutesInZone(date: Date, timezone: string) {
+  const parts = zonedParts(date, timezone);
+  return {
+    date: `${parts.year}-${String(parts.month).padStart(2, "0")}-${String(parts.day).padStart(2, "0")}`,
+    minutes: parts.hour * 60 + parts.minute,
+  };
 }
 
 export function zonedParts(date: Date, timezone: string) {

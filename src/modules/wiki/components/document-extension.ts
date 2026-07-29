@@ -1,4 +1,50 @@
-import { Extension, Node, mergeAttributes } from "@tiptap/core";
+import { Extension, Node, mergeAttributes, type Editor } from "@tiptap/core";
+import { Plugin, PluginKey } from "@tiptap/pm/state";
+import { Decoration, DecorationSet } from "@tiptap/pm/view";
+
+export type DocumentPaginationBreak = {
+  position: number;
+  height: number;
+  page: number;
+  kind?: "block" | "listItem";
+};
+
+const documentPaginationKey = new PluginKey<DocumentPaginationBreak[]>("documentPagination");
+
+export function setDocumentPaginationBreaks(editor: Editor, breaks: DocumentPaginationBreak[]) {
+  editor.view.dispatch(editor.state.tr.setMeta(documentPaginationKey, breaks));
+}
+
+const DocumentPagination = Extension.create({
+  name: "documentPagination",
+  addProseMirrorPlugins() {
+    return [new Plugin<DocumentPaginationBreak[]>({
+      key: documentPaginationKey,
+      state: {
+        init: () => [],
+        apply(transaction, breaks) {
+          const replacement = transaction.getMeta(documentPaginationKey) as DocumentPaginationBreak[] | undefined;
+          if (replacement) return replacement;
+          return transaction.docChanged ? [] : breaks;
+        },
+      },
+      props: {
+        decorations(state) {
+          const breaks = documentPaginationKey.getState(state) ?? [];
+          return DecorationSet.create(state.doc, breaks.map((item) => Decoration.widget(item.position, () => {
+            const spacer = document.createElement(item.kind === "listItem" ? "li" : "div");
+            spacer.className = "wiki-document-auto-page-break";
+            spacer.contentEditable = "false";
+            spacer.dataset.page = String(item.page);
+            spacer.style.height = `${Math.max(0, item.height)}px`;
+            spacer.setAttribute("aria-hidden", "true");
+            return spacer;
+          }, { key: `page-${item.page}-${item.position}-${Math.round(item.height)}-${item.kind ?? "block"}`, side: -1 })));
+        },
+      },
+    })];
+  },
+});
 
 const PageBreak = Node.create({
   name: "pageBreak",
@@ -127,5 +173,6 @@ export const DocumentExtensions = [
   DocumentVariable,
   LayoutSection,
   DocumentBlockAttributes,
+  DocumentPagination,
 ];
 

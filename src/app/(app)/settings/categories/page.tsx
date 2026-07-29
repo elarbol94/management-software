@@ -13,7 +13,7 @@ import { CategoriesManager } from "./categories-manager";
 
 export default async function CategoriesSettingsPage() {
   const user = await requireUser();
-  if (user.role !== "admin") redirect("/settings/company");
+  if (user.role !== "admin") redirect("/settings/profile");
 
   const categories = listCategories({ includeArchived: true });
   const t = await getTranslations("settings.categories");

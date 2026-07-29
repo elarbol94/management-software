@@ -81,8 +81,11 @@ import {
 } from "../import-parser";
 import {
   addDays,
+  dateAndMinutesInZone,
   dateRange,
   daysBetween,
+  isoDate,
+  localDateInZone,
   parseDate,
   startOfWeek,
   zonedDateTimeToUtc,
@@ -99,11 +102,15 @@ import type {
   CalendarWorkspace,
 } from "../types";
 import { cn } from "@/lib/utils";
+import { canonicalTaskHref } from "@/modules/context/routes";
 
 const SOURCE_TYPES = ["event", "focus", "deadline", "task", "project"] as const;
 const HOURS = Array.from({ length: 24 }, (_, index) => index);
 const PX_PER_MINUTE = 1;
-const subscribeToClock = () => () => undefined;
+const subscribeToClock = (onStoreChange: () => void) => {
+  const timer = window.setInterval(onStoreChange, 60_000);
+  return () => window.clearInterval(timer);
+};
 
 type FilterState = {
   sources: string[];
@@ -161,20 +168,33 @@ function localDate(date = new Date()) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 }
 
-function dateForTimedItem(item: CalendarItem) {
-  return item.startAt ? localDate(new Date(item.startAt)) : "";
+function dateForTimedItem(item: CalendarItem, fallbackTimezone: string) {
+  if (!item.startAt) return "";
+  return dateAndMinutesInZone(
+    new Date(item.startAt),
+    fallbackTimezone,
+  ).date;
 }
 
-function startMinutes(item: CalendarItem) {
+function startMinutes(item: CalendarItem, fallbackTimezone: string) {
   if (!item.startAt) return 0;
-  const value = new Date(item.startAt);
-  return value.getHours() * 60 + value.getMinutes();
+  return dateAndMinutesInZone(
+    new Date(item.startAt),
+    fallbackTimezone,
+  ).minutes;
 }
 
-function endMinutes(item: CalendarItem) {
-  if (!item.endAt) return startMinutes(item) + 30;
-  const value = new Date(item.endAt);
-  return value.getHours() * 60 + value.getMinutes();
+function endMinutes(item: CalendarItem, fallbackTimezone: string) {
+  if (!item.endAt) return startMinutes(item, fallbackTimezone) + 30;
+  const timezone = fallbackTimezone;
+  const start = item.startAt
+    ? dateAndMinutesInZone(new Date(item.startAt), timezone)
+    : null;
+  const end = dateAndMinutesInZone(new Date(item.endAt), timezone);
+  return (
+    end.minutes +
+    (start ? Math.max(0, daysBetween(start.date, end.date)) * 24 * 60 : 0)
+  );
 }
 
 function typeSource(item: CalendarItem) {
@@ -188,6 +208,8 @@ function blankDraft(
   date = localDate(),
   hour = 9,
 ): EventDraft {
+  const startHour = Math.min(23, Math.max(0, Math.trunc(hour)));
+  const endHour = (startHour + 1) % 24;
   return {
     calendarId,
     kind: "event",
@@ -198,8 +220,8 @@ function blankDraft(
     allDay: false,
     startDate: date,
     endDate: addDays(date, 1),
-    startTime: `${String(hour).padStart(2, "0")}:00`,
-    endTime: `${String(hour + 1).padStart(2, "0")}:00`,
+    startTime: `${String(startHour).padStart(2, "0")}:00`,
+    endTime: `${String(endHour).padStart(2, "0")}:00`,
     timezone,
     availability: "busy",
     repeat: "none",
@@ -268,16 +290,21 @@ function AustrianDateInput({
   value,
   onChange,
   label,
+  pickerLabel,
+  placeholder,
   invalidMessage,
   min,
 }: {
   value: string;
   onChange: (value: string) => void;
   label: string;
+  pickerLabel: string;
+  placeholder: string;
   invalidMessage: string;
   min?: string;
 }) {
   const [display, setDisplay] = useState(() => formatAustrianDate(value));
+  const displayRef = useRef<HTMLInputElement>(null);
   const pickerRef = useRef<HTMLInputElement>(null);
 
   function update(raw: string, input: HTMLInputElement) {
@@ -291,11 +318,12 @@ function AustrianDateInput({
   return (
     <div className="relative min-w-0">
       <Input
+        ref={displayRef}
         required
         aria-label={label}
         inputMode="numeric"
         autoComplete="off"
-        placeholder="TT.MM.JJJJ"
+        placeholder={placeholder}
         pattern="[0-9]{2}\.[0-9]{2}\.[0-9]{4}"
         value={display}
         onChange={(event) => update(event.target.value, event.currentTarget)}
@@ -310,13 +338,16 @@ function AustrianDateInput({
         value={value}
         min={min}
         onChange={(event) => {
-          if (event.target.value) onChange(event.target.value);
+          if (!event.target.value) return;
+          setDisplay(formatAustrianDate(event.target.value));
+          displayRef.current?.setCustomValidity("");
+          onChange(event.target.value);
         }}
         className="pointer-events-none absolute right-2 top-1/2 size-px -translate-y-1/2 opacity-0"
       />
       <button
         type="button"
-        aria-label={`${label} wählen`}
+        aria-label={pickerLabel}
         onClick={() => {
           try {
             pickerRef.current?.showPicker();
@@ -344,6 +375,7 @@ function AustrianTimeInput({
   invalidMessage: string;
 }) {
   const [display, setDisplay] = useState(value);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   function update(raw: string, input: HTMLInputElement, normalize = false) {
     const parsed = parseAustrianTime(raw);
@@ -354,6 +386,7 @@ function AustrianTimeInput({
 
   return (
     <Input
+      ref={inputRef}
       required
       aria-label={label}
       inputMode="numeric"
@@ -372,14 +405,6 @@ function AustrianTimeInput({
 
 function formatMinutes(minutes: number) {
   return `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
-}
-
-function isoWeekNumber(date: string) {
-  const value = parseDate(date);
-  const weekday = value.getUTCDay() || 7;
-  value.setUTCDate(value.getUTCDate() + 4 - weekday);
-  const yearStart = new Date(Date.UTC(value.getUTCFullYear(), 0, 1));
-  return Math.ceil(((value.getTime() - yearStart.getTime()) / 86_400_000 + 1) / 7);
 }
 
 async function extractImportFileText(file: File) {
@@ -507,8 +532,17 @@ export function CalendarClient({
   const t = useTranslations("calendar");
   const locale = useLocale();
   const router = useRouter();
+  const defaultCalendarId = workspace.calendars.find(
+    (calendar) => calendar.role === "owner" || calendar.role === "editor",
+  )?.id;
   const [pending, startTransition] = useTransition();
   const [filters, setFilters] = useState<FilterState>(initialFilters);
+  const incomingFilterKey = JSON.stringify(initialFilters);
+  const [syncedFilterKey, setSyncedFilterKey] = useState(incomingFilterKey);
+  if (syncedFilterKey !== incomingFilterKey) {
+    setSyncedFilterKey(incomingFilterKey);
+    setFilters(initialFilters);
+  }
   const [eventOpen, setEventOpen] = useState(shouldOpenNewEvent);
   const [calendarOpen, setCalendarOpen] = useState(false);
   const [calendarDraft, setCalendarDraft] = useState<CalendarDraft>({
@@ -530,7 +564,7 @@ export function CalendarClient({
   >(() => new Set());
   const [draft, setDraft] = useState<EventDraft>(() =>
     blankDraft(
-      workspace.calendars[0]?.id ?? "",
+      defaultCalendarId ?? "",
       workspace.preferences.timezone,
       date,
     ),
@@ -542,7 +576,11 @@ export function CalendarClient({
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const clientToday = useSyncExternalStore(
     subscribeToClock,
-    () => localDate(),
+    () =>
+      localDateInZone(
+        new Date(),
+        workspace.preferences.timezone,
+      ),
     () => null,
   );
   const visibleSources = useMemo(
@@ -595,9 +633,6 @@ export function CalendarClient({
     [range.from, range.to],
   );
   const weekDays = days.slice(0, 7);
-  const defaultCalendarId = workspace.calendars.find(
-    (calendar) => calendar.role === "owner" || calendar.role === "editor",
-  )?.id;
   const sourceColors = useMemo(() => {
     const fallback = {
       event: workspace.calendars[0]?.color ?? "#0284C7",
@@ -642,6 +677,32 @@ export function CalendarClient({
       window.clearInterval(timer);
     };
   }, [locale, t]);
+
+  const previousOpenNewEvent = useRef(shouldOpenNewEvent);
+  useEffect(() => {
+    const wasRequested = previousOpenNewEvent.current;
+    previousOpenNewEvent.current = shouldOpenNewEvent;
+    if (!shouldOpenNewEvent || wasRequested || !defaultCalendarId) return;
+    setConflicts([]);
+    setDraft(
+      blankDraft(
+        defaultCalendarId,
+        workspace.preferences.timezone,
+        date,
+      ),
+    );
+    setImportUrl("");
+    setImportBusy(false);
+    setImportError("");
+    setImportResult(null);
+    setManuallyEditedFields(new Set());
+    setEventOpen(true);
+  }, [
+    date,
+    defaultCalendarId,
+    shouldOpenNewEvent,
+    workspace.preferences.timezone,
+  ]);
 
   function buildUrl(next: {
     view?: CalendarView;
@@ -855,7 +916,9 @@ export function CalendarClient({
     const current =
       group === "sources" && filters.sources.length === 0
         ? [...SOURCE_TYPES]
-        : filters[group];
+        : group === "calendars" && filters.calendars.length === 0
+          ? workspace.calendars.map((calendar) => calendar.id)
+          : filters[group];
     const values = current.includes(value)
       ? current.filter((item) => item !== value)
       : [...current, value];
@@ -863,13 +926,28 @@ export function CalendarClient({
   }
 
   function movePeriod(direction: number) {
-    const amount = view === "month" ? 28 : view === "agenda" ? 30 : 7;
+    if (view === "month") {
+      const current = parseDate(date);
+      navigate({
+        date: isoDate(
+          new Date(
+            Date.UTC(
+              current.getUTCFullYear(),
+              current.getUTCMonth() + direction,
+              1,
+            ),
+          ),
+        ),
+      });
+      return;
+    }
+    const amount = view === "agenda" ? 30 : 7;
     navigate({ date: addDays(date, amount * direction) });
   }
 
   function openNewEvent(day = date, hour = 9) {
     if (!defaultCalendarId) {
-      toast.error("No editable calendar is available");
+      toast.error(t("noEditableCalendar"));
       return;
     }
     setConflicts([]);
@@ -1167,7 +1245,7 @@ export function CalendarClient({
     const payload = readDrag(event);
     if (!payload) return;
     if (payload.type === "task") {
-      openNewEvent(targetDate, 9);
+      await dropOnTime(event, targetDate, 9);
       return;
     }
     const item = workspace.items.find((candidate) => candidate.id === payload.id);
@@ -1208,8 +1286,15 @@ export function CalendarClient({
   async function dropOnTime(event: DragEvent, targetDate: string, hour: number) {
     event.preventDefault();
     const payload = readDrag(event);
-    if (!payload || !defaultCalendarId) return;
-    const start = new Date(`${targetDate}T${String(hour).padStart(2, "0")}:00`);
+    if (!payload || !defaultCalendarId) {
+      setDraggingId(null);
+      return;
+    }
+    const [year, month, day] = targetDate.split("-").map(Number);
+    const start = zonedDateTimeToUtc(
+      { year, month, day, hour, minute: 0 },
+      workspace.preferences.timezone,
+    );
     const end = new Date(start.getTime() + 60 * 60_000);
     try {
       if (payload.type === "task") {
@@ -1296,12 +1381,6 @@ export function CalendarClient({
           year: "numeric",
           timeZone: "UTC",
         }).format(parseDate(addDays(range.to, -1)))}`;
-  const periodActionLabel =
-    view === "week"
-      ? t("calendarWeek", { week: isoWeekNumber(range.from) })
-      : view === "month"
-        ? periodLabel
-        : t(view);
   const importFieldLabels: Record<string, string> = {
     title: t("eventTitle"),
     location: t("location"),
@@ -1343,9 +1422,16 @@ export function CalendarClient({
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => navigate({ date: localDate() })}
+              onClick={() =>
+                navigate({
+                  date: localDateInZone(
+                    new Date(),
+                    workspace.preferences.timezone,
+                  ),
+                })
+              }
             >
-              {periodActionLabel}
+              {t("today")}
             </Button>
             <Button
               variant="ghost"
@@ -1362,8 +1448,9 @@ export function CalendarClient({
                 key={mode}
                 variant={view === mode ? "secondary" : "ghost"}
                 size="sm"
+                aria-current={view === mode ? "page" : undefined}
                 onClick={() => navigate({ view: mode })}
-                className="hidden sm:inline-flex"
+                className="inline-flex"
               >
                 {t(mode)}
               </Button>
@@ -1465,7 +1552,7 @@ export function CalendarClient({
               <FilterToggle
                 key={member.id}
                 checked={filters.people.includes(member.id)}
-                label={member.id === currentUser.id ? `${member.name} · me` : member.name}
+                label={member.id === currentUser.id ? `${member.name} · ${t("me")}` : member.name}
                 color="#6D5EF7"
                 onChange={() => toggleFilter("people", member.id)}
               />
@@ -1515,7 +1602,7 @@ export function CalendarClient({
           </Button>
         </aside>
 
-        <main className="min-w-0 rounded-2xl border bg-card">
+        <div className="min-w-0 rounded-2xl border bg-card">
           {view === "week" && (
             <FlowWeek
               days={weekDays}
@@ -1532,6 +1619,7 @@ export function CalendarClient({
                 setDraggingId(item.id);
                 dragPayload(event, { type: "item", id: item.id });
               }}
+              onDragEnd={() => setDraggingId(null)}
               onDropDay={(event, day) => void dropOnDay(event, day)}
               onDropTime={(event, day, hour) =>
                 void dropOnTime(event, day, hour)
@@ -1545,6 +1633,7 @@ export function CalendarClient({
               today={clientToday}
               items={filteredItems}
               locale={locale}
+              timezone={workspace.preferences.timezone}
               t={t}
               onSelect={setSelected}
               onNew={openNewEvent}
@@ -1553,6 +1642,7 @@ export function CalendarClient({
                 setDraggingId(item.id);
                 dragPayload(event, { type: "item", id: item.id });
               }}
+              onDragEnd={() => setDraggingId(null)}
             />
           )}
           {view === "agenda" && (
@@ -1560,6 +1650,7 @@ export function CalendarClient({
               days={days}
               items={filteredItems}
               locale={locale}
+              timezone={workspace.preferences.timezone}
               t={t}
               onSelect={setSelected}
             />
@@ -1570,17 +1661,26 @@ export function CalendarClient({
               items={filteredItems}
               members={workspace.members}
               locale={locale}
+              timezone={workspace.preferences.timezone}
               t={t}
               onSelect={setSelected}
             />
           )}
-        </main>
+        </div>
 
-        <aside className="hidden min-w-0 2xl:block">
+        <aside
+          className={cn(
+            "min-w-0",
+            selected
+              ? "fixed inset-x-3 bottom-3 z-40 max-h-[calc(100dvh-1.5rem)] overflow-y-auto drop-shadow-xl sm:left-auto sm:w-[22rem] 2xl:static 2xl:block 2xl:w-auto 2xl:overflow-visible 2xl:drop-shadow-none"
+              : "hidden 2xl:block",
+          )}
+        >
           {selected ? (
             <Inspector
               item={selected}
               locale={locale}
+              timezone={workspace.preferences.timezone}
               t={t}
               onClose={() => setSelected(null)}
               onEdit={() => openEditEvent(selected)}
@@ -1593,6 +1693,10 @@ export function CalendarClient({
                 setDraggingId(`task:${id}`);
                 dragPayload(event, { type: "task", id });
               }}
+              onDragEnd={() => setDraggingId(null)}
+              onSelect={(task) =>
+                router.push(canonicalTaskHref(task.id, task.projectId))
+              }
             />
           )}
         </aside>
@@ -1718,6 +1822,8 @@ export function CalendarClient({
                         editDraft("startDate", value)
                       }
                       label={t("startDate")}
+                      pickerLabel={t("chooseDate", { label: t("startDate") })}
+                      placeholder={t("datePlaceholder")}
                       invalidMessage={t("invalidDate")}
                     />
                     {!draft.allDay && (
@@ -1745,6 +1851,8 @@ export function CalendarClient({
                           editDraft("endDate", value)
                         }
                         label={t("endDate")}
+                        pickerLabel={t("chooseDate", { label: t("endDate") })}
+                        placeholder={t("datePlaceholder")}
                         invalidMessage={t("invalidDate")}
                       />
                     )}
@@ -2235,6 +2343,7 @@ function FlowWeek({
   onEdit,
   onNew,
   onDragStart,
+  onDragEnd,
   onDropDay,
   onDropTime,
 }: {
@@ -2249,6 +2358,7 @@ function FlowWeek({
   onEdit: (item: CalendarItem) => void;
   onNew: (day: string, hour?: number) => void;
   onDragStart: (event: DragEvent, item: CalendarItem) => void;
+  onDragEnd: () => void;
   onDropDay: (event: DragEvent, day: string) => void;
   onDropTime: (event: DragEvent, day: string, hour: number) => void;
 }) {
@@ -2268,7 +2378,11 @@ function FlowWeek({
   const timedByDate = new Map(
     days.map((day) => [
       day,
-      items.filter((item) => !item.allDay && dateForTimedItem(item) === day),
+      items.filter(
+        (item) =>
+          !item.allDay &&
+          dateForTimedItem(item, preferences.timezone) === day,
+      ),
     ]),
   );
   const workMinutes =
@@ -2293,14 +2407,24 @@ function FlowWeek({
             .filter((item) => item.availability === "busy")
             .reduce(
               (sum, item) =>
-                sum + Math.max(0, endMinutes(item) - startMinutes(item)),
+                sum +
+                Math.max(
+                  0,
+                  endMinutes(item, preferences.timezone) -
+                    startMinutes(item, preferences.timezone),
+                ),
               0,
             );
           const focusMinutes = dayItems
             .filter((item) => item.kind === "focus")
             .reduce(
               (sum, item) =>
-                sum + Math.max(0, endMinutes(item) - startMinutes(item)),
+                sum +
+                Math.max(
+                  0,
+                  endMinutes(item, preferences.timezone) -
+                    startMinutes(item, preferences.timezone),
+                ),
               0,
             );
           const conflicts = dayItems.reduce((count, item, index) => {
@@ -2308,8 +2432,10 @@ function FlowWeek({
               .slice(index + 1)
               .some(
                 (other) =>
-                  startMinutes(item) < endMinutes(other) &&
-                  endMinutes(item) > startMinutes(other),
+                  startMinutes(item, preferences.timezone) <
+                    endMinutes(other, preferences.timezone) &&
+                  endMinutes(item, preferences.timezone) >
+                    startMinutes(other, preferences.timezone),
               );
             return count + (overlaps ? 1 : 0);
           }, 0);
@@ -2392,6 +2518,7 @@ function FlowWeek({
                   draggable={item.editable}
                   key={item.id}
                   onDragStart={(event) => onDragStart(event, item)}
+                  onDragEnd={onDragEnd}
                   onClick={() => onSelect(item)}
                   className={cn(
                     "group flex w-full items-center gap-1.5 rounded-md border-l-[3px] bg-background px-1.5 py-1 text-left text-[10px] shadow-sm outline-none hover:ring-1 hover:ring-foreground/15 focus-visible:ring-2 focus-visible:ring-ring",
@@ -2448,11 +2575,14 @@ function FlowWeek({
             {(timedByDate.get(day) ?? []).map((item) => {
               const top = Math.max(
                 0,
-                (startMinutes(item) - HOURS[0] * 60) * PX_PER_MINUTE,
+                (startMinutes(item, preferences.timezone) - HOURS[0] * 60) *
+                  PX_PER_MINUTE,
               );
               const height = Math.max(
                 24,
-                (endMinutes(item) - startMinutes(item)) * PX_PER_MINUTE,
+                (endMinutes(item, preferences.timezone) -
+                  startMinutes(item, preferences.timezone)) *
+                  PX_PER_MINUTE,
               );
               if (top > HOURS.length * 60) return null;
               return (
@@ -2461,6 +2591,7 @@ function FlowWeek({
                   key={item.id}
                   draggable={item.editable}
                   onDragStart={(event) => onDragStart(event, item)}
+                  onDragEnd={onDragEnd}
                   onClick={() => onSelect(item)}
                   onDoubleClick={() => onEdit(item)}
                   className={cn(
@@ -2480,7 +2611,8 @@ function FlowWeek({
                 >
                   <span className="block truncate font-semibold">{item.title}</span>
                   <span className="mt-0.5 block font-mono text-[9px] text-muted-foreground">
-                    {formatMinutes(startMinutes(item))}–{formatMinutes(endMinutes(item))}
+                    {formatMinutes(startMinutes(item, preferences.timezone))}–
+                    {formatMinutes(endMinutes(item, preferences.timezone))}
                   </span>
                   {height > 48 && item.location && (
                     <span className="mt-1 flex items-center gap-1 truncate text-[9px] text-muted-foreground">
@@ -2505,22 +2637,26 @@ function MonthView({
   today,
   items,
   locale,
+  timezone,
   t,
   onSelect,
   onNew,
   onDrop,
   onDragStart,
+  onDragEnd,
 }: {
   days: string[];
   date: string;
   today: string | null;
   items: CalendarItem[];
   locale: string;
+  timezone: string;
   t: ReturnType<typeof useTranslations<"calendar">>;
   onSelect: (item: CalendarItem) => void;
   onNew: (day: string) => void;
   onDrop: (event: DragEvent, day: string) => void;
   onDragStart: (event: DragEvent, item: CalendarItem) => void;
+  onDragEnd: () => void;
 }) {
   const month = parseDate(date).getUTCMonth();
   const weekdayLabels = days.slice(0, 7).map((day) =>
@@ -2548,7 +2684,7 @@ function MonthView({
         const dayItems = items.filter((item) =>
           item.allDay
             ? Boolean(item.startDate && item.endDate && item.startDate <= day && item.endDate > day)
-            : dateForTimedItem(item) === day,
+            : dateForTimedItem(item, timezone) === day,
         );
         return (
           <div
@@ -2582,6 +2718,7 @@ function MonthView({
                   key={item.id}
                   draggable={item.editable}
                   onDragStart={(event) => onDragStart(event, item)}
+                  onDragEnd={onDragEnd}
                   onClick={() => onSelect(item)}
                   className="flex w-full items-center gap-1 rounded px-1.5 py-1 text-left text-[10px] hover:bg-muted"
                   style={{
@@ -2591,13 +2728,19 @@ function MonthView({
                   {!item.allDay && (
                     <span className="font-mono text-[9px] text-muted-foreground">
                       {new Intl.DateTimeFormat(locale, {
-                        timeStyle: "short",
-                      }).format(new Date(item.startAt!))}
+                      timeStyle: "short",
+                      timeZone: timezone,
+                    }).format(new Date(item.startAt!))}
                     </span>
                   )}
                   <span className="truncate">{item.title}</span>
                 </button>
               ))}
+              {dayItems.length > 3 && (
+                <p className="px-1.5 text-[10px] text-muted-foreground">
+                  {t("more", { count: dayItems.length - 3 })}
+                </p>
+              )}
             </div>
           </div>
         );
@@ -2611,12 +2754,14 @@ function AgendaView({
   days,
   items,
   locale,
+  timezone,
   t,
   onSelect,
 }: {
   days: string[];
   items: CalendarItem[];
   locale: string;
+  timezone: string;
   t: ReturnType<typeof useTranslations<"calendar">>;
   onSelect: (item: CalendarItem) => void;
 }) {
@@ -2626,7 +2771,7 @@ function AgendaView({
       items: items.filter((item) =>
         item.allDay
           ? Boolean(item.startDate && item.endDate && item.startDate <= day && item.endDate > day)
-          : dateForTimedItem(item) === day,
+          : dateForTimedItem(item, timezone) === day,
       ),
     }))
     .filter((group) => group.items.length > 0);
@@ -2685,6 +2830,7 @@ function AgendaView({
                       ? t("allDay")
                       : new Intl.DateTimeFormat(locale, {
                           timeStyle: "short",
+                          timeZone: timezone,
                         }).format(new Date(item.startAt!))}
                     {item.location ? ` · ${item.location}` : ""}
                   </span>
@@ -2703,6 +2849,7 @@ function TeamView({
   items,
   members,
   locale,
+  timezone,
   t,
   onSelect,
 }: {
@@ -2710,6 +2857,7 @@ function TeamView({
   items: CalendarItem[];
   members: CalendarWorkspace["members"];
   locale: string;
+  timezone: string;
   t: ReturnType<typeof useTranslations<"calendar">>;
   onSelect: (item: CalendarItem) => void;
 }) {
@@ -2753,7 +2901,7 @@ function TeamView({
                         item.startDate <= day &&
                         item.endDate > day,
                     )
-                  : dateForTimedItem(item) === day),
+                  : dateForTimedItem(item, timezone) === day),
             );
             return (
               <div key={day} className="border-r p-2 last:border-r-0">
@@ -2788,12 +2936,14 @@ function TeamView({
 function Inspector({
   item,
   locale,
+  timezone,
   t,
   onClose,
   onEdit,
 }: {
   item: CalendarItem;
   locale: string;
+  timezone: string;
   t: ReturnType<typeof useTranslations<"calendar">>;
   onClose: () => void;
   onEdit: () => void;
@@ -2813,7 +2963,7 @@ function Inspector({
           </p>
           <h2 className="mt-1 text-base font-semibold leading-snug">{item.title}</h2>
         </div>
-        <Button variant="ghost" size="icon-sm" onClick={onClose} aria-label="Close">
+        <Button variant="ghost" size="icon-sm" onClick={onClose} aria-label={t("close")}>
           <X />
         </Button>
       </div>
@@ -2824,10 +2974,11 @@ function Inspector({
             {item.allDay
               ? `${formatAustrianDate(item.startDate!)} – ${formatAustrianDate(addDays(item.endDate!, -1))}`
               : new Intl.DateTimeFormat(locale, {
-                  dateStyle: "medium",
-                  timeStyle: "short",
-                  hourCycle: "h23",
-                }).format(new Date(item.startAt!))}
+                dateStyle: "medium",
+                timeStyle: "short",
+                hourCycle: "h23",
+                timeZone: timezone,
+              }).format(new Date(item.startAt!))}
           </span>
         </p>
         {item.location && (
@@ -2881,10 +3032,14 @@ function UnscheduledTray({
   tasks,
   t,
   onDragStart,
+  onDragEnd,
+  onSelect,
 }: {
   tasks: CalendarWorkspace["unscheduledTasks"];
   t: ReturnType<typeof useTranslations<"calendar">>;
   onDragStart: (event: DragEvent, id: string) => void;
+  onDragEnd: () => void;
+  onSelect: (task: CalendarWorkspace["unscheduledTasks"][number]) => void;
 }) {
   return (
     <div className="sticky top-4 rounded-2xl border bg-card p-4">
@@ -2902,6 +3057,8 @@ function UnscheduledTray({
             draggable
             key={task.id}
             onDragStart={(event) => onDragStart(event, task.id)}
+            onDragEnd={onDragEnd}
+            onClick={() => onSelect(task)}
             className="flex w-full cursor-grab items-center gap-2 rounded-xl border bg-background p-2.5 text-left active:cursor-grabbing"
           >
             <GripVertical className="size-4 shrink-0 text-muted-foreground" />

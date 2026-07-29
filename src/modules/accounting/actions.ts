@@ -33,6 +33,7 @@ import {
   type SpecialFields,
 } from "./lib/payroll-special-fields";
 import { allocatePayrollLevyBases } from "./lib/payroll-at-2026";
+import { isValidIsoDate } from "./lib/date";
 
 const specialValueSchema = z.union([
   z.string().max(2000),
@@ -50,36 +51,54 @@ const taxLineSchema = z.object({
   inputVatDeductiblePercent: z.number().int().min(0).max(100).default(100),
 });
 
+const accountingDateSchema = z.string().refine(isValidIsoDate, {
+  message: "Invalid calendar date",
+});
+
 const paymentLineSchema = z.object({
-  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  date: accountingDateSchema,
   description: z.string().max(200),
   recipient: z.string().max(200),
   amountCents: z.number().int().positive(),
   paymentMethod: z.enum(["bank", "cash", "card"]),
 });
 
-const entrySchema = z.object({
-  id: z.string().optional(),
-  kind: z.enum(["income", "expense"]),
-  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  documentDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().default(null),
-  documentNumber: z.string().max(100).default(""),
-  servicePeriodStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().default(null),
-  servicePeriodEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().default(null),
-  status: z.enum(["draft", "finalized"]).default("finalized"),
-  description: z.string().max(500),
-  counterparty: z.string().max(200).default(""),
-  categoryId: z.string().min(1),
-  grossAmountCents: z.number().int().min(0),
-  vatRate: z.number().int(),
-  paymentMethod: z.enum(["bank", "cash", "card"]),
-  notes: z.string().max(2000).default(""),
-  deductiblePercent: z.number().int().min(0).max(100).default(100),
-  warningOverrideReason: z.string().max(1000).default(""),
-  specialFields: z.record(z.string(), specialValueSchema).default({}),
-  taxLines: z.array(taxLineSchema).max(50).optional(),
-  paymentLines: z.array(paymentLineSchema).max(50).optional(),
-});
+const entrySchema = z
+  .object({
+    id: z.string().optional(),
+    kind: z.enum(["income", "expense"]),
+    date: accountingDateSchema,
+    documentDate: accountingDateSchema.nullable().default(null),
+    documentNumber: z.string().max(100).default(""),
+    servicePeriodStart: accountingDateSchema.nullable().default(null),
+    servicePeriodEnd: accountingDateSchema.nullable().default(null),
+    status: z.enum(["draft", "finalized"]).default("finalized"),
+    description: z.string().max(500),
+    counterparty: z.string().max(200).default(""),
+    categoryId: z.string().min(1),
+    grossAmountCents: z.number().int().min(0),
+    vatRate: z.number().int(),
+    paymentMethod: z.enum(["bank", "cash", "card"]),
+    notes: z.string().max(2000).default(""),
+    deductiblePercent: z.number().int().min(0).max(100).default(100),
+    warningOverrideReason: z.string().max(1000).default(""),
+    specialFields: z.record(z.string(), specialValueSchema).default({}),
+    taxLines: z.array(taxLineSchema).max(50).optional(),
+    paymentLines: z.array(paymentLineSchema).max(50).optional(),
+  })
+  .superRefine((entry, context) => {
+    if (
+      entry.servicePeriodStart &&
+      entry.servicePeriodEnd &&
+      entry.servicePeriodStart > entry.servicePeriodEnd
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: "Service period start must not be after its end",
+        path: ["servicePeriodEnd"],
+      });
+    }
+  });
 
 export type EntryInput = z.infer<typeof entrySchema>;
 
@@ -432,7 +451,7 @@ export async function upsertEntry(input: EntryInput): Promise<{ id: string }> {
       tx.insert(entryAuditLog).values({
         entryId: id!,
         action,
-        snapshot: { ...values, taxLines: lines },
+        snapshot: { ...values, taxLines: lines, paymentLines },
         reason: data.warningOverrideReason,
         changedBy: user.id,
       }).run();

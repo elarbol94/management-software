@@ -250,17 +250,29 @@ export function LedgerClient({
             )}
             {entries.map((entry) => {
               const sign = entry.kind === "expense" ? -1 : 1;
+              const canEdit =
+                canManagePersonnel || entry.categoryTemplate !== "personnel";
               return (
                 <Fragment key={entry.id}>
                 <TableRow
-                  tabIndex={0}
-                  className="cursor-pointer border-[#edf0ee] hover:bg-[#f6f9f7] focus-visible:bg-[#f0f5f2] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#315c73]"
+                  tabIndex={canEdit ? 0 : undefined}
+                  aria-disabled={canEdit ? undefined : true}
+                  className={canEdit
+                    ? "cursor-pointer border-[#edf0ee] hover:bg-[#f6f9f7] focus-visible:bg-[#f0f5f2] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#315c73]"
+                    : "border-[#edf0ee]"}
                   onClick={() => {
+                    if (!canEdit) return;
                     setDialogEntry(entry);
                     setDialogOpen(true);
                   }}
                   onKeyDown={(event) => {
-                    if (event.key !== "Enter" && event.key !== " ") return;
+                    if (
+                      event.target !== event.currentTarget ||
+                      !canEdit ||
+                      (event.key !== "Enter" && event.key !== " ")
+                    ) {
+                      return;
+                    }
                     event.preventDefault();
                     setDialogEntry(entry);
                     setDialogOpen(true);
@@ -284,6 +296,7 @@ export function LedgerClient({
                           event.stopPropagation();
                           setExpandedId((current) => current === entry.id ? null : entry.id);
                         }}
+                        onKeyDown={(event) => event.stopPropagation()}
                       >
                         {expandedId === entry.id ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
                       </button>

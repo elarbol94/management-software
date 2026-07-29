@@ -42,35 +42,40 @@ export function CreateUserDialog() {
     e.preventDefault();
     setPending(true);
 
-    const { error } = await authClient.admin.createUser({
-      name: form.name,
-      email: form.email,
-      password: form.password,
-      data: {
-        username: form.username,
-        displayUsername: form.username,
-      },
-      // Better Auth's client types only know the built-in "user" | "admin"
-      // union; the server is configured with defaultRole "member".
-      role: form.role as "admin",
-    });
+    try {
+      const { error } = await authClient.admin.createUser({
+        name: form.name,
+        email: form.email,
+        password: form.password,
+        data: {
+          username: form.username,
+          displayUsername: form.username,
+        },
+        // Better Auth's client types only know the built-in "user" | "admin"
+        // union; the server is configured with defaultRole "member".
+        role: form.role as "admin",
+      });
 
-    setPending(false);
-    if (error) {
-      toast.error(error.message ?? tCommon("error"));
-      return;
+      if (error) {
+        toast.error(error.message ?? tCommon("error"));
+        return;
+      }
+
+      toast.success(t("created"));
+      setOpen(false);
+      setForm({
+        name: "",
+        username: "",
+        email: "",
+        password: "",
+        role: "member",
+      });
+      router.refresh();
+    } catch {
+      toast.error(tCommon("error"));
+    } finally {
+      setPending(false);
     }
-
-    toast.success(t("created"));
-    setOpen(false);
-    setForm({
-      name: "",
-      username: "",
-      email: "",
-      password: "",
-      role: "member",
-    });
-    router.refresh();
   }
 
   return (
@@ -128,14 +133,14 @@ export function CreateUserDialog() {
             />
           </div>
           <div className="flex flex-col gap-2">
-            <Label>{t("role")}</Label>
+            <Label htmlFor="new-user-role">{t("role")}</Label>
             <Select
               value={form.role}
               onValueChange={(value) =>
                 setForm({ ...form, role: value as "member" | "personnel" | "admin" })
               }
             >
-              <SelectTrigger>
+              <SelectTrigger id="new-user-role">
                 <SelectValue>
                   {form.role === "admin"
                     ? t("roleAdmin")

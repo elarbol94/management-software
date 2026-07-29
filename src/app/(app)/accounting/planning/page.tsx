@@ -42,7 +42,7 @@ export default async function PlanningPage({
           variant="ghost"
           size="icon-sm"
           nativeButton={false}
-          render={<Link href="/accounting" />}
+          render={<Link href="/accounting" aria-label={t("overview")} />}
         >
           <ArrowLeft className="size-4" />
         </Button>

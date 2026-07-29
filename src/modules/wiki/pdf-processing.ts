@@ -9,6 +9,7 @@ import { db, sqlite } from "@/db";
 import { wikiPdfDocuments, wikiPdfPages } from "@/db/schema";
 import { getAttachmentAbsolutePath, UPLOADS_PATH } from "@/lib/files";
 import { chooseExtractionMethod, extractPdfMetadataSuggestions } from "./lib/pdf-evidence";
+import { openPdfDocument, pdfMetadataAsInfo } from "./lib/pdf-node";
 
 type PdfJob = {
   id: string;
@@ -34,15 +35,6 @@ function runCommand(command: string, args: string[], timeout = 120_000) {
       resolve(stdout);
     });
   });
-}
-
-function metadataValue(output: string, key: string) {
-  return output.match(new RegExp(`^${key}:\\s*(.+)$`, "mi"))?.[1]?.trim() ?? "";
-}
-
-function parsePageSize(output: string) {
-  const match = output.match(/(?:Page(?:\s+\d+)? size):\s*([\d.]+)\s+x\s+([\d.]+)\s+pts/i);
-  return { width: Number(match?.[1] ?? 0), height: Number(match?.[2] ?? 0) };
 }
 
 function parseOcrTsv(tsv: string) {
@@ -101,7 +93,7 @@ export async function ensurePdfThumbnail(filePath: string, documentId: string, p
   try {
     await fs.mkdir(path.dirname(absolute), { recursive: true });
     const prefix = path.join(temporary, "thumbnail");
-    await runCommand("pdftoppm", ["-f", String(pageNumber), "-l", String(pageNumber), "-singlefile", "-scale-to-x", "220", "-scale-to-y", "-1", "-jpeg", filePath, prefix]);
+    await runCommand(process.env.PDFTOPPM_PATH || "pdftoppm", ["-f", String(pageNumber), "-l", String(pageNumber), "-singlefile", "-scale-to-x", "220", "-scale-to-y", "-1", "-jpeg", filePath, prefix]);
     await fs.rename(prefix + ".jpg", absolute);
     db.update(wikiPdfPages).set({ thumbnailStoredName: storedName })
       .where(and(eq(wikiPdfPages.documentId, documentId), eq(wikiPdfPages.pageNumber, pageNumber))).run();
@@ -113,7 +105,7 @@ export async function ensurePdfThumbnail(filePath: string, documentId: string, p
 
 async function extractOcrPage(filePath: string, pageNumber: number, temporary: string) {
   const prefix = path.join(temporary, `ocr-${pageNumber}`);
-  await runCommand("pdftoppm", ["-f", String(pageNumber), "-l", String(pageNumber), "-singlefile", "-r", "150", "-png", filePath, prefix]);
+  await runCommand(process.env.PDFTOPPM_PATH || "pdftoppm", ["-f", String(pageNumber), "-l", String(pageNumber), "-singlefile", "-r", "150", "-png", filePath, prefix]);
   const tsv = await runCommand(process.env.TESSERACT_PATH || "tesseract", [`${prefix}.png`, "stdout", "-l", process.env.PDF_OCR_LANGUAGES || "deu+eng", "tsv"], 180_000);
   return parseOcrTsv(tsv);
 }
@@ -122,16 +114,24 @@ async function processClaimedJob(job: PdfJob) {
   const startedAt = Date.now();
   const temporary = await fs.mkdtemp(path.join(os.tmpdir(), "pdf-evidence-"));
   const filePath = getAttachmentAbsolutePath(job.storedName);
+  let closePdf: (() => Promise<void>) | undefined;
   try {
-    const info = await runCommand("pdfinfo", [filePath]);
-    const pageCount = Number(metadataValue(info, "Pages"));
+    const pdf = await openPdfDocument(filePath);
+    closePdf = pdf.close;
+    const { document } = pdf;
+    const info = await pdfMetadataAsInfo(document);
+    const pageCount = document.numPages;
     if (!Number.isInteger(pageCount) || pageCount <= 0) throw new Error("The PDF has no readable pages");
     db.update(wikiPdfDocuments).set({ pageCount, progressPage: 0, updatedAt: new Date() })
       .where(eq(wikiPdfDocuments.id, job.id)).run();
 
     const firstPageTexts: string[] = [];
     for (let pageNumber = 1; pageNumber <= pageCount; pageNumber += 1) {
-      const nativeText = await runCommand("pdftotext", ["-f", String(pageNumber), "-l", String(pageNumber), "-layout", filePath, "-"]);
+      const page = await document.getPage(pageNumber);
+      const content = await page.getTextContent();
+      const nativeText = content.items
+        .map((item) => ("str" in item ? item.str : ""))
+        .join(" ");
       const method = chooseExtractionMethod(nativeText, true);
       let text = nativeText.trim();
       let textLayer: OcrWord[] = [];
@@ -143,8 +143,8 @@ async function processClaimedJob(job: PdfJob) {
         textLayer = ocr.words;
       }
       if (pageNumber <= 2) firstPageTexts.push(text);
-      const pageInfo = await runCommand("pdfinfo", ["-f", String(pageNumber), "-l", String(pageNumber), filePath]);
-      const size = parsePageSize(pageInfo);
+      const viewport = page.getViewport({ scale: 1 });
+      const size = { width: viewport.width, height: viewport.height };
 
       db.transaction(() => {
         db.insert(wikiPdfPages).values({
@@ -179,6 +179,7 @@ async function processClaimedJob(job: PdfJob) {
     }).where(eq(wikiPdfDocuments.id, job.id)).run();
     console.info(JSON.stringify({ event: "pdf_processed", documentId: job.id, pageCount, durationMs: Date.now() - startedAt }));
   } finally {
+    await closePdf?.();
     await fs.rm(temporary, { recursive: true, force: true });
   }
 }

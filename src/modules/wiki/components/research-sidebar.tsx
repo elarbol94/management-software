@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useLocale, useTranslations } from "next-intl";
+import { toast } from "sonner";
 import {
   ArchiveRestore,
   Bell,
@@ -38,10 +39,30 @@ import {
 import { useFocusMode } from "@/components/focus-mode";
 import { cn } from "@/lib/utils";
 import { createQuickNote, searchResearch } from "../research-actions";
+import { parseSearchSnippet } from "../lib/search-snippet";
 import type { WikiTreeNode } from "../queries";
 import type { TagDto } from "../research-queries";
 
 type SearchResults = Awaited<ReturnType<typeof searchResearch>>;
+
+function SearchSnippet({ value }: { value: string }) {
+  return (
+    <>
+      {parseSearchSnippet(value).map((segment, index) =>
+        segment.highlighted ? (
+          <mark
+            key={index}
+            className="rounded-sm bg-amber-200 px-0.5 text-foreground dark:bg-amber-800/70"
+          >
+            {segment.text}
+          </mark>
+        ) : (
+          <span key={index}>{segment.text}</span>
+        ),
+      )}
+    </>
+  );
+}
 
 function NavItem({
   href,
@@ -110,6 +131,7 @@ function PageTree({
   depth?: number;
   onNavigate?: () => void;
 }) {
+  const t = useTranslations("wiki");
   const [closed, setClosed] = useState<Record<string, boolean>>({});
   return <>{nodes.map((node) => (
     <div key={node.id}>
@@ -119,6 +141,7 @@ function PageTree({
             type="button"
             className="grid size-5 place-items-center text-muted-foreground"
             aria-expanded={!closed[node.id]}
+            aria-label={`${closed[node.id] ? t("expand") : t("collapse")}: ${node.title}`}
             onClick={() => setClosed((value) => ({ ...value, [node.id]: !value[node.id] }))}
           >
             <ChevronRight className={cn("size-3 transition-transform", !closed[node.id] && "rotate-90")} />
@@ -157,11 +180,32 @@ export function ResearchSidebar({
   }, [expanded]);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [creating, setCreating] = useState(false);
+  const creatingRef = useRef(false);
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SearchResults | null>(null);
+  const [searching, setSearching] = useState(false);
+  const [searchFailed, setSearchFailed] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const searchRequest = useRef(0);
   const desktopSearchRef = useRef<HTMLInputElement>(null);
   const mobileSearchRef = useRef<HTMLInputElement>(null);
+
+  const createNote = useCallback(async () => {
+    if (creating || creatingRef.current) return;
+    creatingRef.current = true;
+    setCreating(true);
+    try {
+      const note = await createQuickNote(locale === "en" ? "en" : "de");
+      setMobileOpen(false);
+      router.push(`/wiki/pages/${note.slug}`);
+      router.refresh();
+    } catch {
+      toast.error(t("quickNoteFailed"));
+    } finally {
+      creatingRef.current = false;
+      setCreating(false);
+    }
+  }, [creating, locale, router, t]);
 
   useEffect(() => {
     function shortcut(event: KeyboardEvent) {
@@ -172,48 +216,55 @@ export function ResearchSidebar({
     }
     window.addEventListener("keydown", shortcut);
     return () => window.removeEventListener("keydown", shortcut);
-  });
+  }, [createNote]);
 
   useEffect(() => () => {
+    searchRequest.current += 1;
     if (timer.current) clearTimeout(timer.current);
   }, []);
 
-  async function createNote() {
-    setCreating(true);
-    try {
-      const note = await createQuickNote(locale === "en" ? "en" : "de");
-      setMobileOpen(false);
-      router.push(`/wiki/pages/${note.slug}`);
-      router.refresh();
-    } finally {
-      setCreating(false);
-    }
-  }
-
-  function focusAfterLayout(ref: React.RefObject<HTMLInputElement | null>) {
-    window.requestAnimationFrame(() => {
-      window.requestAnimationFrame(() => ref.current?.focus());
-    });
-  }
-
-  function openDesktopSearch() {
-    setExpanded(true);
-    focusAfterLayout(desktopSearchRef);
-  }
-
   function updateSearch(value: string) {
+    const request = ++searchRequest.current;
     setQuery(value);
+    setSearchFailed(false);
     if (timer.current) clearTimeout(timer.current);
     if (!value.trim()) {
       setResults(null);
+      setSearching(false);
       return;
     }
-    timer.current = setTimeout(async () => setResults(await searchResearch(value)), 220);
+    setSearching(true);
+    timer.current = setTimeout(() => {
+      timer.current = null;
+      void searchResearch(value)
+        .then((next) => {
+          if (searchRequest.current === request) {
+            setResults(next);
+            setSearchFailed(false);
+          }
+        })
+        .catch(() => {
+          if (searchRequest.current === request) {
+            setResults(null);
+            setSearchFailed(true);
+          }
+        })
+        .finally(() => {
+          if (searchRequest.current === request) setSearching(false);
+        });
+    }, 220);
   }
 
   function closeSearch(onNavigate?: () => void) {
+    searchRequest.current += 1;
+    if (timer.current) {
+      clearTimeout(timer.current);
+      timer.current = null;
+    }
     setQuery("");
     setResults(null);
+    setSearching(false);
+    setSearchFailed(false);
     onNavigate?.();
   }
 
@@ -232,6 +283,7 @@ export function ResearchSidebar({
         <Input
           ref={inputRef}
           id={id}
+          aria-label={t("searchEverything")}
           value={query}
           onChange={(event) => updateSearch(event.target.value)}
           placeholder={t("searchEverything")}
@@ -247,21 +299,42 @@ export function ResearchSidebar({
             <X className="size-3.5" />
           </button>
         )}
-        {results && (
+        {searching && (
+          <div className="absolute top-12 right-3 left-3 z-50 rounded-lg border bg-popover p-3 text-xs text-muted-foreground shadow-xl">
+            {t("loading")}
+          </div>
+        )}
+        {!searching && searchFailed && (
+          <div
+            className="absolute top-12 right-3 left-3 z-50 grid justify-items-center gap-2 rounded-lg border bg-popover p-3 text-center text-xs text-destructive shadow-xl"
+            role="alert"
+          >
+            <p>{t("researchSearchFailed")}</p>
+            <Button
+              type="button"
+              size="xs"
+              variant="outline"
+              onClick={() => updateSearch(query)}
+            >
+              {t("retry")}
+            </Button>
+          </div>
+        )}
+        {!searching && !searchFailed && results && (
           <div className="absolute top-12 right-3 left-3 z-50 max-h-[28rem] overflow-y-auto rounded-lg border bg-popover p-1 shadow-xl">
             {results.pages.length === 0 && results.sources.length === 0 && results.pdfPages.length === 0 && <p className="p-3 text-xs text-muted-foreground">{t("noResults")}</p>}
             {results.pages.length > 0 && <p className="px-2 py-1 text-[10px] font-semibold tracking-wider text-muted-foreground uppercase">{t("documents")}</p>}
             {results.pages.map((item) => (
               <Link key={item.id} href={`/wiki/pages/${item.slug}`} onClick={() => closeSearch(onNavigate)} className="block rounded-md px-2 py-1.5 hover:bg-accent">
                 <span className="block text-xs font-medium">{item.title}</span>
-                <span className="block truncate text-[11px] text-muted-foreground" dangerouslySetInnerHTML={{ __html: item.snippet }} />
+                <span className="block truncate text-[11px] text-muted-foreground"><SearchSnippet value={item.snippet} /></span>
               </Link>
             ))}
             {results.pdfPages.length > 0 && <p className="mt-1 border-t px-2 pt-2 pb-1 text-[10px] font-semibold tracking-wider text-muted-foreground uppercase">{t("pdfPages")}</p>}
             {results.pdfPages.map((item) => (
               <Link key={`${item.sourceId}-${item.pageNumber}`} href={`/wiki/sources/${item.sourceId}/read/${item.documentId}?page=${item.pageNumber}`} onClick={() => closeSearch(onNavigate)} className="block rounded-md px-2 py-1.5 hover:bg-accent">
                 <span className="block text-xs font-medium">{item.sourceTitle} · {t("pageNumber", { page: item.pageNumber })}</span>
-                <span className="block truncate text-[11px] text-muted-foreground" dangerouslySetInnerHTML={{ __html: item.snippet }} />
+                <span className="block truncate text-[11px] text-muted-foreground"><SearchSnippet value={item.snippet} /></span>
               </Link>
             ))}
             {results.sources.length > 0 && <p className="mt-1 border-t px-2 pt-2 pb-1 text-[10px] font-semibold tracking-wider text-muted-foreground uppercase">{t("sources")}</p>}
@@ -329,27 +402,7 @@ export function ResearchSidebar({
             )}
           </div>
 
-          {compact ? (
-            <div className="p-2 pb-1">
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      aria-label={t("searchEverything")}
-                      onClick={openDesktopSearch}
-                      className="w-full"
-                    />
-                  }
-                >
-                  <Search className="size-4" />
-                </TooltipTrigger>
-                <TooltipContent side="right" sideOffset={8}>{t("searchEverything")}</TooltipContent>
-              </Tooltip>
-            </div>
-          ) : searchBox({ id: searchId, inputRef, onNavigate })}
+          {searchBox({ id: searchId, inputRef, onNavigate })}
 
           <nav
             id={navigationId}

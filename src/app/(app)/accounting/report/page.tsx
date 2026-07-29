@@ -70,7 +70,7 @@ export default async function ReportPage({
           variant="ghost"
           size="icon-sm"
           nativeButton={false}
-          render={<Link href="/accounting" />}
+          render={<Link href="/accounting" aria-label={t("overview")} />}
         >
           <ArrowLeft className="size-4" />
         </Button>
@@ -78,7 +78,7 @@ export default async function ReportPage({
           {t("report")} {year}
         </h1>
         <div className="ml-auto flex items-center gap-2">
-          <YearSelect years={years} year={year} />
+          <YearSelect years={years} year={year} label={t("year")} />
           <Button
             variant="outline"
             size="sm"

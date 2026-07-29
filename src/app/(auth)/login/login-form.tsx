@@ -28,16 +28,20 @@ export function LoginForm() {
     setPending(true);
     setError(null);
 
-    const result = await authClient.signIn.username({ username, password });
+    try {
+      const result = await authClient.signIn.username({ username, password });
+      if (result.error) {
+        setError(t("invalidCredentials"));
+        return;
+      }
 
-    if (result.error) {
+      router.push("/");
+      router.refresh();
+    } catch {
       setError(t("invalidCredentials"));
+    } finally {
       setPending(false);
-      return;
     }
-
-    router.push("/");
-    router.refresh();
   }
 
   return (
@@ -70,7 +74,11 @@ export function LoginForm() {
               autoComplete="current-password"
             />
           </div>
-          {error && <p className="text-sm text-destructive">{error}</p>}
+          {error && (
+            <p className="text-sm text-destructive" role="alert">
+              {error}
+            </p>
+          )}
           <Button type="submit" disabled={pending}>
             {t("signIn")}
           </Button>

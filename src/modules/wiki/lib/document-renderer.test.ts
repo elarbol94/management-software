@@ -26,6 +26,7 @@ const doc: TiptapNode = {
       { type: "taskItem", attrs: { checked: true }, content: [{ type: "paragraph", content: [{ type: "text", text: "Done" }] }] },
     ] },
     { type: "pageBreak" },
+    { type: "commentableImage", attrs: { nodeId: "figure-one", src: "data:image/png;base64,AA==", alt: "Chart", caption: "Quarterly revenue", includeInFigureIndex: true } },
     { type: "markdownTable", content: [
       { type: "markdownTableRow", content: [{ type: "markdownTableHeader", content: [{ type: "paragraph", content: [{ type: "text", text: "Item" }] }] }] },
       { type: "markdownTableRow", content: [{ type: "markdownTableCell", content: [{ type: "paragraph", content: [{ type: "text", text: "Result" }] }] }] },
@@ -104,5 +105,18 @@ describe("document renderer", () => {
     expect(result.html).toContain("--heading-after: 0.3em");
     expect(result.html).toContain("--ink: #112233");
     expect(result.html).not.toContain("--ink: #FF0000");
+  });
+
+  it("renders captions in an enabled list of figures", async () => {
+    const settings = {
+      ...DEFAULT_DOCUMENT_SETTINGS,
+      cover: { ...DEFAULT_DOCUMENT_SETTINGS.cover, enabled: false },
+      figures: { ...DEFAULT_DOCUMENT_SETTINGS.figures, enabled: true, heading: "Figures" },
+    };
+    const result = await renderDocumentHtml({ title: "Proposal", doc, settings });
+    expect(result.html).toContain('<section class="figure-index">');
+    expect(result.html).toContain("Quarterly revenue");
+    expect(result.html).toContain('href="#figure-1"');
+    expect(result.html).toContain("Figure 1.");
   });
 });

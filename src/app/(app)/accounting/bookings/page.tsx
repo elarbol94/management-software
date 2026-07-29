@@ -58,7 +58,7 @@ export default async function BookingsPage({
   };
   const entryPage = listEntriesPage(filters, { cursor: params.cursor, limit: 50 });
   const totals = entryTotals(filters);
-  const categories = listCategories();
+  const categories = listCategories({ includeArchived: true });
   const years = yearsWithEntries();
   const currentYear = new Date().getFullYear();
   const settings = getAppSettings();

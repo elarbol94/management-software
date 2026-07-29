@@ -9,14 +9,22 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 
-export function YearSelect({ years, year }: { years: number[]; year: number }) {
+export function YearSelect({
+  years,
+  year,
+  label,
+}: {
+  years: number[];
+  year: number;
+  label: string;
+}) {
   const router = useRouter();
   return (
     <Select
       value={String(year)}
       onValueChange={(value) => router.push(`/accounting/report?year=${value}`)}
     >
-      <SelectTrigger className="w-28">
+      <SelectTrigger className="w-28" aria-label={label}>
         <SelectValue />
       </SelectTrigger>
       <SelectContent>

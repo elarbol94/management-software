@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { Ban, Check, Send } from "lucide-react";
@@ -17,7 +16,6 @@ export function InvoiceStatusActions({
 }) {
   const t = useTranslations("invoices");
   const tCommon = useTranslations("common");
-  const router = useRouter();
   const [pending, setPending] = useState(false);
 
   async function transition(next: "sent" | "paid" | "canceled") {
@@ -25,7 +23,7 @@ export function InvoiceStatusActions({
     try {
       await setInvoiceStatus(id, next);
       toast.success(tCommon("saved"));
-      router.refresh();
+      window.location.reload();
     } catch {
       toast.error(tCommon("error"));
     } finally {

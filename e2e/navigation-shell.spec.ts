@@ -34,8 +34,12 @@ test("desktop navigation rails expand on hover, collapse on leave, and survive f
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.goto("/wiki/inbox");
 
-  const appSidebar = page.getByTestId("app-sidebar");
-  const researchSidebar = page.getByTestId("research-sidebar");
+  await expect(page.getByTestId("app-sidebar")).toHaveCount(1);
+  await expect(page.getByTestId("research-sidebar")).toHaveCount(1);
+  const appSidebar = page.getByTestId("app-sidebar").filter({ visible: true });
+  const researchSidebar = page
+    .getByTestId("research-sidebar")
+    .filter({ visible: true });
   await expect(appSidebar).toBeVisible();
   await expect(researchSidebar).toBeVisible();
   await expectWidth(appSidebar, 56);
@@ -48,23 +52,32 @@ test("desktop navigation rails expand on hover, collapse on leave, and survive f
 
   await appSidebar.hover();
   await expectWidth(appSidebar, 240);
-  await page.locator("main").hover();
+  await page.locator("[data-app-main]").hover();
   await expectWidth(appSidebar, 56);
 
   await researchSidebar.hover();
   await expectWidth(appSidebar, 56);
   await expectWidth(researchSidebar, 256);
-  await page.locator("main").hover();
-  await researchSidebar.getByRole("button", { name: "Seiten und Quellen durchsuchen…" }).click();
+  await page.locator("[data-app-main]").hover();
+  await expectWidth(researchSidebar, 56);
+  const desktopResearchSearch = researchSidebar.getByRole("textbox", {
+    name: "Dokumente und Quellen durchsuchen…",
+  });
+  await desktopResearchSearch.click();
   await expectWidth(researchSidebar, 256);
-  await expect(page.locator("#research-search-desktop")).toBeFocused();
+  await expect(desktopResearchSearch).toBeFocused();
 
-  await researchSidebar.getByRole("link", { name: "Seiten", exact: true }).click();
+  await researchSidebar.getByRole("link", { name: "Dokumente", exact: true }).click();
   await expect(page).toHaveURL(/\/wiki\/pages$/);
+  await expect(page.getByTestId("research-sidebar")).toHaveCount(1);
   await expectWidth(researchSidebar, 256);
 
   await appSidebar.hover();
   await expectWidth(appSidebar, 240);
+  await page.locator("[data-app-main]").hover();
+  await expectWidth(appSidebar, 56);
+  await researchSidebar.hover();
+  await expectWidth(researchSidebar, 256);
   await researchSidebar.getByRole("button", { name: "Schnelle Notiz" }).click();
   await expect(page).toHaveURL(/\/wiki\/pages\/[^/]+$/);
   await page.getByRole("button", { name: "Fokusmodus", exact: true }).click();
@@ -72,8 +85,8 @@ test("desktop navigation rails expand on hover, collapse on leave, and survive f
   await expect(researchSidebar).toHaveCount(0);
 
   await page.getByRole("button", { name: "Fokusmodus beenden" }).click();
-  await expectWidth(page.getByTestId("app-sidebar"), 240);
-  await expectWidth(page.getByTestId("research-sidebar"), 56);
+  await expectWidth(appSidebar, 56);
+  await expectWidth(researchSidebar, 56);
 });
 
 test("mobile navigation uses full-width content with dismissible app and research sheets", async ({ page }) => {
@@ -81,10 +94,16 @@ test("mobile navigation uses full-width content with dismissible app and researc
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/wiki/inbox");
 
+  await expect(page.getByTestId("app-sidebar")).toHaveCount(1);
+  await expect(page.getByTestId("research-sidebar")).toHaveCount(1);
   await expect(page.getByTestId("app-mobile-header")).toBeVisible();
   await expect(page.getByTestId("research-mobile-header")).toBeVisible();
-  await expect(page.getByTestId("app-sidebar")).toBeHidden();
-  await expect(page.getByTestId("research-sidebar")).toBeHidden();
+  await expect(
+    page.getByTestId("app-sidebar").filter({ visible: true }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByTestId("research-sidebar").filter({ visible: true }),
+  ).toHaveCount(0);
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 
   await page.getByRole("button", { name: "Hauptnavigation öffnen" }).click();
@@ -95,14 +114,26 @@ test("mobile navigation uses full-width content with dismissible app and researc
   await expect(appSheet).not.toBeVisible();
 
   await page.keyboard.press("Control+k");
+  const workspaceSearch = page.getByRole("dialog", {
+    name: "Arbeitsbereich durchsuchen",
+  });
+  await expect(workspaceSearch).toBeVisible();
+  await expect(
+    workspaceSearch.getByPlaceholder(
+      "Projekte, Aufgaben, Wiki und Quellen durchsuchen…",
+    ),
+  ).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(workspaceSearch).not.toBeVisible();
+
+  await page.getByRole("button", { name: "Wissensnavigation öffnen" }).click();
   const researchSheet = page.getByTestId("research-navigation-sheet");
   await expect(researchSheet).toBeVisible();
-  await expect(page.locator("#research-search-mobile")).toBeFocused();
   await page.keyboard.press("Escape");
   await expect(researchSheet).not.toBeVisible();
 
   await page.getByRole("button", { name: "Wissensnavigation öffnen" }).click();
-  await researchSheet.getByRole("link", { name: "Seiten", exact: true }).click();
+  await researchSheet.getByRole("link", { name: "Dokumente", exact: true }).click();
   await expect(page).toHaveURL(/\/wiki\/pages$/);
   await expect(researchSheet).not.toBeVisible();
 

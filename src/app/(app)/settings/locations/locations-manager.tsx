@@ -27,6 +27,7 @@ export function LocationsManager({ locations }: { locations: Location[] }) {
   const [state, setState] = useState<(typeof payrollStates)[number] | "">("");
   const [municipality, setMunicipality] = useState("");
   const [pending, setPending] = useState(false);
+  const [togglingId, setTogglingId] = useState<string | null>(null);
 
   function edit(location: Location | null) {
     setEditing(location);
@@ -52,6 +53,18 @@ export function LocationsManager({ locations }: { locations: Location[] }) {
     }
   }
 
+  async function toggleActive(location: Location) {
+    setTogglingId(location.id);
+    try {
+      await setBusinessLocationActive(location.id, !location.active);
+      router.refresh();
+    } catch {
+      toast.error(tc("error"));
+    } finally {
+      setTogglingId(null);
+    }
+  }
+
   return <div className="flex flex-col gap-4">
     <Button size="sm" className="self-start" onClick={() => edit(null)}><Plus className="size-4" />{t("add")}</Button>
     <div className="divide-y rounded-lg border">
@@ -61,7 +74,7 @@ export function LocationsManager({ locations }: { locations: Location[] }) {
         {location.name === "Graz / Steiermark" && <Badge variant="secondary">{t("default")}</Badge>}
         {!location.active && <Badge variant="outline">{t("inactive")}</Badge>}
         <Button type="button" variant="ghost" size="icon-xs" onClick={() => edit(location)} aria-label={t("edit")}><Pencil className="size-3.5" /></Button>
-        <Button type="button" variant="ghost" size="icon-xs" onClick={async () => { await setBusinessLocationActive(location.id, !location.active); router.refresh(); }} aria-label={location.active ? t("archive") : t("restore")}>{location.active ? <Archive className="size-3.5" /> : <ArchiveRestore className="size-3.5" />}</Button>
+        <Button type="button" variant="ghost" size="icon-xs" disabled={togglingId === location.id} onClick={() => void toggleActive(location)} aria-label={location.active ? t("archive") : t("restore")}>{location.active ? <Archive className="size-3.5" /> : <ArchiveRestore className="size-3.5" />}</Button>
       </div>)}
     </div>
     <Dialog open={open} onOpenChange={setOpen}><DialogContent className="sm:max-w-md"><DialogHeader><DialogTitle>{editing ? t("edit") : t("add")}</DialogTitle></DialogHeader><form onSubmit={submit} className="grid gap-4">

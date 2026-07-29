@@ -23,7 +23,7 @@ function parseYear(value?: string) {
 export default async function AccountingPage({
   searchParams,
 }: {
-  searchParams: Promise<{ year?: string }>;
+  searchParams: Promise<{ year?: string; new?: string }>;
 }) {
   const [user, params] = await Promise.all([requireUser(), searchParams]);
   const year = parseYear(params.year);
@@ -32,7 +32,7 @@ export default async function AccountingPage({
   const entries = listEntriesPage(filters, { limit: 5 }).items;
   const totals = entryTotals(filters);
   const months = monthlySummary(year);
-  const categories = listCategories();
+  const categories = listCategories({ includeArchived: true });
   const vatRows = vatSummary(year);
   const settings = getAppSettings();
   const fundingProjects = listFundingProjects().map(({ id, name }) => ({ id, name }));
@@ -61,6 +61,7 @@ export default async function AccountingPage({
       categories={categories}
       years={years}
       year={year}
+      openEntryOnLoad={params.new === "expense" || params.new === "income"}
       canManagePersonnel={canManagePersonnel}
       taxSettings={{ kleinunternehmer: settings.kleinunternehmer, defaultVatRate: settings.defaultVatRate }}
       fundingProjects={fundingProjects}

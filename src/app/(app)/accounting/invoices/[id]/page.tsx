@@ -48,7 +48,7 @@ export default async function InvoiceDetailPage({
           variant="ghost"
           size="icon-sm"
           nativeButton={false}
-          render={<Link href="/accounting/invoices" />}
+          render={<Link href="/accounting/invoices" aria-label={t("title")} />}
         >
           <ArrowLeft className="size-4" />
         </Button>
@@ -88,6 +88,7 @@ export default async function InvoiceDetailPage({
             items,
           }}
           defaultVatRate={settings.kleinunternehmer ? 0 : settings.defaultVatRate}
+          vatExempt={settings.kleinunternehmer}
         />
       ) : (
         <div className="flex max-w-3xl flex-col gap-6">

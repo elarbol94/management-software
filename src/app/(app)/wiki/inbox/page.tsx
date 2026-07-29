@@ -9,7 +9,7 @@ export default async function InboxPage() {
   const t = await getTranslations("wiki");
   const pages = listWorkspacePages(currentUser.id);
   return (
-    <main className="mx-auto max-w-5xl p-5 md:p-8">
+    <div className="mx-auto max-w-5xl p-5 md:p-8">
       <header className="mb-7 flex items-end justify-between gap-4 border-b pb-5">
         <div>
           <p className="mb-1 text-xs font-semibold tracking-[0.16em] text-indigo-600 uppercase">
@@ -25,6 +25,6 @@ export default async function InboxPage() {
         <QuickNoteButton />
       </header>
       <WorkspacePageList pages={pages} />
-    </main>
+    </div>
   );
 }

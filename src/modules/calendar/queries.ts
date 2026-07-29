@@ -66,6 +66,17 @@ export function ensureCalendarWorkspace(userId: string) {
   return ownCalendar;
 }
 
+export function getCalendarTimezone(userId: string) {
+  ensureCalendarWorkspace(userId);
+  return (
+    db
+      .select({ timezone: calendarPreferences.timezone })
+      .from(calendarPreferences)
+      .where(eq(calendarPreferences.userId, userId))
+      .get()?.timezone ?? DEFAULT_TIMEZONE
+  );
+}
+
 export function calendarRoleForUser(
   calendarId: string,
   userId: string,

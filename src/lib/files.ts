@@ -4,6 +4,7 @@ import path from "node:path";
 import { eq, and } from "drizzle-orm";
 import { db } from "@/db";
 import { attachments, attachmentEntityTypes } from "@/db/schema";
+import { isSafeInlineSvg } from "@/lib/svg-upload";
 
 export const UPLOADS_PATH =
   process.env.UPLOADS_PATH ??
@@ -16,6 +17,7 @@ const ALLOWED_MIME: Record<string, string> = {
   "image/png": ".png",
   "image/jpeg": ".jpg",
   "image/webp": ".webp",
+  "image/svg+xml": ".svg",
   "image/heic": ".heic",
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
@@ -50,6 +52,9 @@ export async function saveAttachment(options: {
   }
 
   const buffer = Buffer.from(await file.arrayBuffer());
+  if (file.type === "image/svg+xml" && !isSafeInlineSvg(buffer)) {
+    throw new UploadError("SVG contains active or externally loaded content");
+  }
   const sha256 = crypto.createHash("sha256").update(buffer).digest("hex");
   // Shard by hash prefix so a single directory never grows unbounded.
   const storedName = `${sha256.slice(0, 2)}/${crypto.randomUUID()}${ext}`;

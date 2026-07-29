@@ -11,7 +11,7 @@ import { getCitationSourcesForPage } from "../research-queries";
 import { renderDocumentPdfBytes } from "./document-pdf-engine";
 import type { WikiTypographySettingsV1 } from "./wiki-typography";
 
-const EXPORT_IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
+const EXPORT_IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/svg+xml"]);
 
 function dataUriForAttachment(attachmentId: string, pageId: string) {
   const attachment = getAttachment(attachmentId);

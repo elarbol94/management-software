@@ -39,6 +39,7 @@ type Props = {
   templates: StoredDocumentTemplate[];
   issues: DocumentPreflightIssue[];
   outline: OutlineItem[];
+  figureCount: number;
   onOpenTypographySettings: () => void;
   onClose: () => void;
 };
@@ -65,6 +66,7 @@ export function DocumentLayoutPanel({
   templates,
   issues,
   outline,
+  figureCount,
   onOpenTypographySettings,
   onClose,
 }: Props) {
@@ -198,6 +200,11 @@ export function DocumentLayoutPanel({
           <Toggle checked={settings.footer.enabled} onChange={(enabled) => patch({ footer: { ...settings.footer, enabled } })} label={t("footer")} />
           <Toggle checked={settings.footer.pageNumbers} onChange={(pageNumbers) => patch({ footer: { ...settings.footer, pageNumbers } })} label={t("pageNumbers")} />
           <Toggle checked={settings.bibliography.enabled} onChange={(enabled) => patch({ bibliography: { ...settings.bibliography, enabled } })} label={t("bibliography")} />
+          <Toggle checked={settings.figures.enabled} onChange={(enabled) => patch({ figures: { ...settings.figures, enabled } })} label={t("figureIndex")} />
+          {settings.figures.enabled && <div className="grid gap-2 rounded-lg border bg-muted/35 p-2">
+            <Field label={t("figureIndexHeading")}><Input className="h-8" value={settings.figures.heading} onChange={(event) => patch({ figures: { ...settings.figures, heading: event.target.value } })} /></Field>
+            <p className="text-[11px] text-muted-foreground">{t("figureIndexCount", { count: figureCount })}</p>
+          </div>}
         </section>
       </TabsContent>
 

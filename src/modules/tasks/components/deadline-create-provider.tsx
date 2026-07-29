@@ -9,7 +9,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { CalendarClock, CalendarDays, Check, Clock3, Loader2, Save, X } from "lucide-react";
@@ -83,6 +83,7 @@ export function DeadlineCreateProvider({ children }: { children: ReactNode }) {
   const t = useTranslations("deadlines");
   const tCommon = useTranslations("common");
   const pathname = usePathname();
+  const router = useRouter();
   const [open, setOpen] = useState(false);
   const [options, setOptions] = useState<Awaited<ReturnType<typeof getContextualTaskOptions>> | null>(null);
   const [request, setRequest] = useState<OpenDeadlineOptions>({});
@@ -183,6 +184,7 @@ export function DeadlineCreateProvider({ children }: { children: ReactNode }) {
       request.onCreated?.(result.id);
       toast.success(request.deadline ? t("updated") : t("created"));
       setOpen(false);
+      router.refresh();
     } catch {
       setErrors({ save: t("saveError") });
     } finally {
@@ -319,9 +321,9 @@ export function DeadlineCreateProvider({ children }: { children: ReactNode }) {
               </div>
               <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2">
-                <Label>{t("assignee")}</Label>
+                <Label htmlFor="deadline-assignee">{t("assignee")}</Label>
                 <Select value={assigneeId} onValueChange={(next) => setAssigneeId(next ?? NONE)}>
-                  <SelectTrigger className="w-full"><SelectValue>{assigneeLabel}</SelectValue></SelectTrigger>
+                  <SelectTrigger id="deadline-assignee" className="w-full"><SelectValue>{assigneeLabel}</SelectValue></SelectTrigger>
                   <SelectContent>
                     <SelectItem value={NONE}>{t("unassigned")}</SelectItem>
                     {options?.members.map((member) => (
@@ -331,9 +333,9 @@ export function DeadlineCreateProvider({ children }: { children: ReactNode }) {
                 </Select>
               </div>
               <div className="space-y-2">
-                <Label>{t("status")}</Label>
+                <Label htmlFor="deadline-status">{t("status")}</Label>
                 <Select value={status} onValueChange={(next) => setStatus(next as TaskStatus)}>
-                  <SelectTrigger className="w-full"><SelectValue>{t(`statuses.${status}`)}</SelectValue></SelectTrigger>
+                  <SelectTrigger id="deadline-status" className="w-full"><SelectValue>{t(`statuses.${status}`)}</SelectValue></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="open">{t("statuses.open")}</SelectItem>
                     <SelectItem value="done">{t("statuses.done")}</SelectItem>

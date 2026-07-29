@@ -7,7 +7,7 @@ import { LocationsManager } from "./locations-manager";
 
 export default async function LocationsSettingsPage() {
   const user = await requireUser();
-  if (user.role !== "admin") redirect("/settings/company");
+  if (user.role !== "admin") redirect("/settings/profile");
   const t = await getTranslations("settings.locations");
   return (
     <Card>

@@ -196,7 +196,7 @@ export function PdfReader({
   const [textLayerVersion, setTextLayerVersion] = useState(0);
   const [continuousRenderPages, setContinuousRenderPages] = useState<number[]>([pageNumber]);
   const searchInputRef = useRef<HTMLInputElement>(null);
-  const readerRef = useRef<HTMLElement>(null);
+  const readerRef = useRef<HTMLDivElement>(null);
   const [liveMessage, setLiveMessage] = useState("");
   const [annotationKindFilter, setAnnotationKindFilter] = useState("all");
   const [annotationColorFilter, setAnnotationColorFilter] = useState("all");
@@ -216,6 +216,15 @@ export function PdfReader({
   const [viewMode, setViewMode] = useState<"continuous" | "single" | "double">("continuous");
   const [rendering, setRendering] = useState(true); const [error, setError] = useState("");
   const [annotations, setAnnotations] = useState(initialAnnotations);
+  // Reserve enough centered gutter for the furthest visible marker: annotation
+  // (34px), task (68px), or deadline (100px), plus two pixels per side.
+  const fitPadding = contextDeadlines.length > 0
+    ? 204
+    : contextTasks.length > 0
+      ? 140
+      : annotations.some((annotation) => annotation.note || annotation.comments.length > 0)
+        ? 72
+        : 32;
   const [activeAnnotationId, setActiveAnnotationId] = useState(initialAnnotationId ?? "");
   const [replyByAnnotation, setReplyByAnnotation] = useState<Record<string, string>>({});
   const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
@@ -227,6 +236,7 @@ export function PdfReader({
   const [selectionAnchorPosition, setSelectionAnchorPosition] = useState<{ left: number; top: number; side: SelectionAnchor["side"] } | null>(null);
   const [pendingAnnotation, setPendingAnnotation] = useState<PendingAnnotation | null>(null);
   const [annotationNote, setAnnotationNote] = useState("");
+  const [annotationSaving, setAnnotationSaving] = useState(false);
   const [annotationAnchor, setAnnotationAnchor] = useState<{ left: number; top: number } | null>(null);
   const [regionMode, setRegionMode] = useState(false); const [region, setRegion] = useState<PdfRect | null>(null);
   const regionStart = useRef<{ x: number; y: number } | null>(null);
@@ -1095,6 +1105,7 @@ export function PdfReader({
     const nextScale = calculateFitScale({
       mode, pageWidth: base.width, pageHeight: base.height,
       viewportWidth: viewportRef.current.clientWidth, viewportHeight: viewportRef.current.clientHeight,
+      padding: fitPadding,
     });
     if (nextScale !== null) setScale(nextScale);
   }
@@ -1217,6 +1228,7 @@ export function PdfReader({
           const nextScale = calculateFitScale({
             mode: fitMode, pageWidth: base.width, pageHeight: base.height,
             viewportWidth: viewportRef.current.clientWidth, viewportHeight: viewportRef.current.clientHeight,
+            padding: fitPadding,
           });
           if (nextScale !== null) setScale(nextScale);
         }).catch(() => {});
@@ -1226,7 +1238,7 @@ export function PdfReader({
     observer.observe(viewport);
     recalculate();
     return () => { observer.disconnect(); if (frame !== null) window.cancelAnimationFrame(frame); };
-  }, [fitMode, pageNumber, pdf, rotation]);
+  }, [fitMode, fitPadding, pageNumber, pdf, rotation]);
 
   function selectionActionsStyle(anchor: { left: number; top: number; side: "left" | "right" }) {
     const width = 480; const height = 42; const gap = 8;
@@ -1246,9 +1258,25 @@ export function PdfReader({
     return { left, top, transform: placeAbove ? "translateY(-100%)" : "translateY(0)" };
   }
 
-  function submitPendingAnnotation() {
-    if (!pendingAnnotation) return;
-    void saveAnnotation(pendingAnnotation.kind, pendingAnnotation.geometry, pendingAnnotation.selectedText, pendingAnnotation.previewDataUrl, pendingAnnotation.pageNumber, annotationNote).then(() => setPendingAnnotation(null));
+  async function submitPendingAnnotation() {
+    if (!pendingAnnotation || annotationSaving) return;
+    const annotation = pendingAnnotation;
+    setAnnotationSaving(true);
+    try {
+      await saveAnnotation(
+        annotation.kind,
+        annotation.geometry,
+        annotation.selectedText,
+        annotation.previewDataUrl,
+        annotation.pageNumber,
+        annotationNote,
+      );
+      setPendingAnnotation(null);
+    } catch {
+      toast.error(t("annotationSaveFailed"));
+    } finally {
+      setAnnotationSaving(false);
+    }
   }
 
   function beginThumbnailResize(event: React.PointerEvent<HTMLButtonElement>) {
@@ -1415,7 +1443,7 @@ export function PdfReader({
       ] as const).map(([tab, Icon, label, action]) => <button key={tab} type="button" role="tab" aria-selected={navigatorTab === tab} title={shortcutTitle(action, label)} className={`grid h-8 place-items-center rounded-md transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 ${navigatorTab === tab ? "bg-indigo-50 text-indigo-700 dark:bg-indigo-950/40 dark:text-indigo-300" : "text-muted-foreground hover:bg-muted"}`} onClick={() => setNavigatorTab(tab)}><Icon className="size-4" /><span className="sr-only">{label}</span></button>)}
     </div>
     <div className="min-h-0 flex-1 overflow-y-auto p-2">
-      {navigatorTab === "pages" && <div className="space-y-2">{pages.map((page) => <button key={page.pageNumber} className={`w-full rounded border p-1 ${page.pageNumber === pageNumber ? "border-indigo-500 bg-indigo-50 dark:bg-indigo-950/30" : "bg-muted/20"}`} onClick={() => updateUrl(page.pageNumber)}><img src={"/api/wiki/pdf-documents/" + documentId + "/pages/" + page.pageNumber + "/thumbnail"} alt={t("pageNumber", { page: page.pageNumber })} className="mx-auto h-auto max-h-36 w-full object-contain" loading="lazy" /><span className="mt-1 block text-[10px]">{page.pageNumber}</span></button>)}</div>}
+      {navigatorTab === "pages" && <div className="space-y-2">{pages.map((page) => <button type="button" aria-label={t("pageNumber", { page: page.pageNumber })} aria-current={page.pageNumber === pageNumber ? "page" : undefined} key={page.pageNumber} className={`w-full rounded border p-1 ${page.pageNumber === pageNumber ? "border-indigo-500 bg-indigo-50 dark:bg-indigo-950/30" : "bg-muted/20"}`} onClick={() => updateUrl(page.pageNumber)}><img src={"/api/wiki/pdf-documents/" + documentId + "/pages/" + page.pageNumber + "/thumbnail"} alt="" className="mx-auto h-auto max-h-36 w-full object-contain" loading="lazy" /><span className="mt-1 block text-[10px]">{page.pageNumber}</span></button>)}</div>}
       {navigatorTab === "search" && <div>
         <div className="relative"><Search className="absolute left-2 top-2.5 size-3.5 text-muted-foreground" /><Input ref={searchInputRef} value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => { const shortcut = event.key === "Tab" ? `${event.shiftKey ? "Shift+" : ""}Tab` : normalizePdfShortcut(event); const action = shortcut && (["previousMatch", "nextMatch"] as const).find((candidate) => shortcuts[candidate] === shortcut); if (action && searchOccurrences.length) { event.preventDefault(); navigateSearch(action === "previousMatch" ? -1 : 1); return; } if (event.key === "Enter" && searchOccurrences.length) { event.preventDefault(); navigateSearch(event.shiftKey ? -1 : 1); } }} className="h-8 pl-7 pr-7 text-xs" placeholder={t("searchInPdf")} />{query && <button type="button" aria-label={t("clearSearch")} className="absolute right-2 top-2 text-muted-foreground hover:text-foreground" onClick={() => setQuery("")}><X className="size-4" /></button>}</div>
         <div className="my-2 flex items-center justify-between gap-1">
@@ -1516,9 +1544,9 @@ export function PdfReader({
 
   if (error) return <div className="grid min-h-screen place-items-center p-8 text-center"><div><p className="text-destructive">{error}</p><Link className={buttonVariants({ className: "mt-3" })} href={"/wiki/sources/" + sourceId}>{t("backToSource")}</Link></div></div>;
 
-  return <main ref={readerRef} className="flex h-dvh min-h-0 flex-col bg-transparent" onKeyDownCapture={handlePdfShortcut}>
+  return <div ref={readerRef} className="flex h-dvh min-h-0 flex-col bg-transparent" onKeyDownCapture={handlePdfShortcut}>
     <div className="sr-only" aria-live="polite" aria-atomic="true">{liveMessage}</div>
-    <header data-testid="pdf-toolbar" className="flex h-12 shrink-0 flex-nowrap items-center gap-1 overflow-hidden border-b bg-background px-2 shadow-sm"><Link aria-label={t("backToSource")} title={t("backToSource")} className={buttonVariants({ variant: "ghost", size: "icon-sm" })} href="/wiki/sources"><ArrowLeft className="size-4" /></Link><div className="hidden min-w-0 max-w-48 flex-1 lg:block"><p className="truncate text-xs font-medium">{sourceTitle}</p><p className="truncate text-[10px] text-muted-foreground">{fileName}</p></div>
+    <header data-testid="pdf-toolbar" className="flex h-12 shrink-0 flex-nowrap items-center gap-1 overflow-hidden border-b bg-background px-2 shadow-sm"><Link aria-label={t("backToSource")} title={t("backToSource")} className={buttonVariants({ variant: "ghost", size: "icon-sm" })} href={"/wiki/sources/" + sourceId}><ArrowLeft className="size-4" /></Link><div className="hidden min-w-0 max-w-48 flex-1 lg:block"><p className="truncate text-xs font-medium">{sourceTitle}</p><p className="truncate text-[10px] text-muted-foreground">{fileName}</p></div>
       <div className="flex shrink-0 items-center rounded-lg border bg-muted/20"><Button aria-label={t("previousPage")} title={shortcutTitle("previousPage", t("previousPage"))} variant="ghost" size="icon-sm" disabled={pageNumber <= 1} onClick={() => updateUrl(pageNumber - 1)}><ChevronLeft className="size-4" /></Button><Input aria-label={t("page")} className="h-7 w-11 border-0 bg-transparent px-1 text-center text-xs shadow-none" inputMode="numeric" value={pageNumber} onChange={(event) => { const page = Number(event.target.value); if (Number.isInteger(page) && page >= 1 && page <= pages.length) updateUrl(page); }} /><span className="pr-1 text-[10px] text-muted-foreground">/ {pages.length}</span><Button aria-label={t("nextPage")} title={shortcutTitle("nextPage", t("nextPage"))} variant="ghost" size="icon-sm" disabled={pageNumber >= pages.length} onClick={() => updateUrl(pageNumber + 1)}><ChevronRight className="size-4" /></Button></div>
       <Button aria-label={t("zoomOut")} title={shortcutTitle("zoomOut", t("zoomOut"))} variant="ghost" size="icon-sm" onClick={() => setCustomScale(scale - 0.15)}><Minus className="size-4" /></Button>
       <DropdownMenu><DropdownMenuTrigger render={<Button ref={zoomLabelRef} variant="ghost" size="sm" className="min-w-14 px-1 text-xs tabular-nums" aria-label={t("zoomOptions")} />}>{Math.round(scale * 100)}%<ChevronDown className="size-3" /></DropdownMenuTrigger><DropdownMenuContent align="center" className="w-48"><div className="px-1.5 py-1 text-xs font-medium text-muted-foreground">{t("zoomOptions")}</div><DropdownMenuItem onClick={() => void applyFitMode("width")}>{fitMode === "width" && <Check />}{t("fitWidth")}<DropdownMenuShortcut>{displayPdfShortcut(shortcuts.fitWidth)}</DropdownMenuShortcut></DropdownMenuItem><DropdownMenuItem onClick={() => void applyFitMode("page")}>{fitMode === "page" && <Check />}{t("fitPage")}<DropdownMenuShortcut>{displayPdfShortcut(shortcuts.fitPage)}</DropdownMenuShortcut></DropdownMenuItem><DropdownMenuItem onClick={() => void applyFitMode("actual")}>{fitMode === "actual" && <Check />}{t("actualSize")}<DropdownMenuShortcut>{displayPdfShortcut(shortcuts.actualSize)}</DropdownMenuShortcut></DropdownMenuItem><DropdownMenuSeparator />{[75, 100, 125, 150, 200].map((percentage) => <DropdownMenuItem key={percentage} onClick={() => setCustomScale(percentage / 100)}>{Math.round(scale * 100) === percentage && fitMode === "custom" && <Check />}{percentage}%</DropdownMenuItem>)}<DropdownMenuSeparator /><div className="px-1.5 py-1"><label className="mb-1 block text-xs font-medium text-muted-foreground" htmlFor="pdf-custom-zoom">{t("customZoom")}</label><Input id="pdf-custom-zoom" aria-label={t("customZoom")} className="h-7" type="number" min={50} max={300} defaultValue={Math.round(scale * 100)} onKeyDown={(event) => { event.stopPropagation(); if (event.key === "Enter") setCustomScale(Number(event.currentTarget.value) / 100); }} /></div></DropdownMenuContent></DropdownMenu>
@@ -1543,6 +1571,6 @@ export function PdfReader({
       <SheetContent side="bottom" showCloseButton={false} className="max-h-[min(76dvh,36rem)] rounded-t-2xl p-0"><div data-testid="pdf-annotation-mobile-sheet" className="min-h-0 flex-1">{renderCommentPanel()}</div></SheetContent>
     </Sheet>
     <Dialog open={shortcutsOpen} onOpenChange={(open) => { setShortcutsOpen(open); if (!open) { setRecordingShortcut(null); setShortcutError(""); } }}><DialogContent className="max-h-[min(80dvh,44rem)] max-w-2xl overflow-y-auto"><DialogHeader><DialogTitle>{t("keyboardShortcuts")}</DialogTitle></DialogHeader><p className="text-sm text-muted-foreground">{t("shortcutDialogHint")}</p>{shortcutError && <p role="alert" className="rounded-md bg-destructive/10 p-2 text-xs text-destructive">{shortcutError}</p>}<div className="space-y-4">{PDF_SHORTCUT_GROUPS.map((group) => <section key={group.label} className="overflow-hidden rounded-lg border"><h3 className="border-b bg-muted/40 px-3 py-2 text-xs font-semibold">{group.label}</h3><div className="divide-y">{group.actions.map((action) => <div key={action} className="flex items-center justify-between gap-3 p-2"><span className="min-w-0 truncate text-sm">{PDF_SHORTCUT_LABELS[action]}</span><div className="flex shrink-0 items-center gap-1"><Button type="button" variant={recordingShortcut === action ? "secondary" : "outline"} size="sm" className="font-mono text-xs" onClick={() => { setRecordingShortcut(action); setShortcutError(""); }} onKeyDown={(event) => { if (recordingShortcut === action) captureShortcut(action, event); }}>{recordingShortcut === action ? t("shortcutRecording") : displayPdfShortcut(shortcuts[action])}</Button><Button type="button" variant="ghost" size="xs" disabled={shortcuts[action] === DEFAULT_PDF_SHORTCUT_BINDINGS[action]} aria-label={t("resetShortcut", { action: PDF_SHORTCUT_LABELS[action] })} onClick={() => { setShortcuts((current) => ({ ...current, [action]: DEFAULT_PDF_SHORTCUT_BINDINGS[action] })); setRecordingShortcut(null); setShortcutError(""); }}>{t("resetShortcut")}</Button></div></div>)}</div></section>)}</div><DialogFooter><Button type="button" variant="outline" onClick={() => { setShortcuts(DEFAULT_PDF_SHORTCUT_BINDINGS); setRecordingShortcut(null); setShortcutError(""); }}>{t("resetShortcuts")}</Button><Button type="button" onClick={() => setShortcutsOpen(false)}>{t("done")}</Button></DialogFooter></DialogContent></Dialog>
-    <Dialog open={Boolean(pendingAnnotation)} onOpenChange={(open) => { if (!open) { setPendingAnnotation(null); setAnnotationAnchor(null); } }}><DialogContent style={annotationAnchor ? annotationPopupStyle(annotationAnchor) : undefined}><DialogHeader><DialogTitle>{t("annotationNotePrompt")}</DialogTitle></DialogHeader><Textarea autoFocus value={annotationNote} onChange={(event) => setAnnotationNote(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) { event.preventDefault(); submitPendingAnnotation(); } }} rows={4} /><DialogFooter><Button variant="outline" onClick={() => setPendingAnnotation(null)}>{t("cancel")}</Button><Button onClick={submitPendingAnnotation}>{t("saveAnnotation")}</Button></DialogFooter></DialogContent></Dialog>
-  </main>;
+    <Dialog open={Boolean(pendingAnnotation)} onOpenChange={(open) => { if (!open && !annotationSaving) { setPendingAnnotation(null); setAnnotationAnchor(null); } }}><DialogContent style={annotationAnchor ? annotationPopupStyle(annotationAnchor) : undefined}><DialogHeader><DialogTitle>{t("annotationNotePrompt")}</DialogTitle></DialogHeader><Textarea autoFocus disabled={annotationSaving} value={annotationNote} onChange={(event) => setAnnotationNote(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) { event.preventDefault(); void submitPendingAnnotation(); } }} rows={4} /><DialogFooter><Button variant="outline" disabled={annotationSaving} onClick={() => setPendingAnnotation(null)}>{t("cancel")}</Button><Button disabled={annotationSaving} onClick={() => void submitPendingAnnotation()}>{annotationSaving ? <><Loader2 className="animate-spin" />{t("saving")}</> : t("saveAnnotation")}</Button></DialogFooter></DialogContent></Dialog>
+  </div>;
 }

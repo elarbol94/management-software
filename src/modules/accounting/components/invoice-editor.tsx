@@ -8,6 +8,7 @@ import { Loader2, Plus, Trash2 } from "lucide-react";
 import { formatCents, parseAmountToCents } from "@/lib/money";
 import { upsertInvoice, type InvoiceInput } from "@/modules/accounting/invoice-actions";
 import { computeInvoiceTotals, type InvoiceItemInput } from "@/modules/accounting/lib/invoice";
+import { toLocalIsoDate } from "@/modules/accounting/lib/date";
 import { VAT_RATES } from "@/modules/accounting/lib/vat";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -60,10 +61,12 @@ export function InvoiceEditor({
   customers,
   initial,
   defaultVatRate,
+  vatExempt,
 }: {
   customers: CustomerRef[];
   initial: InvoiceEditorInitial;
   defaultVatRate: number;
+  vatExempt: boolean;
 }) {
   const t = useTranslations("invoices");
   const tAccounting = useTranslations("accounting");
@@ -71,7 +74,7 @@ export function InvoiceEditor({
   const locale = useLocale();
   const router = useRouter();
 
-  const today = new Date().toISOString().slice(0, 10);
+  const today = toLocalIsoDate();
   const [customerId, setCustomerId] = useState(initial?.customerId ?? "");
   const [issueDate, setIssueDate] = useState(initial?.issueDate ?? today);
   const [dueDate, setDueDate] = useState(initial?.dueDate ?? "");
@@ -81,7 +84,7 @@ export function InvoiceEditor({
       description: item.description,
       quantityText: formatQuantity(item.quantityThousandths),
       unitPriceText: (item.unitPriceCents / 100).toFixed(2).replace(".", ","),
-      vatRate: item.vatRate,
+      vatRate: vatExempt ? 0 : item.vatRate,
     })) ?? [
       {
         description: "",
@@ -156,7 +159,7 @@ export function InvoiceEditor({
     <form onSubmit={onSubmit} className="flex max-w-3xl flex-col gap-6">
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
         <div className="flex flex-col gap-2">
-          <Label>{t("customer")}</Label>
+          <Label htmlFor="invoice-customer">{t("customer")}</Label>
           <Select
             value={customerId}
             onValueChange={(value) => setCustomerId(value ?? "")}
@@ -197,8 +200,9 @@ export function InvoiceEditor({
       </div>
 
       <div className="flex flex-col gap-2">
-        <Label>{t("items")}</Label>
-        <div className="flex flex-col gap-2">
+        <p className="text-sm font-medium">{t("items")}</p>
+        <div className="overflow-x-auto pb-1">
+        <div className="flex min-w-[640px] flex-col gap-2">
           <div className="grid grid-cols-[1fr_90px_120px_90px_100px_32px] items-center gap-2 px-1 text-xs font-medium text-muted-foreground">
             <span>{t("itemDescription")}</span>
             <span>{t("quantity")}</span>
@@ -215,18 +219,21 @@ export function InvoiceEditor({
                 className="grid grid-cols-[1fr_90px_120px_90px_100px_32px] items-center gap-2"
               >
                 <Input
+                  aria-label={`${t("itemDescription")} ${index + 1}`}
                   value={item.description}
                   onChange={(e) => updateItem(index, { description: e.target.value })}
                   placeholder={t("itemDescription")}
                   data-testid={`item-description-${index}`}
                 />
                 <Input
+                  aria-label={`${t("quantity")} ${index + 1}`}
                   value={item.quantityText}
                   onChange={(e) => updateItem(index, { quantityText: e.target.value })}
                   inputMode="decimal"
                   data-testid={`item-quantity-${index}`}
                 />
                 <Input
+                  aria-label={`${t("unitPrice")} ${index + 1}`}
                   value={item.unitPriceText}
                   onChange={(e) => updateItem(index, { unitPriceText: e.target.value })}
                   inputMode="decimal"
@@ -239,11 +246,13 @@ export function InvoiceEditor({
                     updateItem(index, { vatRate: Number(value) })
                   }
                 >
-                  <SelectTrigger className="w-full">
+                  <SelectTrigger className="w-full" aria-label={`${tAccounting("vat")} ${index + 1}`}>
                     <SelectValue>{item.vatRate} %</SelectValue>
                   </SelectTrigger>
                   <SelectContent>
-                    {VAT_RATES.map((rate) => (
+                    {VAT_RATES
+                      .filter((rate) => !vatExempt || rate === 0)
+                      .map((rate) => (
                       <SelectItem key={rate} value={String(rate)}>
                         {rate} %
                       </SelectItem>
@@ -266,6 +275,7 @@ export function InvoiceEditor({
                   type="button"
                   variant="ghost"
                   size="icon-xs"
+                  aria-label={tCommon("delete")}
                   disabled={items.length === 1}
                   onClick={() =>
                     setItems((current) => current.filter((_, i) => i !== index))
@@ -276,6 +286,7 @@ export function InvoiceEditor({
               </div>
             );
           })}
+        </div>
         </div>
         <Button
           type="button"

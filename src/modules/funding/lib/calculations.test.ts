@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   calculateBudgetItemTotal,
   calculateFinancing,
@@ -7,6 +7,10 @@ import {
 } from "./calculations";
 
 describe("funding calculations", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("calculates quantity-based budget totals without floating-point money", () => {
     expect(calculateBudgetItemTotal(12_500, 8_000)).toBe(100_000);
     expect(calculateBudgetItemTotal(333, 1_000)).toBe(333);
@@ -53,5 +57,21 @@ describe("funding calculations", () => {
       "financing_gap",
       "project_end_near",
     ]);
+  });
+
+  it("uses the Austrian calendar date at the UTC day boundary", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-27T22:30:00Z"));
+
+    expect(
+      calculateWarningCodes({
+        projectStart: null,
+        projectEnd: "2026-09-26",
+        projectStatus: "active",
+        financingGapCents: 0,
+        budgetActuals: [],
+        bookings: [],
+      }),
+    ).toContain("project_end_near");
   });
 });

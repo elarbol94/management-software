@@ -37,12 +37,12 @@ test("inline images accept whole-image comments and keep their anchor after relo
   await dialog.getByPlaceholder("Kommentar oder @Name-Erwähnung schreiben…").fill("Diagramm prüfen");
   await dialog.getByRole("button", { name: "Kommentieren", exact: true }).click();
 
-  await expect(page.getByTestId("comment-anchor-overlay").getByRole("button", { name: "Open comment" })).toBeVisible();
+  await expect(page.getByTestId("comment-anchor-overlay").getByRole("button", { name: "Kommentar öffnen" })).toBeVisible();
   await expect(page.getByTestId("comment-rail")).toContainText("Diagramm prüfen");
   await expect(page.getByText("Gespeichert", { exact: true })).toBeVisible({ timeout: 10_000 });
   await page.reload();
   await expect(page.locator("figure[data-commentable-image]")).toBeVisible();
-  await expect(page.getByTestId("comment-anchor-overlay").getByRole("button", { name: "Open comment" })).toBeVisible();
+  await expect(page.getByTestId("comment-anchor-overlay").getByRole("button", { name: "Kommentar öffnen" })).toBeVisible();
 });
 
 async function quickNote(page: Page, title: string, body: string) {
@@ -96,12 +96,15 @@ test("selection comments stay beside their anchors and support replies and resol
 test("general comments lead the rail and mobile slash comments open the sheet", async ({ page }) => {
   await login(page);
   await quickNote(page, "General Comments", "Page-level context");
+  await page.getByRole("button", { name: "Kommentare anzeigen" }).click();
   const rail = page.getByTestId("comment-rail");
   await rail.getByTestId("page-comment-input").fill("Allgemeiner Hinweis");
   await rail.getByRole("button", { name: "Kommentieren" }).click();
   await expect(rail).toContainText("Allgemeiner Hinweis");
   await expect(rail.getByText("Allgemeiner Kommentar").first()).toBeVisible();
 
+  await page.getByRole("button", { name: "Kommentare ausblenden" }).click();
+  await expect(rail).toHaveCount(0);
   await page.setViewportSize({ width: 800, height: 900 });
   const editor = page.locator(".ProseMirror");
   await editor.click();
@@ -128,8 +131,16 @@ test("metadata version changes do not cause repeated conflicts and older revisio
   await expect(page.getByText("Gespeichert", { exact: true })).toBeVisible({ timeout: 10_000 });
   await expect(page.getByText("Bearbeitungskonflikt", { exact: true })).toHaveCount(0);
 
+  await page
+    .getByTestId("note-metadata-sidebar")
+    .getByRole("button", { name: "Verlauf", exact: true })
+    .click();
+  const historyDialog = page.getByRole("dialog", { name: "Verlauf" });
+  await expect(historyDialog).toBeVisible();
   page.once("dialog", (dialog) => void dialog.accept());
-  await page.getByRole("button", { name: "Wiederherstellen", exact: true }).first().click();
+  await historyDialog
+    .getByRole("button", { name: "Wiederherstellen", exact: true })
+    .click();
   await expect(page.locator(".ProseMirror")).toContainText("Original version");
   await expect(page.locator(".ProseMirror")).not.toContainText("Newer version");
   await expect(page.getByText("Bearbeitungskonflikt", { exact: true })).toHaveCount(0);

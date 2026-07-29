@@ -31,6 +31,7 @@ import type { EntryRow } from "@/modules/accounting/queries";
 import type { categories as categoriesTable, CategoryTemplate } from "@/modules/accounting/schema";
 import { formatCents, parseAmountToCents } from "@/lib/money";
 import { ENTRY_FORM_CONFIG, type EntryBaseField } from "../lib/entry-form-config";
+import { toLocalIsoDate } from "../lib/date";
 import { breakdownFromGross, breakdownFromNet, VAT_RATES } from "../lib/vat";
 import { calculatePayrollAt2026, payrollEmploymentTypes } from "../lib/payroll-at-2026";
 import { payrollResultToSpecialFields, storedAmountCents, type SpecialFields } from "../lib/payroll-special-fields";
@@ -79,7 +80,7 @@ const TEMPLATE_ICONS = {
 } satisfies Record<CategoryTemplate, typeof ReceiptText>;
 
 function todayIso() {
-  return new Date().toISOString().slice(0, 10);
+  return toLocalIsoDate();
 }
 
 function nextMonth(value: string) {
@@ -210,6 +211,7 @@ export function EntryDialog({
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
   const [pending, setPending] = useState(false);
   const [isDuplicate, setIsDuplicate] = useState(false);
+  const [persistedEntryId, setPersistedEntryId] = useState<string | null>(null);
   const [syncKey, setSyncKey] = useState<string | null>(null);
 
   const currentKey = open ? (entry?.id ?? "new") : null;
@@ -219,6 +221,7 @@ export function EntryDialog({
       const entrySpecial = entry?.specialFields ?? {};
       setStep(entry ? "form" : "category");
       setIsDuplicate(false);
+      setPersistedEntryId(entry?.id ?? null);
       setSearch("");
       setKind(entry?.kind ?? "expense");
       setCategoryId(entry?.categoryId ?? "");
@@ -278,6 +281,7 @@ export function EntryDialog({
     (formConfig.baseFields as readonly EntryBaseField[]).includes(field);
   const filteredCategories = categories.filter(
     (item) =>
+      !item.archived &&
       (canManagePersonnel || item.template !== "personnel") &&
       (!search.trim() || item.name.toLocaleLowerCase(locale).includes(search.trim().toLocaleLowerCase(locale))),
   );
@@ -307,6 +311,7 @@ export function EntryDialog({
 
   function duplicatePersonnelMonth() {
     setIsDuplicate(true);
+    setPersistedEntryId(null);
     setDate((current) => nextMonth(current));
     setDocumentDate((current) => nextMonth(current));
     setDocumentNumber("");
@@ -465,14 +470,40 @@ export function EntryDialog({
   );
 
   async function uploadFiles(entryId: string) {
+    const failedFiles: File[] = [];
+    const uploadedAttachments: AttachmentDto[] = [];
+
     for (const file of pendingFiles) {
-      const formData = new FormData();
-      formData.append("file", file);
-      formData.append("entityType", "entry");
-      formData.append("entityId", entryId);
-      const response = await fetch("/api/files", { method: "POST", body: formData });
-      if (!response.ok) toast.error(`${t("uploadFailed")}: ${file.name}`);
+      try {
+        const formData = new FormData();
+        formData.append("file", file);
+        formData.append("entityType", "entry");
+        formData.append("entityId", entryId);
+        const response = await fetch("/api/files", { method: "POST", body: formData });
+        if (!response.ok) {
+          failedFiles.push(file);
+          continue;
+        }
+        const attachment = await response.json() as AttachmentDto;
+        uploadedAttachments.push({
+          id: attachment.id,
+          fileName: attachment.fileName,
+        });
+      } catch {
+        failedFiles.push(file);
+      }
     }
+
+    if (uploadedAttachments.length > 0) {
+      setExistingAttachments((current) => [
+        ...current,
+        ...uploadedAttachments.filter(
+          (attachment) => !current.some((item) => item.id === attachment.id),
+        ),
+      ]);
+    }
+    setPendingFiles(failedFiles);
+    return failedFiles;
   }
 
   async function save(status: "draft" | "finalized") {
@@ -488,7 +519,7 @@ export function EntryDialog({
           ? deductiblePercent
           : 100;
       const input: EntryInput = {
-        id: isDuplicate ? undefined : entry?.id,
+        id: persistedEntryId ?? undefined,
         kind,
         date,
         documentDate: hasBaseField("documentDate") ? (documentDate || null) : null,
@@ -512,10 +543,20 @@ export function EntryDialog({
         paymentLines,
       };
       const { id } = await upsertEntry(input);
-      if (pendingFiles.length) await uploadFiles(id);
+      setPersistedEntryId(id);
+      if (pendingFiles.length) {
+        const failedFiles = await uploadFiles(id);
+        if (failedFiles.length > 0) {
+          toast.error(tf("receiptUploadPartial", {
+            files: failedFiles.map((file) => file.name).join(", "),
+          }));
+          router.refresh();
+          return;
+        }
+      }
       toast.success(status === "draft" ? tf("draftSaved") : tc("saved"));
       onOpenChange(false);
-      router.refresh();
+      window.location.reload();
     } catch {
       toast.error(tc("error"));
     } finally {
@@ -524,8 +565,13 @@ export function EntryDialog({
   }
 
   async function removeExistingAttachment(id: string) {
-    const response = await fetch(`/api/files/${id}`, { method: "DELETE" });
-    if (response.ok) setExistingAttachments((current) => current.filter((item) => item.id !== id));
+    try {
+      const response = await fetch(`/api/files/${id}`, { method: "DELETE" });
+      if (!response.ok) throw new Error("Attachment delete failed");
+      setExistingAttachments((current) => current.filter((item) => item.id !== id));
+    } catch {
+      toast.error(tf("receiptDeleteFailed"));
+    }
   }
 
   async function removeEntry() {
@@ -535,7 +581,7 @@ export function EntryDialog({
       await deleteEntry(entry.id);
       toast.success(entry.status === "draft" ? tf("draftDeleted") : tf("voided"));
       onOpenChange(false);
-      router.refresh();
+      window.location.reload();
     } catch {
       toast.error(tc("error"));
     } finally {
@@ -546,7 +592,7 @@ export function EntryDialog({
   function renderSpecialFields() {
     if (template === "grant_income") return (
       <FormSection title={tf("categoryDetails")} description={tf(`templates.${template}.description`)}>
-        <div className="sm:col-span-2"><FieldLabel>{tf("fundingProject")}</FieldLabel><Select value={String(special.fundingProjectId ?? "none")} onValueChange={(value) => setSpecialValue("fundingProjectId", value === "none" ? "" : (value ?? ""))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="none">{tf("noFundingProject")}</SelectItem>{fundingProjects.map((project) => <SelectItem key={project.id} value={project.id}>{project.name}</SelectItem>)}</SelectContent></Select><p className="mt-1.5 text-xs text-[#7c8984]">{tf("fundingProjectHint")}</p></div>
+        <div className="sm:col-span-2"><FieldLabel htmlFor="funding-project">{tf("fundingProject")}</FieldLabel><Select value={String(special.fundingProjectId ?? "none")} onValueChange={(value) => setSpecialValue("fundingProjectId", value === "none" ? "" : (value ?? ""))}><SelectTrigger id="funding-project"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="none">{tf("noFundingProject")}</SelectItem>{fundingProjects.map((project) => <SelectItem key={project.id} value={project.id}>{project.name}</SelectItem>)}</SelectContent></Select><p className="mt-1.5 text-xs text-[#7c8984]">{tf("fundingProjectHint")}</p></div>
       </FormSection>
     );
     if (template === "hospitality") return (
@@ -596,7 +642,7 @@ export function EntryDialog({
           <div className="sm:col-span-2 flex rounded-lg border border-[#d8e1dd] bg-[#f4f7f5] p-1" aria-label={tf("personnel.calculationMode")}>
             {(["auto", "manual"] as const).map((item) => <button key={item} type="button" onClick={() => setSpecial((current) => ({ ...current, calculationMode: item, overrideReason: item === "auto" ? "" : current.overrideReason }))} className={`flex flex-1 items-center justify-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition-colors ${mode === item ? "bg-white text-[#173c32] shadow-sm" : "text-[#71807a] hover:text-[#29463e]"}`}>{item === "auto" ? <Calculator className="size-4" /> : <LockKeyhole className="size-4" />}{tf(`personnel.modes.${item}`)}</button>)}
           </div>
-          <div className="sm:col-span-2"><FieldLabel>{tf("personnel.employeeMaster")}</FieldLabel><Select value={special.employeeId ? String(special.employeeId) : "new"} onValueChange={(value) => { const employee = personnelEmployees.find((item) => item.id === value); setSpecial((current) => employee ? { ...current, employeeId: employee.id, employeeName: employee.name, personnelNumber: employee.personnelNumber, employmentType: employee.employmentType === "managing_director" ? "managing_director_asvg" : employee.employmentType, locationId: employee.locationId ?? current.locationId } : { ...current, employeeId: "", employeeName: "", personnelNumber: "", employmentType: "employee" }); }}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="new">{tf("personnel.newEmployee")}</SelectItem>{personnelEmployees.map((employee) => <SelectItem key={employee.id} value={employee.id}>{employee.name}{employee.personnelNumber ? ` · ${employee.personnelNumber}` : ""}</SelectItem>)}</SelectContent></Select></div>
+          <div className="sm:col-span-2"><FieldLabel htmlFor="personnel-employee">{tf("personnel.employeeMaster")}</FieldLabel><Select value={special.employeeId ? String(special.employeeId) : "new"} onValueChange={(value) => { const employee = personnelEmployees.find((item) => item.id === value); setSpecial((current) => employee ? { ...current, employeeId: employee.id, employeeName: employee.name, personnelNumber: employee.personnelNumber, employmentType: employee.employmentType === "managing_director" ? "managing_director_asvg" : employee.employmentType, locationId: employee.locationId ?? current.locationId } : { ...current, employeeId: "", employeeName: "", personnelNumber: "", employmentType: "employee" }); }}><SelectTrigger id="personnel-employee"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="new">{tf("personnel.newEmployee")}</SelectItem>{personnelEmployees.map((employee) => <SelectItem key={employee.id} value={employee.id}>{employee.name}{employee.personnelNumber ? ` · ${employee.personnelNumber}` : ""}</SelectItem>)}</SelectContent></Select></div>
           <div><FieldLabel htmlFor="employee-name">{tf("personnel.employeeName")}</FieldLabel><Input id="employee-name" value={String(special.employeeName ?? "")} disabled={Boolean(special.employeeId)} onChange={(e) => setSpecialValue("employeeName", e.target.value)} /></div>
           <div><FieldLabel htmlFor="personnel-number">{tf("personnel.personnelNumber")}</FieldLabel><Input id="personnel-number" value={String(special.personnelNumber ?? "")} onChange={(e) => setSpecialValue("personnelNumber", e.target.value)} /></div>
           <div><FieldLabel htmlFor="location-id">{tf("personnel.location")}</FieldLabel><Select value={String(special.locationId ?? "")} disabled={Boolean(special.employeeId)} onValueChange={(value) => setSpecialValue("locationId", value ?? "")}><SelectTrigger id="location-id"><SelectValue /></SelectTrigger><SelectContent>{personnelLocations.map((item) => <SelectItem key={item.id} value={item.id}>{item.name}</SelectItem>)}</SelectContent></Select></div>
@@ -669,7 +715,7 @@ export function EntryDialog({
                   {hasBaseField("paymentDate") && <div><FieldLabel htmlFor="entry-date" help={tf("help.paymentDate")}>{t("date")}</FieldLabel><Input id="entry-date" type="date" value={date} onChange={(e) => setDate(e.target.value)} required /></div>}
                   {hasBaseField("documentDate") && <div><FieldLabel htmlFor="document-date">{tf("documentDate")}</FieldLabel><Input id="document-date" type="date" value={documentDate} onChange={(e) => setDocumentDate(e.target.value)} /></div>}
                   {hasBaseField("documentNumber") && <div><FieldLabel htmlFor="document-number">{tf("documentNumber")}</FieldLabel><Input id="document-number" value={documentNumber} onChange={(e) => setDocumentNumber(e.target.value)} /></div>}
-                  {hasBaseField("paymentMethod") && <div><FieldLabel>{t("paymentMethod")}</FieldLabel><Select value={paymentMethod} onValueChange={(value) => setPaymentMethod(value as typeof paymentMethod)}><SelectTrigger><SelectValue>{t(paymentMethod)}</SelectValue></SelectTrigger><SelectContent><SelectItem value="bank">{t("bank")}</SelectItem><SelectItem value="cash">{t("cash")}</SelectItem><SelectItem value="card">{t("card")}</SelectItem></SelectContent></Select></div>}
+                  {hasBaseField("paymentMethod") && <div><FieldLabel htmlFor="payment-method">{t("paymentMethod")}</FieldLabel><Select value={paymentMethod} onValueChange={(value) => setPaymentMethod(value as typeof paymentMethod)}><SelectTrigger id="payment-method"><SelectValue>{t(paymentMethod)}</SelectValue></SelectTrigger><SelectContent><SelectItem value="bank">{t("bank")}</SelectItem><SelectItem value="cash">{t("cash")}</SelectItem><SelectItem value="card">{t("card")}</SelectItem></SelectContent></Select></div>}
                   {hasBaseField("description") && <div className="sm:col-span-2"><FieldLabel htmlFor="entry-description">{t("description")}</FieldLabel><Input id="entry-description" value={description} onChange={(e) => setDescription(e.target.value)} maxLength={500} /></div>}
                   {hasBaseField("counterparty") && <div className="sm:col-span-2"><FieldLabel htmlFor="entry-counterparty">{template === "grant_income" ? tf("fundingBody") : t("counterparty")}</FieldLabel><Input id="entry-counterparty" value={counterparty} onChange={(e) => setCounterparty(e.target.value)} maxLength={200} /></div>}
                   {hasBaseField("servicePeriod") && <><div><FieldLabel htmlFor="service-start">{tf("servicePeriodStart")}</FieldLabel><Input id="service-start" type="date" value={servicePeriodStart} onChange={(e) => setServicePeriodStart(e.target.value)} /></div><div><FieldLabel htmlFor="service-end">{tf("servicePeriodEnd")}</FieldLabel><Input id="service-end" type="date" value={servicePeriodEnd} onChange={(e) => setServicePeriodEnd(e.target.value)} /></div></>}
@@ -684,9 +730,9 @@ export function EntryDialog({
                     return <div key={line.key} className={`grid gap-3 p-4 sm:items-end ${taxLines.length > 1 ? "sm:grid-cols-[1fr_120px_110px_100px_auto]" : "sm:grid-cols-[minmax(160px,1fr)_140px_120px_auto]"}`}>
                       {taxLines.length > 1 && <div><FieldLabel htmlFor={`line-description-${line.key}`}>{tf("lineDescription")}</FieldLabel><Input id={`line-description-${line.key}`} value={line.description} onChange={(e) => setTaxLines((current) => current.map((item) => item.key === line.key ? { ...item, description: e.target.value } : item))} /></div>}
                       <div><FieldLabel htmlFor={`line-amount-${line.key}`}>{line.mode === "gross" ? t("gross") : t("net")}</FieldLabel><Input id={`line-amount-${line.key}`} inputMode="decimal" placeholder="0,00" value={line.amountText} onChange={(e) => setTaxLines((current) => current.map((item) => item.key === line.key ? { ...item, amountText: e.target.value } : item))} /></div>
-                      <div><FieldLabel>{tf("amountMode")}</FieldLabel><Select value={line.mode} onValueChange={(value) => setTaxLines((current) => current.map((item) => item.key === line.key ? { ...item, mode: value as AmountMode } : item))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="gross">{t("gross")}</SelectItem><SelectItem value="net">{t("net")}</SelectItem></SelectContent></Select></div>
-                      <div><FieldLabel help={tf("help.vatRate")}>{t("vatRate")}</FieldLabel><Select value={String(line.vatRate)} onValueChange={(value) => setTaxLines((current) => current.map((item) => item.key === line.key ? { ...item, vatRate: Number(value) } : item))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{VAT_RATES.map((rate) => <SelectItem key={rate} value={String(rate)}>{rate} %</SelectItem>)}</SelectContent></Select></div>
-                      <Button type="button" variant="ghost" size="icon-sm" disabled={taxLines.length === 1} onClick={() => setTaxLines((current) => current.filter((item) => item.key !== line.key))}><Trash2 className="size-4" /></Button>
+                      <div><FieldLabel htmlFor={`amount-mode-${line.key}`}>{tf("amountMode")}</FieldLabel><Select value={line.mode} onValueChange={(value) => setTaxLines((current) => current.map((item) => item.key === line.key ? { ...item, mode: value as AmountMode } : item))}><SelectTrigger id={`amount-mode-${line.key}`}><SelectValue /></SelectTrigger><SelectContent><SelectItem value="gross">{t("gross")}</SelectItem><SelectItem value="net">{t("net")}</SelectItem></SelectContent></Select></div>
+                      <div><FieldLabel htmlFor={`vat-rate-${line.key}`} help={tf("help.vatRate")}>{t("vatRate")}</FieldLabel><Select value={String(line.vatRate)} onValueChange={(value) => setTaxLines((current) => current.map((item) => item.key === line.key ? { ...item, vatRate: Number(value) } : item))}><SelectTrigger id={`vat-rate-${line.key}`}><SelectValue /></SelectTrigger><SelectContent>{VAT_RATES.map((rate) => <SelectItem key={rate} value={String(rate)}>{rate} %</SelectItem>)}</SelectContent></Select></div>
+                      <Button type="button" variant="ghost" size="icon-sm" aria-label={tc("delete")} disabled={taxLines.length === 1} onClick={() => setTaxLines((current) => current.filter((item) => item.key !== line.key))}><Trash2 className="size-4" /></Button>
                       {kind === "expense" && template !== "vehicle" && <div className="sm:col-span-2"><FieldLabel htmlFor={`input-vat-${line.key}`} help={tf("help.inputVatDeductible")}>{tf("inputVatDeductiblePercent")}</FieldLabel><Input id={`input-vat-${line.key}`} type="number" min={0} max={100} disabled={taxSettings.kleinunternehmer} value={taxSettings.kleinunternehmer ? 0 : line.inputVatDeductiblePercent} onChange={(e) => setTaxLines((current) => current.map((item) => item.key === line.key ? { ...item, inputVatDeductiblePercent: Number(e.target.value) } : item))} /></div>}
                       {computed && <p className="text-xs text-[#71807a] sm:col-span-2">{t("net")}: {formatCents(computed.netAmountCents, locale)} · {t("vat")}: {formatCents(computed.vatAmountCents, locale)} · {t("gross")}: {formatCents(computed.grossAmountCents, locale)}</p>}
                     </div>;
@@ -703,7 +749,7 @@ export function EntryDialog({
 
                 <FormSection title={tf("supportingInformation")} description={tf("supportingInformationDescription")}>
                   <div><FieldLabel htmlFor="entry-notes">{t("notes")}</FieldLabel><Textarea id="entry-notes" rows={4} value={notes} onChange={(e) => setNotes(e.target.value)} maxLength={2000} /></div>
-                  <div><FieldLabel>{t("receipts")}</FieldLabel><div className="mt-1 flex flex-col gap-1">{existingAttachments.map((attachment) => <div key={attachment.id} className="flex items-center gap-2 text-sm"><Paperclip className="size-3.5" /><a className="min-w-0 flex-1 truncate hover:underline" href={`/api/files/${attachment.id}`} target="_blank" rel="noreferrer">{attachment.fileName}</a><Button type="button" variant="ghost" size="icon-xs" onClick={() => void removeExistingAttachment(attachment.id)}><X className="size-3.5" /></Button></div>)}{pendingFiles.map((file, index) => <div key={`${file.name}-${index}`} className="flex items-center gap-2 text-sm text-[#73817c]"><Upload className="size-3.5" /><span className="min-w-0 flex-1 truncate">{file.name}</span><Button type="button" variant="ghost" size="icon-xs" onClick={() => setPendingFiles((current) => current.filter((_, itemIndex) => itemIndex !== index))}><X className="size-3.5" /></Button></div>)}</div><input ref={fileInputRef} type="file" accept="application/pdf,image/png,image/jpeg,image/webp,image/heic" multiple className="hidden" onChange={(event) => { const files = Array.from(event.currentTarget.files ?? []); setPendingFiles((current) => [...current, ...files]); event.currentTarget.value = ""; }} /><Button type="button" variant="outline" size="sm" className="mt-2" onClick={() => fileInputRef.current?.click()}><Upload className="size-4" />{t("uploadReceipt")}</Button></div>
+                  <div><FieldLabel htmlFor="receipt-files">{t("receipts")}</FieldLabel><div className="mt-1 flex flex-col gap-1">{existingAttachments.map((attachment) => <div key={attachment.id} className="flex items-center gap-2 text-sm"><Paperclip className="size-3.5" /><a className="min-w-0 flex-1 truncate hover:underline" href={`/api/files/${attachment.id}`} target="_blank" rel="noreferrer">{attachment.fileName}</a><Button type="button" variant="ghost" size="icon-xs" aria-label={tc("delete")} onClick={() => void removeExistingAttachment(attachment.id)}><X className="size-3.5" /></Button></div>)}{pendingFiles.map((file, index) => <div key={`${file.name}-${index}`} className="flex items-center gap-2 text-sm text-[#73817c]"><Upload className="size-3.5" /><span className="min-w-0 flex-1 truncate">{file.name}</span><Button type="button" variant="ghost" size="icon-xs" aria-label={tc("delete")} onClick={() => setPendingFiles((current) => current.filter((_, itemIndex) => itemIndex !== index))}><X className="size-3.5" /></Button></div>)}</div><input id="receipt-files" ref={fileInputRef} type="file" accept="application/pdf,image/png,image/jpeg,image/webp,image/heic" multiple className="hidden" onChange={(event) => { const files = Array.from(event.currentTarget.files ?? []); setPendingFiles((current) => [...current, ...files]); event.currentTarget.value = ""; }} /><Button type="button" variant="outline" size="sm" className="mt-2" onClick={() => fileInputRef.current?.click()}><Upload className="size-4" />{t("uploadReceipt")}</Button></div>
                 </FormSection>
 
                 {entry && !isDuplicate && <EvidencePanel targetType="accountingEntry" targetId={entry.id} />}

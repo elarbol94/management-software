@@ -4,10 +4,20 @@ import { z } from "zod";
 import { and, asc, eq, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { db } from "@/db";
-import { categories, customers, entries, invoiceItems, invoices } from "@/db/schema";
+import {
+  categories,
+  customers,
+  entries,
+  entryAuditLog,
+  entryPaymentLines,
+  entryTaxLines,
+  invoiceItems,
+  invoices,
+} from "@/db/schema";
 import { requireUserOrThrow } from "@/lib/auth";
 import { getAppSettings } from "@/modules/settings/queries";
 import { computeInvoiceTotals, formatInvoiceNumber } from "./lib/invoice";
+import { isValidIsoDate, toLocalIsoDate } from "./lib/date";
 
 // --- Customers ---
 
@@ -69,17 +79,25 @@ const itemSchema = z.object({
   vatRate: z.number().int(),
 });
 
+const invoiceDateSchema = z.string().refine(isValidIsoDate, {
+  message: "Invalid calendar date",
+});
+
 const invoiceSchema = z.object({
   id: z.string().optional(),
   customerId: z.string().min(1),
-  issueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  dueDate: z
-    .string()
-    .regex(/^\d{4}-\d{2}-\d{2}$/)
-    .nullable()
-    .default(null),
+  issueDate: invoiceDateSchema,
+  dueDate: invoiceDateSchema.nullable().default(null),
   notes: z.string().max(2000).default(""),
   items: z.array(itemSchema).min(1).max(100),
+}).superRefine((invoice, context) => {
+  if (invoice.dueDate && invoice.dueDate < invoice.issueDate) {
+    context.addIssue({
+      code: "custom",
+      message: "Due date must not be before the issue date",
+      path: ["dueDate"],
+    });
+  }
 });
 
 export type InvoiceInput = z.infer<typeof invoiceSchema>;
@@ -89,7 +107,14 @@ export async function upsertInvoice(
 ): Promise<{ id: string }> {
   const user = await requireUserOrThrow();
   const data = invoiceSchema.parse(input);
+  const settings = getAppSettings();
   computeInvoiceTotals(data.items); // validates VAT rates
+  if (
+    settings.kleinunternehmer &&
+    data.items.some((item) => item.vatRate !== 0)
+  ) {
+    throw new Error("Small-business invoices must not contain VAT");
+  }
 
   if (data.id) {
     const existing = db
@@ -130,7 +155,6 @@ export async function upsertInvoice(
   }
 
   // Gapless per-year numbering (§ 11 UStG): allocate inside the transaction.
-  const settings = getAppSettings();
   const year = Number(data.issueDate.slice(0, 4));
 
   const id = db.transaction(() => {
@@ -196,30 +220,47 @@ export async function setInvoiceStatus(
   const user = await requireUserOrThrow();
   const newStatus = statusSchema.parse(status);
 
-  const invoice = db.select().from(invoices).where(eq(invoices.id, id)).get();
-  if (!invoice) throw new Error("Invoice not found");
-  if (!ALLOWED_TRANSITIONS[invoice.status].includes(newStatus)) {
-    throw new Error(`Cannot change status from ${invoice.status} to ${newStatus}`);
-  }
+  db.transaction((tx) => {
+    const invoice = tx
+      .select()
+      .from(invoices)
+      .where(eq(invoices.id, id))
+      .get();
+    if (!invoice) throw new Error("Invoice not found");
+    if (!ALLOWED_TRANSITIONS[invoice.status].includes(newStatus)) {
+      throw new Error(
+        `Cannot change status from ${invoice.status} to ${newStatus}`,
+      );
+    }
 
-  const customer = db
-    .select()
-    .from(customers)
-    .where(eq(customers.id, invoice.customerId))
-    .get();
-
-  db.transaction(() => {
-    db.update(invoices)
+    const transition = tx
+      .update(invoices)
       .set({
         status: newStatus,
         paidAt: newStatus === "paid" ? new Date() : invoice.paidAt,
         updatedAt: new Date(),
       })
-      .where(eq(invoices.id, id))
+      .where(and(eq(invoices.id, id), eq(invoices.status, invoice.status)))
       .run();
+    if (transition.changes !== 1) {
+      throw new Error("Invoice status changed concurrently; reload and retry");
+    }
 
     if (newStatus === "paid") {
-      const items = db
+      const existingEntry = tx
+        .select({ id: entries.id })
+        .from(entries)
+        .where(eq(entries.invoiceId, id))
+        .get();
+      if (existingEntry) {
+        throw new Error("This invoice already has ledger entries");
+      }
+      const customer = tx
+        .select()
+        .from(customers)
+        .where(eq(customers.id, invoice.customerId))
+        .get();
+      const items = tx
         .select()
         .from(invoiceItems)
         .where(eq(invoiceItems.invoiceId, id))
@@ -227,31 +268,81 @@ export async function setInvoiceStatus(
         .all();
       const totals = computeInvoiceTotals(items);
 
-      const incomeCategory = db
+      const incomeCategory = tx
         .select()
         .from(categories)
-        .where(and(eq(categories.kind, "income"), eq(categories.archived, false)))
+        .where(
+          and(
+            eq(categories.kind, "income"),
+            eq(categories.archived, false),
+            eq(categories.template, "standard_income"),
+          ),
+        )
         .orderBy(asc(categories.sortOrder))
         .get();
-      if (!incomeCategory) throw new Error("No income category available");
+      if (!incomeCategory) {
+        throw new Error(
+          "Create an active standard income category before marking an invoice as paid",
+        );
+      }
 
-      const today = new Date().toISOString().slice(0, 10);
+      const today = toLocalIsoDate();
       for (const group of totals.byRate) {
-        db.insert(entries)
+        const description = `Rechnung ${invoice.invoiceNumber}`;
+        const entryValues = {
+          kind: "income" as const,
+          date: today,
+          documentDate: invoice.issueDate,
+          documentNumber: invoice.invoiceNumber,
+          description,
+          counterparty: customer?.name ?? "",
+          categoryId: incomeCategory.id,
+          grossAmountCents: group.grossCents,
+          vatRate: group.vatRate,
+          vatAmountCents: group.vatCents,
+          netAmountCents: group.netCents,
+          paymentMethod: "bank" as const,
+          invoiceId: id,
+          notes: invoice.notes,
+          createdBy: user.id,
+        };
+        const entry = tx
+          .insert(entries)
+          .values(entryValues)
+          .returning({ id: entries.id })
+          .get();
+        const taxLine = {
+          entryId: entry.id,
+          description,
+          netAmountCents: group.netCents,
+          vatRate: group.vatRate,
+          vatAmountCents: group.vatCents,
+          grossAmountCents: group.grossCents,
+          inputVatDeductiblePercent: 100,
+          sortOrder: 0,
+        };
+        tx.insert(entryTaxLines).values(taxLine).run();
+        const paymentLine = {
+          entryId: entry.id,
+          date: today,
+          description,
+          recipient: customer?.name ?? "",
+          amountCents: group.grossCents,
+          paymentMethod: "bank" as const,
+          sortOrder: 0,
+        };
+        tx.insert(entryPaymentLines).values(paymentLine).run();
+        tx.insert(entryAuditLog)
           .values({
-            kind: "income",
-            date: today,
-            description: `Rechnung ${invoice.invoiceNumber}`,
-            counterparty: customer?.name ?? "",
-            categoryId: incomeCategory.id,
-            grossAmountCents: group.grossCents,
-            vatRate: group.vatRate,
-            vatAmountCents: group.vatCents,
-            netAmountCents: group.netCents,
-            paymentMethod: "bank",
-            invoiceId: id,
-            notes: "",
-            createdBy: user.id,
+            entryId: entry.id,
+            action: "created",
+            snapshot: {
+              ...entryValues,
+              taxLines: [taxLine],
+              paymentLines: [paymentLine],
+            },
+            reason: "",
+            changedBy: user.id,
           })
           .run();
       }

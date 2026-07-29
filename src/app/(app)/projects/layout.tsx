@@ -1,13 +1,4 @@
-export const unstable_instant = {
-  prefetch: "runtime",
-  samples: [
-    {
-      cookies: [{ name: "locale", value: "de" }],
-      headers: [["rsc", "1"], ["next-action", null]],
-      params: { projectId: "sample" },
-    },
-  ],
-};
+export const unstable_instant = false;
 
 export default function ProjectsLayout({
   children,

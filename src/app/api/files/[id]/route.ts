@@ -51,6 +51,9 @@ async function serveAttachment(request: Request, { params }: Params, headOnly = 
     "Accept-Ranges": "bytes",
     "X-Content-Type-Options": "nosniff",
   });
+  if (attachment.mimeType === "image/svg+xml") {
+    headers.set("Content-Security-Policy", "default-src 'none'; img-src data:; style-src 'unsafe-inline'; sandbox");
+  }
   if (range) headers.set("Content-Range", `bytes ${start}-${end}/${stat.size}`);
 
   if (headOnly) return new NextResponse(null, { status: range ? 206 : 200, headers });

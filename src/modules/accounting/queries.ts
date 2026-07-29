@@ -343,13 +343,19 @@ export function entryTotals(filters: EntryFilters) {
     .select({
       incomeGross: sql<number>`coalesce(sum(case when ${entries.kind} = 'income' then ${entries.grossAmountCents} else 0 end), 0)`,
       expenseGross: sql<number>`coalesce(sum(case when ${entries.kind} = 'expense' then ${entries.grossAmountCents} else 0 end), 0)`,
+      bookingCount: sql<number>`count(*)`,
     })
     .from(entries)
     .where(and(...conditions))
     .get();
   const incomeGross = row?.incomeGross ?? 0;
   const expenseGross = row?.expenseGross ?? 0;
-  return { incomeGross, expenseGross, balance: incomeGross - expenseGross };
+  return {
+    incomeGross,
+    expenseGross,
+    balance: incomeGross - expenseGross,
+    bookingCount: row?.bookingCount ?? 0,
+  };
 }
 
 export function listCategories(options?: { includeArchived?: boolean }) {
@@ -511,23 +517,27 @@ export type CategorySummary = {
 };
 
 export function categorySummary(year: number): CategorySummary[] {
+  const grossAmount = sql<number>`coalesce(${entryTaxLines.grossAmountCents}, ${entries.grossAmountCents})`;
+  const netAmount = sql<number>`coalesce(${entryTaxLines.netAmountCents}, ${entries.netAmountCents})`;
+  const vatAmount = sql<number>`coalesce(${entryTaxLines.vatAmountCents}, ${entries.vatAmountCents})`;
+  const inputVatPercent = sql<number>`coalesce(${entryTaxLines.inputVatDeductiblePercent}, 100)`;
   return db
     .select({
       categoryId: entries.categoryId,
       categoryName: categories.name,
       categoryColor: categories.color,
       kind: entries.kind,
-      gross: sql<number>`sum(${entryTaxLines.grossAmountCents})`,
-      net: sql<number>`sum(${entryTaxLines.netAmountCents})`,
-      vat: sql<number>`sum(${entryTaxLines.vatAmountCents})`,
-      deductible: sql<number>`sum(round((${entryTaxLines.netAmountCents} + ${entryTaxLines.vatAmountCents} - round(${entryTaxLines.vatAmountCents} * ${entryTaxLines.inputVatDeductiblePercent} / 100.0)) * ${entries.deductiblePercent} / 100.0))`,
+      gross: sql<number>`sum(${grossAmount})`,
+      net: sql<number>`sum(${netAmount})`,
+      vat: sql<number>`sum(${vatAmount})`,
+      deductible: sql<number>`sum(round((${netAmount} + ${vatAmount} - round(${vatAmount} * ${inputVatPercent} / 100.0)) * ${entries.deductiblePercent} / 100.0))`,
     })
     .from(entries)
     .innerJoin(categories, eq(entries.categoryId, categories.id))
-    .innerJoin(entryTaxLines, eq(entryTaxLines.entryId, entries.id))
+    .leftJoin(entryTaxLines, eq(entryTaxLines.entryId, entries.id))
     .where(and(like(entries.date, `${year}-%`), eq(entries.status, "finalized")))
     .groupBy(entries.categoryId, entries.kind)
-    .orderBy(desc(entries.kind), desc(sql`sum(${entryTaxLines.grossAmountCents})`))
+    .orderBy(desc(entries.kind), desc(sql`sum(${grossAmount})`))
     .all();
 }
 
@@ -540,18 +550,22 @@ export type VatSummary = {
 
 /** VAT collected (income = Umsatzsteuer) vs. paid (expense = Vorsteuer) per rate. */
 export function vatSummary(year: number): VatSummary[] {
+  const vatRate = sql<number>`coalesce(${entryTaxLines.vatRate}, ${entries.vatRate})`;
+  const netAmount = sql<number>`coalesce(${entryTaxLines.netAmountCents}, ${entries.netAmountCents})`;
+  const vatAmount = sql<number>`coalesce(${entryTaxLines.vatAmountCents}, ${entries.vatAmountCents})`;
+  const inputVatPercent = sql<number>`coalesce(${entryTaxLines.inputVatDeductiblePercent}, 100)`;
   return db
     .select({
-      vatRate: entryTaxLines.vatRate,
+      vatRate,
       kind: entries.kind,
-      net: sql<number>`sum(${entryTaxLines.netAmountCents})`,
-      vat: sql<number>`sum(case when ${entries.kind} = 'expense' then round(${entryTaxLines.vatAmountCents} * ${entryTaxLines.inputVatDeductiblePercent} / 100.0) else ${entryTaxLines.vatAmountCents} end)`,
+      net: sql<number>`sum(${netAmount})`,
+      vat: sql<number>`sum(case when ${entries.kind} = 'expense' then round(${vatAmount} * ${inputVatPercent} / 100.0) else ${vatAmount} end)`,
     })
     .from(entries)
-    .innerJoin(entryTaxLines, eq(entryTaxLines.entryId, entries.id))
+    .leftJoin(entryTaxLines, eq(entryTaxLines.entryId, entries.id))
     .where(and(like(entries.date, `${year}-%`), eq(entries.status, "finalized")))
-    .groupBy(entryTaxLines.vatRate, entries.kind)
-    .orderBy(desc(entryTaxLines.vatRate))
+    .groupBy(vatRate, entries.kind)
+    .orderBy(desc(vatRate))
     .all();
 }
 

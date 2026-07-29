@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useId, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { Loader2, Plus, Save } from "lucide-react";
@@ -31,6 +31,8 @@ export function SourceForm({ initial: initialSource, documentTypes = [], compact
   const [pending, setPending] = useState(false); const [error, setError] = useState("");
   const [type, setType] = useState(initial?.type ?? "document");
   const [readingStatus, setReadingStatus] = useState(initial?.readingStatus ?? "toRead");
+  const sourceTypeId = useId();
+  const readingStatusId = useId();
 
   async function submit(formData: FormData) {
     setPending(true); setError("");
@@ -54,11 +56,11 @@ export function SourceForm({ initial: initialSource, documentTypes = [], compact
   }
 
   return <form action={submit} onKeyDown={(event) => { if ((event.ctrlKey || event.metaKey) && event.key === "Enter") { event.preventDefault(); event.currentTarget.requestSubmit(); } }} className="space-y-5">
-    {error && <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">{error}</div>}
+      {error && <div role="alert" aria-live="polite" className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">{error}</div>}
     <div className="grid gap-4 md:grid-cols-4">
-      <div className="space-y-1.5"><Label>{t("sourceType")}</Label><Select value={type} onValueChange={(value) => setType(value as typeof type)}><SelectTrigger className="w-full"><SelectValue /></SelectTrigger><SelectContent>{["journalArticle","book","bookChapter","report","webPage","document"].map((item) => <SelectItem key={item} value={item}>{t(`sourceTypes.${item}`)}</SelectItem>)}</SelectContent></Select></div>
+      <div className="space-y-1.5"><Label htmlFor={sourceTypeId}>{t("sourceType")}</Label><Select value={type} onValueChange={(value) => setType(value as typeof type)}><SelectTrigger id={sourceTypeId} className="w-full"><SelectValue /></SelectTrigger><SelectContent>{["journalArticle","book","bookChapter","report","webPage","document"].map((item) => <SelectItem key={item} value={item}>{t(`sourceTypes.${item}`)}</SelectItem>)}</SelectContent></Select></div>
       <div className="space-y-1.5"><Label htmlFor="documentType">{t("documentType")}</Label><Input id="documentType" name="documentType" list="document-types" defaultValue={initial?.documentType} placeholder={t("documentTypePlaceholder")} /><datalist id="document-types">{documentTypes.map((item) => <option key={item} value={item} />)}</datalist></div>
-      <div className="space-y-1.5"><Label>{t("readingStatus")}</Label><Select value={readingStatus} onValueChange={(value) => setReadingStatus(value as typeof readingStatus)}><SelectTrigger className="w-full"><SelectValue /></SelectTrigger><SelectContent>{["toRead","reading","read"].map((item) => <SelectItem key={item} value={item}>{t(`readingStatuses.${item}`)}</SelectItem>)}</SelectContent></Select></div>
+      <div className="space-y-1.5"><Label htmlFor={readingStatusId}>{t("readingStatus")}</Label><Select value={readingStatus} onValueChange={(value) => setReadingStatus(value as typeof readingStatus)}><SelectTrigger id={readingStatusId} className="w-full"><SelectValue /></SelectTrigger><SelectContent>{["toRead","reading","read"].map((item) => <SelectItem key={item} value={item}>{t(`readingStatuses.${item}`)}</SelectItem>)}</SelectContent></Select></div>
       <div className="space-y-1.5"><Label htmlFor="issuedDate">{t("issuedDate")}</Label><Input id="issuedDate" name="issuedDate" defaultValue={initial?.issuedDate} placeholder="2026 or 2026-07-20" /></div>
     </div>
     <div className="grid gap-4 md:grid-cols-2"><div className="space-y-1.5"><Label htmlFor="title">{t("sourceTitle")}</Label><Input id="title" name="title" required defaultValue={initial?.title} /></div><div className="space-y-1.5"><Label htmlFor="subtitle">{t("subtitle")}</Label><Input id="subtitle" name="subtitle" defaultValue={initial?.subtitle} /></div></div>

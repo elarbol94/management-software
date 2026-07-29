@@ -1,3 +1,5 @@
+import { toAustrianIsoDate } from "./date";
+
 export type FinancingAmount = {
   sourceType:
     | "requested_grant"
@@ -106,7 +108,7 @@ export function calculateWarningCodes(input: {
   if (input.financingGapCents > 0) warnings.push("financing_gap");
 
   if (input.projectEnd && input.projectStatus !== "completed") {
-    const today = new Date(`${input.today ?? new Date().toISOString().slice(0, 10)}T00:00:00Z`);
+    const today = new Date(`${input.today ?? toAustrianIsoDate()}T00:00:00Z`);
     const end = new Date(`${input.projectEnd}T00:00:00Z`);
     const days = Math.ceil((end.getTime() - today.getTime()) / 86_400_000);
     if (days >= 0 && days <= 60) warnings.push("project_end_near");

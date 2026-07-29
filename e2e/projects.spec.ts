@@ -21,6 +21,10 @@ async function openProjectBoard(page: Page, projectName: string) {
     .getByRole("button", { name: `Aktionen für ${projectName}` })
     .click();
   await page.getByRole("menuitem", { name: "Kanban-Board öffnen" }).click();
+  await expect(page).toHaveURL(/\/projects\/[^/?#]+(?:[?#].*)?$/);
+  const openColumn = page.locator('[data-column-name="Offen"]');
+  await expect(openColumn).toHaveCount(1);
+  await expect(openColumn).toBeVisible();
 }
 
 test("create a project with default kanban columns", async ({ page }) => {
@@ -48,26 +52,39 @@ test("create, move (via dialog) and complete a task", async ({ page }) => {
 
   // Create a task with assignee, due date and high priority.
   await page.getByRole("button", { name: "Neue Aufgabe" }).first().click();
-  await page.locator("#task-title").fill("Landingpage bauen");
-  await page.locator("#task-description").fill("Hero, Features, Kontakt");
-  await page.locator("#task-assignee").click();
+  const taskDialog = page.getByRole("dialog");
+  await expect(taskDialog).toBeVisible();
+  await taskDialog.locator("#task-title").fill("Landingpage bauen");
+  await taskDialog.locator("#task-description").fill("Hero, Features, Kontakt");
+  await taskDialog.locator("#task-assignee").click();
   await page.getByRole("option", { name: "E2E Admin" }).click();
-  await page.locator("#task-start").fill("2026-07-27");
-  await page.locator("#task-due").fill("2026-07-31");
-  await page.getByRole("button", { name: "Speichern" }).click();
+  await taskDialog.locator("#task-start").fill("2026-07-27");
+  await taskDialog.locator("#task-due").fill("2026-07-31");
+  await taskDialog.getByRole("button", { name: "Speichern" }).click();
 
   const openColumn = page.locator('[data-column-name="Offen"]');
   await expect(openColumn.getByText("Landingpage bauen")).toBeVisible();
 
-  // The task shows on the dashboard under "Meine Aufgaben".
+  // The dashboard deliberately contains project-independent work only.
+  // Project tasks remain in their Kanban and portfolio views.
   await page.goto("/");
-  await expect(page.getByText("Meine Aufgaben")).toBeVisible();
-  await expect(page.getByText("Landingpage bauen")).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Aufgaben", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText(
+      "Projektunabhängige Aufgaben aus Wiki, Quellen, PDFs und der restlichen Software.",
+    ),
+  ).toBeVisible();
+  await expect(page.getByText("Landingpage bauen")).toHaveCount(0);
 
   // Move it to "In Arbeit" via the dialog's column select.
   await page.goto("/projects");
   await openProjectBoard(page, "Website Relaunch");
-  await page.getByText("Landingpage bauen").click();
+  await page
+    .locator('[data-column-name="Offen"]')
+    .getByRole("button", { name: "Landingpage bauen", exact: true })
+    .click();
   await expect(page.getByText("Aufgabe bearbeiten")).toBeVisible();
   await page.locator("#task-column").click();
   await page.getByRole("option", { name: "In Arbeit" }).click();
@@ -85,7 +102,7 @@ test("drag a task between columns", async ({ page }) => {
 
   const card = page
     .locator('[data-column-name="In Arbeit"]')
-    .getByText("Landingpage bauen");
+    .locator('[data-task-title="Landingpage bauen"]');
   await expect(card).toBeVisible();
 
   const target = page.locator('[data-column-name="Erledigt"]');
@@ -93,9 +110,13 @@ test("drag a task between columns", async ({ page }) => {
   const targetBox = (await target.boundingBox())!;
 
   // dnd-kit needs a small initial move to pass its activation constraint.
-  await page.mouse.move(cardBox.x + cardBox.width / 2, cardBox.y + cardBox.height / 2);
+  const dragStart = {
+    x: cardBox.x + 12,
+    y: cardBox.y + cardBox.height / 2,
+  };
+  await page.mouse.move(dragStart.x, dragStart.y);
   await page.mouse.down();
-  await page.mouse.move(cardBox.x + cardBox.width / 2 + 15, cardBox.y + 15, { steps: 5 });
+  await page.mouse.move(dragStart.x + 15, dragStart.y + 15, { steps: 5 });
   await page.mouse.move(
     targetBox.x + targetBox.width / 2,
     targetBox.y + targetBox.height / 2,
@@ -141,15 +162,26 @@ test("move the project tree on drop and restore it with undo", async ({ page }) 
     hasText: "Website Relaunch",
   });
   const projectBar = projectRow.getByRole("button", {
-    name: /Website Relaunch, 2026-07-27 – 2026-07-31/,
+    name: /^Website Relaunch, /,
   });
   const box = (await projectBar.boundingBox())!;
-  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
-  await page.mouse.down();
-  await page.mouse.move(box.x + box.width / 2 + 32, box.y + box.height / 2, {
-    steps: 8,
+  const start = {
+    clientX: box.x + box.width / 2,
+    clientY: box.y + box.height / 2,
+    pointerId: 1,
+    pointerType: "mouse",
+    buttons: 1,
+  };
+  await projectBar.dispatchEvent("pointerdown", start);
+  await projectBar.dispatchEvent("pointermove", {
+    ...start,
+    clientX: start.clientX + 32,
   });
-  await page.mouse.up();
+  await projectBar.dispatchEvent("pointerup", {
+    ...start,
+    clientX: start.clientX + 32,
+    buttons: 0,
+  });
 
   // The drop commits on its own — no confirmation step.
   await expect(page.getByText("Terminplan aktualisiert")).toBeVisible();
@@ -173,22 +205,83 @@ test("move the project tree on drop and restore it with undo", async ({ page }) 
 test("indent a task and expose its parent as a schedule container", async ({ page }) => {
   await login(page);
   await page.goto("/projects");
+  await openProjectBoard(page, "Website Relaunch");
+
+  const openColumn = page.locator('[data-column-name="Offen"]');
+  await openColumn.getByRole("button", { name: "Neue Aufgabe" }).click();
+  await page.locator("#task-title").fill("Landingpage prüfen");
+  await page.getByRole("button", { name: "Speichern" }).click();
+  const childCard = openColumn
+    .locator('[data-task-title="Landingpage prüfen"]')
+    .last();
+  await expect(childCard).toBeVisible();
+  const childTaskId = await childCard.getAttribute("data-task-id");
+  expect(childTaskId).toBeTruthy();
+
+  await page.goto("/projects");
 
   const gantt = page.getByTestId("portfolio-gantt");
-  const target = gantt.locator('[data-row-kind="task"]').nth(1);
+  const target = gantt.locator(
+    `[data-row-kind="task"][data-task-id="${childTaskId}"]`,
+  );
   await expect(target).toBeVisible();
 
-  await target.getByRole("button", { name: /^Aktionen für / }).click();
+  await target
+    .getByRole("button", { name: "Aktionen für Landingpage prüfen" })
+    .click();
+  const documentTimeOrigin = await page.evaluate(() => performance.timeOrigin);
   await page.getByRole("menuitem", { name: "Einrücken" }).click();
+  await page.waitForFunction(
+    (previousTimeOrigin) => performance.timeOrigin !== previousTimeOrigin,
+    documentTimeOrigin,
+  );
 
-  // The indented row is now a subtask. Its parent is a minimum schedule
-  // container with editable edges.
-  await expect(gantt.locator('[data-row-kind="subtask"]')).toHaveCount(1);
-  const bracket = gantt.locator("[data-summary-bracket]").first();
+  // The hard refresh preserves the selected task, scroll position, and the
+  // expanded parent, so the moved row stays in context.
+  const parent = page
+    .getByTestId("portfolio-gantt")
+    .locator('[data-row-kind="task"]')
+    .filter({ hasText: "Landingpage bauen" });
+  const refreshedGantt = page.getByTestId("portfolio-gantt");
+  const refreshedChild = refreshedGantt.locator(
+    `[data-row-kind="subtask"][data-task-id="${childTaskId}"]`,
+  );
+  await expect(refreshedChild).toBeVisible();
+  await expect(refreshedChild).toHaveAttribute("aria-selected", "true");
+
+  const bracket = parent.locator("[data-summary-bracket]");
   await expect(bracket).toBeVisible();
-  await expect(
-    bracket.locator('[title="Startdatum ändern"], [title="Enddatum ändern"]'),
-  ).toHaveCount(2);
+  const startHandle = parent.getByRole("button", {
+    name: "Startdatum ändern: Landingpage bauen",
+  });
+  const endHandle = parent.getByRole("button", {
+    name: "Enddatum ändern: Landingpage bauen",
+  });
+  await expect(startHandle).toBeAttached();
+  await expect(endHandle).toBeAttached();
+
+  const [startBox, endBox] = await Promise.all([
+    startHandle.boundingBox(),
+    endHandle.boundingBox(),
+  ]);
+  expect(startBox).not.toBeNull();
+  expect(endBox).not.toBeNull();
+  expect(startBox!.x + startBox!.width).toBeLessThanOrEqual(endBox!.x);
+
+  const originalRange = await bracket.getAttribute("aria-label");
+  expect(originalRange).toBeTruthy();
+  await endHandle.focus();
+  await endHandle.press("ArrowRight");
+  await expect.poll(() => bracket.getAttribute("aria-label")).not.toBe(originalRange);
+  const resizedRange = await bracket.getAttribute("aria-label");
+
+  await page.reload();
+  const persistedBracket = page
+    .getByTestId("portfolio-gantt")
+    .locator('[data-row-kind="task"]')
+    .filter({ hasText: "Landingpage bauen" })
+    .locator("[data-summary-bracket]");
+  await expect(persistedBracket).toHaveAttribute("aria-label", resizedRange!);
 });
 
 test("create and expand a scheduled subtask in Kanban and Gantt", async ({

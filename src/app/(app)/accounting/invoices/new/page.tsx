@@ -20,7 +20,7 @@ export default async function NewInvoicePage() {
           variant="ghost"
           size="icon-sm"
           nativeButton={false}
-          render={<Link href="/accounting/invoices" />}
+          render={<Link href="/accounting/invoices" aria-label={t("title")} />}
         >
           <ArrowLeft className="size-4" />
         </Button>
@@ -32,6 +32,7 @@ export default async function NewInvoicePage() {
         customers={customers}
         initial={null}
         defaultVatRate={settings.kleinunternehmer ? 0 : settings.defaultVatRate}
+        vatExempt={settings.kleinunternehmer}
       />
     </div>
   );

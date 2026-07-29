@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Editor } from "@tiptap/react";
+import { useTranslations } from "next-intl";
 import { type NormalizedRect } from "../lib/comment-anchors";
 import type { CommentThread } from "./comment-rail";
 import { cn } from "@/lib/utils";
@@ -47,6 +48,7 @@ export function CommentAnchorOverlay({
   onActiveThreadChange: (threadId: string) => void;
   visible?: boolean;
 }) {
+  const t = useTranslations("wiki");
   const [geometry, setGeometry] = useState<AnchorGeometry[]>([]);
   const visibleThreads = useMemo(() => comments.filter((thread) => !thread.orphaned && thread.anchor.type !== "page"), [comments]);
 
@@ -120,7 +122,7 @@ export function CommentAnchorOverlay({
   }, [editor, measure, rootRef]);
 
   if (!visible) return null;
-  return <div data-testid="comment-anchor-overlay" className="pointer-events-none absolute inset-0 z-10 overflow-visible" aria-label="Anchored comments">
+  return <div data-testid="comment-anchor-overlay" className="pointer-events-none absolute inset-0 z-10 overflow-visible" aria-label={t("anchoredComments")}>
     {geometry.filter((item) => item.imageRect).map((item) => <div
       key={"region-" + item.id}
       data-testid={"image-comment-highlight-" + item.id}
@@ -130,7 +132,7 @@ export function CommentAnchorOverlay({
     {geometry.map((item) => <button
       key={"anchor-" + item.id}
       type="button"
-      aria-label="Open comment"
+      aria-label={t("openComment")}
       className={cn("pointer-events-auto absolute size-4 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-background shadow-sm", item.resolved && "opacity-60")}
       style={{ left: item.x, top: item.y, ...userMarkColorStyle(item.markColor), backgroundColor: "var(--user-mark-solid)" }}
       onClick={() => onActiveThreadChange(item.id)}

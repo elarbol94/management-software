@@ -13,7 +13,7 @@ import Placeholder from "@tiptap/extension-placeholder";
 import TaskList from "@tiptap/extension-task-list";
 import TaskItem from "@tiptap/extension-task-item";
 import { Fragment, Slice } from "@tiptap/pm/model";
-import { AlertCircle, AlignCenter, AlignLeft, AlignRight, Bold, BookMarked, CalendarClock, Check, ClipboardCheck, CloudOff, Code, Columns2, Eye, EyeOff, FileText, Heading1, Heading2, Heading3, Highlighter, ImagePlus, Italic, Keyboard, Languages, Link2, List, ListOrdered, ListTree, ListTodo, MessageSquareText, Minus, MoreHorizontal, PanelRightClose, PanelRightOpen, Paperclip, Pilcrow, Quote, Redo2, RotateCcw, Rows3, Scan, ScissorsLineDashed, Search, Settings2, Strikethrough, Trash2, Underline as UnderlineIcon, Undo2, WifiOff } from "lucide-react";
+import { AlertCircle, AlignCenter, AlignLeft, AlignRight, Bold, BookMarked, CalendarClock, Captions, Check, ClipboardCheck, CloudOff, Code, Columns2, Eye, EyeOff, FileText, Heading1, Heading2, Heading3, Highlighter, ImagePlus, Italic, Keyboard, Languages, Link2, List, ListOrdered, ListTree, ListTodo, MessageSquareText, Minus, MoreHorizontal, PanelRightClose, PanelRightOpen, Paperclip, Pilcrow, Quote, Redo2, RotateCcw, Rows3, Scan, ScissorsLineDashed, Search, Settings2, Strikethrough, Trash2, Underline as UnderlineIcon, Undo2, WifiOff } from "lucide-react";
 import { addComment, restorePageRevision } from "../research-actions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -37,7 +37,7 @@ import { collectSpellcheckParagraphs, createSpellcheckBatches, createSpellcheckE
 import { looksLikeMarkdown, parseMarkdownDocument } from "../lib/markdown-import";
 import { calculateWritingStats, type WritingStats } from "../lib/editor-writing";
 import { userMarkColorStyle, type UserMarkColor } from "@/lib/user-mark-colors";
-import { DocumentExtensions } from "./document-extension";
+import { DocumentExtensions, setDocumentPaginationBreaks, type DocumentPaginationBreak } from "./document-extension";
 import { DocumentLayoutPanel } from "./document-layout-panel";
 import { WikiTypographyDialog, type WikiEditorPreferences } from "./wiki-typography-dialog";
 import {
@@ -79,6 +79,7 @@ type PageRef = { id: string; title: string; slug: string };
 type SourceRef = { id: string; title: string; issuedDate: string; contributors: string };
 type WikiEditorPageActions = { addAttachment: () => void; linkSupportingSource: () => void };
 type CachedSpellcheckMatch = Omit<SpellcheckResponseMatch, "paragraph">;
+type FigureCaption = { nodeId: string; caption: string };
 type WikiSaveInput = {
   id: string;
   contentJson: string;
@@ -109,6 +110,15 @@ function proofingIssueKey(issue: SpellcheckIssue) {
 }
 
 const WIKI_SHORTCUTS_KEY = "wiki:editor-shortcuts:v1";
+const DOCUMENT_ZOOM_KEY = "wiki:document-zoom:v1";
+const DOCUMENT_ZOOM_MIN = 70;
+const DOCUMENT_ZOOM_MAX = 200;
+
+function loadDocumentZoom() {
+  if (typeof window === "undefined") return 100;
+  const stored = Number(window.localStorage.getItem(DOCUMENT_ZOOM_KEY));
+  return Number.isFinite(stored) ? Math.min(DOCUMENT_ZOOM_MAX, Math.max(DOCUMENT_ZOOM_MIN, stored)) : 100;
+}
 // These are TipTap's built-in editing combinations. Capture them as well when
 // a user has moved the corresponding action, otherwise TipTap would still run
 // the old command after the custom shortcut handler intentionally ignores it.
@@ -262,6 +272,7 @@ const CommentableImage = Node.create({
       src: { default: "" },
       alt: { default: "" },
       caption: { default: "" },
+      includeInFigureIndex: { default: true },
       widthPercent: { default: 100 },
       alignment: { default: "center" },
       cropX: { default: 50 },
@@ -370,7 +381,17 @@ function backfillCommentNodeIds(editor: Editor) {
 }
 
 type UploadedAttachment = { id: string; fileName: string; mimeType: string };
-const INLINE_IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
+const INLINE_IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/svg+xml"]);
+
+function isInlineImageFile(file: File) {
+  return INLINE_IMAGE_TYPES.has(file.type) || (!file.type && file.name.toLocaleLowerCase().endsWith(".svg"));
+}
+
+function normalizeInlineImageFile(file: File) {
+  return !file.type && file.name.toLocaleLowerCase().endsWith(".svg")
+    ? new File([file], file.name, { type: "image/svg+xml", lastModified: file.lastModified })
+    : file;
+}
 
 async function uploadInlineAttachment(pageId: string, file: File): Promise<UploadedAttachment> {
   const data = new FormData();
@@ -384,12 +405,14 @@ async function uploadInlineAttachment(pageId: string, file: File): Promise<Uploa
 }
 
 function imageNodeAttrs(attachment: UploadedAttachment) {
+  const label = attachment.fileName.replace(/\.[^.]+$/, "");
   return {
     nodeId: crypto.randomUUID(),
     attachmentId: attachment.id,
     src: `/api/files/${attachment.id}`,
-    alt: attachment.fileName,
-    caption: attachment.fileName,
+    alt: label,
+    caption: label,
+    includeInFigureIndex: true,
     widthPercent: 100,
     alignment: "center",
     cropX: 50,
@@ -404,6 +427,8 @@ function ImageRegionSelector({ rootRef, nodeId, label, onSelect, onCancel }: {
   onSelect: (anchor: CommentAnchor) => void;
   onCancel: () => void;
 }) {
+  const t = useTranslations("wiki");
+  const common = useTranslations("common");
   const [bounds, setBounds] = useState<DOMRect | null>(null);
   const [drag, setDrag] = useState<{ startX: number; startY: number; endX: number; endY: number } | null>(null);
 
@@ -443,9 +468,9 @@ function ImageRegionSelector({ rootRef, nodeId, label, onSelect, onCancel }: {
     onKeyDown={(event) => { if (event.key === "Escape") onCancel(); }}
     role="application"
     tabIndex={0}
-    aria-label="Select image region"
+    aria-label={t("selectImageRegion")}
   >
-    <button type="button" className="absolute top-2 right-2 rounded bg-background/95 px-2 py-1 text-xs shadow" onPointerDown={(event) => event.stopPropagation()} onClick={onCancel}>×</button>
+    <button type="button" aria-label={common("cancel")} title={common("cancel")} className="absolute top-2 right-2 rounded bg-background/95 px-2 py-1 text-xs shadow" onPointerDown={(event) => event.stopPropagation()} onClick={onCancel}>×</button>
     {preview && <div className="absolute border-2 border-amber-600 bg-amber-300/30" style={{ left: `${preview.x * 100}%`, top: `${preview.y * 100}%`, width: `${preview.width * 100}%`, height: `${preview.height * 100}%` }} />}
   </div>;
 }
@@ -587,10 +612,17 @@ export function WikiEditor({
   const [documentMode, setDocumentMode] = useState(initialDocumentMode);
   const [documentSettings, setDocumentSettings] = useState<DocumentSettingsV1>(() => parseDocumentSettings(initialDocumentSettings));
   const [documentIssues, setDocumentIssues] = useState<DocumentPreflightIssue[]>([]);
+  const [documentPageCount, setDocumentPageCount] = useState(1);
+  const [documentZoom, setDocumentZoom] = useState(loadDocumentZoom);
+  const [figureCaptions, setFigureCaptions] = useState<FigureCaption[]>([]);
   const [typography, setTypography] = useState(() => normalizeWikiTypography(initialTypography));
   const [personalTypography, setPersonalTypography] = useState(() => normalizeWikiTypography(editableTypography));
   const [personalTypographyTemplates, setPersonalTypographyTemplates] = useState(typographyTemplates);
   const [typographyOpen, setTypographyOpen] = useState(false);
+  const [imageDescriptionOpen, setImageDescriptionOpen] = useState(false);
+  const [imageCaptionDraft, setImageCaptionDraft] = useState("");
+  const [imageAltDraft, setImageAltDraft] = useState("");
+  const [imageInFigureIndexDraft, setImageInFigureIndexDraft] = useState(true);
   const [spellcheckIssue, setSpellcheckIssue] = useState<{ issue: SpellcheckIssue; rect: DOMRect } | null>(null);
   const [proofingLanguage, setProofingLanguage] = useState<ProofingLanguage>(initialProofingLanguage);
   const [proofingStatus, setProofingStatus] = useState<"ready" | "checking" | "error">("checking");
@@ -599,7 +631,6 @@ export function WikiEditor({
   const [proofingDictionary, setProofingDictionary] = useState<string[]>([]);
   const [proofingDictionaryLoaded, setProofingDictionaryLoaded] = useState(false);
   const ignoredProofingIssues = useRef(new Set<string>());
-  const preserveProofingOnNextUpdate = useRef(false);
   const [wikiShortcuts, setWikiShortcuts] = useState(loadWikiShortcutBindings);
   const [initialPreferences] = useState(loadEditorPreferences);
   const [statusVisible, setStatusVisible] = useState(initialPreferences.statusVisible); const [minimalToolbar, setMinimalToolbar] = useState(initialPreferences.minimalToolbar); const [typewriterMode, setTypewriterMode] = useState(initialPreferences.typewriterMode); const typewriterModeRef = useRef(initialPreferences.typewriterMode);
@@ -614,10 +645,15 @@ export function WikiEditor({
 
   function updateDerivedState(currentEditor: Editor) {
     const items: OutlineItem[] = [];
+    const captions: FigureCaption[] = [];
     currentEditor.state.doc.descendants((node, position) => {
       if (node.type.name === "heading") items.push({ level: Number(node.attrs.level), text: node.textContent, position, id: String(node.attrs.id ?? `heading-${position}`) });
+      if (node.type.name === "commentableImage" && node.attrs.includeInFigureIndex !== false && String(node.attrs.caption ?? "").trim()) {
+        captions.push({ nodeId: String(node.attrs.nodeId ?? `figure-${position}`), caption: String(node.attrs.caption).trim() });
+      }
     });
     setOutline(items);
+    setFigureCaptions(captions);
     const cursor = currentEditor.state.selection.from;
     setActiveHeadingPosition([...items].reverse().find((item) => item.position < cursor)?.position ?? null);
     setWritingStats(calculateWritingStats(currentEditor.state.doc, currentEditor.state.selection));
@@ -761,7 +797,10 @@ export function WikiEditor({
     slash("inlineImage", "wiki", ImagePlus, () => setImagePickerRequest((value) => value + 1)),
     slash("attachment", "wiki", Paperclip, () => pageActions.addAttachment()),
     slash("supportingSource", "wiki", BookMarked, () => pageActions.linkSupportingSource()),
-    slash("pageComment", "wiki", MessageSquareText, () => setCommentFocusRequest((value) => value + 1)),
+    slash("pageComment", "wiki", MessageSquareText, () => {
+      setCommentsVisible(true);
+      setCommentFocusRequest((value) => value + 1);
+    }),
   ];
   const slashExtension = createSlashCommandExtension({ commands: slashCommands, ariaLabel: t("slash.ariaLabel"), emptyLabel: t("slash.empty") });
 
@@ -769,7 +808,7 @@ export function WikiEditor({
     editorProps: {
       attributes: { class: "prose prose-neutral dark:prose-invert max-w-none min-h-[28rem] focus:outline-none", spellcheck: "false" },
       handlePaste(view, event) {
-        const files = [...(event.clipboardData?.files ?? [])].filter((file) => INLINE_IMAGE_TYPES.has(file.type));
+        const files = [...(event.clipboardData?.files ?? [])].filter(isInlineImageFile).map(normalizeInlineImageFile);
         if (files.length) {
           event.preventDefault();
           void (async () => {
@@ -799,7 +838,7 @@ export function WikiEditor({
         }
       },
       handleDrop(view, event) {
-        const files = [...(event.dataTransfer?.files ?? [])].filter((file) => INLINE_IMAGE_TYPES.has(file.type));
+        const files = [...(event.dataTransfer?.files ?? [])].filter(isInlineImageFile).map(normalizeInlineImageFile);
         if (!files.length) return false;
         event.preventDefault();
         const coordinates = view.posAtCoords({ left: event.clientX, top: event.clientY });
@@ -945,7 +984,11 @@ export function WikiEditor({
         const priorityParagraphs = [paragraphs[priorityIndex >= 0 ? priorityIndex : 0]];
         const priorityIssues = await requestProofing(priorityParagraphs, activeController);
         if (checkGeneration !== generation || activeController.signal.aborted) return;
-        setSpellcheckIssues(editor, priorityIssues);
+        const currentIssues = getSpellcheckIssues(editor).filter((issue) => !priorityParagraphs.some((paragraph) => {
+          const paragraphEnd = paragraph.from + paragraph.text.length;
+          return issue.from < paragraphEnd && paragraph.from < issue.to;
+        }));
+        setSpellcheckIssues(editor, [...currentIssues, ...priorityIssues].sort((left, right) => left.from - right.from));
 
         const fullIssues = paragraphs.length === 1 ? priorityIssues : await requestProofing(paragraphs, activeController);
         if (checkGeneration !== generation || activeController.signal.aborted) return;
@@ -954,22 +997,16 @@ export function WikiEditor({
       } catch (error: unknown) {
         if (error instanceof DOMException && error.name === "AbortError") return;
         if (checkGeneration !== generation) return;
-        setSpellcheckIssues(editor, []);
         setProofingStatus("error");
       }
     };
 
     const schedule = () => {
-      if (preserveProofingOnNextUpdate.current) {
-        preserveProofingOnNextUpdate.current = false;
-        return;
-      }
       if (timer) clearTimeout(timer);
       controller?.abort();
       generation += 1;
       setSpellcheckIssue(null);
-      setSpellcheckIssues(editor, []);
-      timer = setTimeout(() => void check(generation), 420);
+      timer = setTimeout(() => void check(generation), 140);
     };
     editor.on("update", schedule);
     void check(++generation);
@@ -980,6 +1017,127 @@ export function WikiEditor({
       editor.off("update", schedule);
     };
   }, [editor, pageId, proofingDictionary, proofingDictionaryLoaded, proofingLanguage]);
+  useEffect(() => {
+    if (!editor) return;
+    editor.view.dom.spellcheck = proofingStatus === "error";
+  }, [editor, proofingStatus]);
+  useEffect(() => {
+    if (!editor) return;
+    if (!documentMode) {
+      setDocumentPaginationBreaks(editor, []);
+      return;
+    }
+
+    let frame = 0;
+    const paginate = () => {
+      cancelAnimationFrame(frame);
+      setDocumentPaginationBreaks(editor, []);
+      frame = requestAnimationFrame(() => {
+        const canvas = editorRootRef.current?.querySelector<HTMLElement>(".wiki-document-canvas");
+        const proseMirror = editor.view.dom;
+        if (!canvas || !proseMirror.isConnected) return;
+
+        const portraitWidthMm = documentSettings.page.size === "A4" ? 210 : 215.9;
+        const portraitHeightMm = documentSettings.page.size === "A4" ? 297 : 279.4;
+        const paperWidthMm = documentSettings.page.orientation === "portrait" ? portraitWidthMm : portraitHeightMm;
+        const paperHeightMm = documentSettings.page.orientation === "portrait" ? portraitHeightMm : portraitWidthMm;
+        const zoomFactor = documentZoom / 100;
+        const pixelsPerMm = canvas.offsetWidth / paperWidthMm;
+        const pageHeight = paperHeightMm * pixelsPerMm;
+        const pageGap = 12 * pixelsPerMm;
+        const marginTop = documentSettings.page.marginsMm.top * pixelsPerMm;
+        const marginBottom = documentSettings.page.marginsMm.bottom * pixelsPerMm;
+        const usableHeight = pageHeight - marginTop - marginBottom;
+        const cycle = pageHeight + pageGap;
+        const canvasTop = canvas.getBoundingClientRect().top;
+        const breaks: DocumentPaginationBreak[] = [];
+        let accumulated = 0;
+        let forceNextPage = false;
+        let finalBottom = marginTop;
+
+        const paginationElements: HTMLElement[] = [];
+        const collectPaginationElements = (element: HTMLElement) => {
+          const elementHeight = element.getBoundingClientRect().height / zoomFactor;
+          const canSplit = element.matches("ul, ol, li, blockquote, section[data-document-columns]");
+          if (canSplit && elementHeight > usableHeight && element.children.length > 0) {
+            for (const child of Array.from(element.children) as HTMLElement[]) collectPaginationElements(child);
+            return;
+          }
+          paginationElements.push(element);
+        };
+        for (const element of Array.from(proseMirror.children) as HTMLElement[]) collectPaginationElements(element);
+
+        for (const element of paginationElements) {
+          if (element.classList.contains("wiki-document-auto-page-break")) continue;
+          if (element.hasAttribute("data-document-page-break")) {
+            forceNextPage = true;
+            continue;
+          }
+          const rect = element.getBoundingClientRect();
+          const naturalTop = (rect.top - canvasTop) / zoomFactor;
+          const naturalBottom = (rect.bottom - canvasTop) / zoomFactor;
+          let flowTop = naturalTop + accumulated;
+          let flowBottom = naturalBottom + accumulated;
+          let pageIndex = Math.max(0, Math.floor(flowTop / cycle));
+          const pageStart = pageIndex * cycle;
+          const contentStart = pageStart + marginTop;
+          const contentEnd = pageStart + pageHeight - marginBottom;
+          let offset = 0;
+
+          if (forceNextPage) {
+            offset = (pageIndex + 1) * cycle + marginTop - flowTop;
+            forceNextPage = false;
+          } else if (flowTop < contentStart) {
+            offset = contentStart - flowTop;
+          } else if (flowBottom > contentEnd + 1 && rect.height / zoomFactor <= usableHeight) {
+            offset = (pageIndex + 1) * cycle + marginTop - flowTop;
+          }
+
+          if (offset > 0.5) {
+            const position = Math.max(0, editor.view.posAtDOM(element, 0) - 1);
+            pageIndex = Math.max(1, Math.floor((flowTop + offset) / cycle));
+            breaks.push({ position, height: offset, page: pageIndex + 1, kind: element.tagName === "LI" ? "listItem" : "block" });
+            accumulated += offset;
+            flowTop += offset;
+            flowBottom += offset;
+          }
+          finalBottom = Math.max(finalBottom, flowBottom);
+        }
+
+        setDocumentPaginationBreaks(editor, breaks);
+        setDocumentPageCount(Math.max(1, Math.floor((finalBottom + marginBottom) / cycle) + 1));
+      });
+    };
+
+    const schedule = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(paginate);
+    };
+    const mediaResizeObserver = new ResizeObserver(schedule);
+    for (const element of editor.view.dom.querySelectorAll("img, figure, table")) {
+      mediaResizeObserver.observe(element);
+    }
+    const scheduleAfterMediaLoad = (event: Event) => {
+      if (event.target instanceof HTMLImageElement) schedule();
+    };
+    editor.view.dom.addEventListener("load", scheduleAfterMediaLoad, true);
+    let disposed = false;
+    void document.fonts?.ready.then(() => {
+      if (!disposed) schedule();
+    });
+    editor.on("update", schedule);
+    window.addEventListener("resize", schedule);
+    paginate();
+    return () => {
+      disposed = true;
+      cancelAnimationFrame(frame);
+      mediaResizeObserver.disconnect();
+      editor.view.dom.removeEventListener("load", scheduleAfterMediaLoad, true);
+      editor.off("update", schedule);
+      window.removeEventListener("resize", schedule);
+      setDocumentPaginationBreaks(editor, []);
+    };
+  }, [documentMode, documentSettings.page, documentZoom, editor]);
   useEffect(() => { if (!conflictBlocked.current && pageVersion > version.current) version.current = pageVersion; }, [pageVersion]);
   useEffect(() => { if (commentFocusRequest > 0) commentRailRef.current?.focusGeneralComment(); }, [commentFocusRequest]);
   useEffect(() => { if (imagePickerRequest > 0) imageInputRef.current?.click(); }, [imagePickerRequest]);
@@ -989,6 +1147,22 @@ export function WikiEditor({
   }, [minimalToolbar, preferencesKey, statusVisible, typewriterMode]);
   useEffect(() => { window.localStorage.setItem(commentsPreferenceKey, String(commentsVisible)); }, [commentsPreferenceKey, commentsVisible]);
   useEffect(() => { window.localStorage.setItem(layoutPreferenceKey, String(documentLayoutVisible)); }, [documentLayoutVisible, layoutPreferenceKey]);
+  useEffect(() => { window.localStorage.setItem(DOCUMENT_ZOOM_KEY, String(documentZoom)); }, [documentZoom]);
+  useEffect(() => {
+    const workspace = editorRootRef.current;
+    if (!workspace || !documentMode) return;
+
+    const zoomDocument = (event: WheelEvent) => {
+      if (!event.ctrlKey) return;
+      event.preventDefault();
+      const direction = event.deltaY < 0 ? 1 : -1;
+      const intensity = Math.max(1, Math.min(4, Math.round(Math.abs(event.deltaY) / 25)));
+      setDocumentZoom((value) => Math.min(DOCUMENT_ZOOM_MAX, Math.max(DOCUMENT_ZOOM_MIN, value + direction * intensity * 2)));
+    };
+
+    workspace.addEventListener("wheel", zoomDocument, { passive: false });
+    return () => workspace.removeEventListener("wheel", zoomDocument);
+  }, [documentMode]);
   useEffect(() => { window.localStorage.setItem(WIKI_SHORTCUTS_KEY, JSON.stringify(wikiShortcuts)); }, [wikiShortcuts]);
   useEffect(() => {
     const online = () => { if (pendingSave.current) void persistContentRef.current(pendingSave.current); };
@@ -1208,6 +1382,13 @@ export function WikiEditor({
     "--document-margin-right": `${documentSettings.page.marginsMm.right}mm`,
     "--document-margin-bottom": `${documentSettings.page.marginsMm.bottom}mm`,
     "--document-margin-left": `${documentSettings.page.marginsMm.left}mm`,
+    "--document-page-gap": "12mm",
+    "--document-content-pages": String(documentPageCount),
+    "--document-page-count": String(documentPageCount + (documentSettings.figures.enabled && figureCaptions.length ? 1 : 0)),
+    "--document-content-stack-height": `${documentPageCount * (documentSettings.page.orientation === "portrait" ? paperHeight : paperWidth) + Math.max(0, documentPageCount - 1) * 12}mm`,
+    "--document-figure-index-top": `${documentPageCount * (documentSettings.page.orientation === "portrait" ? paperHeight : paperWidth) + documentPageCount * 12}mm`,
+    "--document-stack-height": `${(documentPageCount + (documentSettings.figures.enabled && figureCaptions.length ? 1 : 0)) * (documentSettings.page.orientation === "portrait" ? paperHeight : paperWidth) + Math.max(0, documentPageCount + (documentSettings.figures.enabled && figureCaptions.length ? 1 : 0) - 1) * 12}mm`,
+    zoom: documentZoom / 100,
   } as CSSProperties;
   const editorTypographyStyle = wikiTypographyCssVariables(typography) as CSSProperties;
   function openCommentComposer(anchor: CommentAnchor) {
@@ -1234,8 +1415,25 @@ export function WikiEditor({
     if (mode === "region") setRegionTarget(image);
     else openCommentComposer({ type: "image", ...image, mode: "whole" });
   }
+  function openImageDescription() {
+    const current = activeEditor.state.selection;
+    if (!(current instanceof NodeSelection) || current.node.type.name !== "commentableImage") return;
+    setImageCaptionDraft(String(current.node.attrs.caption ?? ""));
+    setImageAltDraft(String(current.node.attrs.alt ?? ""));
+    setImageInFigureIndexDraft(current.node.attrs.includeInFigureIndex !== false);
+    setImageDescriptionOpen(true);
+  }
+  function saveImageDescription() {
+    activeEditor.chain().focus().updateAttributes("commentableImage", {
+      caption: imageCaptionDraft.trim(),
+      alt: imageAltDraft.trim(),
+      includeInFigureIndex: imageInFigureIndexDraft,
+    }).run();
+    setImageDescriptionOpen(false);
+  }
   async function insertInlineImage(file: File) {
-    if (!INLINE_IMAGE_TYPES.has(file.type)) { setImageError(t("inlineImageUnsupported")); return; }
+    if (!isInlineImageFile(file)) { setImageError(t("inlineImageUnsupported")); return; }
+    file = normalizeInlineImageFile(file);
     setImageUploading(true); setImageError("");
     try {
       const attachment = await uploadInlineAttachment(pageId, file);
@@ -1253,6 +1451,7 @@ export function WikiEditor({
     if (pendingAnchor.type === "text" && selection.current) addThreadMark(activeEditor, selection.current, result.threadId);
     setOptimisticCommentThreads((current) => [result.thread, ...current.filter((thread) => thread.id !== result.threadId)]);
     setActiveThreadId(result.threadId);
+    setCommentsVisible(true);
     commentRailRef.current?.openMobile();
     setCommentOpen(false);
     setCommentBody("");
@@ -1330,9 +1529,12 @@ export function WikiEditor({
     if (!spellcheckIssue) return;
     const source = activeEditor.state.doc.textBetween(spellcheckIssue.issue.from, spellcheckIssue.issue.to);
     if (!source || source === replacement) return;
-    preserveProofingOnNextUpdate.current = true;
+    const retainedIssues = getSpellcheckIssues(activeEditor).filter((issue) => {
+      const text = activeEditor.state.doc.textBetween(issue.from, issue.to);
+      return text !== source;
+    });
+    setSpellcheckIssues(activeEditor, retainedIssues);
     const count = replaceAllSpellcheckOccurrences(activeEditor, source, replacement);
-    if (!count) preserveProofingOnNextUpdate.current = false;
     setSpellcheckIssue(null);
     if (count > 0) toast.success(t("editor.proofing.replacedAll", { count }));
   }
@@ -1342,7 +1544,7 @@ export function WikiEditor({
     const { issue } = spellcheckIssue;
     const source = activeEditor.state.doc.textBetween(issue.from, issue.to);
     if (!source || source === replacement) return;
-    preserveProofingOnNextUpdate.current = true;
+    setSpellcheckIssues(activeEditor, getSpellcheckIssues(activeEditor).filter((candidate) => proofingIssueKey(candidate) !== proofingIssueKey(issue)));
     activeEditor.chain().focus().insertContentAt({ from: issue.from, to: issue.to }, replacement).run();
     setSpellcheckIssue(null);
   }
@@ -1360,9 +1562,11 @@ export function WikiEditor({
   const proofingLanguageLabel = proofingLanguage === "de-DE" ? t("editor.proofing.languages.de") : t("editor.proofing.languages.en");
   const nextProofingLanguageLabel = proofingLanguage === "de-DE" ? t("editor.proofing.languages.en") : t("editor.proofing.languages.de");
   const proofingButtonTitle = proofingStatus === "error"
-    ? t("editor.proofing.unavailable")
+    ? t("editor.proofing.browserFallback")
     : t("editor.proofing.switch", { language: proofingLanguageLabel, nextLanguage: nextProofingLanguageLabel });
   const layoutVisible = documentMode && documentLayoutVisible;
+  const figureIndexVisible = documentMode && documentSettings.figures.enabled && figureCaptions.length > 0;
+  const visibleDocumentPages = documentPageCount + (figureIndexVisible ? 1 : 0);
 
   return <div className="relative flex flex-col gap-3"><div className="sticky top-0 z-40 flex flex-wrap items-center gap-1.5 rounded-xl border bg-background/95 p-1.5 shadow-sm backdrop-blur supports-[backdrop-filter]:bg-background/80">
     <ToolbarGroup label={t("editor.toolbar.groups.history")}>
@@ -1403,7 +1607,7 @@ export function WikiEditor({
       <DropdownMenuItem onClick={() => pageActions.linkSupportingSource()}><BookMarked />{t("slash.commands.supportingSource.label")}<DropdownMenuShortcut>{shortcutLabel("supportingSource")}</DropdownMenuShortcut></DropdownMenuItem>
       </ToolbarMenu>
     </ToolbarGroup>
-    <input ref={imageInputRef} data-testid="wiki-inline-image-input" hidden type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => { const file = event.target.files?.[0]; if (file) void insertInlineImage(file); event.target.value = ""; }} />
+    <input ref={imageInputRef} data-testid="wiki-inline-image-input" hidden type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml,.svg" onChange={(event) => { const file = event.target.files?.[0]; if (file) void insertInlineImage(file); event.target.value = ""; }} />
     <ToolbarGroup label={t("editor.toolbar.groups.review")}>
       <Tooltip>
         <TooltipTrigger render={<Button type="button" data-testid="proofing-language-toggle" size="sm" variant="ghost" className="gap-1 px-2 text-xs" aria-label={proofingButtonTitle} aria-busy={proofingStatus === "checking" || proofingSaving} disabled={proofingSaving} onClick={() => void toggleProofingLanguage()} />}>
@@ -1486,6 +1690,9 @@ export function WikiEditor({
       <BubbleMenu editor={editor} pluginKey="wikiImageCommentMenu" options={{ strategy: "fixed", placement: "bottom", flip: true, shift: true, offset: 8 }} shouldShow={({ state }) => state.selection instanceof NodeSelection && ["commentableImage", "pdfEvidence"].includes(state.selection.node.type.name)} className="z-40 flex items-center gap-1 rounded-lg border bg-background p-1 shadow-lg">
         <Button type="button" size="sm" variant="ghost" onClick={() => prepareImageComment("whole")}><MessageSquareText className="size-4" />{t("commentWholeImage")}</Button>
         <Button type="button" size="sm" variant="ghost" onClick={() => prepareImageComment("region")}><Scan className="size-4" />{t("selectImageRegion")}</Button>
+        {activeEditor.isActive("commentableImage") && <>
+          <Button type="button" size="sm" variant="ghost" onClick={openImageDescription}><Captions className="size-4" />{t("imageDescription.button")}</Button>
+        </>}
         {activeEditor.isActive("commentableImage") && documentMode && <>
           <span className="mx-1 h-5 w-px bg-border" />
           {[50, 75, 100].map((width) => <Button key={width} type="button" size="xs" variant="ghost" onClick={() => activeEditor.chain().focus().updateAttributes("commentableImage", { widthPercent: width }).run()}>{width}%</Button>)}
@@ -1508,7 +1715,13 @@ export function WikiEditor({
         className={`wiki-editor-surface${documentMode ? " wiki-document-canvas" : ""}`}
         style={documentMode ? documentCanvasStyle : editorTypographyStyle}
       >
+        {documentMode && Array.from({ length: visibleDocumentPages }, (_, index) => <div key={index} className="wiki-document-page-sheet" style={{ top: `calc(${index} * (var(--document-paper-height) + var(--document-page-gap)))` }} aria-hidden="true" />)}
         <EditorContent editor={editor} data-testid="wiki-editor" data-document-mode={documentMode ? "true" : "false"} />
+        {figureIndexVisible && <section className="wiki-document-figure-index" aria-label={documentSettings.figures.heading}>
+          <p className="wiki-document-figure-index-kicker">{t("document.figureIndex")}</p>
+          <h2>{documentSettings.figures.heading}</h2>
+          <ol>{figureCaptions.map((figure, index) => <li key={figure.nodeId}><span>{t("document.figureNumber", { number: index + 1 })}</span><span>{figure.caption}</span></li>)}</ol>
+        </section>}
       </div>
       {spellcheckIssue && <div role="dialog" aria-label={t("editor.proofing.dialog")} className="fixed z-50 max-h-[min(28rem,calc(100vh-2rem))] w-72 overflow-y-auto rounded-lg border bg-popover p-2 shadow-lg" style={{ left: Math.min(spellcheckIssue.rect.left, window.innerWidth - 304), top: Math.min(spellcheckIssue.rect.bottom + 8, window.innerHeight - 210) }}>
         <p className="px-2 pb-1 text-xs font-medium">{t(spellcheckIssue.issue.kind === "spelling" ? "editor.proofing.types.spelling" : "editor.proofing.types.writing")}{spellcheckIssue.issue.category && <span className="font-normal text-muted-foreground"> · {spellcheckIssue.issue.category}</span>}</p>
@@ -1532,6 +1745,7 @@ export function WikiEditor({
       templates={documentTemplates}
       issues={documentIssues}
       outline={outline}
+      figureCount={figureCaptions.length}
       onOpenTypographySettings={() => setTypographyOpen(true)}
       onClose={() => setDocumentLayoutVisible(false)}
     />}
@@ -1544,6 +1758,14 @@ export function WikiEditor({
     <span className="ml-auto">{t("editor.stats.block", { type: activeEditor.state.selection.$from.parent.type.name })}</span>
   </footer>}
   {regionTarget && <ImageRegionSelector rootRef={editorRootRef} {...regionTarget} onCancel={() => setRegionTarget(null)} onSelect={(anchor) => { setRegionTarget(null); openCommentComposer(anchor); }} />}
+  <Dialog open={imageDescriptionOpen} onOpenChange={setImageDescriptionOpen}><DialogContent className="w-[min(28rem,calc(100vw-2rem))]"><DialogHeader><DialogTitle>{t("imageDescription.title")}</DialogTitle></DialogHeader>
+    <div className="grid gap-4">
+      <label className="grid gap-1.5 text-sm font-medium">{t("imageDescription.caption")}<Input value={imageCaptionDraft} onChange={(event) => setImageCaptionDraft(event.target.value)} placeholder={t("imageDescription.captionPlaceholder")} /></label>
+      <label className="grid gap-1.5 text-sm font-medium">{t("imageDescription.alt")}<Textarea value={imageAltDraft} onChange={(event) => setImageAltDraft(event.target.value)} placeholder={t("imageDescription.altPlaceholder")} /></label>
+      <label className="flex items-start gap-2 rounded-lg border bg-muted/35 p-3 text-sm"><input className="mt-0.5 size-4 accent-indigo-600" type="checkbox" checked={imageInFigureIndexDraft} onChange={(event) => setImageInFigureIndexDraft(event.target.checked)} /><span><strong className="block font-medium">{t("imageDescription.include")}</strong><span className="text-xs text-muted-foreground">{t("imageDescription.includeHint")}</span></span></label>
+      <Button type="button" onClick={saveImageDescription}>{t("imageDescription.save")}</Button>
+    </div>
+  </DialogContent></Dialog>
   <Dialog open={commentOpen} onOpenChange={(open) => { setCommentOpen(open); if (!open) setPendingAnchor(null); }}><DialogContent className="w-[min(26rem,calc(100vw-2rem))]"><DialogHeader><DialogTitle>{pendingAnchor?.type === "image" ? t("imageComment") : t("inlineComment")}</DialogTitle></DialogHeader>{pendingAnchor?.type !== "page" && pendingAnchor && <blockquote className="border-l-2 border-amber-400 pl-3 text-sm italic text-muted-foreground">{pendingAnchor.type === "text" ? pendingAnchor.quote : pendingAnchor.label}</blockquote>}<Textarea autoFocus value={commentBody} onChange={(event) => setCommentBody(event.target.value)} placeholder={t("commentPlaceholder")} /><Select value={assigneeId} onValueChange={(value) => setAssigneeId(value ?? "none")}><SelectTrigger className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="none">{t("unassigned")}</SelectItem>{users.map((person) => <SelectItem key={person.id} value={person.id}>{person.name}</SelectItem>)}</SelectContent></Select><Button onClick={submitComment} disabled={!commentBody.trim()}>{t("addComment")}</Button></DialogContent></Dialog>
   <MarkdownReferenceDialog open={markdownHelpOpen} onOpenChange={setMarkdownHelpOpen} />
   <WikiShortcutsDialog open={shortcutsOpen} onOpenChange={setShortcutsOpen} bindings={wikiShortcuts} onBindingsChange={setWikiShortcuts} />

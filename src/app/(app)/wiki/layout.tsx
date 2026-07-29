@@ -3,16 +3,7 @@ import { requireUser } from "@/lib/auth";
 import { getResearchNavigation } from "@/modules/wiki/research-queries";
 import { ResearchSidebar } from "@/modules/wiki/components/research-sidebar";
 
-export const unstable_instant = {
-  prefetch: "runtime",
-  samples: [
-    {
-      cookies: [{ name: "locale", value: "de" }],
-      headers: [["rsc", "1"], ["next-action", null]],
-      params: { slug: "sample", id: "sample", documentId: "sample", page: "1" },
-    },
-  ],
-};
+export const unstable_instant = false;
 
 async function AuthenticatedResearchSidebar() {
   const currentUser = await requireUser();

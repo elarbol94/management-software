@@ -28,7 +28,9 @@ export function localDateValue(date: string) {
   if (!DATE_PATTERN.test(date)) return null;
   const [year, month, day] = date.split("-").map(Number);
   const value = new Date(year, month - 1, day);
-  return Number.isNaN(value.getTime()) ? null : value;
+  return Number.isNaN(value.getTime()) || todayLocal(value) !== date
+    ? null
+    : value;
 }
 
 export function localTimeFromIso(iso: string | null) {

@@ -94,6 +94,19 @@ function collectHeadings(doc: TiptapNode) {
   return headings;
 }
 
+function collectFigures(doc: TiptapNode) {
+  const figures: Array<{ nodeId: string; caption: string }> = [];
+  function walk(node: TiptapNode) {
+    if (node.type === "commentableImage" && node.attrs?.includeInFigureIndex !== false) {
+      const caption = String(node.attrs?.caption ?? "").trim();
+      if (caption) figures.push({ nodeId: String(node.attrs?.nodeId ?? ""), caption });
+    }
+    for (const child of node.content ?? []) walk(child);
+  }
+  walk(doc);
+  return figures;
+}
+
 function variableValue(node: TiptapNode, settings: DocumentSettingsV1) {
   const key = String(node.attrs?.key ?? "");
   return settings.variables[key] ?? "";
@@ -103,9 +116,10 @@ async function renderNode(
   node: TiptapNode,
   input: RenderDocumentInput,
   headings: ReturnType<typeof collectHeadings>,
+  figures: ReturnType<typeof collectFigures>,
 ): Promise<string> {
   const children = async () => (await Promise.all(
-    (node.content ?? []).map((child) => renderNode(child, input, headings)),
+    (node.content ?? []).map((child) => renderNode(child, input, headings, figures)),
   )).join("");
   const attrs = node.attrs ?? {};
   const keepAttrs = [
@@ -166,7 +180,12 @@ async function renderNode(
       const cropX = clampNumber(attrs.cropX, 50, 0, 100);
       const cropY = clampNumber(attrs.cropY, 50, 0, 100);
       const caption = String(attrs.caption ?? "");
-      return `<figure class="image align-${alignment}" style="width:${width}%" ${keepAttrs}><img src="${resolved}" alt="${escapeHtml(alt)}" style="object-position:${cropX}% ${cropY}%">${caption ? `<figcaption>${escapeHtml(caption)}</figcaption>` : ""}</figure>`;
+      const figureNumber = figures.findIndex((figure) => figure.nodeId && figure.nodeId === String(attrs.nodeId ?? "")) + 1;
+      const figureId = figureNumber ? `figure-${figureNumber}` : "";
+      const figureLabel = figureNumber && input.settings.figures.enabled
+        ? `<span class="figure-number">Figure ${figureNumber}.</span> `
+        : "";
+      return `<figure${figureId ? ` id="${figureId}"` : ""} class="image align-${alignment}" style="width:${width}%" ${keepAttrs}><img src="${resolved}" alt="${escapeHtml(alt)}" style="object-position:${cropX}% ${cropY}%">${caption ? `<figcaption>${figureLabel}${escapeHtml(caption)}</figcaption>` : ""}</figure>`;
     }
     case "footnoteReference": {
       const label = escapeHtml(attrs.label ?? "");
@@ -186,7 +205,7 @@ async function renderNode(
       const rows = node.content ?? [];
       const headerRows = rows.filter((row) => row.content?.some((cell) => cell.type === "markdownTableHeader"));
       const bodyRows = rows.filter((row) => !headerRows.includes(row));
-      const renderRows = async (items: TiptapNode[]) => (await Promise.all(items.map((row) => renderNode(row, input, headings)))).join("");
+      const renderRows = async (items: TiptapNode[]) => (await Promise.all(items.map((row) => renderNode(row, input, headings, figures)))).join("");
       return `<div class="table-wrap" ${keepAttrs}><table>${headerRows.length ? `<thead>${await renderRows(headerRows)}</thead>` : ""}<tbody>${await renderRows(bodyRows)}</tbody></table></div>`;
     }
     case "markdownTableRow":
@@ -316,6 +335,11 @@ function printCss(settings: DocumentSettingsV1, typography: WikiTypographySettin
     .unresolved { color: #b42318; background: #fee4e2; }
     .bibliography { ${settings.bibliography.pageBreakBefore ? "break-before: page; page-break-before: always;" : ""} }
     .bibliography li { padding-left: 6mm; text-indent: -6mm; }
+    .figure-index { ${settings.figures.pageBreakBefore ? "break-before: page; page-break-before: always;" : ""} }
+    .figure-index ol { list-style: none; padding: 0; }
+    .figure-index li { display: grid; grid-template-columns: 24mm 1fr; gap: 4mm; padding: 2mm 0; border-bottom: .5pt solid #e4e7ec; }
+    .figure-index a { color: inherit; text-decoration: none; }
+    .figure-index .figure-index-number, .figure-number { color: var(--muted); font-weight: 600; }
     @media screen {
       body { background: #e7ebf1; padding: 24px; }
       .print-sheet { max-width: ${page.orientation === "portrait" ? "210mm" : "297mm"}; min-height: ${page.orientation === "portrait" ? "297mm" : "210mm"}; margin: 0 auto; padding: ${page.marginsMm.top}mm ${page.marginsMm.right}mm ${page.marginsMm.bottom}mm ${page.marginsMm.left}mm; background: white; box-shadow: 0 18px 60px rgba(23,32,51,.16); }
@@ -345,14 +369,18 @@ export async function renderDocumentHtml(input: RenderDocumentInput): Promise<Re
   const typography = normalizeWikiTypography(input.typography);
   const normalizedInput = { ...input, settings, typography };
   const headings = collectHeadings(input.doc);
-  const content = await renderNode(input.doc, normalizedInput, headings);
+  const figures = collectFigures(input.doc);
+  const content = await renderNode(input.doc, normalizedInput, headings, figures);
   const cover = settings.cover.enabled
     ? `<section class="cover"><p class="eyebrow">${escapeHtml(settings.cover.eyebrow)}</p><h1>${escapeHtml(input.title)}</h1>${settings.cover.subtitle ? `<p class="subtitle">${escapeHtml(settings.cover.subtitle)}</p>` : ""}<p class="meta">${escapeHtml(settings.variables.applicant)}${settings.variables.programme ? ` · ${escapeHtml(settings.variables.programme)}` : ""}${settings.variables.date ? ` · ${escapeHtml(settings.variables.date)}` : ""}</p></section>`
     : "";
   const references = settings.bibliography.enabled && input.references?.length
     ? `<section class="bibliography"><h2>${escapeHtml(settings.bibliography.heading)}</h2><ol>${input.references.map((entry) => `<li>${escapeHtml(entry)}</li>`).join("")}</ol></section>`
     : "";
-  const article = `<article>${content}${references}</article>`;
+  const figureIndex = settings.figures.enabled && figures.length
+    ? `<section class="figure-index"><h2>${escapeHtml(settings.figures.heading)}</h2><ol>${figures.map((figure, index) => `<li><a class="figure-index-number" href="#figure-${index + 1}">Figure ${index + 1}</a><a href="#figure-${index + 1}">${escapeHtml(figure.caption)}</a></li>`).join("")}</ol></section>`
+    : "";
+  const article = `<article>${content}${figureIndex}${references}</article>`;
   const bodyHtml = `${cover}${article}`;
   const shell = (inner: string, extraCss = "") => `<!doctype html><html><head><meta charset="utf-8"><meta name="color-scheme" content="light"><title>${escapeHtml(input.title)}</title><style>${printCss(settings, typography)}${extraCss}</style></head><body><main class="print-sheet">${inner}</main></body></html>`;
   const html = shell(bodyHtml);
@@ -408,7 +436,10 @@ export function renderDocumentMarkdown(doc: TiptapNode, settings: DocumentSettin
       case "citation": return String(node.attrs?.label ?? "");
       case "documentVariable": return settings.variables[String(node.attrs?.key ?? "")] || `{${String(node.attrs?.key ?? "variable")}}`;
       case "pageBreak": return "\n<div style=\"page-break-after: always\"></div>\n\n";
-      case "commentableImage": return `![${String(node.attrs?.alt ?? "")}](${String(node.attrs?.src ?? "")})\n\n`;
+      case "commentableImage": {
+        const caption = String(node.attrs?.caption ?? "").trim();
+        return `![${String(node.attrs?.alt ?? "")}](${String(node.attrs?.src ?? "")})\n${caption ? `\n*${caption}*\n` : ""}\n`;
+      }
       case "footnoteReference": return `[^${String(node.attrs?.label ?? "")}]`;
       case "footnoteDefinition": return `[^${String(node.attrs?.label ?? "")}]: ${content.trim()}\n\n`;
       default: return content;

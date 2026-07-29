@@ -74,7 +74,7 @@ export function getBoard(projectId: string) {
     .from(tasks)
     .leftJoin(user, eq(tasks.assigneeId, user.id))
     .where(eq(tasks.projectId, projectId))
-    .orderBy(asc(tasks.sortOrder))
+    .orderBy(asc(tasks.sortOrder), asc(tasks.createdAt), asc(tasks.id))
     .all();
 
   const tasksByColumn: Record<string, typeof taskRows> = {};
@@ -129,7 +129,13 @@ export function getPortfolioSchedule() {
     .innerJoin(projectColumns, eq(tasks.columnId, projectColumns.id))
     .leftJoin(user, eq(tasks.assigneeId, user.id))
     .where(eq(projects.status, "active"))
-    .orderBy(asc(tasks.projectId), asc(tasks.sortOrder))
+    .orderBy(
+      asc(tasks.projectId),
+      asc(projectColumns.sortOrder),
+      asc(tasks.sortOrder),
+      asc(tasks.createdAt),
+      asc(tasks.id),
+    )
     .all();
 
   const deadlineRows = db

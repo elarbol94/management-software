@@ -75,17 +75,27 @@ export function CategoriesManager({ categories }: { categories: Category[] }) {
 
   async function onDelete(category: Category) {
     if (!window.confirm(tCommon("confirmDeleteTitle"))) return;
-    const { deleted } = await deleteCategory(category.id);
-    if (!deleted) {
-      await setCategoryArchived(category.id, true);
-      toast.info(t("inUse"));
+    try {
+      const { deleted } = await deleteCategory(category.id);
+      if (!deleted) {
+        await setCategoryArchived(category.id, true);
+        toast.info(t("inUse"));
+      } else {
+        toast.success(tCommon("deleted"));
+      }
+      router.refresh();
+    } catch {
+      toast.error(tCommon("error"));
     }
-    router.refresh();
   }
 
   async function toggleArchived(category: Category) {
-    await setCategoryArchived(category.id, !category.archived);
-    router.refresh();
+    try {
+      await setCategoryArchived(category.id, !category.archived);
+      router.refresh();
+    } catch {
+      toast.error(tCommon("error"));
+    }
   }
 
   const grouped: Array<{ kind: "income" | "expense"; items: Category[] }> = [
@@ -131,6 +141,7 @@ export function CategoriesManager({ categories }: { categories: Category[] }) {
                 <Button
                   variant="ghost"
                   size="icon-xs"
+                  aria-label={tCommon("edit")}
                   onClick={() => openDialog(category)}
                 >
                   <Pencil className="size-3.5" />
@@ -139,6 +150,7 @@ export function CategoriesManager({ categories }: { categories: Category[] }) {
                   variant="ghost"
                   size="icon-xs"
                   title={category.archived ? t("unarchive") : t("archive")}
+                  aria-label={category.archived ? t("unarchive") : t("archive")}
                   onClick={() => toggleArchived(category)}
                 >
                   {category.archived ? (
@@ -150,6 +162,7 @@ export function CategoriesManager({ categories }: { categories: Category[] }) {
                 <Button
                   variant="ghost"
                   size="icon-xs"
+                  aria-label={tCommon("delete")}
                   onClick={() => onDelete(category)}
                 >
                   <Trash2 className="size-3.5" />
@@ -180,7 +193,7 @@ export function CategoriesManager({ categories }: { categories: Category[] }) {
             </div>
             {!editing && (
               <div className="flex flex-col gap-2">
-                <Label>{t("kind")}</Label>
+                <Label htmlFor="category-kind">{t("kind")}</Label>
                 <Select
                   value={kind}
                   onValueChange={(value) => {
@@ -191,7 +204,7 @@ export function CategoriesManager({ categories }: { categories: Category[] }) {
                     );
                   }}
                 >
-                  <SelectTrigger>
+                  <SelectTrigger id="category-kind">
                     <SelectValue>
                       {kind === "income"
                         ? tAccounting("income")
@@ -210,12 +223,12 @@ export function CategoriesManager({ categories }: { categories: Category[] }) {
               </div>
             )}
             <div className="flex flex-col gap-2">
-              <Label>{t("template")}</Label>
+              <Label htmlFor="category-template">{t("template")}</Label>
               <Select
                 value={template}
                 onValueChange={(value) => setTemplate(value as CategoryTemplate)}
               >
-                <SelectTrigger>
+                <SelectTrigger id="category-template">
                   <SelectValue>{t(`templates.${template}`)}</SelectValue>
                 </SelectTrigger>
                 <SelectContent>

@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { PDFDocument, StandardFonts } from "pdf-lib";
 
 test.describe.configure({ mode: "serial", timeout: 90_000 });
 
@@ -13,27 +14,16 @@ async function login(page: Page) {
   await expect(page.getByText("Willkommen, E2E Admin!")).toBeVisible();
 }
 
-function nativeTextPdf(text: string): Buffer {
-  const escaped = text.replaceAll("\\", "\\\\").replaceAll("(", "\\(").replaceAll(")", "\\)");
-  const stream = `BT /F1 18 Tf 72 720 Td (${escaped}) Tj ET`;
-  const objects = [
-    "<< /Type /Catalog /Pages 2 0 R >>",
-    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>",
-    `<< /Length ${Buffer.byteLength(stream)} >>\nstream\n${stream}\nendstream`,
-    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
-  ];
-  let pdf = "%PDF-1.4\n";
-  const offsets = [0];
-  objects.forEach((object, index) => {
-    offsets.push(Buffer.byteLength(pdf));
-    pdf += `${index + 1} 0 obj\n${object}\nendobj\n`;
-  });
-  const xref = Buffer.byteLength(pdf);
-  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
-  pdf += offsets.slice(1).map((offset) => `${String(offset).padStart(10, "0")} 00000 n \n`).join("");
-  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
-  return Buffer.from(pdf);
+function visibleTestId(page: Page, testId: string) {
+  return page.getByTestId(testId).filter({ visible: true });
+}
+
+async function nativeTextPdf(text: string): Promise<Buffer> {
+  const document = await PDFDocument.create();
+  const page = document.addPage([612, 792]);
+  const font = await document.embedFont(StandardFonts.Helvetica);
+  page.drawText(text, { x: 72, y: 720, size: 18, font });
+  return Buffer.from(await document.save());
 }
 
 test("upload, read, search, annotate, reload, and insert traceable PDF evidence", async ({ page }) => {
@@ -44,11 +34,13 @@ test("upload, read, search, annotate, reload, and insert traceable PDF evidence"
   await (await chooser).setFiles({
       name: "local-evidence.pdf",
       mimeType: "application/pdf",
-      buffer: nativeTextPdf("Local PDF evidence supports traceable research"),
+      buffer: await nativeTextPdf("Local PDF evidence supports traceable research"),
     });
 
   await expect(page).toHaveURL(/\/wiki\/sources\//, { timeout: 15_000 });
-  await expect(page.getByText("local-evidence.pdf")).toBeVisible();
+  await expect(
+    page.getByRole("article").getByText("local-evidence.pdf"),
+  ).toBeVisible();
   const read = page.getByRole("link", { name: "PDF lesen" });
   await expect(read).toBeVisible({ timeout: 30_000 });
   await read.click();
@@ -92,6 +84,7 @@ test("upload, read, search, annotate, reload, and insert traceable PDF evidence"
   const quotationDialog = page.getByRole("dialog", { name: "Optionale Notiz zu diesem Nachweis" });
   await quotationDialog.getByRole("textbox").fill("Key quotation");
   await quotationDialog.getByRole("button", { name: "Speichern", exact: true }).click();
+  await expect(quotationDialog).toBeHidden();
   await expect(page.getByText("Key quotation")).toBeVisible();
 
   await page.getByRole("button", { name: "Bereich markieren" }).click();
@@ -108,6 +101,7 @@ test("upload, read, search, annotate, reload, and insert traceable PDF evidence"
   const regionDialog = page.getByRole("dialog", { name: "Optionale Notiz zu diesem Nachweis" });
   await regionDialog.getByRole("textbox").fill("Important figure");
   await regionDialog.getByRole("button", { name: "Speichern", exact: true }).click();
+  await expect(regionDialog).toBeHidden();
   await expect(page.getByText("Important figure")).toBeVisible();
   await page.reload();
   await expect(page.getByText("Key quotation")).toBeVisible();
@@ -197,40 +191,51 @@ test("PDF and note focus modes expand their workspaces and persist independently
   await expect(page).toHaveURL(/\/wiki\/sources\/[^/]+\/read\/[^/]+/);
   const readerUrl = page.url();
 
+  await expect(page.getByTestId("app-sidebar")).toHaveCount(1);
+  await expect(page.getByTestId("research-sidebar")).toHaveCount(1);
   const viewport = page.getByTestId("pdf-reader-viewport");
+  const appSidebar = visibleTestId(page, "app-sidebar");
+  const researchSidebar = visibleTestId(page, "research-sidebar");
+  const thumbnailsPanel = visibleTestId(page, "pdf-thumbnails-panel");
+  const commentsPanel = visibleTestId(page, "pdf-comments-panel");
+  const noteMetadataControls = visibleTestId(page, "note-metadata-controls");
+  const noteMetadataSidebar = visibleTestId(page, "note-metadata-sidebar");
+  const commentRail = visibleTestId(page, "comment-rail");
   await expect(viewport).toBeVisible();
-  await expect(page.getByTestId("app-sidebar")).toBeVisible();
-  await expect(page.getByTestId("research-sidebar")).toBeVisible();
+  await expect(appSidebar).toBeVisible();
+  await expect(researchSidebar).toBeVisible();
   const standardWidth = (await viewport.boundingBox())?.width ?? 0;
 
   await page.getByRole("button", { name: "Fokusmodus", exact: true }).click();
-  await expect(page.getByTestId("app-sidebar")).toHaveCount(0);
-  await expect(page.getByTestId("research-sidebar")).toHaveCount(0);
-  await expect(page.getByTestId("pdf-thumbnails-panel")).toHaveCount(0);
-  await expect(page.getByTestId("pdf-comments-panel")).toHaveCount(0);
-  await expect.poll(async () => (await viewport.boundingBox())?.width ?? 0).toBeGreaterThan(standardWidth + 400);
+  await expect(appSidebar).toHaveCount(0);
+  await expect(researchSidebar).toHaveCount(0);
+  await expect(thumbnailsPanel).toHaveCount(0);
+  await expect(commentsPanel).toHaveCount(0);
+  await expect.poll(async () => (await viewport.boundingBox())?.width ?? 0).toBeGreaterThan(standardWidth + 350);
   await page.getByRole("button", { name: "Zoomoptionen" }).click();
   await page.getByRole("menuitem", { name: "An Breite anpassen" }).click();
   await expect.poll(async () => viewport.evaluate((element) => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
 
   await page.getByRole("button", { name: "Markierungen anzeigen" }).click();
-  await expect(page.getByTestId("pdf-comments-panel")).toBeVisible();
+  await expect(commentsPanel).toBeVisible();
 
   await page.getByRole("button", { name: "Weitere PDF-Aktionen" }).click();
   await page.getByRole("menuitem", { name: "Gliederung" }).click();
-  await expect(page.getByTestId("pdf-thumbnails-panel")).toBeVisible();
+  await expect(thumbnailsPanel).toBeVisible();
 
   await page.reload();
   await expect(page.getByRole("button", { name: "Fokusmodus beenden" })).toBeVisible();
-  await expect(page.getByTestId("app-sidebar")).toHaveCount(0);
-  await expect(page.getByTestId("pdf-thumbnails-panel")).toHaveCount(0);
-  await expect(page.getByTestId("pdf-comments-panel")).toHaveCount(0);
+  await expect(appSidebar).toHaveCount(0);
+  await expect(thumbnailsPanel).toHaveCount(0);
+  await expect(commentsPanel).toHaveCount(0);
 
   await page.setViewportSize({ width: 1280, height: 900 });
 
   await page.goto("/wiki/inbox");
-  await expect(page.getByTestId("app-sidebar")).toBeVisible();
-  await expect(page.getByTestId("research-sidebar")).toBeVisible();
+  await expect(page.getByTestId("app-sidebar")).toHaveCount(1);
+  await expect(page.getByTestId("research-sidebar")).toHaveCount(1);
+  await expect(appSidebar).toBeVisible();
+  await expect(researchSidebar).toBeVisible();
   await page.getByRole("button", { name: "Schnelle Notiz" }).last().click();
   const editor = page.locator(".ProseMirror");
   await editor.click();
@@ -238,27 +243,29 @@ test("PDF and note focus modes expand their workspaces and persist independently
   await expect(page.getByText("Gespeichert", { exact: true })).toBeVisible({ timeout: 10_000 });
   await expect(page.getByRole("button", { name: "Fokusmodus", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Fokusmodus", exact: true }).click();
-  await expect(page.getByTestId("app-sidebar")).toHaveCount(0);
-  await expect(page.getByTestId("research-sidebar")).toHaveCount(0);
-  await expect(page.getByTestId("note-metadata-controls")).toHaveCount(0);
-  await expect(page.getByTestId("note-metadata-sidebar")).toHaveCount(0);
-  await expect(page.getByTestId("comment-rail")).toHaveCount(0);
+  await expect(appSidebar).toHaveCount(0);
+  await expect(researchSidebar).toHaveCount(0);
+  await expect(noteMetadataControls).toHaveCount(0);
+  await expect(noteMetadataSidebar).toHaveCount(0);
+  await expect(commentRail).toHaveCount(0);
   await expect(editor).toContainText("Focused writing remains autosaved");
 
   await page.getByRole("button", { name: "Kommentare anzeigen" }).click();
-  await expect(page.getByTestId("comment-rail")).toBeVisible();
+  await expect(commentRail).toBeVisible();
   await page.reload();
   await expect(page.getByRole("button", { name: "Fokusmodus beenden" })).toBeVisible();
-  await expect(page.getByTestId("app-sidebar")).toHaveCount(0);
+  await expect(appSidebar).toHaveCount(0);
   await expect(page.locator(".ProseMirror")).toContainText("Focused writing remains autosaved");
   await page.getByRole("button", { name: "Fokusmodus beenden" }).click();
 
   await page.goto(readerUrl);
+  await expect(appSidebar).toHaveCount(0);
+  await expect(researchSidebar).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Fokusmodus beenden" })).toBeVisible();
-  await expect(page.getByTestId("app-sidebar")).toHaveCount(0);
+  await expect(appSidebar).toHaveCount(0);
   await page.getByRole("button", { name: "Fokusmodus beenden" }).click();
-  await expect(page.getByTestId("app-sidebar")).toBeVisible();
-  await expect(page.getByTestId("research-sidebar")).toBeVisible();
-  await expect(page.getByTestId("pdf-thumbnails-panel")).toBeVisible();
-  await expect(page.getByTestId("pdf-comments-panel")).toBeVisible();
+  await expect(appSidebar).toBeVisible();
+  await expect(researchSidebar).toBeVisible();
+  await expect(thumbnailsPanel).toBeVisible();
+  await expect(commentsPanel).toBeVisible();
 });

@@ -128,7 +128,11 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
-import { isDeadlineOverdue, localDateValue } from "@/modules/tasks/deadline-utils";
+import {
+  isDeadlineOverdue,
+  localDateValue,
+} from "@/modules/tasks/deadline-utils";
+import { localDateInZone } from "@/modules/calendar/date-utils";
 
 type ProjectCard = PortfolioSchedule["projects"][number] & { openTasks: number };
 type Zoom = "week" | "month" | "quarter";
@@ -200,6 +204,14 @@ type StoredPortfolioViewState = {
     expandedTasks: string[];
   };
 };
+type StoredReparentViewState = {
+  taskId: string;
+  expandedProjects: string[];
+  expandedTasks: string[];
+  scrollLeft: number;
+  scrollTop: number;
+  inspectorOpen: boolean;
+};
 
 const LEFT_WIDTH = 352;
 const ROW_HEIGHT = 44;
@@ -216,6 +228,7 @@ const MIN_DAY_WIDTH = 6;
 const MAX_DAY_WIDTH = 44;
 const ZOOM_WHEEL_SENSITIVITY = 0.003;
 const FOCUS_VIEW_STORAGE_KEY = "projects.focusPortfolioView";
+const REPARENT_VIEW_STORAGE_KEY = "projects.reparentPortfolioView";
 const DEPENDENCY_TYPE_OPTIONS: DependencyType[] = [
   "finish_to_start",
   "start_to_start",
@@ -745,6 +758,37 @@ function clearStoredPortfolioView() {
   }
 }
 
+function storeReparentView(view: StoredReparentViewState) {
+  try {
+    window.sessionStorage.setItem(REPARENT_VIEW_STORAGE_KEY, JSON.stringify(view));
+  } catch {
+    // Reparenting remains functional when browser storage is unavailable.
+  }
+}
+
+function takeStoredReparentView(): StoredReparentViewState | null {
+  try {
+    const stored = JSON.parse(
+      window.sessionStorage.getItem(REPARENT_VIEW_STORAGE_KEY) ?? "null",
+    ) as StoredReparentViewState | null;
+    window.sessionStorage.removeItem(REPARENT_VIEW_STORAGE_KEY);
+    if (
+      !stored ||
+      typeof stored.taskId !== "string" ||
+      !Array.isArray(stored.expandedProjects) ||
+      !Array.isArray(stored.expandedTasks) ||
+      typeof stored.scrollLeft !== "number" ||
+      typeof stored.scrollTop !== "number" ||
+      typeof stored.inspectorOpen !== "boolean"
+    ) {
+      return null;
+    }
+    return stored;
+  } catch {
+    return null;
+  }
+}
+
 function projectRisk(
   project: PortfolioSchedule["projects"][number],
   tasks: PortfolioTask[],
@@ -1046,9 +1090,9 @@ function ScheduleInspector({
           </div>
           <div className="grid gap-3">
             <div className="grid gap-2">
-              <Label>{t("column")}</Label>
+              <Label htmlFor="schedule-task-column">{t("column")}</Label>
               <Select value={columnId} onValueChange={(value) => setColumnId(value ?? "")}>
-                <SelectTrigger className="w-full">
+                <SelectTrigger id="schedule-task-column" className="w-full">
                   <SelectValue>
                     {projectColumns.find((column) => column.id === columnId)?.name ?? ""}
                   </SelectValue>
@@ -1061,9 +1105,9 @@ function ScheduleInspector({
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div className="grid gap-2">
-              <Label>{t("assignee")}</Label>
+              <Label htmlFor="schedule-task-assignee">{t("assignee")}</Label>
               <Select value={assigneeId} onValueChange={(value) => setAssigneeId(value ?? "unassigned")}>
-                <SelectTrigger className="w-full">
+                <SelectTrigger id="schedule-task-assignee" className="w-full">
                   <SelectValue>
                     {assigneeId === "unassigned"
                       ? t("unassigned")
@@ -1078,9 +1122,9 @@ function ScheduleInspector({
               </Select>
             </div>
             <div className="grid gap-2">
-              <Label>{t("priority")}</Label>
+              <Label htmlFor="schedule-task-priority">{t("priority")}</Label>
               <Select value={priority} onValueChange={(value) => setPriority(value as typeof priority)}>
-                <SelectTrigger className="w-full">
+                <SelectTrigger id="schedule-task-priority" className="w-full">
                   <SelectValue>
                     {priority === "low"
                       ? t("priorityLow")
@@ -1116,9 +1160,9 @@ function ScheduleInspector({
           {!isSummary && (
             <div className="grid gap-3 rounded-md border bg-muted/25 p-3">
               <div className="grid gap-2">
-                <Label>{t("constraintType")}</Label>
+                <Label htmlFor="schedule-constraint-type">{t("constraintType")}</Label>
                 <Select value={constraintType} onValueChange={(value) => setConstraintType((value ?? "asap") as typeof constraintType)}>
-                  <SelectTrigger className="w-full">
+                  <SelectTrigger id="schedule-constraint-type" className="w-full">
                     <SelectValue>
                       {constraintType === "asap"
                         ? t("constraintAsap")
@@ -1230,7 +1274,7 @@ function ScheduleInspector({
               })}
               <div className="grid gap-2 rounded-md border border-dashed p-2">
                 <Select value={predecessorId} onValueChange={(value) => setPredecessorId(value ?? "none")}>
-                  <SelectTrigger className="w-full">
+                  <SelectTrigger className="w-full" aria-label={t("choosePredecessor")}>
                     <SelectValue>
                       {predecessorId === "none"
                         ? t("choosePredecessor")
@@ -1247,7 +1291,7 @@ function ScheduleInspector({
                 </Select>
                 <div className="grid grid-cols-[1fr_5.5rem_auto] gap-2">
                   <Select value={dependencyType} onValueChange={(value) => setDependencyType((value ?? "finish_to_start") as DependencyType)}>
-                    <SelectTrigger className="w-full">
+                    <SelectTrigger className="w-full" aria-label={t("dependencyType")}>
                       <SelectValue>
                         {t(dependencyTypeTranslationKey(dependencyType))}
                       </SelectValue>
@@ -1408,7 +1452,7 @@ function NewProjectDialog({
           <div className="grid gap-2"><Label htmlFor="portfolio-project-description">{t("description")}</Label><Textarea id="portfolio-project-description" value={description} onChange={(event) => setDescription(event.target.value)} rows={3} /></div>
           <div className="grid grid-cols-[5rem_1fr] gap-3">
             <div className="grid gap-2"><Label htmlFor="portfolio-project-color">{t("color")}</Label><input id="portfolio-project-color" type="color" value={color} onChange={(event) => setColor(event.target.value)} className="h-9 w-full cursor-pointer rounded-md border bg-background p-1" /></div>
-            <div className="grid gap-2"><Label>{t("manager")}</Label><Select value={managerId} onValueChange={(value) => setManagerId(value ?? "none")}><SelectTrigger className="w-full"><SelectValue>{managerId === "none" ? t("unassigned") : members.find((member) => member.id === managerId)?.name ?? t("unassigned")}</SelectValue></SelectTrigger><SelectContent><SelectItem value="none">{t("unassigned")}</SelectItem>{members.map((member) => <SelectItem key={member.id} value={member.id}>{member.name}</SelectItem>)}</SelectContent></Select></div>
+            <div className="grid gap-2"><Label htmlFor="portfolio-project-manager">{t("manager")}</Label><Select value={managerId} onValueChange={(value) => setManagerId(value ?? "none")}><SelectTrigger id="portfolio-project-manager" className="w-full"><SelectValue>{managerId === "none" ? t("unassigned") : members.find((member) => member.id === managerId)?.name ?? t("unassigned")}</SelectValue></SelectTrigger><SelectContent><SelectItem value="none">{t("unassigned")}</SelectItem>{members.map((member) => <SelectItem key={member.id} value={member.id}>{member.name}</SelectItem>)}</SelectContent></Select></div>
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div className="grid gap-2"><Label htmlFor="portfolio-project-start">{t("plannedStart")}</Label><Input id="portfolio-project-start" type="date" value={plannedStartDate} onChange={(event) => setPlannedStartDate(event.target.value)} /></div>
@@ -1439,7 +1483,7 @@ export function PortfolioClient({
   const compactInspector = useMediaQuery("(max-width: 767px)");
   const reducedMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
   const [renderedAt] = useState(() => new Date());
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localDateInZone(renderedAt, "Europe/Vienna");
   const [view, setView] = useState<"timeline" | "projects">("timeline");
   const [zoom, setZoom] = useState<Zoom>("month");
   const [dayWidth, setDayWidth] = useState(ZOOM_WIDTH.month);
@@ -1644,6 +1688,40 @@ export function PortfolioClient({
     });
     return () => cancelAnimationFrame(frame);
   }, [initialFocusedTaskId]);
+
+  useEffect(() => {
+    const stored = takeStoredReparentView();
+    if (!stored) return;
+
+    let layoutFrame: number | null = null;
+    let focusFrame: number | null = null;
+    const stateFrame = requestAnimationFrame(() => {
+      setExpandedProjects(new Set(stored.expandedProjects));
+      setExpandedTasks(new Set(stored.expandedTasks));
+      setSelectedTaskId(stored.taskId);
+      setInspectorOpen(stored.inspectorOpen);
+      layoutFrame = requestAnimationFrame(() => {
+        focusFrame = requestAnimationFrame(() => {
+          scrollRef.current?.scrollTo({
+            left: stored.scrollLeft,
+            top: stored.scrollTop,
+            behavior: "auto",
+          });
+          const taskRow = [
+            ...document.querySelectorAll<HTMLElement>("[data-task-id]"),
+          ].find((element) => element.dataset.taskId === stored.taskId);
+          taskRow
+            ?.querySelector<HTMLButtonElement>('[data-task-bar="true"]')
+            ?.focus({ preventScroll: true });
+        });
+      });
+    });
+    return () => {
+      cancelAnimationFrame(stateFrame);
+      if (layoutFrame !== null) cancelAnimationFrame(layoutFrame);
+      if (focusFrame !== null) cancelAnimationFrame(focusFrame);
+    };
+  }, []);
 
   useEffect(() => {
     const frame = requestAnimationFrame(() => {
@@ -2756,8 +2834,9 @@ export function PortfolioClient({
       task,
       startX: event.clientX,
       timelineLeft:
-        event.currentTarget.parentElement?.parentElement?.getBoundingClientRect()
-          .left ?? 0,
+        event.currentTarget
+          .closest<HTMLElement>("[data-timeline-row]")
+          ?.getBoundingClientRect().left ?? 0,
       activatedResize: false,
       timer: setTimeout(() => {
         if (connectorGestureRef.current?.pointerId === pointerId) {
@@ -2829,6 +2908,51 @@ export function PortfolioClient({
       previewFrameRef.current = null;
     }
     setDragPreview(null);
+  }
+
+  function cancelTaskDrag(event: ReactPointerEvent) {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    dragRef.current = null;
+    draggedRef.current = true;
+    clearDrag();
+    releaseDragFlag();
+  }
+
+  function cancelProjectDrag(event: ReactPointerEvent) {
+    const drag = projectDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    projectDragRef.current = null;
+    draggedRef.current = true;
+    clearDrag();
+    releaseDragFlag();
+  }
+
+  function cancelDeadlineDrag(event: ReactPointerEvent<HTMLButtonElement>) {
+    const drag = deadlineDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    deadlineDragRef.current = null;
+    pendingDeadlinePreviewRef.current = null;
+    if (deadlinePreviewFrameRef.current !== null) {
+      cancelAnimationFrame(deadlinePreviewFrameRef.current);
+      deadlinePreviewFrameRef.current = null;
+    }
+    draggedRef.current = true;
+    setDeadlinePreview(null);
+    releaseDragFlag();
+  }
+
+  function cancelConnectorGesture(event: ReactPointerEvent<HTMLElement>) {
+    const gesture = connectorGestureRef.current;
+    if (!gesture || gesture.pointerId !== event.pointerId) return;
+    clearTimeout(gesture.timer);
+    connectorGestureRef.current = null;
+    if (gesture.activatedResize) {
+      cancelTaskDrag(event);
+      return;
+    }
+    draggedRef.current = true;
+    releaseDragFlag();
   }
 
   const undoScheduleChange = useCallback(async (changeSetId = undoChangeSetId) => {
@@ -3327,8 +3451,17 @@ export function PortfolioClient({
     }
     try {
       await reparentTask({ taskId: task.id, parentTaskId: target.id });
-      setExpandedTasks((current) => new Set(current).add(target.id));
-      router.refresh();
+      storeReparentView({
+        taskId: task.id,
+        expandedProjects: [...new Set([...expandedProjects, task.projectId])],
+        expandedTasks: [...new Set([...expandedTasks, target.id])],
+        scrollLeft: scrollRef.current?.scrollLeft ?? 0,
+        scrollTop: scrollRef.current?.scrollTop ?? 0,
+        inspectorOpen,
+      });
+      // This tree is backed by synchronous SQLite reads. Preserve the user's
+      // place across the hard reload needed to expose the new hierarchy.
+      window.location.reload();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : tCommon("error"));
     }
@@ -3344,7 +3477,20 @@ export function PortfolioClient({
     }
     try {
       await reparentTask({ taskId: task.id, parentTaskId: target });
-      router.refresh();
+      storeReparentView({
+        taskId: task.id,
+        expandedProjects: [...new Set([...expandedProjects, task.projectId])],
+        expandedTasks: [
+          ...new Set([
+            ...expandedTasks,
+            ...(target ? [target] : []),
+          ]),
+        ],
+        scrollLeft: scrollRef.current?.scrollLeft ?? 0,
+        scrollTop: scrollRef.current?.scrollTop ?? 0,
+        inspectorOpen,
+      });
+      window.location.reload();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : tCommon("error"));
     }
@@ -3454,6 +3600,63 @@ export function PortfolioClient({
       operation:
         mode === "start" ? "resize-start" : mode === "end" ? "resize-end" : mode,
     };
+  }
+
+  function handleScheduleResizeKey(
+    event: React.KeyboardEvent<HTMLButtonElement>,
+    row: Row,
+    project: PortfolioSchedule["projects"][number],
+    edge: "start" | "end",
+  ) {
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (
+      scheduleCommitPending ||
+      dependencyCommitPending ||
+      dependencyEditorOpen ||
+      !row.startDate ||
+      !row.dueDate
+    ) {
+      return;
+    }
+
+    const offset =
+      (event.key === "ArrowRight" ? 1 : -1) * (event.shiftKey ? 7 : 1);
+    let startDate = row.startDate;
+    let dueDate = row.dueDate;
+    if (edge === "start") {
+      startDate = addCalendarDays(startDate, offset);
+      if (startDate > dueDate) startDate = dueDate;
+    } else {
+      dueDate = addCalendarDays(dueDate, offset);
+      if (dueDate < startDate) dueDate = startDate;
+    }
+    if (startDate === row.startDate && dueDate === row.dueDate) return;
+
+    const mode = edge === "start" ? "resize-start" : "resize-end";
+    if (row.task) {
+      const edit = taskScheduleEdit(row.task.id, edge, { startDate, dueDate });
+      setDragPreview(
+        atomicPreview(
+          edit,
+          { taskId: row.task.id, startDate, dueDate, mode },
+          null,
+        ),
+      );
+      void commitSchedule(edit);
+      return;
+    }
+
+    const edit = projectScheduleEdit(project.id, edge, { startDate, dueDate });
+    setDragPreview(
+      atomicPreview(
+        edit,
+        null,
+        { projectId: project.id, startDate, dueDate, mode },
+      ),
+    );
+    void commitSchedule(edit);
   }
 
   function endProjectDrag(event: ReactPointerEvent) {
@@ -4060,8 +4263,8 @@ export function PortfolioClient({
                 </div>
               )}
             </div>
-            <Select value={owner} onValueChange={(value) => setOwner(value ?? "all")}><SelectTrigger className="w-36"><SelectValue>{owner === "all" ? t("allOwners") : schedule.members.find((member) => member.id === owner)?.name ?? t("allOwners")}</SelectValue></SelectTrigger><SelectContent><SelectItem value="all">{t("allOwners")}</SelectItem>{schedule.members.map((member) => <SelectItem key={member.id} value={member.id}>{member.name}</SelectItem>)}</SelectContent></Select>
-            <Select value={health} onValueChange={(value) => setHealth((value ?? "all") as typeof health)}><SelectTrigger className="w-32"><SelectValue>{health === "risk" ? t("atRisk") : health === "track" ? t("onTrack") : t("allHealth")}</SelectValue></SelectTrigger><SelectContent><SelectItem value="all">{t("allHealth")}</SelectItem><SelectItem value="track">{t("onTrack")}</SelectItem><SelectItem value="risk">{t("atRisk")}</SelectItem></SelectContent></Select>
+            <Select value={owner} onValueChange={(value) => setOwner(value ?? "all")}><SelectTrigger className="w-36" aria-label={t("allOwners")}><SelectValue>{owner === "all" ? t("allOwners") : schedule.members.find((member) => member.id === owner)?.name ?? t("allOwners")}</SelectValue></SelectTrigger><SelectContent><SelectItem value="all">{t("allOwners")}</SelectItem>{schedule.members.map((member) => <SelectItem key={member.id} value={member.id}>{member.name}</SelectItem>)}</SelectContent></Select>
+            <Select value={health} onValueChange={(value) => setHealth((value ?? "all") as typeof health)}><SelectTrigger className="w-32" aria-label={t("allHealth")}><SelectValue>{health === "risk" ? t("atRisk") : health === "track" ? t("onTrack") : t("allHealth")}</SelectValue></SelectTrigger><SelectContent><SelectItem value="all">{t("allHealth")}</SelectItem><SelectItem value="track">{t("onTrack")}</SelectItem><SelectItem value="risk">{t("atRisk")}</SelectItem></SelectContent></Select>
             <div className="ml-auto hidden rounded-md border p-0.5 md:flex">
               {(["week", "month", "quarter"] as const).map((option) => <Button key={option} size="xs" variant={zoom === option ? "secondary" : "ghost"} onClick={() => setTimelineZoom(option)}>{t(option)}</Button>)}
             </div>
@@ -4583,7 +4786,7 @@ export function PortfolioClient({
                           onPointerDown={(event) => startDeadlineDrag(event, deadline)}
                           onPointerMove={moveDeadlineDrag}
                           onPointerUp={endDeadlineDrag}
-                          onPointerCancel={endDeadlineDrag}
+                          onPointerCancel={cancelDeadlineDrag}
                           onKeyDown={(event) => handleDeadlineKey(event, deadline)}
                           className={cn(
                             "absolute top-1/2 grid size-4 -translate-x-1/2 -translate-y-1/2 rotate-45 cursor-ew-resize touch-none place-items-center rounded-[2px] border-2 bg-card shadow-xs transition-transform hover:scale-125 focus-visible:outline-2 focus-visible:outline-ring",
@@ -4646,22 +4849,110 @@ export function PortfolioClient({
                     aria-hidden
                   />
                 ) : null;
-                const endpointConnector = row.task ? (
-                  <span
-                    role="button"
-                    tabIndex={0}
+                const interactiveBarWidth =
+                  scheduled && row.isMilestone && !row.isSummary
+                    ? Math.max(dayWidth, 24)
+                    : width;
+                const startHandleLeft = Math.max(0, left - 12);
+                const endHandleLeft = Math.max(
+                  left + interactiveBarWidth,
+                  startHandleLeft + 12,
+                );
+                const resizeControls = scheduled && !row.isMilestone ? (
+                  <>
+                    <button
+                      type="button"
+                      data-resize-edge="start"
+                      aria-label={`${t("dragStart")}: ${row.label}`}
+                      aria-keyshortcuts="ArrowLeft ArrowRight Shift+ArrowLeft Shift+ArrowRight"
+                      title={t("dragStart")}
+                      disabled={scheduleCommitPending || dependencyCommitPending}
+                      className="absolute top-2 z-30 flex h-7 w-3 touch-none cursor-ew-resize items-center justify-center rounded-l-sm border border-r-0 bg-background/95 text-foreground opacity-0 shadow-sm transition-opacity motion-reduce:transition-none group-hover/row:opacity-100 group-focus-within/row:opacity-100 focus:opacity-100 focus-visible:outline-2 focus-visible:outline-ring disabled:pointer-events-none"
+                      style={{ left: startHandleLeft }}
+                      onClick={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                      }}
+                      onPointerDown={(event) => {
+                        if (row.task) startDrag(event, row.task, "start");
+                        else startProjectDrag(event, project, row, "start");
+                      }}
+                      onPointerMove={(event) => {
+                        if (row.task) moveDrag(event);
+                        else moveProjectDrag(event);
+                      }}
+                      onPointerUp={(event) => {
+                        if (row.task) endDrag(event);
+                        else endProjectDrag(event);
+                      }}
+                      onPointerCancel={(event) => {
+                        if (row.task) cancelTaskDrag(event);
+                        else cancelProjectDrag(event);
+                      }}
+                      onKeyDown={(event) =>
+                        handleScheduleResizeKey(event, row, project, "start")
+                      }
+                    >
+                      <ChevronLeft className="size-3" />
+                    </button>
+                    <button
+                      type="button"
+                      data-resize-edge="end"
+                      aria-label={`${t("dragEnd")}: ${row.label}`}
+                      aria-keyshortcuts="ArrowLeft ArrowRight Shift+ArrowLeft Shift+ArrowRight"
+                      title={t("dragEnd")}
+                      disabled={scheduleCommitPending || dependencyCommitPending}
+                      className="absolute top-2 z-30 flex h-7 w-3 touch-none cursor-ew-resize items-center justify-center rounded-r-sm border border-l-0 bg-background/95 text-foreground opacity-0 shadow-sm transition-opacity motion-reduce:transition-none group-hover/row:opacity-100 group-focus-within/row:opacity-100 focus:opacity-100 focus-visible:outline-2 focus-visible:outline-ring disabled:pointer-events-none"
+                      style={{ left: endHandleLeft }}
+                      onClick={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                      }}
+                      onPointerDown={(event) => {
+                        if (row.task) startDrag(event, row.task, "end");
+                        else startProjectDrag(event, project, row, "end");
+                      }}
+                      onPointerMove={(event) => {
+                        if (row.task) moveDrag(event);
+                        else moveProjectDrag(event);
+                      }}
+                      onPointerUp={(event) => {
+                        if (row.task) endDrag(event);
+                        else endProjectDrag(event);
+                      }}
+                      onPointerCancel={(event) => {
+                        if (row.task) cancelTaskDrag(event);
+                        else cancelProjectDrag(event);
+                      }}
+                      onKeyDown={(event) =>
+                        handleScheduleResizeKey(event, row, project, "end")
+                      }
+                    >
+                      <ChevronRight className="size-3" />
+                    </button>
+                  </>
+                ) : null;
+                const endpointConnector = row.task && scheduled ? (
+                  <button
+                    type="button"
                     aria-label={t("dependencyConnector", { name: row.label })}
                     title={t("dependencyConnectorHint")}
+                    disabled={scheduleCommitPending || dependencyCommitPending}
                     className={cn(
-                      "absolute top-1/2 -right-1.5 z-30 size-3 -translate-y-1/2 rounded-full border-2 bg-card shadow-sm transition-[transform,opacity] duration-150 hover:scale-125 focus-visible:outline-2 focus-visible:outline-ring",
+                      "absolute top-[22px] z-40 size-3 -translate-y-1/2 rounded-full border-2 bg-card shadow-sm transition-[transform,opacity] duration-150 hover:scale-125 focus-visible:outline-2 focus-visible:outline-ring disabled:pointer-events-none",
                       isDependencySource
                         ? "border-amber-600 opacity-100"
-                        : "border-indigo-600 opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100",
+                        : "border-indigo-600 opacity-0 group-hover/row:opacity-100 group-focus-within/row:opacity-100 focus:opacity-100",
                     )}
+                    style={{
+                      left: row.isMilestone
+                        ? left + interactiveBarWidth + 4
+                        : endHandleLeft + 14,
+                    }}
                     onPointerDown={(event) => startConnectorGesture(event, row.task!)}
                     onPointerMove={moveConnectorGesture}
                     onPointerUp={endConnectorGesture}
-                    onPointerCancel={endConnectorGesture}
+                    onPointerCancel={cancelConnectorGesture}
                     onClick={(event) => {
                       event.preventDefault();
                       event.stopPropagation();
@@ -4783,7 +5074,7 @@ export function PortfolioClient({
                               <Minimize2 className="size-3.5" />{t("fitToTasks")}
                             </DropdownMenuItem>
                             <DropdownMenuItem
-                              onClick={() => router.push(`/projects/${row.projectId}`)}
+                              render={<a href={`/projects/${row.projectId}`} />}
                             >
                               <FolderKanban className="size-3.5" />{t("openBoard")}
                             </DropdownMenuItem>
@@ -4860,6 +5151,7 @@ export function PortfolioClient({
                       )}
                     </div>
                     <div
+                      data-timeline-row
                       className="relative h-full"
                       onClick={(event) => {
                         if (
@@ -4872,12 +5164,13 @@ export function PortfolioClient({
                       }}
                       onPointerMove={moveDrag}
                       onPointerUp={endDrag}
-                      onPointerCancel={endDrag}
+                      onPointerCancel={cancelTaskDrag}
                       style={{ width: timelineWidth, backgroundImage: `repeating-linear-gradient(to right, transparent 0, transparent ${dayWidth - 1}px, color-mix(in oklab, var(--border) 22%, transparent) ${dayWidth - 1}px, color-mix(in oklab, var(--border) 22%, transparent) ${dayWidth}px)` }}
                     >
                       {!scheduled && row.kind === "project" && row.placement && (
                         <button
                           type="button"
+                          data-task-bar="true"
                           className="group absolute top-2 h-7 cursor-grab overflow-hidden rounded-md border border-dashed border-slate-500 bg-slate-100/80 text-left shadow-xs active:cursor-grabbing dark:bg-slate-900/70"
                           style={{
                             left: calendarDistance(range.start, row.placement.startDate) * dayWidth,
@@ -4889,7 +5182,7 @@ export function PortfolioClient({
                           onPointerDown={(event) => startProjectPlacement(event, project, row)}
                           onPointerMove={moveProjectDrag}
                           onPointerUp={endProjectDrag}
-                          onPointerCancel={endProjectDrag}
+                          onPointerCancel={cancelProjectDrag}
                           title={t("dragProjectPreset")}
                           aria-label={`${row.label}, ${t("dragProjectPreset")}`}
                         >
@@ -4901,13 +5194,14 @@ export function PortfolioClient({
                       {!scheduled && row.task && (
                         <button
                           type="button"
+                          data-task-bar="true"
                           onClick={() => openTaskFromBar(row.task)}
                           onPointerDown={(event) => {
                             if (row.task && !dependencySourceId) startUnscheduledDrag(event, row.task);
                           }}
                           onPointerMove={moveDrag}
                           onPointerUp={endDrag}
-                          onPointerCancel={endDrag}
+                          onPointerCancel={cancelTaskDrag}
                           onPointerEnter={() => isDependencyTarget && setDependencyHoverId(row.task!.id)}
                           onPointerLeave={() => setDependencyHoverId((current) => current === row.task?.id ? null : current)}
                           onKeyDown={(event) => handleTaskScheduleKey(event, row)}
@@ -4943,13 +5237,14 @@ export function PortfolioClient({
                       {scheduled && row.isMilestone && !row.isSummary ? (
                         <button
                           type="button"
+                          data-task-bar="true"
                           onClick={() => openTaskFromBar(row.task)}
                           onPointerDown={(event) => {
                             if (row.task && !dependencySourceId) startDrag(event, row.task, "move");
                           }}
                           onPointerMove={moveDrag}
                           onPointerUp={endDrag}
-                          onPointerCancel={endDrag}
+                          onPointerCancel={cancelTaskDrag}
                           onPointerEnter={() => isDependencyTarget && setDependencyHoverId(row.task!.id)}
                           onPointerLeave={() => setDependencyHoverId((current) => current === row.task?.id ? null : current)}
                           onKeyDown={(event) => handleTaskScheduleKey(event, row)}
@@ -4966,18 +5261,18 @@ export function PortfolioClient({
                         >
                           <span className="absolute top-1/2 left-1/2 size-4 -translate-x-1/2 -translate-y-1/2 rotate-45 border-2 border-indigo-700 bg-indigo-500 shadow-sm" />
                           {dependencyTargetHandle}
-                          {endpointConnector}
                         </button>
                       ) : scheduled && row.isSummary ? (
                         <button
                           type="button"
+                          data-task-bar="true"
                           onClick={() => openTaskFromBar(row.task)}
                           onPointerDown={(event) => {
                             if (row.task && !dependencySourceId) startDrag(event, row.task, "move");
                           }}
                           onPointerMove={moveDrag}
                           onPointerUp={endDrag}
-                          onPointerCancel={endDrag}
+                          onPointerCancel={cancelTaskDrag}
                           onPointerEnter={() => isDependencyTarget && setDependencyHoverId(row.task!.id)}
                           onPointerLeave={() => setDependencyHoverId((current) => current === row.task?.id ? null : current)}
                           onKeyDown={(event) => handleTaskScheduleKey(event, row)}
@@ -5001,23 +5296,13 @@ export function PortfolioClient({
                           />
                           <span className="pointer-events-none absolute top-[calc(100%-1px)] left-0 h-1.5 w-0.5 bg-indigo-700 dark:bg-indigo-300" />
                           <span className="pointer-events-none absolute top-[calc(100%-1px)] right-0 h-1.5 w-0.5 bg-indigo-700 dark:bg-indigo-300" />
-                          <span
-                            className="absolute inset-y-0 left-0 z-10 flex w-4 cursor-ew-resize items-center justify-center bg-background/75 text-foreground opacity-0 transition-opacity motion-reduce:transition-none group-hover:opacity-100 group-focus-visible:opacity-100"
-                            title={t("dragStart")}
-                            onPointerDown={(event) => {
-                              event.stopPropagation();
-                              if (row.task) startDrag(event, row.task, "start");
-                            }}
-                          >
-                            <ChevronLeft className="size-3" />
-                          </span>
                           {dependencyTargetHandle}
-                          {endpointConnector}
                           {width > 72 && <span className="pointer-events-none relative z-[1] block truncate px-2 text-left text-[10px] font-semibold leading-[17px] text-indigo-950 dark:text-indigo-100">{row.label}</span>}
                         </button>
                       ) : scheduled && (
                         <button
                           type="button"
+                          data-task-bar={row.task ? "true" : undefined}
                           onClick={() => openTaskFromBar(row.task)}
                           onPointerDown={(event) => {
                             if (row.task) {
@@ -5033,6 +5318,10 @@ export function PortfolioClient({
                           onPointerUp={(event) => {
                             if (row.task) endDrag(event);
                             else endProjectDrag(event);
+                          }}
+                          onPointerCancel={(event) => {
+                            if (row.task) cancelTaskDrag(event);
+                            else cancelProjectDrag(event);
                           }}
                           onPointerEnter={() => isDependencyTarget && setDependencyHoverId(row.task!.id)}
                           onPointerLeave={() => setDependencyHoverId((current) => current === row.task?.id ? null : current)}
@@ -5067,15 +5356,9 @@ export function PortfolioClient({
                             style={{
                               width: `${row.progress}%`,
                               backgroundColor:
-                                row.kind === "project" ? row.color : "#4f46e5",
+                              row.kind === "project" ? row.color : "#4f46e5",
                             }}
                           />
-                          {!row.isMilestone && <>
-                            <span className="absolute inset-y-0 left-0 z-10 flex w-4 cursor-ew-resize items-center justify-center bg-background/75 text-foreground opacity-0 transition-opacity motion-reduce:transition-none group-hover:opacity-100" title={t("dragStart")} onPointerDown={(event) => { event.stopPropagation(); if (row.task) startDrag(event, row.task, "start"); else startProjectDrag(event, project, row, "start"); }}><ChevronLeft className="size-3" /></span>
-                            {row.task ? endpointConnector : (
-                              <span className="absolute inset-y-0 right-0 z-10 flex w-4 cursor-ew-resize items-center justify-center bg-background/75 text-foreground opacity-0 transition-opacity motion-reduce:transition-none group-hover:opacity-100" title={t("dragEnd")} onPointerDown={(event) => { event.stopPropagation(); startProjectDrag(event, project, row, "end"); }}><ChevronRight className="size-3" /></span>
-                            )}
-                          </>}
                           {dependencyTargetHandle}
                           {width > 72 && <span className={cn(
                             "relative z-[1] block truncate px-2 text-left text-[10px]",
@@ -5086,6 +5369,8 @@ export function PortfolioClient({
                           {manager && <span className="pointer-events-none absolute right-5 top-1/2 z-[2] max-w-40 -translate-y-1/2 truncate rounded-sm bg-background/90 px-1.5 py-0.5 text-[10px] font-medium text-foreground opacity-0 shadow-sm transition-opacity motion-reduce:transition-none group-hover:opacity-100">{manager}</span>}
                         </button>
                       )}
+                      {resizeControls}
+                      {endpointConnector}
                       {/* Work reaching past the project's authored window (R4). The
                           bar itself never stretches to swallow it. */}
                       {overflowSpans.map((span) => (

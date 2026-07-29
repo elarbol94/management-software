@@ -1,21 +1,15 @@
 import { Suspense } from "react";
+import { connection } from "next/server";
 import { requireUser } from "@/lib/auth";
 import { AppSidebar } from "@/components/app-sidebar";
 import { Skeleton } from "@/components/ui/skeleton";
 import { TaskCreateProvider } from "@/modules/tasks/components/task-create-provider";
 import { DeadlineCreateProvider } from "@/modules/tasks/components/deadline-create-provider";
 
-export const unstable_instant = {
-  prefetch: "runtime",
-  samples: [
-    {
-      cookies: [{ name: "locale", value: "de" }],
-      headers: [["rsc", "1"], ["next-action", null]],
-      params: { slug: "sample", id: "sample", projectId: "sample", documentId: "sample", page: "1" },
-      searchParams: { task: null },
-    },
-  ],
-};
+// This authenticated dashboard reads mutable, user-specific better-sqlite3
+// data throughout its route tree. It cannot safely serve a prefetched static
+// shell captured from a runtime sample.
+export const unstable_instant = false;
 
 async function AuthenticatedSidebar() {
   const user = await requireUser();
@@ -40,9 +34,13 @@ function SidebarFallback() {
   );
 }
 
-export default function AppLayout({
+export default async function AppLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
+  // All application data comes from synchronous better-sqlite3 queries.
+  // With Cache Components enabled, Next can otherwise place those reads in a
+  // prerendered shell and serve stale rows after a mutation.
+  await connection();
   return (
     <TaskCreateProvider>
       <DeadlineCreateProvider>

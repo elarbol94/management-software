@@ -3,7 +3,9 @@ import {
   compareDeadlineTiming,
   deadlineDayState,
   isDeadlineOverdue,
+  localDateValue,
   localDeadlineToUtc,
+  todayLocal,
 } from "./deadline-utils";
 
 describe("deadline timing", () => {
@@ -29,6 +31,15 @@ describe("deadline timing", () => {
       deadlineAt: null,
       status: "open",
     }, now)).toBe("today");
+  });
+
+  it("formats the browser-local calendar date without converting to UTC", () => {
+    expect(todayLocal(new Date(2026, 6, 29, 0, 30))).toBe("2026-07-29");
+  });
+
+  it("rejects calendar dates that roll into another month", () => {
+    expect(localDateValue("2026-02-29")).toBeNull();
+    expect(localDateValue("2026-02-28")).toBeInstanceOf(Date);
   });
 
   it("uses the exact timestamp when a time is present", () => {

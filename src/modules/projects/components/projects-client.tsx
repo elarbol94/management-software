@@ -180,7 +180,15 @@ export function ProjectsClient({
                 </Link>
                 <DropdownMenu>
                   <DropdownMenuTrigger
-                    render={<Button variant="ghost" size="icon-xs" />}
+                    render={
+                      <Button
+                        variant="ghost"
+                        size="icon-xs"
+                        aria-label={t("projectActions", {
+                          name: project.name,
+                        })}
+                      />
+                    }
                   >
                     <MoreHorizontal className="size-4" />
                   </DropdownMenuTrigger>
@@ -241,6 +249,7 @@ export function ProjectsClient({
                   variant="ghost"
                   size="icon-xs"
                   title={t("unarchive")}
+                  aria-label={t("unarchive")}
                   onClick={() => toggleArchived(project)}
                 >
                   <ArchiveRestore className="size-3.5" />
@@ -248,6 +257,7 @@ export function ProjectsClient({
                 <Button
                   variant="ghost"
                   size="icon-xs"
+                  aria-label={t("deleteProject")}
                   onClick={() => onDelete(project)}
                 >
                   <Trash2 className="size-3.5" />
@@ -297,12 +307,12 @@ export function ProjectsClient({
               />
             </div>
             <div className="flex flex-col gap-2">
-              <Label>{t("manager")}</Label>
+              <Label htmlFor="project-manager">{t("manager")}</Label>
               <Select
                 value={managerId}
                 onValueChange={(value) => setManagerId(value ?? "none")}
               >
-                <SelectTrigger className="w-full">
+                <SelectTrigger id="project-manager" className="w-full">
                   <SelectValue>
                     {managerId === "none"
                       ? t("unassigned")
@@ -341,14 +351,14 @@ export function ProjectsClient({
               </div>
             </div>
             {!editing && <div className="flex flex-col gap-2">
-              <Label>{t("choosePredecessor")}</Label>
+              <Label htmlFor="project-predecessor">{t("choosePredecessor")}</Label>
               <Select value={predecessor} onValueChange={(value) => {
                 const next = value ?? "none";
                 setPredecessor(next);
                 const selected = predecessorOptions.find((option) => `${option.type}:${option.id}` === next);
                 if (selected?.dueDate) setPlannedStartDate(addCalendarDays(selected.dueDate, 1));
               }}>
-                <SelectTrigger className="w-full"><SelectValue>{predecessor === "none" ? t("choosePredecessor") : predecessorOptions.find((option) => `${option.type}:${option.id}` === predecessor)?.title}</SelectValue></SelectTrigger>
+                <SelectTrigger id="project-predecessor" className="w-full"><SelectValue>{predecessor === "none" ? t("choosePredecessor") : predecessorOptions.find((option) => `${option.type}:${option.id}` === predecessor)?.title}</SelectValue></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="none">{t("choosePredecessor")}</SelectItem>
                   {predecessorOptions.filter((option) => option.dueDate).map((option) => <SelectItem key={`${option.type}:${option.id}`} value={`${option.type}:${option.id}`}>{option.type === "project" ? `${t("newProject")}: ${option.title}` : option.title}</SelectItem>)}

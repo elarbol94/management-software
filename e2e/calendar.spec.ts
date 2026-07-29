@@ -58,11 +58,9 @@ test("calendar rail entry opens the Flow week and creates a timed event", async 
 
   await page.getByRole("button", { name: "Neuer Termin" }).click();
   await page.getByPlaceholder("Was findet statt?").fill("Weekly operations");
-  await page.locator('input[type="date"]').fill("2026-07-29");
-  const times = page.locator('input[type="time"]');
-  await expect(times).toHaveCount(2);
-  await times.nth(0).fill("10:00");
-  await times.nth(1).fill("11:00");
+  await page.getByRole("textbox", { name: "Beginn-Datum" }).fill("29.07.2026");
+  await page.getByRole("textbox", { name: "Beginn-Uhrzeit" }).fill("10:00");
+  await page.getByRole("textbox", { name: "End-Uhrzeit" }).fill("11:00");
   await page.getByRole("button", { name: "Termin speichern" }).click();
 
   await expect(page.getByText("Weekly operations")).toBeVisible();

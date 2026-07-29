@@ -211,6 +211,7 @@ export function AccountingOverview({
   categories,
   years,
   year,
+  openEntryOnLoad,
   canManagePersonnel,
   taxSettings,
   fundingProjects,
@@ -220,11 +221,12 @@ export function AccountingOverview({
 }: {
   entries: EntryRow[];
   months: MonthlySummary[];
-  totals: { incomeGross: number; expenseGross: number; balance: number };
+  totals: { incomeGross: number; expenseGross: number; balance: number; bookingCount: number };
   vatBalance: number;
   categories: Category[];
   years: number[];
   year: number;
+  openEntryOnLoad: boolean;
   canManagePersonnel: boolean;
   taxSettings: { kleinunternehmer: boolean; defaultVatRate: number };
   fundingProjects: Array<{ id: string; name: string }>;
@@ -239,7 +241,20 @@ export function AccountingOverview({
   const router = useRouter();
   const searchParams = useSearchParams();
   const [dialogEntry, setDialogEntry] = useState<EntryRow | null>(null);
-  const [dialogOpen, setDialogOpen] = useState(false);
+  const [dialogOpen, setDialogOpen] = useState(openEntryOnLoad);
+
+  function setEntryDialogOpen(nextOpen: boolean) {
+    setDialogOpen(nextOpen);
+    if (nextOpen || !searchParams.has("new")) return;
+    const params = new URLSearchParams(searchParams.toString());
+    params.delete("new");
+    const query = params.toString();
+    window.history.replaceState(
+      null,
+      "",
+      query ? `/accounting?${query}` : "/accounting",
+    );
+  }
 
   function changeYear(value: string | null) {
     if (!value) return;
@@ -376,7 +391,7 @@ export function AccountingOverview({
             <div className="mt-7 flex items-end justify-between border-t border-white/15 pt-5">
               <div>
                 <p className="text-xs text-[#9fb7ae]">{tOverview("bookingCount")}</p>
-                <p className="mt-1 text-2xl font-semibold tabular-nums">{entries.length}</p>
+                <p className="mt-1 text-2xl font-semibold tabular-nums">{totals.bookingCount}</p>
               </div>
               <Button
                 variant="outline"
@@ -440,17 +455,23 @@ export function AccountingOverview({
             )}
             {recentEntries.map((entry) => {
               const sign = entry.kind === "expense" ? -1 : 1;
+              const canEdit =
+                canManagePersonnel || entry.categoryTemplate !== "personnel";
               return (
                 <TableRow
                   key={entry.id}
-                  tabIndex={0}
-                  className="cursor-pointer border-[#edf0ee] hover:bg-[#f6f9f7] focus-visible:bg-[#f0f5f2] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#315c73]"
+                  tabIndex={canEdit ? 0 : undefined}
+                  aria-disabled={canEdit ? undefined : true}
+                  className={canEdit
+                    ? "cursor-pointer border-[#edf0ee] hover:bg-[#f6f9f7] focus-visible:bg-[#f0f5f2] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#315c73]"
+                    : "border-[#edf0ee]"}
                   onClick={() => {
+                    if (!canEdit) return;
                     setDialogEntry(entry);
                     setDialogOpen(true);
                   }}
                   onKeyDown={(event) => {
-                    if (event.key !== "Enter" && event.key !== " ") return;
+                    if (!canEdit || (event.key !== "Enter" && event.key !== " ")) return;
                     event.preventDefault();
                     setDialogEntry(entry);
                     setDialogOpen(true);
@@ -504,7 +525,7 @@ export function AccountingOverview({
 
       {dialogOpen && <EntryDialog
         open={dialogOpen}
-        onOpenChange={setDialogOpen}
+        onOpenChange={setEntryDialogOpen}
         entry={dialogEntry}
         categories={categories}
         canManagePersonnel={canManagePersonnel}

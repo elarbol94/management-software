@@ -24,6 +24,11 @@ async function quickNote(page: Page, title: string, body: string) {
   await expect(page.getByRole("button", { name: title })).toBeVisible();
 }
 
+async function openWritingStyle(page: Page) {
+  await page.getByRole("button", { name: "Mehr", exact: true }).click();
+  await page.getByRole("menuitem", { name: /Schreibbild/ }).click();
+}
+
 test("capture an inbox note and retain autosaved content", async ({ page }) => {
   await login(page);
   await quickNote(page, "Onboarding", "Willkommen im Team! Erste Schritte für neue Kollegen.");
@@ -32,8 +37,9 @@ test("capture an inbox note and retain autosaved content", async ({ page }) => {
 
 test("Markdown reference dialog opens from the editor toolbar and closes on Escape or outside click", async ({ page }) => {
   await login(page);
-  await page.goto("/wiki/pages/unbenannte-notiz");
+  await quickNote(page, `Markdown Reference ${Date.now()}`, "Toolbar help.");
 
+  await page.getByRole("button", { name: "Mehr", exact: true }).click();
   await page.getByTestId("markdown-help-button").click();
   const dialog = page.getByTestId("markdown-reference-dialog");
   await expect(dialog).toBeVisible();
@@ -42,6 +48,7 @@ test("Markdown reference dialog opens from the editor toolbar and closes on Esca
   await page.keyboard.press("Escape");
   await expect(dialog).toBeHidden();
 
+  await page.getByRole("button", { name: "Mehr", exact: true }).click();
   await page.getByTestId("markdown-help-button").click();
   await expect(dialog).toBeVisible();
   await page.locator('[data-slot="dialog-overlay"]').click({ position: { x: 4, y: 4 } });
@@ -53,14 +60,14 @@ test("global writing style previews, cancels, persists across pages, and reaches
   await login(page);
   await quickNote(page, `Typography settings ${Date.now()}`, "A compact list preview.");
 
-  await page.getByRole("button", { name: "Schreibbild", exact: true }).click();
+  await openWritingStyle(page);
   const dialog = page.getByTestId("wiki-typography-dialog");
   const preview = page.getByTestId("wiki-typography-preview");
   await expect(dialog).toBeVisible();
   await dialog.getByRole("button", { name: "Standard" }).click();
   await dialog.getByRole("button", { name: "Speichern", exact: true }).click();
   await expect(page.locator(".ProseMirror")).toHaveCSS("line-height", "21px");
-  await page.getByRole("button", { name: "Schreibbild", exact: true }).click();
+  await openWritingStyle(page);
   await expect(preview).toContainText("Entscheidungen nachvollziehbar dokumentieren");
   await expect(page.getByTestId("listItemSpacingEm-number")).toHaveValue("0.15");
 
@@ -79,7 +86,7 @@ test("global writing style previews, cancels, persists across pages, and reaches
   await expect(preview).toHaveCSS("--wiki-list-item-spacing", "0.8em");
   await dialog.getByRole("button", { name: "Abbrechen" }).click();
 
-  await page.getByRole("button", { name: "Schreibbild", exact: true }).click();
+  await openWritingStyle(page);
   await expect(page.getByTestId("listItemSpacingEm-number")).toHaveValue("0.15");
   await dialog.getByRole("button", { name: "Kompakt" }).click();
   await expect(page.getByTestId("lineHeight-number")).toHaveValue("1.35");
@@ -105,13 +112,13 @@ test("global writing style previews, cancels, persists across pages, and reaches
   await expect(page).toHaveURL(/\/wiki\/pages\/unbenannte-notiz/, { timeout: 30_000 });
   await expect(page.locator(".wiki-editor-surface")).toHaveCSS("--wiki-list-item-spacing", "0em", { timeout: 30_000 });
 
-  await page.getByRole("button", { name: "Schreibbild", exact: true }).click();
+  await openWritingStyle(page);
   await dialog.getByRole("button", { name: "Standard" }).click();
   await dialog.getByRole("button", { name: "Speichern", exact: true }).click();
   await expect(page.locator(".wiki-editor-surface")).toHaveCSS("--wiki-list-item-spacing", "0.15em");
 
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.getByRole("button", { name: "Schreibbild", exact: true }).click();
+  await openWritingStyle(page);
   const dialogBox = await dialog.boundingBox();
   const previewBox = await preview.boundingBox();
   const firstSectionBox = await dialog.locator("section").first().boundingBox();
@@ -311,7 +318,16 @@ test("extended Markdown syntax creates editable semantic content", async ({ page
   await expect(table.locator("td").nth(0)).toHaveText("Header");
   await expect(table.locator("td").nth(1)).toHaveText("Title");
 
-  await editor.locator("table[data-markdown-table] + p").click();
+  const trailingParagraph = editor.locator("xpath=./p").last();
+  await trailingParagraph.evaluate((element) => {
+    (element.parentElement as HTMLElement | null)?.focus();
+    const range = document.createRange();
+    range.selectNodeContents(element);
+    range.collapse(false);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+  });
   await page.keyboard.type("### ");
   await page.keyboard.type("My Great Heading {#custom-id}");
   await page.keyboard.press("Enter");
@@ -347,16 +363,24 @@ test("internal links create backlinks and unified search finds content", async (
   await login(page);
   await quickNote(page, "IT-Setup", "Laptop einrichten. Siehe auch: ");
   await page.locator(".ProseMirror").click();
-  await page.getByRole("button", { name: "Seite verlinken" }).click();
+  await page.getByRole("button", { name: "Dokument verlinken" }).click();
   await page.getByRole("button", { name: "Onboarding" }).first().click();
+  await expect(page.getByText("Nicht gespeichert", { exact: true })).toBeVisible();
   await expect(page.getByText("Gespeichert", { exact: true })).toBeVisible({ timeout: 10_000 });
   const onboardingHref = await page.locator(".ProseMirror").getByRole("link", { name: "Onboarding" }).getAttribute("href");
   expect(onboardingHref).toBeTruthy();
   await page.goto(onboardingHref!);
-  await expect(page.getByText("Verweise auf diese Seite")).toBeVisible();
+  await expect(
+    page.getByRole("heading", {
+      name: "Dokumente mit Verweisen hierher",
+    }),
+  ).toBeVisible();
   await expect(page.getByRole("link", { name: "IT-Setup" }).last()).toBeVisible();
-  await page.getByRole("button", { name: "Seiten und Quellen durchsuchen…" }).click();
-  await page.getByPlaceholder("Seiten und Quellen durchsuchen…").fill("Laptop");
+  const researchSearch = page.getByRole("textbox", {
+    name: "Dokumente und Quellen durchsuchen…",
+  });
+  await researchSearch.click();
+  await researchSearch.fill("Laptop");
   await expect(page.getByRole("link", { name: /IT-Setup/ }).first()).toBeVisible();
 });
 
@@ -381,7 +405,9 @@ test("create a source, cite it, and render the bibliography", async ({ page }) =
   await page.reload();
   await expect(page.getByRole("heading", { name: "Literaturverzeichnis" })).toBeVisible();
   await expect(page.getByText(/Smith, J\. \(2026\)/)).toBeVisible();
-  await expect(page.getByText(sourceTitle, { exact: false })).toBeVisible();
+  await expect(
+    page.locator("ol").getByText(sourceTitle, { exact: false }),
+  ).toBeVisible();
 });
 
 test("subpages remain nested and deletion is recoverable", async ({ page }) => {
@@ -492,7 +518,7 @@ test("slash wiki insert commands open the shared page, citation, and PDF evidenc
   };
 
   await openCommand("seite verknupfen");
-  await expect(page.getByPlaceholder("Seiten filtern…")).toBeVisible();
+  await expect(page.getByPlaceholder("Dokumente filtern…")).toBeVisible();
   await page.keyboard.press("Escape");
 
   await openCommand("zitat einfugen");

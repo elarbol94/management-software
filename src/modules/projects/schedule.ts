@@ -1529,12 +1529,13 @@ export function indentTarget<
 >(tasks: T[], taskId: string): T | null {
   const task = tasks.find((candidate) => candidate.id === taskId);
   if (!task) return null;
-  const siblings = tasks
-    .filter((candidate) => (candidate.parentTaskId ?? null) === (task.parentTaskId ?? null))
-    .sort(
-      (left, right) =>
-        (left.sortOrder ?? 0) - (right.sortOrder ?? 0) || left.id.localeCompare(right.id),
-    );
+  // Callers pass the same deterministic order used to render the tree. Keeping
+  // that order matters because sortOrder is scoped to a Kanban column, so equal
+  // and overlapping values across columns are expected.
+  const siblings = tasks.filter(
+    (candidate) =>
+      (candidate.parentTaskId ?? null) === (task.parentTaskId ?? null),
+  );
   const index = siblings.findIndex((candidate) => candidate.id === taskId);
   if (index <= 0) return null;
   const previous = siblings[index - 1];

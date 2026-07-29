@@ -48,6 +48,23 @@ const empty: EntityContextDto = {
   sources: [],
 };
 
+class RequestGate {
+  private current = 0;
+
+  next() {
+    this.current += 1;
+    return this.current;
+  }
+
+  isCurrent(request: number) {
+    return request === this.current;
+  }
+
+  invalidate() {
+    this.current += 1;
+  }
+}
+
 function ItemIcon({ type }: { type: ContextEntityType }) {
   if (type === "project") return <FolderKanban className="size-3.5" />;
   if (type === "task") return <ClipboardCheck className="size-3.5" />;
@@ -62,17 +79,7 @@ function groupFor(type: ContextEntityType) {
   return "sources";
 }
 
-export function ContextPanel({
-  subjectType,
-  subjectId,
-  subjectLabel,
-  subjectHref,
-  compact = false,
-  accentColor = "#4f46e5",
-  className,
-  title,
-  initialContext,
-}: {
+type ContextPanelProps = {
   subjectType: ContextEntityType;
   subjectId: string;
   subjectLabel: string;
@@ -82,7 +89,28 @@ export function ContextPanel({
   className?: string;
   title?: string;
   initialContext?: EntityContextDto;
-}) {
+};
+
+export function ContextPanel(props: ContextPanelProps) {
+  return (
+    <ContextPanelContent
+      key={`${props.subjectType}:${props.subjectId}`}
+      {...props}
+    />
+  );
+}
+
+function ContextPanelContent({
+  subjectType,
+  subjectId,
+  subjectLabel,
+  subjectHref,
+  compact = false,
+  accentColor = "#4f46e5",
+  className,
+  title,
+  initialContext,
+}: ContextPanelProps) {
   const locale = useLocale();
   const de = locale !== "en";
   const labels = de
@@ -101,6 +129,11 @@ export function ContextPanel({
         removed: "Verknüpfung entfernt",
         undo: "Rückgängig",
         noResults: "Keine passenden Einträge gefunden.",
+        retry: "Erneut versuchen",
+        loadFailed: "Der Kontext konnte nicht geladen werden.",
+        searchFailed: "Die Suche ist momentan nicht verfügbar.",
+        linkFailed: "Die Verknüpfung konnte nicht erstellt werden.",
+        removeFailed: "Die Verknüpfung konnte nicht entfernt werden.",
       }
     : {
         context: "Context",
@@ -117,52 +150,100 @@ export function ContextPanel({
         removed: "Link removed",
         undo: "Undo",
         noResults: "No matching items found.",
+        retry: "Try again",
+        loadFailed: "Context could not be loaded.",
+        searchFailed: "Search is temporarily unavailable.",
+        linkFailed: "The link could not be created.",
+        removeFailed: "The link could not be removed.",
       };
   const [context, setContext] = useState<EntityContextDto>(
     initialContext ?? empty,
   );
   const [loading, setLoading] = useState(!initialContext);
+  const [loadFailed, setLoadFailed] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [candidates, setCandidates] = useState<ContextCandidateDto[]>([]);
   const [searching, setSearching] = useState(false);
+  const [searchFailed, setSearchFailed] = useState(false);
   const [linkingId, setLinkingId] = useState("");
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [mobileCollapsed, setMobileCollapsed] = useState<Record<string, boolean>>(
     {},
   );
+  const subjectKey = `${subjectType}:${subjectId}`;
+  const [requestGate] = useState(() => new RequestGate());
 
-  async function load() {
+  async function load(requestedSubject = subjectKey) {
+    if (requestedSubject !== subjectKey) return;
+    const request = requestGate.next();
     setLoading(true);
+    setLoadFailed(false);
     try {
-      setContext(await getEntityContext({ type: subjectType, id: subjectId }));
+      const next = await getEntityContext({ type: subjectType, id: subjectId });
+      if (requestGate.isCurrent(request)) {
+        setContext(next);
+      }
+    } catch {
+      if (requestGate.isCurrent(request)) {
+        setLoadFailed(true);
+      }
     } finally {
-      setLoading(false);
+      if (requestGate.isCurrent(request)) {
+        setLoading(false);
+      }
     }
   }
 
   useEffect(() => {
-    let cancelled = false;
+    const requestedSubject = subjectKey;
+    const request = requestGate.next();
     void getEntityContext({ type: subjectType, id: subjectId })
       .then((next) => {
-        if (!cancelled) setContext(next);
+        if (
+          requestGate.isCurrent(request) &&
+          requestedSubject === subjectKey
+        ) {
+          setContext(next);
+          setLoadFailed(false);
+        }
+      })
+      .catch(() => {
+        if (
+          requestGate.isCurrent(request) &&
+          requestedSubject === subjectKey
+        ) {
+          setLoadFailed(!initialContext);
+        }
       })
       .finally(() => {
-        if (!cancelled) setLoading(false);
+        if (
+          requestGate.isCurrent(request) &&
+          requestedSubject === subjectKey
+        ) {
+          setLoading(false);
+        }
       });
     return () => {
-      cancelled = true;
+      if (requestGate.isCurrent(request)) requestGate.invalidate();
     };
-  }, [subjectId, subjectType]);
+  }, [initialContext, requestGate, subjectId, subjectKey, subjectType]);
 
   useEffect(() => {
     if (!pickerOpen) return;
     let cancelled = false;
     const timer = window.setTimeout(() => {
       setSearching(true);
+      setSearchFailed(false);
       void findContextCandidates({ subjectType, query })
         .then((next) => {
           if (!cancelled) setCandidates(next);
+        })
+        .catch(() => {
+          if (!cancelled) {
+            setCandidates([]);
+            setSearchFailed(true);
+          }
         })
         .finally(() => {
           if (!cancelled) setSearching(false);
@@ -215,6 +296,8 @@ export function ContextPanel({
       setPickerOpen(false);
       setQuery("");
       await load();
+    } catch {
+      toast.error(labels.linkFailed);
     } finally {
       setLinkingId("");
     }
@@ -222,26 +305,32 @@ export function ContextPanel({
 
   async function remove(item: ContextItemDto) {
     if (!item.linkId) return;
-    const removed = await unlinkContext(item.linkId);
-    await load();
-    if (!removed) return;
-    toast(labels.removed, {
-      action: {
-        label: labels.undo,
-        onClick: () => {
-          void restoreContextLink({
-            ownerType: removed.ownerType,
-            ownerId: removed.ownerId,
-            targetType: removed.targetType,
-            targetId: removed.targetId,
-            relation: removed.relation,
-            route: removed.route,
-            label: removed.label,
-            anchorJson: removed.anchorJson,
-          }).then(load);
+    try {
+      const removed = await unlinkContext(item.linkId);
+      await load();
+      if (!removed) return;
+      toast(labels.removed, {
+        action: {
+          label: labels.undo,
+          onClick: () => {
+            void restoreContextLink({
+              ownerType: removed.ownerType,
+              ownerId: removed.ownerId,
+              targetType: removed.targetType,
+              targetId: removed.targetId,
+              relation: removed.relation,
+              route: removed.route,
+              label: removed.label,
+              anchorJson: removed.anchorJson,
+            })
+              .then(() => load())
+              .catch(() => toast.error(labels.linkFailed));
+          },
         },
-      },
-    });
+      });
+    } catch {
+      toast.error(labels.removeFailed);
+    }
   }
 
   return (
@@ -306,6 +395,13 @@ export function ContextPanel({
 
       {loading ? (
         <Loader2 className="size-4 animate-spin text-muted-foreground" />
+      ) : loadFailed ? (
+        <div className="flex items-center justify-between gap-3 rounded-md border border-destructive/30 bg-destructive/5 p-2 text-xs text-destructive">
+          <span>{labels.loadFailed}</span>
+          <Button type="button" size="xs" variant="outline" onClick={() => void load()}>
+            {labels.retry}
+          </Button>
+        </div>
       ) : total === 0 ? (
         <p className="text-xs text-muted-foreground">{labels.empty}</p>
       ) : (
@@ -398,7 +494,18 @@ export function ContextPanel({
         </div>
       )}
 
-      <Dialog open={pickerOpen} onOpenChange={setPickerOpen}>
+      <Dialog
+        open={pickerOpen}
+        onOpenChange={(next) => {
+          setPickerOpen(next);
+          if (!next) {
+            setQuery("");
+            setCandidates([]);
+            setSearching(false);
+            setSearchFailed(false);
+          }
+        }}
+      >
         <DialogContent className="sm:max-w-xl">
           <DialogHeader>
             <DialogTitle>{labels.choose}</DialogTitle>
@@ -408,7 +515,11 @@ export function ContextPanel({
             <Input
               autoFocus
               value={query}
-              onChange={(event) => setQuery(event.target.value)}
+              onChange={(event) => {
+                setQuery(event.target.value);
+                setCandidates([]);
+                setSearchFailed(false);
+              }}
               placeholder={labels.search}
               className="pl-9"
             />
@@ -416,6 +527,13 @@ export function ContextPanel({
           <div className="max-h-[24rem] space-y-4 overflow-y-auto">
             {searching ? (
               <Loader2 className="mx-auto my-8 size-5 animate-spin text-muted-foreground" />
+            ) : searchFailed ? (
+              <p
+                role="alert"
+                className="py-8 text-center text-sm text-destructive"
+              >
+                {labels.searchFailed}
+              </p>
             ) : candidates.length === 0 ? (
               <p className="py-8 text-center text-sm text-muted-foreground">
                 {labels.noResults}

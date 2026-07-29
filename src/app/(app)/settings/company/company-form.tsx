@@ -118,7 +118,7 @@ export function CompanyForm({ settings }: { settings: AppSettings }) {
             </div>
           </div>
           <div className="flex flex-col gap-2">
-            <Label>{t("defaultVatRate")}</Label>
+            <Label htmlFor="default-vat-rate">{t("defaultVatRate")}</Label>
             <Select
               value={String(form.defaultVatRate)}
               onValueChange={(value) =>
@@ -128,7 +128,7 @@ export function CompanyForm({ settings }: { settings: AppSettings }) {
                 })
               }
             >
-              <SelectTrigger className="w-32">
+              <SelectTrigger id="default-vat-rate" className="w-32">
                 <SelectValue>{form.defaultVatRate} %</SelectValue>
               </SelectTrigger>
               <SelectContent>

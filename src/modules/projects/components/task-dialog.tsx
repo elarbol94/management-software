@@ -154,6 +154,9 @@ export function TaskDialog({
       await deleteTask(task.id);
       onOpenChange(false);
       router.refresh();
+      toast.success(tCommon("deleted"));
+    } catch {
+      toast.error(tCommon("error"));
     } finally {
       setPending(false);
     }
@@ -219,7 +222,7 @@ export function TaskDialog({
 
           <div className="grid grid-cols-2 gap-4">
             <div className="flex flex-col gap-2">
-              <Label>{t("column")}</Label>
+              <Label htmlFor="task-column">{t("column")}</Label>
               <Select
                 value={columnId}
                 onValueChange={(value) => setColumnId(value ?? "")}
@@ -239,12 +242,12 @@ export function TaskDialog({
               </Select>
             </div>
             <div className="flex flex-col gap-2">
-              <Label>{t("priority")}</Label>
+              <Label htmlFor="task-priority">{t("priority")}</Label>
               <Select
                 value={priority}
                 onValueChange={(value) => setPriority(value as typeof priority)}
               >
-                <SelectTrigger className="w-full">
+                <SelectTrigger className="w-full" id="task-priority">
                   <SelectValue>{priorityLabel}</SelectValue>
                 </SelectTrigger>
                 <SelectContent>
@@ -255,7 +258,7 @@ export function TaskDialog({
               </Select>
             </div>
             <div className="flex flex-col gap-2">
-              <Label>{t("assignee")}</Label>
+              <Label htmlFor="task-assignee">{t("assignee")}</Label>
               <Select
                 value={assigneeId}
                 onValueChange={(value) => setAssigneeId(value ?? UNASSIGNED)}
@@ -281,14 +284,14 @@ export function TaskDialog({
 
           {!task && (
             <div className="flex flex-col gap-2">
-              <Label>{t("choosePredecessor")}</Label>
+              <Label htmlFor="task-predecessor">{t("choosePredecessor")}</Label>
               <Select value={predecessorTaskId} onValueChange={(value) => {
                 const next = value ?? "none";
                 setPredecessorTaskId(next);
                 const predecessor = predecessorOptions.find((candidate) => `${candidate.type}:${candidate.id}` === next);
                 if (predecessor?.dueDate) setStartDate(addCalendarDays(predecessor.dueDate, 1));
               }}>
-                <SelectTrigger className="w-full"><SelectValue>{predecessorTaskId === "none" ? t("choosePredecessor") : predecessorOptions.find((candidate) => `${candidate.type}:${candidate.id}` === predecessorTaskId)?.title}</SelectValue></SelectTrigger>
+                <SelectTrigger id="task-predecessor" className="w-full"><SelectValue>{predecessorTaskId === "none" ? t("choosePredecessor") : predecessorOptions.find((candidate) => `${candidate.type}:${candidate.id}` === predecessorTaskId)?.title}</SelectValue></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="none">{t("choosePredecessor")}</SelectItem>
                   {predecessorOptions.filter((candidate) => candidate.dueDate).map((candidate) => <SelectItem key={`${candidate.type}:${candidate.id}`} value={`${candidate.type}:${candidate.id}`}>{candidate.type === "project" ? `${t("newProject")}: ${candidate.title}` : candidate.title}</SelectItem>)}

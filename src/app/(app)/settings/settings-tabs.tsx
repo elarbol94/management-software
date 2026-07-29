@@ -22,13 +22,13 @@ export function SettingsTabs({ isAdmin }: { isAdmin: boolean }) {
   ];
 
   return (
-    <div className="flex gap-1 border-b">
+    <div className="flex gap-1 overflow-x-auto border-b">
       {tabs.map((tab) => (
         <Link
           key={tab.href}
           href={tab.href}
           className={cn(
-            "border-b-2 px-4 py-2 text-sm font-medium transition-colors",
+            "shrink-0 whitespace-nowrap border-b-2 px-4 py-2 text-sm font-medium transition-colors",
             pathname.startsWith(tab.href)
               ? "border-primary text-foreground"
               : "border-transparent text-muted-foreground hover:text-foreground",

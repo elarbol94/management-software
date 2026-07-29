@@ -9,6 +9,7 @@ import {
   Users,
 } from "@/components/server-safe-icons";
 import { formatCents } from "@/lib/money";
+import { toLocalIsoDate } from "@/modules/accounting/lib/date";
 import {
   invoiceStatusSummary,
   listInvoicesPage,
@@ -66,7 +67,7 @@ export async function DocumentsWorkspace({
   });
   const receipts = receiptPage.items;
   const totalReceipts = receiptDocumentCount();
-  const today = new Date().toISOString().slice(0, 10);
+  const today = toLocalIsoDate();
   const summary = invoiceStatusSummary(today);
 
   return (
@@ -192,12 +193,12 @@ export async function DocumentsWorkspace({
                 {invoices.map((invoice) => (
                   <TableRow key={invoice.id} className="relative">
                     <TableCell className="font-medium">
-                      <Link
+                      <a
                         href={`/accounting/invoices/${invoice.id}`}
                         className="after:absolute after:inset-0 focus-visible:rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2"
                       >
                         {invoice.invoiceNumber}
-                      </Link>
+                      </a>
                     </TableCell>
                     <TableCell>{invoice.customerName}</TableCell>
                     <TableCell className="whitespace-nowrap">

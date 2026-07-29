@@ -75,6 +75,7 @@ test("print view renders the § 11 UStG fields", async ({ page }) => {
   const href = await page
     .getByRole("button", { name: "Drucken / PDF" })
     .getAttribute("href");
+  expect(href).toMatch(/^\/print\/invoices\/[^/]+$/);
   await page.goto(href!);
 
   await expect(page.getByText("Rechnung 2026-0001")).toBeVisible();

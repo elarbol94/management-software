@@ -3,15 +3,7 @@ import { getTranslations } from "next-intl/server";
 import { requireUser } from "@/lib/auth";
 import { SettingsTabs } from "./settings-tabs";
 
-export const unstable_instant = {
-  prefetch: "runtime",
-  samples: [
-    {
-      cookies: [{ name: "locale", value: "de" }],
-      headers: [["rsc", "1"], ["next-action", null]],
-    },
-  ],
-};
+export const unstable_instant = false;
 
 async function SettingsChrome({
   children,

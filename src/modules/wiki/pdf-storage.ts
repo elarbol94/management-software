@@ -1,8 +1,6 @@
 import "server-only";
 
 import crypto from "node:crypto";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { and, eq, isNull } from "drizzle-orm";
@@ -10,10 +8,10 @@ import { db, sqlite } from "@/db";
 import { attachments, wikiPdfDocuments, wikiSources } from "@/db/schema";
 import { UPLOADS_PATH } from "@/lib/files";
 import { sourceTitleFromFileName } from "./lib/pdf-evidence";
+import { openPdfDocument } from "./lib/pdf-node";
 import { PdfUploadStreamError, writePdfUploadToFile } from "./lib/pdf-upload-stream";
 
 const DEFAULT_MAX_PDF_BYTES = 100 * 1024 * 1024;
-const execFileAsync = promisify(execFile);
 
 export function maxPdfUploadBytes() {
   const configured = Number(process.env.MAX_PDF_UPLOAD_BYTES);
@@ -50,8 +48,14 @@ export async function ingestPdfStream(input: {
   const temporaryPath = path.join(temporaryDirectory, `${crypto.randomUUID()}.part`);
   const upload = await writePdfUploadToFile(input.stream, temporaryPath, maxPdfUploadBytes());
   try {
-    const result = await execFileAsync("pdfinfo", [temporaryPath], { timeout: 30_000, maxBuffer: 2 * 1024 * 1024 });
-    const pageCount = Number(result.stdout.match(/^Pages:\s*(\d+)/mi)?.[1] ?? 0); if (!Number.isInteger(pageCount) || pageCount < 1) throw new Error("No readable pages");
+    const pdf = await openPdfDocument(temporaryPath);
+    try {
+      if (!Number.isInteger(pdf.document.numPages) || pdf.document.numPages < 1) {
+        throw new Error("No readable pages");
+      }
+    } finally {
+      await pdf.close();
+    }
   } catch {
     await fs.unlink(temporaryPath).catch(() => undefined);
     throw new PdfUploadStreamError("The PDF is password-protected or structurally invalid");

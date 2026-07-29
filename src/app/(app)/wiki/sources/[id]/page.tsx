@@ -27,7 +27,7 @@ export default async function SourcePage({ params }: { params: Promise<{ id: str
   const metadataDefaults = { title: data.source.title === filenameTitle ? metadata.suggestedTitle || data.source.title : data.source.title, issuedDate: data.source.issuedDate || metadata.suggestedIssuedDate || "", language: data.source.language || metadata.suggestedLanguage || "", doi: data.source.doi || metadata.suggestedDoi || "", isbn: data.source.isbn || metadata.suggestedIsbn || "", contributors: data.contributors.length ? data.contributors : metadata.suggestedAuthor ? [{ role: "author" as const, given: "", family: "", literal: metadata.suggestedAuthor }] : [] };
   const citation = formatBibliographyEntry({ ...data.source, contributors: data.contributors });
   const sourceContext = listEntityContext("wikiSource", id);
-  return <main className="mx-auto max-w-6xl p-5 md:p-8"><Link href="/wiki/sources" className="mb-5 inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"><ArrowLeft className="size-4" />{t("backToSources")}</Link>
+  return <div className="mx-auto max-w-6xl p-5 md:p-8"><Link href="/wiki/sources" className="mb-5 inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"><ArrowLeft className="size-4" />{t("backToSources")}</Link>
     <header className="mb-7 border-b pb-5"><div className="flex items-start justify-between gap-4"><div><p className="mb-1 text-xs font-semibold tracking-[0.16em] text-indigo-600 uppercase">{t(`sourceTypes.${data.source.type}`)}</p><h1 className="max-w-3xl text-3xl font-semibold tracking-tight">{data.source.title}</h1></div><SourcePageActions sourceId={id} sourceTitle={data.source.title} /></div><p className="mt-4 max-w-3xl border-l-2 border-indigo-300 pl-3 text-sm leading-relaxed text-muted-foreground">{citation}</p></header>
     <div className="mb-8"><PdfDocumentsPanel sourceId={id} documents={pdfDocuments} /></div>
     <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_17rem]"><SourceForm key={id} documentTypes={documentTypes} redirectTo="/wiki/sources" initial={{ ...data.source, ...metadataDefaults, tags: data.tags }} /><aside className="space-y-6"><AttachmentPanel entityType="wikiSource" entityId={id} initial={attachments} />
@@ -42,5 +42,5 @@ export default async function SourcePage({ params }: { params: Promise<{ id: str
       />
       <section><h3 className="mb-2 flex items-center gap-2 text-sm font-medium"><History className="size-4 text-indigo-500" />{t("history")}</h3><div className="space-y-2">{data.revisions.length ? data.revisions.map((revision) => <div key={revision.id} className="flex items-start justify-between gap-1 text-xs text-muted-foreground"><span><span className="font-medium text-foreground">v{revision.version}</span> · {revision.createdByName}<br />{revision.createdAt.toLocaleString()}</span><RestoreSourceRevisionButton revisionId={revision.id} /></div>) : <p className="text-xs text-muted-foreground">{t("noHistory")}</p>}</div></section>
     </aside></div>
-  </main>;
+  </div>;
 }

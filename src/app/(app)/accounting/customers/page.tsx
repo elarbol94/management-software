@@ -18,7 +18,7 @@ export default async function CustomersPage() {
           variant="ghost"
           size="icon-sm"
           nativeButton={false}
-          render={<Link href="/accounting/invoices" />}
+          render={<Link href="/accounting/invoices" aria-label={t("title")} />}
         >
           <ArrowLeft className="size-4" />
         </Button>

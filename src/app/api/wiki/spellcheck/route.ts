@@ -58,7 +58,7 @@ async function checkWithLanguageTool(text: string, language: ProofingLanguage) {
     const response = await fetch(endpoint, {
       method: "POST",
       body: new URLSearchParams({ text, language, enabledOnly: "false" }),
-      signal: AbortSignal.timeout(15_000),
+      signal: AbortSignal.timeout(6_000),
       cache: "no-store",
     });
     if (!response.ok) throw new Error(`LanguageTool returned ${response.status}`);

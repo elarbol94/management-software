@@ -8,7 +8,7 @@ export function RouteLoading({
   compact?: boolean;
 }) {
   return (
-    <main
+    <div
       className={compact ? "space-y-4 p-5 md:p-8" : "space-y-6"}
       aria-busy="true"
       aria-label="Loading"
@@ -37,6 +37,6 @@ export function RouteLoading({
           </div>
         ))}
       </div>
-    </main>
+    </div>
   );
 }

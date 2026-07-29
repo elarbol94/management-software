@@ -710,6 +710,25 @@ describe("project schedule", () => {
     expect(outdentTarget(tasks, "second")).toBeUndefined();
   });
 
+  it("keeps the visible sibling order when indent candidates share a sort order", () => {
+    const tasks = [
+      { id: "z-visible-first", parentTaskId: null, sortOrder: 0 },
+      { id: "a-visible-second", parentTaskId: null, sortOrder: 0 },
+    ];
+
+    expect(indentTarget(tasks, "a-visible-second")?.id).toBe("z-visible-first");
+    expect(indentTarget(tasks, "z-visible-first")).toBeNull();
+  });
+
+  it("uses the rendered order when column-scoped sort values overlap", () => {
+    const tasks = [
+      { id: "visible-first", parentTaskId: null, sortOrder: 2000 },
+      { id: "visible-second", parentTaskId: null, sortOrder: 1000 },
+    ];
+
+    expect(indentTarget(tasks, "visible-second")?.id).toBe("visible-first");
+  });
+
   it("moves a complete project task tree by a calendar-day offset", () => {
     expect(
       shiftScheduledTasks(

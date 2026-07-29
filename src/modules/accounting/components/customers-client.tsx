@@ -77,9 +77,14 @@ export function CustomersClient({ customers }: { customers: Customer[] }) {
 
   async function onDelete(customer: Customer) {
     if (!window.confirm(tCommon("confirmDeleteTitle"))) return;
-    const { deleted } = await deleteCustomer(customer.id);
-    if (!deleted) toast.info(t("customerInUse"));
-    router.refresh();
+    try {
+      const { deleted } = await deleteCustomer(customer.id);
+      if (!deleted) toast.info(t("customerInUse"));
+      else toast.success(tCommon("deleted"));
+      router.refresh();
+    } catch {
+      toast.error(tCommon("error"));
+    }
   }
 
   return (
@@ -120,6 +125,7 @@ export function CustomersClient({ customers }: { customers: Customer[] }) {
                     <Button
                       variant="ghost"
                       size="icon-xs"
+                      aria-label={tCommon("edit")}
                       onClick={() => openDialog(customer)}
                     >
                       <Pencil className="size-3.5" />
@@ -127,6 +133,7 @@ export function CustomersClient({ customers }: { customers: Customer[] }) {
                     <Button
                       variant="ghost"
                       size="icon-xs"
+                      aria-label={tCommon("delete")}
                       onClick={() => onDelete(customer)}
                     >
                       <Trash2 className="size-3.5" />

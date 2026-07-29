@@ -10,7 +10,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { usePathname, useSearchParams } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { Check, ClipboardPlus, Loader2, Save } from "lucide-react";
@@ -85,6 +85,7 @@ export function TaskCreateProvider({ children }: { children: ReactNode }) {
   const t = useTranslations("tasks");
   const tCommon = useTranslations("common");
   const pathname = usePathname();
+  const router = useRouter();
   const searchParams = useSearchParams();
   const deepLinkedTaskId = pathname === "/" ? searchParams.get("task") : null;
   const lastDeepLink = useRef<string | null>(null);
@@ -118,11 +119,28 @@ export function TaskCreateProvider({ children }: { children: ReactNode }) {
   }, [options, tCommon]);
 
   useEffect(() => {
-    if (!deepLinkedTaskId || lastDeepLink.current === deepLinkedTaskId) return;
+    if (!deepLinkedTaskId) {
+      if (lastDeepLink.current) {
+        lastDeepLink.current = null;
+        setOpen(false);
+      }
+      return;
+    }
+    if (lastDeepLink.current === deepLinkedTaskId) return;
+    let active = true;
     lastDeepLink.current = deepLinkedTaskId;
     void getContextualTaskForEdit(deepLinkedTaskId)
-      .then((task) => openTaskCreator({ task }))
-      .catch(() => toast.error(tCommon("error")));
+      .then((task) => {
+        if (active) openTaskCreator({ task });
+      })
+      .catch(() => {
+        if (!active) return;
+        lastDeepLink.current = null;
+        toast.error(tCommon("error"));
+      });
+    return () => {
+      active = false;
+    };
   }, [deepLinkedTaskId, openTaskCreator, tCommon]);
 
   function setDialogOpen(next: boolean) {
@@ -190,6 +208,7 @@ export function TaskCreateProvider({ children }: { children: ReactNode }) {
       request.onCreated?.(result.id);
       toast.success(request.task ? t("updated") : t("created"));
       setDialogOpen(false);
+      router.refresh();
     } catch {
       setErrors({ save: t("saveError") });
     } finally {
@@ -249,9 +268,9 @@ export function TaskCreateProvider({ children }: { children: ReactNode }) {
               </div>
               <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2">
-                <Label>{t("assignee")}</Label>
+                <Label htmlFor="context-task-assignee">{t("assignee")}</Label>
                 <Select value={assigneeId} onValueChange={(value) => setAssigneeId(value ?? NONE)}>
-                  <SelectTrigger className="w-full"><SelectValue>{assigneeLabel}</SelectValue></SelectTrigger>
+                  <SelectTrigger id="context-task-assignee" className="w-full"><SelectValue>{assigneeLabel}</SelectValue></SelectTrigger>
                   <SelectContent>
                     <SelectItem value={NONE}>{t("unassigned")}</SelectItem>
                     {options?.members.map((member) => (
@@ -261,9 +280,9 @@ export function TaskCreateProvider({ children }: { children: ReactNode }) {
                 </Select>
               </div>
               <div className="space-y-2">
-                <Label>{t("priority")}</Label>
+                <Label htmlFor="context-task-priority">{t("priority")}</Label>
                 <Select value={priority} onValueChange={(value) => setPriority(value as TaskPriority)}>
-                  <SelectTrigger className="w-full"><SelectValue>{t(`priorities.${priority}`)}</SelectValue></SelectTrigger>
+                  <SelectTrigger id="context-task-priority" className="w-full"><SelectValue>{t(`priorities.${priority}`)}</SelectValue></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="low">{t("priorities.low")}</SelectItem>
                     <SelectItem value="medium">{t("priorities.medium")}</SelectItem>
@@ -276,9 +295,9 @@ export function TaskCreateProvider({ children }: { children: ReactNode }) {
                 <Input id="context-task-due" type="date" value={dueDate} onChange={(event) => setDueDate(event.target.value)} />
               </div>
               <div className="space-y-2">
-                <Label>{t("status")}</Label>
+                <Label htmlFor="context-task-status">{t("status")}</Label>
                 <Select value={status} onValueChange={(value) => setStatus(value as TaskStatus)}>
-                  <SelectTrigger className="w-full"><SelectValue>{t(`statuses.${status}`)}</SelectValue></SelectTrigger>
+                  <SelectTrigger id="context-task-status" className="w-full"><SelectValue>{t(`statuses.${status}`)}</SelectValue></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="open">{t("statuses.open")}</SelectItem>
                     <SelectItem value="done">{t("statuses.done")}</SelectItem>
@@ -287,9 +306,9 @@ export function TaskCreateProvider({ children }: { children: ReactNode }) {
               </div>
               </div>
               <div className="space-y-2">
-              <Label>{t("project")}</Label>
+              <Label htmlFor="context-task-project">{t("project")}</Label>
               <Select value={projectId} onValueChange={(value) => setProjectId(value ?? NONE)}>
-                <SelectTrigger className="w-full"><SelectValue>{projectLabel}</SelectValue></SelectTrigger>
+                <SelectTrigger id="context-task-project" className="w-full"><SelectValue>{projectLabel}</SelectValue></SelectTrigger>
                 <SelectContent>
                   <SelectItem value={NONE}>{t("noProject")}</SelectItem>
                   {options?.projects.map((project) => (

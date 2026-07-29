@@ -2,15 +2,18 @@ import { requireUser } from "@/lib/auth";
 import {
   addDays,
   endOfMonthWindow,
+  isValidDate,
   localDateInZone,
   startOfWeek,
 } from "@/modules/calendar/date-utils";
 import { CalendarClient } from "@/modules/calendar/components/calendar-client";
-import { listCalendarWorkspace } from "@/modules/calendar/queries";
+import {
+  getCalendarTimezone,
+  listCalendarWorkspace,
+} from "@/modules/calendar/queries";
 import type { CalendarView } from "@/modules/calendar/types";
 
 const views = new Set<CalendarView>(["week", "month", "agenda", "team"]);
-const datePattern = /^\d{4}-\d{2}-\d{2}$/;
 
 export default async function CalendarPage({
   searchParams,
@@ -33,8 +36,11 @@ export default async function CalendarPage({
   const view = views.has(query.view as CalendarView)
     ? (query.view as CalendarView)
     : "week";
-  const fallbackDate = localDateInZone(new Date(), "Europe/Berlin");
-  const date = datePattern.test(query.date ?? "") ? query.date! : fallbackDate;
+  const fallbackDate = localDateInZone(
+    new Date(),
+    getCalendarTimezone(currentUser.id),
+  );
+  const date = isValidDate(query.date ?? "") ? query.date! : fallbackDate;
 
   let from: string;
   let to: string;

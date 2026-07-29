@@ -3,16 +3,7 @@ import { getTranslations } from "next-intl/server";
 import { Landmark } from "@/components/server-safe-icons";
 import { AccountingNav } from "@/modules/accounting/components/accounting-nav";
 
-export const unstable_instant = {
-  prefetch: "runtime",
-  samples: [
-    {
-      cookies: [{ name: "locale", value: "de" }],
-      headers: [["rsc", "1"], ["next-action", null]],
-      params: { id: "sample", projectId: "sample" },
-    },
-  ],
-};
+export const unstable_instant = false;
 
 async function AccountingHeader() {
   const t = await getTranslations("accountingShell");

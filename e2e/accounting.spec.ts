@@ -47,7 +47,12 @@ test("create an entry and see it in ledger, report and CSV", async ({ page }) =>
   });
   await expect(page.getByText("beleg.pdf")).toBeVisible();
 
+  const documentTimeOrigin = await page.evaluate(() => performance.timeOrigin);
   await page.getByRole("button", { name: "Buchung finalisieren" }).click();
+  await page.waitForFunction(
+    (previousTimeOrigin) => performance.timeOrigin !== previousTimeOrigin,
+    documentTimeOrigin,
+  );
 
   // Row appears in the ledger with negative (expense) amounts.
   const row = page.getByRole("row", { name: /Playwright Hosting/ });
@@ -112,34 +117,32 @@ test("keeps planning section headings fixed during horizontal scrolling", async 
   const expenseLabel = expenseHeading.locator("td").first();
   const monthInput = page.getByLabel("Miete Jan");
 
-  const before = await page.evaluate(() => {
-    const container = document.querySelector('[data-slot="table-container"]');
-    const heading = document.querySelector('tr:has(td.sticky)');
-    const input = document.querySelector('input[aria-label="Miete Jan"]');
-    if (!container || !heading || !input) throw new Error("Planning table elements missing");
-    return {
-      maxScroll: container.scrollWidth - container.clientWidth,
-      headingLeft: heading.getBoundingClientRect().left,
-      inputLeft: input.getBoundingClientRect().left,
-    };
-  });
+  const before = {
+    maxScroll: await tableContainer.evaluate(
+      (element) => element.scrollWidth - element.clientWidth,
+    ),
+    headingLeft: await expenseLabel.evaluate(
+      (element) => element.getBoundingClientRect().left,
+    ),
+    inputLeft: await monthInput.evaluate(
+      (element) => element.getBoundingClientRect().left,
+    ),
+  };
   expect(before.maxScroll).toBeGreaterThan(0);
 
   await tableContainer.evaluate((element) => {
     element.scrollLeft = Math.min(400, element.scrollWidth - element.clientWidth);
   });
 
-  const after = await page.evaluate(() => {
-    const container = document.querySelector('[data-slot="table-container"]');
-    const heading = document.querySelector('tr:has(td.sticky)');
-    const input = document.querySelector('input[aria-label="Miete Jan"]');
-    if (!container || !heading || !input) throw new Error("Planning table elements missing");
-    return {
-      scrollLeft: container.scrollLeft,
-      headingLeft: heading.getBoundingClientRect().left,
-      inputLeft: input.getBoundingClientRect().left,
-    };
-  });
+  const after = {
+    scrollLeft: await tableContainer.evaluate((element) => element.scrollLeft),
+    headingLeft: await expenseLabel.evaluate(
+      (element) => element.getBoundingClientRect().left,
+    ),
+    inputLeft: await monthInput.evaluate(
+      (element) => element.getBoundingClientRect().left,
+    ),
+  };
 
   expect(after.scrollLeft).toBeGreaterThan(0);
   expect(Math.abs(after.headingLeft - before.headingLeft)).toBeLessThan(2);
@@ -208,7 +211,21 @@ test("calculate, save, and duplicate automatic personnel costs", async ({ page }
   await page.locator("#warning-reason").fill("Lohnabrechnung wird nachgereicht.");
 
   await expect(page.getByText("€ 2.002,03")).toBeVisible();
-  await expect(page.getByText("€ 3.497,85")).toHaveCount(2);
+  const employerCostLabels = page.getByText("Gesamte Arbeitgeberkosten", {
+    exact: true,
+  });
+  await expect(employerCostLabels).toHaveCount(2);
+  await expect(employerCostLabels.first().locator("..")).toContainText(
+    "€ 3.497,85",
+  );
+  await expect(employerCostLabels.nth(1).locator("..")).toContainText(
+    "€ 3.497,85",
+  );
+  await expect(
+    page
+      .getByText("Summe der tatsächlichen Zahlungen", { exact: true })
+      .locator(".."),
+  ).toContainText("€ 3.497,85");
   await page.getByRole("button", { name: "Buchung finalisieren" }).click();
 
   const row = page.getByRole("row", { name: /Lohnverrechnung Juli/ });
@@ -225,7 +242,13 @@ test("calculate, save, and duplicate automatic personnel costs", async ({ page }
   await expect(page.locator("#payroll-month")).toHaveValue("2026-08");
   await page.locator("#entry-description").fill("Lohnverrechnung August");
   await page.locator("#warning-reason").fill("Lohnabrechnung wird nachgereicht.");
+  const documentTimeOrigin = await page.evaluate(() => performance.timeOrigin);
   await page.getByRole("button", { name: "Buchung finalisieren" }).click();
+  await page.waitForFunction(
+    (previousTimeOrigin) => performance.timeOrigin !== previousTimeOrigin,
+    documentTimeOrigin,
+  );
+  await expect(page.getByRole("heading", { name: "Buchungen" })).toBeVisible();
   await page.goto("/accounting/bookings?year=2026&month=8");
   await expect(page.getByRole("row", { name: /Lohnverrechnung August/ })).toBeVisible();
 });
@@ -238,7 +261,10 @@ test("language switcher changes the UI to English and back", async ({ page }) =>
   await expect(page.getByText("Willkommen, E2E Admin!")).toBeVisible();
 
   // Open the user menu and switch to English.
-  await page.getByText("admin@example.com").first().click();
+  const userMenu = page
+    .getByTestId("app-sidebar")
+    .getByRole("button", { name: /E2E Admin/ });
+  await userMenu.click();
   await page.getByText("Sprache").hover();
   await page.getByRole("menuitem", { name: "Englisch" }).click();
   await expect(page.getByText("Welcome, E2E Admin!")).toBeVisible();
@@ -247,7 +273,7 @@ test("language switcher changes the UI to English and back", async ({ page }) =>
   await expect(page.getByRole("link", { name: "Accounting" })).toBeVisible();
 
   // And back to German (cookie persists across reloads).
-  await page.getByText("admin@example.com").first().click();
+  await userMenu.click();
   await page.getByText("Language").hover();
   await page.getByRole("menuitem", { name: "German" }).click();
   await expect(page.getByText("Willkommen, E2E Admin!")).toBeVisible();

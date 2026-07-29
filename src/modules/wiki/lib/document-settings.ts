@@ -56,6 +56,11 @@ export type DocumentSettingsV1 = {
     heading: string;
     pageBreakBefore: boolean;
   };
+  figures: {
+    enabled: boolean;
+    heading: string;
+    pageBreakBefore: boolean;
+  };
   variables: Record<string, string>;
   constraints: DocumentConstraint[];
   metadata: {
@@ -110,6 +115,7 @@ export const DEFAULT_DOCUMENT_SETTINGS: DocumentSettingsV1 = {
   header: { enabled: true, left: "{title}", center: "", right: "{programme}" },
   footer: { enabled: true, left: "{applicant}", center: "", right: "", pageNumbers: true },
   bibliography: { enabled: true, heading: "References", pageBreakBefore: true },
+  figures: { enabled: false, heading: "List of figures", pageBreakBefore: true },
   variables: {
     applicant: "",
     programme: "",
@@ -149,6 +155,7 @@ export function normalizeDocumentSettings(value: unknown): DocumentSettingsV1 {
   const header = input.header ?? fallback.header;
   const footer = input.footer ?? fallback.footer;
   const bibliography = input.bibliography ?? fallback.bibliography;
+  const figures = input.figures ?? fallback.figures;
   const metadata = input.metadata ?? fallback.metadata;
   const variables = input.variables && typeof input.variables === "object"
     ? Object.fromEntries(
@@ -218,6 +225,11 @@ export function normalizeDocumentSettings(value: unknown): DocumentSettingsV1 {
       enabled: bibliography.enabled !== false,
       heading: safeText(bibliography.heading, fallback.bibliography.heading),
       pageBreakBefore: bibliography.pageBreakBefore !== false,
+    },
+    figures: {
+      enabled: figures.enabled === true,
+      heading: safeText(figures.heading, fallback.figures.heading),
+      pageBreakBefore: figures.pageBreakBefore !== false,
     },
     variables: { ...fallback.variables, ...variables },
     constraints,

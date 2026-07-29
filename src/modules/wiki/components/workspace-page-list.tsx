@@ -136,6 +136,7 @@ export function WorkspacePageList({
           <div className="relative min-w-56 flex-1">
             <Search className="absolute top-2.5 left-3 size-4 text-muted-foreground" />
             <Input
+              aria-label={t("searchNotes")}
               value={query}
               onChange={(event) => setQuery(event.target.value)}
               placeholder={t("searchNotes")}
@@ -148,7 +149,7 @@ export function WorkspacePageList({
               setStatusFilter((value ?? "all") as Status | "all")
             }
           >
-            <SelectTrigger className="w-36">
+            <SelectTrigger aria-label={t("allPageStatuses")} className="w-36">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -164,7 +165,7 @@ export function WorkspacePageList({
             value={tagFilter}
             onValueChange={(value) => setTagFilter(value ?? "all")}
           >
-            <SelectTrigger className="w-40">
+            <SelectTrigger aria-label={t("allTags")} className="w-40">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -334,6 +335,8 @@ export function WorkspacePageList({
                             disabled={pendingId === page.id}
                             onClick={() => void changeFavorite(page)}
                             title={t("favorite")}
+                            aria-label={`${t("favorite")}: ${page.title}`}
+                            aria-pressed={page.favorite}
                           >
                             <Star
                               className={cn(
@@ -352,6 +355,7 @@ export function WorkspacePageList({
                           >
                             <SelectTrigger
                               data-testid="workspace-note-status"
+                              aria-label={`${t("allPageStatuses")}: ${page.title}`}
                               className="w-32"
                             >
                               <SelectValue />

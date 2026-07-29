@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useFormatter, useTranslations } from "next-intl";
@@ -48,6 +48,8 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { TaskDialog, type BoardTaskDto, type MemberDto } from "./task-dialog";
 import { cn } from "@/lib/utils";
+import { localDateValue } from "@/modules/tasks/deadline-utils";
+import { localDateInZone } from "@/modules/calendar/date-utils";
 
 type Project = typeof projectsTable.$inferSelect;
 type ColumnDto = {
@@ -206,8 +208,9 @@ function TaskCard({
 }) {
   const t = useTranslations("projects");
   const format = useFormatter();
+  const today = localDateInZone(new Date(), "Europe/Vienna");
   const overdue =
-    task.dueDate !== null && task.dueDate < new Date().toISOString().slice(0, 10);
+    task.dueDate !== null && task.dueDate < today;
   const subtasks = subtasksByParent[task.id] ?? [];
   const leaves = descendantLeaves(task.id, subtasksByParent);
   const completedSubtasks = leaves.filter(
@@ -224,7 +227,22 @@ function TaskCard({
         overlay ? "rotate-2 shadow-lg" : "hover:border-ring/40"
       }`}
     >
-      <span className="font-medium">{task.title}</span>
+      {onClick ? (
+        <button
+          type="button"
+          className="w-fit max-w-full text-left font-medium hover:underline focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          onPointerDown={(event) => event.stopPropagation()}
+          onKeyDown={(event) => event.stopPropagation()}
+          onClick={(event) => {
+            event.stopPropagation();
+            onClick();
+          }}
+        >
+          {task.title}
+        </button>
+      ) : (
+        <span className="font-medium">{task.title}</span>
+      )}
       <div className="flex flex-wrap items-center gap-2">
         <Badge className={`${PRIORITY_STYLES[task.priority]} border-transparent`}>
           {t(
@@ -242,7 +260,7 @@ function TaskCard({
             }`}
           >
             <CalendarDays className="size-3" />
-            {format.dateTime(new Date(task.dueDate), {
+            {format.dateTime(localDateValue(task.dueDate)!, {
               day: "2-digit",
               month: "2-digit",
             })}
@@ -403,6 +421,7 @@ function BoardColumn({
   canDelete: boolean;
 }) {
   const t = useTranslations("projects");
+  const tCommon = useTranslations("common");
   const { setNodeRef } = useDroppable({
     id: column.id,
     data: { type: "column" },
@@ -417,11 +436,19 @@ function BoardColumn({
         <span className="text-sm font-medium">{column.name}</span>
         <span className="text-xs text-muted-foreground">{tasks.length}</span>
         <div className="ml-auto flex items-center">
-          <Button variant="ghost" size="icon-xs" onClick={onAddTask} title={t("newTask")}>
+          <Button variant="ghost" size="icon-xs" onClick={onAddTask} title={t("newTask")} aria-label={t("newTask")}>
             <Plus className="size-3.5" />
           </Button>
           <DropdownMenu>
-            <DropdownMenuTrigger render={<Button variant="ghost" size="icon-xs" />}>
+            <DropdownMenuTrigger
+              render={
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  aria-label={tCommon("actions")}
+                />
+              }
+            >
               <MoreHorizontal className="size-3.5" />
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
@@ -508,6 +535,7 @@ export function BoardClient({
   const [expandedTasks, setExpandedTasks] = useState<Set<string>>(
     () => new Set(),
   );
+  const dragStartBoardRef = useRef<Record<string, BoardTaskDto[]> | null>(null);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
@@ -532,7 +560,10 @@ export function BoardClient({
         return;
       }
       const task = taskIndex.get(focusedTaskId);
-      if (!task) return;
+      if (!task) {
+        setTaskDialogOpen(false);
+        return;
+      }
       setEditingTask(task);
       setNewTaskColumnId(task.columnId);
       setNewTaskParentId(task.parentTaskId);
@@ -549,7 +580,16 @@ export function BoardClient({
   }
 
   function onDragStart(event: DragStartEvent) {
+    dragStartBoardRef.current = board;
     setActiveTask(taskIndex.get(String(event.active.id)) ?? null);
+  }
+
+  function restoreCancelledDrag() {
+    if (dragStartBoardRef.current) {
+      setBoard(dragStartBoardRef.current);
+    }
+    dragStartBoardRef.current = null;
+    setActiveTask(null);
   }
 
   function onDragOver(event: DragOverEvent) {
@@ -585,7 +625,10 @@ export function BoardClient({
   async function onDragEnd(event: DragEndEvent) {
     const { active, over } = event;
     setActiveTask(null);
-    if (!over) return;
+    if (!over) {
+      restoreCancelledDrag();
+      return;
+    }
     const activeId = String(active.id);
     const overId = String(over.id);
     const toColumn =
@@ -593,6 +636,7 @@ export function BoardClient({
     if (!toColumn) return;
 
     // Compute final position within the target column.
+    dragStartBoardRef.current = null;
     setBoard((current) => {
       const column = [...(current[toColumn] ?? [])];
       const fromIndex = column.findIndex((item) => item.id === activeId);
@@ -699,6 +743,7 @@ export function BoardClient({
           size="icon-sm"
           nativeButton={false}
           render={<Link href="/projects" />}
+          aria-label={t("title")}
         >
           <ArrowLeft className="size-4" />
         </Button>
@@ -715,6 +760,7 @@ export function BoardClient({
           onClick={() => {
             openNewTask(columns[0]?.id ?? "");
           }}
+          disabled={columns.length === 0}
         >
           <Plus className="size-4" />
           {t("newTask")}
@@ -727,6 +773,7 @@ export function BoardClient({
         onDragStart={onDragStart}
         onDragOver={onDragOver}
         onDragEnd={onDragEnd}
+        onDragCancel={restoreCancelledDrag}
       >
         <div className="flex min-w-0 max-w-full flex-1 items-start gap-3 overflow-x-auto pb-4">
           {columns.map((column) => (

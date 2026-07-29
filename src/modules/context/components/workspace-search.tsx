@@ -17,6 +17,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { searchWorkspace } from "../actions";
 import type {
@@ -43,6 +44,8 @@ export function WorkspaceSearch({
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<WorkspaceSearchResultDto[]>([]);
   const [pending, setPending] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const [retryVersion, setRetryVersion] = useState(0);
 
   useEffect(() => {
     function shortcut(event: KeyboardEvent) {
@@ -69,7 +72,16 @@ export function WorkspaceSearch({
       setPending(true);
       void searchWorkspace(query)
         .then((next) => {
-          if (!cancelled) setResults(next);
+          if (!cancelled) {
+            setResults(next);
+            setFailed(false);
+          }
+        })
+        .catch(() => {
+          if (!cancelled) {
+            setResults([]);
+            setFailed(true);
+          }
         })
         .finally(() => {
           if (!cancelled) setPending(false);
@@ -79,18 +91,22 @@ export function WorkspaceSearch({
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [open, query]);
+  }, [open, query, retryVersion]);
+
+  function changeOpen(next: boolean) {
+    onOpenChange(next);
+    if (!next) {
+      setQuery("");
+      setResults([]);
+      setPending(false);
+      setFailed(false);
+    }
+  }
 
   return (
     <Dialog
       open={open}
-      onOpenChange={(next) => {
-        onOpenChange(next);
-        if (!next) {
-          setQuery("");
-          setResults([]);
-        }
-      }}
+      onOpenChange={changeOpen}
     >
       <DialogContent className="top-[14vh] translate-y-0 gap-0 overflow-hidden p-0 sm:max-w-2xl">
         <DialogHeader className="sr-only">
@@ -103,7 +119,13 @@ export function WorkspaceSearch({
           <Input
             autoFocus
             value={query}
-            onChange={(event) => setQuery(event.target.value)}
+            onChange={(event) => {
+              const next = event.target.value;
+              setQuery(next);
+              setResults([]);
+              setFailed(false);
+              setPending(next.trim().length >= 2);
+            }}
             placeholder={
               de
                 ? "Projekte, Aufgaben, Wiki und Quellen durchsuchen…"
@@ -117,13 +139,42 @@ export function WorkspaceSearch({
         </div>
         <div className="max-h-[min(32rem,65dvh)] overflow-y-auto p-2">
           {pending ? (
-            <Loader2 className="mx-auto my-10 size-5 animate-spin text-muted-foreground" />
+            <div
+              className="grid place-items-center py-10"
+              role="status"
+              aria-label={de ? "Suche läuft" : "Searching"}
+            >
+              <Loader2 className="size-5 animate-spin text-muted-foreground" />
+            </div>
           ) : query.trim().length < 2 ? (
             <p className="py-10 text-center text-sm text-muted-foreground">
               {de
                 ? "Mindestens zwei Zeichen eingeben."
                 : "Enter at least two characters."}
             </p>
+          ) : failed ? (
+            <div
+              role="alert"
+              className="grid justify-items-center gap-3 py-10 text-center text-sm text-destructive"
+            >
+              <p>
+                {de
+                  ? "Die Suche ist momentan nicht verfügbar."
+                  : "Search is temporarily unavailable."}
+              </p>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  setFailed(false);
+                  setPending(true);
+                  setRetryVersion((value) => value + 1);
+                }}
+              >
+                {de ? "Erneut versuchen" : "Try again"}
+              </Button>
+            </div>
           ) : results.length === 0 ? (
             <p className="py-10 text-center text-sm text-muted-foreground">
               {de ? "Keine passenden Einträge gefunden." : "No matching items found."}
@@ -134,7 +185,7 @@ export function WorkspaceSearch({
                 <Link
                   key={`${result.type}:${result.id}:${result.href}`}
                   href={result.href}
-                  onClick={() => onOpenChange(false)}
+                  onClick={() => changeOpen(false)}
                   className="flex items-center gap-3 rounded-lg px-3 py-2.5 hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 >
                   <span className="grid size-8 shrink-0 place-items-center rounded-md bg-indigo-50 text-indigo-600 dark:bg-indigo-950/40 dark:text-indigo-300">

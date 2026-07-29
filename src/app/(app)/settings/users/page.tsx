@@ -22,14 +22,14 @@ import { CreateUserDialog } from "./create-user-dialog";
 
 export default async function UsersSettingsPage() {
   const currentUser = await requireUser();
-  if (currentUser.role !== "admin") redirect("/settings/company");
+  if (currentUser.role !== "admin") redirect("/settings/profile");
 
   const users = listUsers();
   const t = await getTranslations("settings.users");
 
   return (
     <Card>
-      <CardHeader className="flex flex-row items-start justify-between">
+      <CardHeader className="flex flex-col items-start justify-between gap-3 sm:flex-row">
         <div>
           <CardTitle>{t("title")}</CardTitle>
           <CardDescription>{t("description")}</CardDescription>
