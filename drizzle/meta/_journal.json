@@ -281,6 +281,20 @@
       "when": 1785342578444,
       "tag": "0039_reliable_wiki_editor",
       "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "6",
+      "when": 1785428978444,
+      "tag": "0040_svg_source_paths",
+      "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "6",
+      "when": 1785515378444,
+      "tag": "0041_svg_size_scale",
+      "breakpoints": true
     }
   ]
 }

@@ -5,6 +5,8 @@ export const DOCUMENT_SETTINGS_VERSION = 1 as const;
 export type DocumentPageSize = "A4" | "Letter";
 export type DocumentOrientation = "portrait" | "landscape";
 export type DocumentThemeId = "formal" | "report" | "concept" | "custom";
+export const DOCUMENT_DIAGRAM_SIZE_MODES = ["off", "scale", "rewrite"] as const;
+export type DocumentDiagramSizeMode = (typeof DOCUMENT_DIAGRAM_SIZE_MODES)[number];
 
 export type DocumentConstraint = {
   id: string;
@@ -68,6 +70,19 @@ export type DocumentSettingsV1 = {
     heading: string;
     pageBreakBefore: boolean;
   };
+  diagrams: {
+    /** Redraw SVG label text in the document's body font. */
+    matchFont: boolean;
+    /**
+     * How label size is matched to the body size:
+     * - `scale` resizes the whole drawing, keeping its layout intact.
+     * - `rewrite` resizes only the text, keeping the drawing's size — this can
+     *   push labels off the shapes they belong to, since SVG text never reflows.
+     */
+    sizeMode: DocumentDiagramSizeMode;
+    /** Tuning multiplier on that match — diagrams are drawn at arbitrary scales. */
+    sizeScale: number;
+  };
   variables: Record<string, string>;
   constraints: DocumentConstraint[];
   metadata: {
@@ -124,6 +139,8 @@ export const DEFAULT_DOCUMENT_SETTINGS: DocumentSettingsV1 = {
   footer: { enabled: true, left: "{applicant}", center: "", right: "", pageNumbers: true, differentFirstPage: true, pageNumberStart: 1 },
   bibliography: { enabled: true, heading: "References", pageBreakBefore: true },
   figures: { enabled: false, heading: "List of figures", pageBreakBefore: true },
+  // Off by default: matching is a display-time override of artwork the author drew deliberately.
+  diagrams: { matchFont: false, sizeMode: "off", sizeScale: 1 },
   variables: {
     applicant: "",
     programme: "",
@@ -164,6 +181,7 @@ export function normalizeDocumentSettings(value: unknown): DocumentSettingsV1 {
   const footer = input.footer ?? fallback.footer;
   const bibliography = input.bibliography ?? fallback.bibliography;
   const figures = input.figures ?? fallback.figures;
+  const diagrams = input.diagrams ?? fallback.diagrams;
   const metadata = input.metadata ?? fallback.metadata;
   const variables = input.variables && typeof input.variables === "object"
     ? Object.fromEntries(
@@ -245,6 +263,14 @@ export function normalizeDocumentSettings(value: unknown): DocumentSettingsV1 {
       enabled: figures.enabled === true,
       heading: safeText(figures.heading, fallback.figures.heading),
       pageBreakBefore: figures.pageBreakBefore !== false,
+    },
+    diagrams: {
+      matchFont: diagrams.matchFont === true,
+      sizeMode: DOCUMENT_DIAGRAM_SIZE_MODES.includes(diagrams.sizeMode)
+        ? diagrams.sizeMode
+        // Reads the boolean this field replaced, so settings saved before the rewrite mode existed keep working.
+        : (diagrams as { matchSize?: unknown }).matchSize === true ? "scale" : fallback.diagrams.sizeMode,
+      sizeScale: finiteNumber(diagrams.sizeScale, fallback.diagrams.sizeScale, 0.25, 4),
     },
     variables: { ...fallback.variables, ...variables },
     constraints,

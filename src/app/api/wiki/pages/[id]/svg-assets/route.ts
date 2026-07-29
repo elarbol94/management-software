@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { getSession } from "@/lib/auth";
-import { listSvgAssets, restoreSvgAsset, updateSvgAsset } from "@/modules/wiki/svg-assets";
+import { listSvgAssets, restoreSvgAsset, syncSvgAssetsFromFolder, updateSvgAsset } from "@/modules/wiki/svg-assets";
+
+const MAX_SYNC_FILES = 500;
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -14,6 +16,7 @@ const updateSchema = z.object({
     text: z.string().max(10_000),
     binding: z.string().max(50),
   })).max(1_000),
+  sizeScale: z.number().min(0.25).max(4).nullish(),
 });
 const restoreSchema = z.object({
   action: z.literal("restore"),
@@ -30,6 +33,32 @@ export async function GET(_request: Request, { params }: Params) {
     return NextResponse.json({ assets: listSvgAssets(id, session.user.id) });
   } catch {
     return NextResponse.json({ error: "SVG assets could not be loaded" }, { status: 400 });
+  }
+}
+
+/** Folder sync: multipart `files` plus a matching `paths` entry per file. */
+export async function POST(request: Request, { params }: Params) {
+  const session = await getSession();
+  if (!session?.user?.id) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const [{ id }, formData] = await Promise.all([params, request.formData()]);
+  const files = formData.getAll("files").filter((entry): entry is File => entry instanceof File);
+  const paths = formData.getAll("paths");
+  if (
+    !files.length ||
+    files.length > MAX_SYNC_FILES ||
+    files.length !== paths.length ||
+    paths.some((path) => typeof path !== "string" || !path || path.length > 400)
+  ) {
+    return NextResponse.json({ error: "Invalid request" }, { status: 400 });
+  }
+  try {
+    return NextResponse.json(await syncSvgAssetsFromFolder({
+      pageId: id,
+      userId: session.user.id,
+      files: files.map((file, index) => ({ path: String(paths[index]), file })),
+    }));
+  } catch {
+    return NextResponse.json({ error: "Folder could not be imported" }, { status: 400 });
   }
 }
 

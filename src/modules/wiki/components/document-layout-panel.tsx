@@ -21,7 +21,9 @@ import {
 import { applyDocumentTemplate, savePageAsDocumentTemplate } from "../document-actions";
 import type { StoredDocumentTemplate } from "../document-queries";
 import {
+  DOCUMENT_DIAGRAM_SIZE_MODES,
   type DocumentConstraint,
+  type DocumentDiagramSizeMode,
   type DocumentPreflightIssue,
   type DocumentSettingsV1,
 } from "../lib/document-settings";
@@ -218,6 +220,21 @@ export function DocumentLayoutPanel({
           {settings.figures.enabled && <div className="grid gap-2 rounded-lg border bg-muted/35 p-2">
             <Field label={t("figureIndexHeading")}><Input className="h-8" value={settings.figures.heading} onChange={(event) => patch({ figures: { ...settings.figures, heading: event.target.value } })} /></Field>
             <p className="text-[11px] text-muted-foreground">{t("figureIndexCount", { count: figureCount })}</p>
+          </div>}
+          <Toggle checked={settings.diagrams.matchFont} onChange={(matchFont) => patch({ diagrams: { ...settings.diagrams, matchFont } })} label={t("diagramMatchFont")} />
+          <Field label={t("diagramSizeMode")}>
+            <Select value={settings.diagrams.sizeMode} onValueChange={(value) => patch({ diagrams: { ...settings.diagrams, sizeMode: (value ?? "off") as DocumentDiagramSizeMode } })}>
+              <SelectTrigger className="h-8"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {DOCUMENT_DIAGRAM_SIZE_MODES.map((mode) => <SelectItem key={mode} value={mode}>{t(`diagramSizeMode_${mode}`)}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </Field>
+          {settings.diagrams.sizeMode !== "off" && <div className="grid gap-2 rounded-lg border bg-muted/35 p-2">
+            <Field label={t("diagramSizeScale")}>
+              <Input className="h-8" type="number" min={0.25} max={4} step={0.05} value={settings.diagrams.sizeScale} onChange={(event) => patch({ diagrams: { ...settings.diagrams, sizeScale: Number(event.target.value) } })} />
+            </Field>
+            <p className="text-[11px] text-muted-foreground">{t(settings.diagrams.sizeMode === "rewrite" ? "diagramRewriteHint" : "diagramSizeScaleHint")}</p>
           </div>}
         </section>
       </TabsContent>

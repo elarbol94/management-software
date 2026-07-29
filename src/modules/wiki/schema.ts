@@ -2,6 +2,7 @@ import {
   sqliteTable,
   text,
   integer,
+  real,
   index,
   uniqueIndex,
   primaryKey,
@@ -263,12 +264,20 @@ export const wikiSvgAssets = sqliteTable(
     currentSvg: text("current_svg").notNull(),
     bindingsJson: text("bindings_json").notNull().default("{}"),
     version: integer("version").notNull().default(1),
+    /** Folder-relative path of the imported file, used to re-match it on the next folder sync. */
+    sourcePath: text("source_path"),
+    /** Hash of the last imported source bytes, so an unchanged file is not re-versioned. */
+    sourceSha256: text("source_sha256"),
+    /** Overrides the document's diagram scale for this one graphic. */
+    sizeScale: real("size_scale"),
     updatedBy: text("updated_by").notNull().references(() => user.id),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
     updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
   },
   (table) => [
     uniqueIndex("wiki_svg_assets_attachment_unique").on(table.attachmentId),
+    // NULL source paths repeat freely in SQLite, so hand-added assets stay unaffected.
+    uniqueIndex("wiki_svg_assets_page_source_unique").on(table.pageId, table.sourcePath),
     index("wiki_svg_assets_page_idx").on(table.pageId, table.updatedAt),
   ],
 );
