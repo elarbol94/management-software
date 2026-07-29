@@ -12,7 +12,7 @@ const doc: TiptapNode = {
     { type: "paragraph", content: [
       { type: "text", text: "A ", marks: [{ type: "bold" }] },
       { type: "documentVariable", attrs: { key: "applicant" } },
-      { type: "citation", attrs: { label: "(Example, 2026)" } },
+      { type: "citation", attrs: { label: "(Example, 2026)", items: [{ sourceId: "source-1" }] } },
     ] },
     { type: "bulletList", content: [
       { type: "listItem", content: [{ type: "paragraph", content: [{ type: "text", text: "Bullet" }] }] },
@@ -44,6 +44,8 @@ describe("document renderer", () => {
     const result = await renderDocumentHtml({ title: "Proposal", doc, settings });
     expect(result.html).toContain('<h1 id="summary"');
     expect(result.html).toContain("Ada");
+    expect(result.html).toContain('<span class="citation">[1]</span>');
+    expect(result.html).not.toContain("(Example, 2026)");
     expect(result.html).toContain("<thead>");
     expect(result.html).toContain('href="#summary"');
     expect(result.html).not.toContain("data-comment");
@@ -56,6 +58,7 @@ describe("document renderer", () => {
     });
     expect(markdown).toContain("# Summary");
     expect(markdown).toContain("Ada");
+    expect(markdown).toContain("[1]");
     expect(markdown).toContain("- Bullet");
     expect(markdown).toContain("3. Third");
     expect(markdown).toContain("4. Fourth");

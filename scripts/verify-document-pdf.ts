@@ -11,17 +11,20 @@ fs.mkdirSync(outputDirectory, { recursive: true });
 
 const settings = structuredClone(DEFAULT_DOCUMENT_SETTINGS);
 settings.cover = {
+  ...settings.cover,
   enabled: true,
   eyebrow: "FUNDING APPLICATION",
   subtitle: "A deterministic document-mode quality check",
 };
 settings.header = {
+  ...settings.header,
   enabled: true,
   left: "{projectTitle}",
   center: "",
   right: "{programme}",
 };
 settings.footer = {
+  ...settings.footer,
   enabled: true,
   left: "{applicant}",
   center: "Confidential",

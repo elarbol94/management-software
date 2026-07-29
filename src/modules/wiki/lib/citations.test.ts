@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatBibliographyEntry, formatInlineCitation, normalizeDoi, normalizeIsbn, normalizeUrl, type CitationSource } from "./citations";
+import { formatBibliography, formatBibliographyEntry, formatInlineCitation, normalizeDoi, normalizeIsbn, normalizeUrl, toCslJson, type CitationSource } from "./citations";
 
 const source: CitationSource = {
   id: "source-1", type: "journalArticle", title: "Knowledge systems", issuedDate: "2026",
@@ -9,13 +9,44 @@ const source: CitationSource = {
 };
 
 describe("citation formatting", () => {
-  it("formats localized inline locators", () => {
-    expect(formatInlineCitation(source, "14", "en-US")).toBe("(Smith, 2026, p. 14)");
-    expect(formatInlineCitation(source, "14", "de-DE")).toBe("(Smith, 2026, S. 14)");
+  it("formats numbered IEEE inline locators", () => {
+    expect(formatInlineCitation(source, "14", "en-US", 3)).toBe("[3, p. 14]");
+    expect(formatInlineCitation(source, undefined, "de-DE", 2)).toBe("[2]");
   });
-  it("formats a stable bibliography entry", () => {
-    expect(formatBibliographyEntry(source)).toContain("Smith, J. (2026). Knowledge systems.");
-    expect(formatBibliographyEntry(source)).toContain("https://doi.org/10.1000/test");
+  it("formats a stable IEEE bibliography entry", () => {
+    expect(formatBibliographyEntry(source)).toContain('J. Smith, “Knowledge systems,”');
+    expect(formatBibliographyEntry(source)).toContain("Journal of Research, vol. 4, no. 2, pp. 12-20, 2026");
+    expect(formatBibliographyEntry(source)).toContain("doi: 10.1000/test");
+  });
+  it("maps every supported source kind to CSL and de-duplicates a bibliography", () => {
+    const expected = {
+      journalArticle: "article-journal",
+      book: "book",
+      bookChapter: "chapter",
+      report: "report",
+      webPage: "webpage",
+      document: "document",
+    };
+    for (const [type, cslType] of Object.entries(expected)) {
+      expect(toCslJson({ ...source, type }).type).toBe(cslType);
+    }
+    expect(formatBibliography([source, source], "en-US")).toEqual([
+      expect.objectContaining({ text: expect.stringMatching(/^\[1\]/) }),
+    ]);
+  });
+  it("uses IEEE contributor initials and a stable missing-date label", () => {
+    const manyAuthors: CitationSource = {
+      ...source,
+      issuedDate: "",
+      contributors: [
+        source.contributors[0],
+        { role: "author", given: "John", family: "Miller", literal: "", sortOrder: 1 },
+        { role: "author", given: "Alex", family: "Taylor", literal: "", sortOrder: 2 },
+      ],
+    };
+    expect(formatInlineCitation(manyAuthors)).toBe("[1]");
+    expect(formatBibliographyEntry(manyAuthors)).toContain("J. Smith, J. Miller, A. Taylor");
+    expect(formatBibliographyEntry(manyAuthors)).toContain("n.d.");
   });
 });
 

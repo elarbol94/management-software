@@ -1,14 +1,13 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useFormatter, useLocale, useTranslations } from "next-intl";
 import { BookMarked, Check, Clock3, History, Link2, Plus, Star, Trash2, X } from "lucide-react";
 import { createPage, deletePage, renamePage } from "../actions";
-import { linkSupportingSource, restorePageRevision, toggleFavorite, unlinkSupportingSource, updatePageResearchMeta } from "../research-actions";
+import { createPageCheckpoint, linkSupportingSource, restorePageRevision, toggleFavorite, unlinkSupportingSource, updatePageResearchMeta } from "../research-actions";
 import type { CitationSource } from "../lib/citations";
-import { formatBibliographyEntry } from "../lib/citations";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -28,11 +27,11 @@ import type { ContextDeadlineMarker, ContextTaskMarker } from "@/modules/tasks/t
 import { ContextPanel } from "@/modules/context/components/context-panel";
 
 type PageRef = { id: string; title: string; slug: string };
-type SourceRef = { id: string; title: string; issuedDate: string; contributors: string };
-export function WikiShell({ page, backlinks, allPages, sources, citationSources, research, comments, currentUserId, users, attachments, documentTemplates, typography, editableTypography, typographyTemplates, tasks, deadlines, focusTaskId, focusDeadlineId, meta }: {
-  page: { id: string; title: string; slug: string; contentJson: string; status: "inbox" | "working" | "evergreen"; citationLocale: string; proofingLanguage: "de-DE" | "en-US"; version: number; documentMode: boolean; documentSettingsJson: string; createdBy: string };
-  backlinks: PageRef[]; allPages: PageRef[]; sources: SourceRef[]; citationSources: CitationSource[];
-  research: { tags: Array<{ id: string; name: string; color: string }>; supportingSources: Array<{ id: string; title: string; issuedDate: string; relation: string }>; favorite: boolean; revisions: Array<{ id: string; version: number; kind: string; createdAt: Date; createdByName: string; contentJson: string }> };
+type SourceRef = CitationSource;
+export function WikiShell({ page, backlinks, allPages, sources, research, comments, currentUserId, users, attachments, documentTemplates, typography, editableTypography, typographyTemplates, tasks, deadlines, focusTaskId, focusDeadlineId, meta }: {
+  page: { id: string; title: string; slug: string; contentJson: string; status: "inbox" | "working" | "evergreen"; citationLocale: string; proofingLanguage: "de-DE" | "en-US"; version: number; contentVersion: number; documentMode: boolean; documentSettingsJson: string; createdBy: string };
+  backlinks: PageRef[]; allPages: PageRef[]; sources: SourceRef[];
+  research: { tags: Array<{ id: string; name: string; color: string }>; supportingSources: Array<{ id: string; title: string; issuedDate: string; relation: string }>; favorite: boolean; revisions: Array<{ id: string; version: number; contentVersion: number; contentHash: string; label: string | null; kind: string; createdAt: Date; createdByName: string; contentJson: string }> };
   comments: CommentThread[]; currentUserId: string; users: Array<{ id: string; name: string; markColor: UserMarkColor }>;
   attachments: Array<{ id: string; fileName: string; mimeType: string; sizeBytes: number }>;
   documentTemplates: StoredDocumentTemplate[];
@@ -54,7 +53,6 @@ export function WikiShell({ page, backlinks, allPages, sources, citationSources,
   const [historyOpen, setHistoryOpen] = useState(false);
   const [selectedRevisionId, setSelectedRevisionId] = useState(research.revisions[0]?.id ?? "");
   const attachmentRef = useRef<AttachmentPanelHandle>(null); const supportingSourceSectionRef = useRef<HTMLElement>(null); const supportingSourceTriggerRef = useRef<HTMLButtonElement>(null);
-  const bibliography = useMemo(() => [...citationSources].sort((a, b) => formatBibliographyEntry(a).localeCompare(formatBibliographyEntry(b))), [citationSources]);
   const selectedRevision = research.revisions.find((revision) => revision.id === selectedRevisionId) ?? research.revisions[0];
   const currentText = extractText(parseStoredDocument(page.contentJson));
   const revisionText = selectedRevision ? extractText(parseStoredDocument(selectedRevision.contentJson)) : "";
@@ -75,8 +73,7 @@ export function WikiShell({ page, backlinks, allPages, sources, citationSources,
 
     <div className={isFocused ? "w-full" : "grid gap-7 xl:grid-cols-[minmax(0,1fr)_17rem]"}>
       <section className="min-w-0">
-        <WikiEditor key={page.id} focused={isFocused} pageId={page.id} pageTitle={page.title} pageSlug={page.slug} pageVersion={page.version} initialContent={page.contentJson} initialProofingLanguage={page.proofingLanguage} initialDocumentMode={page.documentMode} initialDocumentSettings={page.documentSettingsJson} initialTypography={typography} editableTypography={editableTypography} typographyTemplates={typographyTemplates} isPrimaryAuthor={page.createdBy === currentUserId} documentTemplates={documentTemplates} allPages={allPages} sources={sources} users={users} citationLocale={citationLocale} comments={comments} contextTasks={tasks} contextDeadlines={deadlines} focusTaskId={focusTaskId} focusDeadlineId={focusDeadlineId} currentUserId={currentUserId} pageActions={{ addAttachment: () => attachmentRef.current?.openFilePicker(), linkSupportingSource: () => { supportingSourceSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "center" }); setSupportingSourceOpen(true); requestAnimationFrame(() => supportingSourceTriggerRef.current?.focus()); } }} />
-        {!isFocused && bibliography.length > 0 && <section className="mt-10 border-t pt-6"><p className="mb-1 text-xs font-semibold tracking-[0.16em] text-indigo-600 uppercase">APA 7</p><h2 className="mb-4 text-xl font-semibold">{t("references")}</h2><ol className="space-y-3 text-sm leading-relaxed">{bibliography.map((source) => <li key={source.id} className="pl-6 -indent-6">{formatBibliographyEntry(source)}</li>)}</ol></section>}
+        <WikiEditor key={page.id} focused={isFocused} pageId={page.id} pageTitle={page.title} pageSlug={page.slug} pageVersion={page.version} pageContentVersion={page.contentVersion} initialContent={page.contentJson} initialProofingLanguage={page.proofingLanguage} initialDocumentMode={page.documentMode} initialDocumentSettings={page.documentSettingsJson} initialTypography={typography} editableTypography={editableTypography} typographyTemplates={typographyTemplates} isPrimaryAuthor={page.createdBy === currentUserId} documentTemplates={documentTemplates} allPages={allPages} sources={sources} users={users} citationLocale={citationLocale} comments={comments} contextTasks={tasks} contextDeadlines={deadlines} focusTaskId={focusTaskId} focusDeadlineId={focusDeadlineId} currentUserId={currentUserId} pageActions={{ addAttachment: () => attachmentRef.current?.openFilePicker(), linkSupportingSource: () => { supportingSourceSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "center" }); setSupportingSourceOpen(true); requestAnimationFrame(() => supportingSourceTriggerRef.current?.focus()); } }} />
         {!isFocused && backlinks.length > 0 && <section className="mt-8 border-t pt-5"><h2 className="mb-3 flex items-center gap-2 text-sm font-medium"><Link2 className="size-4 text-indigo-500" />{t("backlinks")}</h2><div className="flex flex-wrap gap-2">{backlinks.map((item) => <Link key={item.id} href={`/wiki/pages/${item.slug}`} className="rounded-md border px-2 py-1 text-sm hover:bg-accent">{item.title}</Link>)}</div></section>}
       </section>
 
@@ -84,7 +81,7 @@ export function WikiShell({ page, backlinks, allPages, sources, citationSources,
         <section data-testid="note-metadata-controls" className="space-y-2">
           <div className="grid grid-cols-2 gap-2">
             <Select value={status} onValueChange={(value) => { if (!value) return; const next = value as typeof status; setStatus(next); void saveMeta(next, citationLocale); }}><SelectTrigger aria-label={t("allPageStatuses")} className="h-8 w-full"><SelectValue /></SelectTrigger><SelectContent>{["inbox","working","evergreen"].map((item) => <SelectItem key={item} value={item}>{t(`pageStatuses.${item}`)}</SelectItem>)}</SelectContent></Select>
-            <Select value={citationLocale} onValueChange={(value) => { if (!value) return; setCitationLocale(value); void saveMeta(status, value); }}><SelectTrigger aria-label={t("citationLanguage")} className="h-8 w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="de-DE">APA · DE</SelectItem><SelectItem value="en-US">APA · EN</SelectItem></SelectContent></Select>
+            <Select value={citationLocale} onValueChange={(value) => { if (!value) return; setCitationLocale(value); void saveMeta(status, value); }}><SelectTrigger aria-label={t("citationLanguage")} className="h-8 w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="de-DE">IEEE · DE</SelectItem><SelectItem value="en-US">IEEE · EN</SelectItem></SelectContent></Select>
           </div>
           <div className="flex items-center gap-1"><Input value={tags} onChange={(event) => setTags(event.target.value)} onBlur={() => void saveMeta()} placeholder={t("tagsHint")} className="h-8 min-w-0 text-xs" />{metaSaved && <Check className="size-4 shrink-0 text-emerald-600" />}</div>
         </section>
@@ -94,11 +91,12 @@ export function WikiShell({ page, backlinks, allPages, sources, citationSources,
           subjectLabel={page.title}
           subjectHref={`/wiki/pages/${page.slug}`}
           compact
+          hideSources
         />
         <AttachmentPanel ref={attachmentRef} entityType="wikiPage" entityId={page.id} initial={attachments} />
         <EvidencePanel targetType="wikiPage" targetId={page.id} compact />
         <section ref={supportingSourceSectionRef}><h3 className="mb-2 flex items-center gap-2 text-sm font-medium"><BookMarked className="size-4 text-indigo-500" />{t("supportingSources")}</h3><div className="flex gap-1"><Select open={supportingSourceOpen} onOpenChange={setSupportingSourceOpen} value={sourceToLink} onValueChange={(value) => setSourceToLink(value ?? "")}><SelectTrigger aria-label={t("chooseSource")} data-testid="supporting-source-picker" ref={supportingSourceTriggerRef} className="min-w-0 flex-1"><SelectValue placeholder={t("chooseSource")} /></SelectTrigger><SelectContent>{sources.filter((source) => !research.supportingSources.some((linked) => linked.id === source.id)).map((source) => <SelectItem key={source.id} value={source.id}>{source.title}</SelectItem>)}</SelectContent></Select><Button aria-label={t("linkSupportingSource")} title={t("linkSupportingSource")} size="icon" variant="outline" disabled={!sourceToLink} onClick={async () => { await linkSupportingSource(page.id, sourceToLink); setSourceToLink(""); router.refresh(); }}><Plus className="size-4" /></Button></div><div className="mt-2 space-y-1">{research.supportingSources.map((source) => <div key={source.id} className="group flex items-center gap-1 rounded-md border p-2 text-xs"><Link href={`/wiki/sources/${source.id}`} className="min-w-0 flex-1 truncate font-medium">{source.title}</Link><button type="button" aria-label={`${t("editor.link.remove")}: ${source.title}`} title={t("editor.link.remove")} onClick={async () => { await unlinkSupportingSource(page.id, source.id); router.refresh(); }} className="rounded-sm p-1 opacity-0 transition-opacity hover:bg-accent group-hover:opacity-100 focus-visible:opacity-100"><X className="size-3" /></button></div>)}</div></section>
-        <div className="flex justify-end border-t pt-4"><Button type="button" variant="outline" size="sm" onClick={() => setHistoryOpen(true)}><History className="size-4" />{t("history")}</Button></div>
+        <div className="flex justify-end gap-2 border-t pt-4"><Button type="button" variant="ghost" size="sm" onClick={async () => { const label = prompt(t("checkpointLabelPrompt")) ?? ""; await createPageCheckpoint(page.id, label); router.refresh(); }}><Plus className="size-4" />{t("checkpoint")}</Button><Button type="button" variant="outline" size="sm" onClick={() => setHistoryOpen(true)}><History className="size-4" />{t("history")}</Button></div>
       </aside>}
     </div>
     <Dialog open={historyOpen} onOpenChange={setHistoryOpen}>
@@ -106,7 +104,7 @@ export function WikiShell({ page, backlinks, allPages, sources, citationSources,
         <DialogHeader><DialogTitle>{t("history")}</DialogTitle><DialogDescription>{t("historyComparisonDescription")}</DialogDescription></DialogHeader>
         {research.revisions.length ? <div className="grid min-h-0 gap-4 md:grid-cols-[15rem_minmax(0,1fr)]">
           <nav className="max-h-[65dvh] space-y-1 overflow-y-auto border-r pr-3" aria-label={t("history")}>
-            {research.revisions.map((revision) => <button key={revision.id} type="button" onClick={() => setSelectedRevisionId(revision.id)} className={`w-full rounded-md px-2 py-2 text-left text-xs ${selectedRevision?.id === revision.id ? "bg-accent" : "hover:bg-accent/60"}`}><span className="font-medium">v{revision.version}</span> · {revision.createdByName}<span className="mt-0.5 block text-muted-foreground">{format.dateTime(new Date(revision.createdAt), { dateStyle: "medium", timeStyle: "short" })}</span></button>)}
+            {research.revisions.map((revision) => <button key={revision.id} type="button" onClick={() => setSelectedRevisionId(revision.id)} className={`w-full rounded-md px-2 py-2 text-left text-xs ${selectedRevision?.id === revision.id ? "bg-accent" : "hover:bg-accent/60"}`}><span className="font-medium">v{revision.contentVersion}</span> · {revision.label || t(`revisionKinds.${revision.kind}`)}<span className="mt-0.5 block text-muted-foreground">{revision.createdByName} · {format.dateTime(new Date(revision.createdAt), { dateStyle: "medium", timeStyle: "short" })}</span></button>)}
           </nav>
           <RevisionDiffView oldText={revisionText} currentText={currentText} oldTitle={t("selectedVersion", { version: selectedRevision?.version ?? 0 })} currentTitle={t("currentVersion")} />
         </div> : <p className="py-12 text-center text-sm text-muted-foreground">{t("noHistory")}</p>}

@@ -2,6 +2,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { createHash } from "node:crypto";
 
 import { z } from "zod";
 import { and, eq, inArray, isNull } from "drizzle-orm";
@@ -39,6 +40,45 @@ import { searchPdfPageText } from "./pdf-queries";
 
 function revalidateWiki() {
   revalidatePath("/wiki", "layout");
+}
+
+function pageSnapshotHash(page: Pick<typeof wikiPages.$inferSelect, "contentJson" | "documentMode" | "documentSettingsJson">) {
+  return createHash("sha256")
+    .update(page.contentJson)
+    .update("\0")
+    .update(page.documentMode ? "1" : "0")
+    .update("\0")
+    .update(page.documentSettingsJson)
+    .digest("hex");
+}
+
+export async function createPageCheckpoint(pageId: string, label?: string) {
+  const currentUser = await requireUserOrThrow();
+  const page = db.select().from(wikiPages).where(and(eq(wikiPages.id, pageId), isNull(wikiPages.deletedAt))).get();
+  if (!page) throw new Error("Page not found");
+  const contentHash = pageSnapshotHash(page);
+  const existing = db.select({ id: wikiPageRevisions.id }).from(wikiPageRevisions)
+    .where(and(eq(wikiPageRevisions.pageId, pageId), eq(wikiPageRevisions.contentHash, contentHash)))
+    .get();
+  if (existing) return { id: existing.id, created: false as const };
+  const revision = db.insert(wikiPageRevisions).values({
+    pageId,
+    version: page.version,
+    contentVersion: page.contentVersion,
+    contentHash,
+    label: z.string().trim().max(120).optional().parse(label) || null,
+    title: page.title,
+    contentJson: page.contentJson,
+    status: page.status,
+    citationLocale: page.citationLocale,
+    documentMode: page.documentMode,
+    documentSettingsJson: page.documentSettingsJson,
+    documentTemplateId: page.documentTemplateId,
+    kind: "manual",
+    createdBy: currentUser.id,
+  }).returning({ id: wikiPageRevisions.id }).get();
+  revalidateWiki();
+  return { id: revision.id, created: true as const };
 }
 
 function uniquePageSlug(title: string) {
@@ -91,7 +131,6 @@ export async function updatePageResearchMeta(input: z.infer<typeof pageMetaSchem
   if (!page) throw new Error("Page not found");
   const tags = ensureTags(data.tagNames, currentUser.id);
   db.transaction(() => {
-    db.insert(wikiPageRevisions).values({ pageId: page.id, version: page.version, title: page.title, contentJson: page.contentJson, status: page.status, citationLocale: page.citationLocale, documentMode: page.documentMode, documentSettingsJson: page.documentSettingsJson, documentTemplateId: page.documentTemplateId, kind: "autosave", createdBy: currentUser.id }).run();
     db.update(wikiPages).set({ status: data.status, citationLocale: data.citationLocale, updatedBy: currentUser.id, updatedAt: new Date(), version: page.version + 1 }).where(eq(wikiPages.id, page.id)).run();
     db.delete(wikiPageTags).where(eq(wikiPageTags.pageId, page.id)).run();
     if (tags.length) db.insert(wikiPageTags).values(tags.map((tag) => ({ pageId: page.id, tagId: tag.id }))).run();
@@ -388,8 +427,8 @@ export async function restorePageRevision(revisionId: string) {
   const restoredContentJson = JSON.stringify(restoredDocument);
   const contentText = extractText(restoredDocument);
   db.transaction(() => {
-    db.insert(wikiPageRevisions).values({ pageId: page.id, version: page.version, title: page.title, contentJson: page.contentJson, status: page.status, citationLocale: page.citationLocale, documentMode: page.documentMode, documentSettingsJson: page.documentSettingsJson, documentTemplateId: page.documentTemplateId, kind: "restore", createdBy: currentUser.id }).run();
-    db.update(wikiPages).set({ title: revision.title, contentJson: restoredContentJson, contentText, status: revision.status, citationLocale: revision.citationLocale, documentMode: revision.documentMode, documentSettingsJson: revision.documentSettingsJson, documentTemplateId: revision.documentTemplateId, version: page.version + 1, updatedBy: currentUser.id, updatedAt: new Date() }).where(eq(wikiPages.id, page.id)).run();
+    db.insert(wikiPageRevisions).values({ pageId: page.id, version: page.version, contentVersion: page.contentVersion, contentHash: pageSnapshotHash(page), title: page.title, contentJson: page.contentJson, status: page.status, citationLocale: page.citationLocale, documentMode: page.documentMode, documentSettingsJson: page.documentSettingsJson, documentTemplateId: page.documentTemplateId, kind: "restore", createdBy: currentUser.id }).run();
+    db.update(wikiPages).set({ title: revision.title, contentJson: restoredContentJson, contentText, status: revision.status, citationLocale: revision.citationLocale, documentMode: revision.documentMode, documentSettingsJson: revision.documentSettingsJson, documentTemplateId: revision.documentTemplateId, version: page.version + 1, contentVersion: page.contentVersion + 1, updatedBy: currentUser.id, updatedAt: new Date() }).where(eq(wikiPages.id, page.id)).run();
     sqlite.prepare("DELETE FROM wiki_pages_fts WHERE page_id = ?").run(page.id);
     sqlite.prepare("INSERT INTO wiki_pages_fts (page_id, title, content_text) VALUES (?, ?, ?)").run(page.id, revision.title, contentText);
   });

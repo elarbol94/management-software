@@ -89,6 +89,7 @@ type ContextPanelProps = {
   className?: string;
   title?: string;
   initialContext?: EntityContextDto;
+  hideSources?: boolean;
 };
 
 export function ContextPanel(props: ContextPanelProps) {
@@ -110,6 +111,7 @@ function ContextPanelContent({
   className,
   title,
   initialContext,
+  hideSources = false,
 }: ContextPanelProps) {
   const locale = useLocale();
   const de = locale !== "en";
@@ -260,9 +262,9 @@ function ContextPanelContent({
       { key: "parents", label: labels.belongs, items: context.parents },
       { key: "tasks", label: labels.tasks, items: context.tasks },
       { key: "wiki", label: labels.wiki, items: context.wiki },
-      { key: "sources", label: labels.sources, items: context.sources },
+      ...(hideSources ? [] : [{ key: "sources", label: labels.sources, items: context.sources }]),
     ],
-    [context, labels.belongs, labels.sources, labels.tasks, labels.wiki],
+    [context, hideSources, labels.belongs, labels.sources, labels.tasks, labels.wiki],
   );
   const total = groups.reduce((sum, group) => sum + group.items.length, 0);
 
@@ -539,7 +541,7 @@ function ContextPanelContent({
                 {labels.noResults}
               </p>
             ) : (
-              ["projects", "tasks", "wiki", "sources"].map((group) => {
+              ["projects", "tasks", "wiki", ...(hideSources ? [] : ["sources"])].map((group) => {
                 const items = candidates.filter(
                   (candidate) => groupFor(candidate.type) === group,
                 );

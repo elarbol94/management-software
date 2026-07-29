@@ -1,5 +1,6 @@
 "use server";
 
+import { createHash } from "node:crypto";
 import { z } from "zod";
 import { and, eq, inArray, isNull } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
@@ -10,6 +11,7 @@ import {
   wikiCommentThreads,
   wikiLinks,
   wikiPageRevisions,
+  wikiPageEditLeases,
   wikiPageSources,
   wikiPages,
   wikiPdfAnnotations,
@@ -52,6 +54,69 @@ function syncFts(pageId: string, title: string, contentText: string) {
       "INSERT INTO wiki_pages_fts (page_id, title, content_text) VALUES (?, ?, ?)",
     )
     .run(pageId, title, contentText);
+}
+
+function contentSnapshotHash(contentJson: string, documentMode: boolean, documentSettingsJson: string) {
+  return createHash("sha256")
+    .update(contentJson)
+    .update("\0")
+    .update(documentMode ? "1" : "0")
+    .update("\0")
+    .update(documentSettingsJson)
+    .digest("hex");
+}
+
+const leaseSchema = z.object({
+  pageId: z.string().min(1),
+  sessionId: z.string().min(8).max(200),
+  takeover: z.boolean().optional(),
+});
+
+const LEASE_TIMEOUT_MS = 60_000;
+
+export async function acquirePageEditLease(input: z.infer<typeof leaseSchema>) {
+  const currentUser = await requireUserOrThrow();
+  const data = leaseSchema.parse(input);
+  const now = new Date();
+  const lease = db.select().from(wikiPageEditLeases).where(eq(wikiPageEditLeases.pageId, data.pageId)).get();
+  const expired = !lease || now.getTime() - lease.heartbeatAt.getTime() > LEASE_TIMEOUT_MS;
+  if (lease && !expired && lease.sessionId !== data.sessionId && !data.takeover) {
+    return { editable: false as const, expiresAt: lease.heartbeatAt.getTime() + LEASE_TIMEOUT_MS };
+  }
+  db.insert(wikiPageEditLeases)
+    .values({ pageId: data.pageId, sessionId: data.sessionId, userId: currentUser.id, acquiredAt: now, heartbeatAt: now })
+    .onConflictDoUpdate({
+      target: wikiPageEditLeases.pageId,
+      set: { sessionId: data.sessionId, userId: currentUser.id, acquiredAt: now, heartbeatAt: now },
+    })
+    .run();
+  return { editable: true as const, expiresAt: now.getTime() + LEASE_TIMEOUT_MS };
+}
+
+export async function heartbeatPageEditLease(input: Omit<z.infer<typeof leaseSchema>, "takeover">) {
+  const currentUser = await requireUserOrThrow();
+  const data = leaseSchema.omit({ takeover: true }).parse(input);
+  const updated = db.update(wikiPageEditLeases)
+    .set({ heartbeatAt: new Date() })
+    .where(and(
+      eq(wikiPageEditLeases.pageId, data.pageId),
+      eq(wikiPageEditLeases.sessionId, data.sessionId),
+      eq(wikiPageEditLeases.userId, currentUser.id),
+    ))
+    .returning({ pageId: wikiPageEditLeases.pageId })
+    .get();
+  return { editable: Boolean(updated) };
+}
+
+export async function releasePageEditLease(input: Omit<z.infer<typeof leaseSchema>, "takeover">) {
+  const currentUser = await requireUserOrThrow();
+  const data = leaseSchema.omit({ takeover: true }).parse(input);
+  db.delete(wikiPageEditLeases).where(and(
+    eq(wikiPageEditLeases.pageId, data.pageId),
+    eq(wikiPageEditLeases.sessionId, data.sessionId),
+    eq(wikiPageEditLeases.userId, currentUser.id),
+  )).run();
+  return { released: true as const };
 }
 
 const createSchema = z.object({
@@ -111,7 +176,6 @@ export async function renamePage(id: string, title: string) {
   if (!page) throw new Error("Page not found");
 
   db.transaction(() => {
-    db.insert(wikiPageRevisions).values({ pageId: page.id, version: page.version, title: page.title, contentJson: page.contentJson, status: page.status, citationLocale: page.citationLocale, documentMode: page.documentMode, documentSettingsJson: page.documentSettingsJson, documentTemplateId: page.documentTemplateId, kind: "autosave", createdBy: user.id }).run();
     db.update(wikiPages)
       .set({ title: cleanTitle, updatedBy: user.id, updatedAt: new Date(), version: page.version + 1 })
       .where(eq(wikiPages.id, id))
@@ -129,7 +193,8 @@ const saveSchema = z.object({
   documentSettingsJson: z.string().max(200_000).optional(),
   baseDocumentMode: z.boolean().optional(),
   baseDocumentSettingsJson: z.string().max(200_000).optional(),
-  expectedVersion: z.number().int().positive().optional(),
+  expectedContentVersion: z.number().int().positive(),
+  editorSessionId: z.string().min(8).max(200),
 });
 
 export async function savePageContent(input: z.infer<typeof saveSchema>) {
@@ -144,6 +209,11 @@ export async function savePageContent(input: z.infer<typeof saveSchema>) {
   // Autosaves can arrive after another request deleted the page. Treat that
   // normal race as a no-op instead of surfacing a server error.
   if (!page) return { saved: false };
+
+  const lease = db.select().from(wikiPageEditLeases).where(eq(wikiPageEditLeases.pageId, data.id)).get();
+  if (lease && lease.sessionId !== data.editorSessionId && Date.now() - lease.heartbeatAt.getTime() <= LEASE_TIMEOUT_MS) {
+    return { saved: false as const, locked: true as const, contentVersion: page.contentVersion };
+  }
 
   let doc: TiptapNode | null = null;
   try {
@@ -173,16 +243,22 @@ export async function savePageContent(input: z.infer<typeof saveSchema>) {
     }
   }
 
-  const baseChanged =
-    data.baseContentJson !== undefined && data.baseContentJson !== page.contentJson
-    || data.baseDocumentMode !== undefined && data.baseDocumentMode !== page.documentMode
-    || data.baseDocumentSettingsJson !== undefined && data.baseDocumentSettingsJson !== page.documentSettingsJson;
-  if (data.expectedVersion !== undefined && data.expectedVersion !== page.version && baseChanged) {
-    const revision = db
+  const incomingHash = contentSnapshotHash(data.contentJson, nextDocumentMode, nextDocumentSettingsJson);
+  if (data.expectedContentVersion !== page.contentVersion) {
+    const existingConflict = db.select({ id: wikiPageRevisions.id }).from(wikiPageRevisions)
+      .where(and(
+        eq(wikiPageRevisions.pageId, page.id),
+        eq(wikiPageRevisions.kind, "conflict"),
+        eq(wikiPageRevisions.contentHash, incomingHash),
+      ))
+      .get();
+    const revision = existingConflict ?? db
       .insert(wikiPageRevisions)
       .values({
         pageId: page.id,
-        version: data.expectedVersion,
+        version: page.version,
+        contentVersion: data.expectedContentVersion,
+        contentHash: incomingHash,
         title: page.title,
         contentJson: data.contentJson,
         status: page.status,
@@ -198,7 +274,7 @@ export async function savePageContent(input: z.infer<typeof saveSchema>) {
     return {
       saved: false as const,
       conflict: true as const,
-      version: page.version,
+      contentVersion: page.contentVersion,
       revisionId: revision.id,
       contentJson: page.contentJson,
       documentMode: page.documentMode,
@@ -207,9 +283,10 @@ export async function savePageContent(input: z.infer<typeof saveSchema>) {
   }
 
   const nextVersion = page.version + 1;
+  const nextContentVersion = page.contentVersion + 1;
 
-  db.transaction(() => {
-    db.update(wikiPages)
+  const applied = db.transaction(() => {
+    const updated = db.update(wikiPages)
       .set({
         contentJson: data.contentJson,
         contentText,
@@ -218,10 +295,13 @@ export async function savePageContent(input: z.infer<typeof saveSchema>) {
         updatedBy: user.id,
         updatedAt: new Date(),
         version: nextVersion,
+        contentVersion: nextContentVersion,
         ...(inferredTitle ? { title: inferredTitle } : {}),
       })
-      .where(eq(wikiPages.id, data.id))
-      .run();
+      .where(and(eq(wikiPages.id, data.id), eq(wikiPages.contentVersion, data.expectedContentVersion)))
+      .returning({ contentVersion: wikiPages.contentVersion })
+      .get();
+    if (!updated) return false;
 
     // Rebuild outgoing links.
     db.delete(wikiLinks).where(eq(wikiLinks.sourcePageId, data.id)).run();
@@ -300,6 +380,8 @@ export async function savePageContent(input: z.infer<typeof saveSchema>) {
         .values({
           pageId: page.id,
           version: page.version,
+          contentVersion: page.contentVersion,
+          contentHash: contentSnapshotHash(page.contentJson, page.documentMode, page.documentSettingsJson),
           title: page.title,
           contentJson: page.contentJson,
           status: page.status,
@@ -314,9 +396,21 @@ export async function savePageContent(input: z.infer<typeof saveSchema>) {
     }
 
     syncFts(data.id, effectiveTitle, contentText);
+    return true;
   });
+  if (!applied) {
+    return {
+      saved: false as const,
+      conflict: true as const,
+      contentVersion: db.select({ contentVersion: wikiPages.contentVersion }).from(wikiPages).where(eq(wikiPages.id, data.id)).get()?.contentVersion ?? page.contentVersion,
+      revisionId: "",
+      contentJson: page.contentJson,
+      documentMode: page.documentMode,
+      documentSettingsJson: page.documentSettingsJson,
+    };
+  }
   // No revalidatePath here: autosave must not re-render the open editor.
-  return { saved: true as const, conflict: false as const, version: nextVersion };
+  return { saved: true as const, conflict: false as const, contentVersion: nextContentVersion };
 }
 
 export async function searchWiki(query: string) {

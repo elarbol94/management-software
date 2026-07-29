@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { gunzipSync } from "node:zlib";
 import { eq, and } from "drizzle-orm";
 import { db } from "@/db";
 import { attachments, attachmentEntityTypes } from "@/db/schema";
@@ -45,15 +46,23 @@ export async function saveAttachment(options: {
 }) {
   const { file, entityType, entityId, userId } = options;
 
-  const ext = ALLOWED_MIME[file.type];
+  const ext = file.type === "image/svg+xml" && /\.svgz$/i.test(file.name)
+    ? ".svgz"
+    : ALLOWED_MIME[file.type];
   if (!ext) throw new UploadError(`File type not allowed: ${file.type}`);
   if (file.size > MAX_UPLOAD_BYTES) {
     throw new UploadError("File exceeds the 50 MB limit");
   }
 
   const buffer = Buffer.from(await file.arrayBuffer());
-  if (file.type === "image/svg+xml" && !isSafeInlineSvg(buffer)) {
-    throw new UploadError("SVG contains active or externally loaded content");
+  if (file.type === "image/svg+xml") {
+    let svgBytes: Uint8Array = buffer;
+    try {
+      if (ext === ".svgz" || (buffer[0] === 0x1f && buffer[1] === 0x8b)) svgBytes = gunzipSync(buffer);
+    } catch {
+      throw new UploadError("SVGZ could not be decompressed");
+    }
+    if (!isSafeInlineSvg(svgBytes)) throw new UploadError("SVG contains active or externally loaded content");
   }
   const sha256 = crypto.createHash("sha256").update(buffer).digest("hex");
   // Shard by hash prefix so a single directory never grows unbounded.

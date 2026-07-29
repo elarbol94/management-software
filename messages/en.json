@@ -1163,6 +1163,9 @@
     "linkedPages": "Linked documents",
     "usedIn": "Used in",
     "history": "History",
+    "checkpoint": "Save version",
+    "checkpointLabelPrompt": "Optional name for this version:",
+    "revisionKinds": { "autosave": "Automatic checkpoint", "manual": "Saved version", "conflict": "Protected draft", "restore": "Before restore" },
     "noHistory": "No earlier versions.",
     "historyComparisonDescription": "Compare an earlier version with the current document. Changed lines are highlighted.",
     "selectedVersion": "Version {version}",
@@ -1187,6 +1190,26 @@
     "supportingSources": "Supporting sources",
     "chooseSource": "Choose source",
     "references": "References",
+    "citeSource": "Cite source",
+    "graphics": {
+      "title": "Graphics",
+      "description": "Edit SVG text and connect it to document fields.",
+      "close": "Close graphics",
+      "assets": "SVG graphics",
+      "empty": "No SVG graphic yet",
+      "emptyHint": "Add an SVG or SVGZ file as an image or attachment.",
+      "version": "Version {version}",
+      "textLayers": "Text layers",
+      "noText": "This graphic has no directly editable text or tspan elements.",
+      "fixedText": "Fixed text",
+      "save": "Save graphic",
+      "history": "Version history",
+      "restore": "Restore",
+      "loadFailed": "Graphics could not be loaded.",
+      "saveFailed": "The graphic could not be saved.",
+      "restoreFailed": "The graphic version could not be restored.",
+      "conflict": "The graphic changed in the meantime. Reopen the panel."
+    },
     "comments": "Comments",
     "hideComments": "Hide comments",
     "showComments": "Show comments",
@@ -1225,6 +1248,7 @@
       "portrait": "Portrait",
       "landscape": "Landscape",
       "margin": { "top": "Top (mm)", "right": "Right (mm)", "bottom": "Bottom (mm)", "left": "Left (mm)" },
+      "showMarginGuides": "Show margin guides",
       "typography": "Typography and colors",
       "bodyFont": "Body font",
       "headingFont": "Headings",
@@ -1238,15 +1262,21 @@
       "cover": "Cover page",
       "eyebrow": "Cover eyebrow",
       "subtitle": "Subtitle",
+      "author": "Author",
+      "organization": "Organization",
+      "date": "Date",
       "header": "Header",
       "footer": "Footer",
       "pageNumbers": "Page numbers",
+      "pageNumberStart": "Page numbering starts at",
       "bibliography": "Bibliography",
+      "bibliographyHeading": "Bibliography heading",
       "figureIndex": "List of figures",
       "figureIndexHeading": "List heading",
       "figureIndexCount": "{count, plural, =0 {No captioned figures yet} one {# captioned figure} other {# captioned figures}}",
       "figureNumber": "Figure {number}",
       "left": "Left",
+      "center": "Center",
       "right": "Right",
       "insert": "Document blocks",
       "pageBreak": "Page break",
@@ -1302,6 +1332,7 @@
         "heading1": "Heading 1", "heading2": "Heading 2", "heading3": "Heading 3",
         "bulletList": "Bullet list", "orderedList": "Numbered list", "taskList": "Task list",
         "format": "Format", "insert": "Insert", "more": "More", "actions": "Actions", "settings": "View and settings",
+        "zoom": "Zoom", "zoomIn": "Zoom in", "zoomOut": "Zoom out", "zoomReset": "Reset zoom to 100%",
         "groups": { "history": "History", "writing": "Format text", "insert": "Insert content", "review": "Review and comment", "document": "Document view" },
         "underline": "Underline", "highlight": "Highlight",
         "strike": "Strikethrough", "inlineCode": "Inline code", "blockquote": "Block quote", "codeBlock": "Code block"
@@ -1312,6 +1343,7 @@
         "remove": "Remove link", "open": "Open link", "apply": "Apply"
       },
       "save": { "unsaved": "Not saved", "offline": "Offline · saved locally", "error": "Save failed", "retry": "Retry" },
+      "lease": { "locked": "This page is already being edited in another window. Your local draft remains safe.", "takeover": "Take over editing", "takeoverFailed": "Editing could not be taken over." },
       "search": {
         "title": "Find and replace", "placeholder": "Search this note…", "replacement": "Replace with…",
         "results": "{current} of {total}", "noResults": "No results", "caseSensitive": "Match case",
@@ -1558,9 +1590,9 @@
           "keywords": ["link", "url", "website", "external"]
         },
         "citation": {
-          "label": "Insert citation",
-          "description": "Cite a source with an optional page",
-          "keywords": ["citation", "source", "reference", "zitat"]
+          "label": "Cite source",
+          "description": "Insert an IEEE citation with an optional page",
+          "keywords": ["citation", "source", "reference", "zitat", "ieee", "bibliography"]
         },
         "pdfEvidence": {
           "label": "Insert PDF evidence",
@@ -1578,8 +1610,8 @@
           "keywords": ["attachment", "file", "upload", "anhang"]
         },
         "supportingSource": {
-          "label": "Link supporting source",
-          "description": "Connect a supporting source to this page",
+          "label": "Link source only",
+          "description": "Connect a supporting source without citing it in the text",
           "keywords": ["source", "supporting", "link", "quelle"]
         },
         "pageComment": {

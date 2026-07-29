@@ -13,6 +13,7 @@ import {
   wikiPages,
   wikiPageSources,
   wikiPageTags,
+  wikiPdfDocuments,
   wikiSourceContributors,
   wikiSourceRevisions,
   wikiSources,
@@ -21,6 +22,7 @@ import {
 } from "@/db/schema";
 import { getPageTree } from "./queries";
 import type { CitationSource, Contributor } from "./lib/citations";
+import { decorateCitationSource } from "./lib/citations.server";
 import { resolveStoredUserMarkColor } from "@/lib/user-mark-colors.server";
 import { measureServerOperation } from "@/lib/performance-server";
 
@@ -242,6 +244,23 @@ export function getSourceById(id: string) {
 }
 
 export function getCitationSourcesForPage(pageId: string): CitationSource[] {
+  const pageContent = db.select({ contentJson: wikiPages.contentJson }).from(wikiPages).where(eq(wikiPages.id, pageId)).get()?.contentJson ?? "";
+  const citationOrder: string[] = [];
+  try {
+    const visit = (node: unknown) => {
+      if (!node || typeof node !== "object") return;
+      const value = node as { type?: unknown; attrs?: { items?: unknown }; content?: unknown };
+      if (value.type === "citation" && Array.isArray(value.attrs?.items)) {
+        for (const item of value.attrs.items as Array<{ sourceId?: unknown }>) {
+          if (typeof item.sourceId === "string" && !citationOrder.includes(item.sourceId)) citationOrder.push(item.sourceId);
+        }
+      }
+      if (Array.isArray(value.content)) value.content.forEach(visit);
+    };
+    visit(JSON.parse(pageContent));
+  } catch {
+    // Legacy or damaged content falls back to the relation-table order.
+  }
   const rows = db
     .select({ source: wikiSources })
     .from(wikiPageSources)
@@ -253,7 +272,14 @@ export function getCitationSourcesForPage(pageId: string): CitationSource[] {
       ),
     )
     .all()
-    .map((row) => row.source);
+    .map((row) => row.source)
+    .sort((left, right) => {
+      const leftIndex = citationOrder.indexOf(left.id);
+      const rightIndex = citationOrder.indexOf(right.id);
+      if (leftIndex < 0) return rightIndex < 0 ? 0 : 1;
+      if (rightIndex < 0) return -1;
+      return leftIndex - rightIndex;
+    });
   if (rows.length === 0) return [];
   const ids = rows.map((source) => source.id);
   const placeholders = ids.map(() => "?").join(",");
@@ -262,12 +288,47 @@ export function getCitationSourcesForPage(pageId: string): CitationSource[] {
       `SELECT source_id AS sourceId, role, given, family, literal, sort_order AS sortOrder FROM wiki_source_contributors WHERE source_id IN (${placeholders}) ORDER BY sort_order`,
     )
     .all(...ids) as Array<Contributor & { sourceId: string }>;
+  const documents = db
+    .select({ id: wikiPdfDocuments.id, sourceId: wikiPdfDocuments.sourceId })
+    .from(wikiPdfDocuments)
+    .where(inArray(wikiPdfDocuments.sourceId, ids))
+    .orderBy(desc(wikiPdfDocuments.version))
+    .all();
   return rows.map((source) => ({
     ...source,
     contributors: contributors.filter(
       (person) => person.sourceId === source.id,
     ),
+    pdfDocumentId: documents.find((document) => document.sourceId === source.id)?.id,
   }));
+}
+
+export function listCitationSources(locale = "en-US", limit = 500): CitationSource[] {
+  const rows = db
+    .select()
+    .from(wikiSources)
+    .where(isNull(wikiSources.deletedAt))
+    .orderBy(asc(wikiSources.title))
+    .limit(limit)
+    .all();
+  if (!rows.length) return [];
+  const contributors = db
+    .select()
+    .from(wikiSourceContributors)
+    .where(inArray(wikiSourceContributors.sourceId, rows.map((source) => source.id)))
+    .orderBy(asc(wikiSourceContributors.sortOrder))
+    .all();
+  const documents = db
+    .select({ id: wikiPdfDocuments.id, sourceId: wikiPdfDocuments.sourceId })
+    .from(wikiPdfDocuments)
+    .where(inArray(wikiPdfDocuments.sourceId, rows.map((source) => source.id)))
+    .orderBy(desc(wikiPdfDocuments.version))
+    .all();
+  return rows.map((source) => decorateCitationSource({
+    ...source,
+    contributors: contributors.filter((person) => person.sourceId === source.id),
+    pdfDocumentId: documents.find((document) => document.sourceId === source.id)?.id,
+  }, locale));
 }
 
 export function getPageResearchMeta(pageId: string, userId: string) {
@@ -311,6 +372,9 @@ export function getPageResearchMeta(pageId: string, userId: string) {
     .select({
       id: wikiPageRevisions.id,
       version: wikiPageRevisions.version,
+      contentVersion: wikiPageRevisions.contentVersion,
+      contentHash: wikiPageRevisions.contentHash,
+      label: wikiPageRevisions.label,
       kind: wikiPageRevisions.kind,
       createdAt: wikiPageRevisions.createdAt,
       createdByName: user.name,

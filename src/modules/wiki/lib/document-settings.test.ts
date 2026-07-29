@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   collectDocumentPreflightIssues,
   DEFAULT_DOCUMENT_SETTINGS,
+  localizeDocumentSettings,
   normalizeDocumentSettings,
   parseDocumentSettings,
   resolveDocumentToken,
@@ -23,6 +24,22 @@ describe("document settings", () => {
 
   it("falls back for invalid serialized settings", () => {
     expect(parseDocumentSettings("{no")).toEqual(DEFAULT_DOCUMENT_SETTINGS);
+  });
+
+  it("keeps margin-guide visibility backward compatible and configurable", () => {
+    expect(normalizeDocumentSettings({ page: {} }).page.showMarginGuides).toBe(true);
+    expect(normalizeDocumentSettings({ page: { showMarginGuides: false } }).page.showMarginGuides).toBe(false);
+  });
+
+  it("localizes untouched generated-section headings without overwriting custom titles", () => {
+    const german = localizeDocumentSettings(normalizeDocumentSettings(null), "de-DE");
+    expect(german.bibliography.heading).toBe("Literaturverzeichnis");
+    expect(german.figures.heading).toBe("Abbildungsverzeichnis");
+
+    const custom = normalizeDocumentSettings({
+      bibliography: { heading: "Quellen", enabled: true, pageBreakBefore: true },
+    });
+    expect(localizeDocumentSettings(custom, "de-DE").bibliography.heading).toBe("Quellen");
   });
 
   it("reports unresolved variables and section limits", () => {

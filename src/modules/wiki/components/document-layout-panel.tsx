@@ -175,6 +175,9 @@ export function DocumentLayoutPanel({
               <Input className="h-8" type="number" min={8} max={50} value={settings.page.marginsMm[side]} onChange={(event) => patchMargins(side, Number(event.target.value))} />
             </Field>)}
           </div>
+          <div className="rounded-lg border bg-muted/30 px-2.5 py-1.5">
+            <Toggle checked={settings.page.showMarginGuides} onChange={(showMarginGuides) => patchPage({ showMarginGuides })} label={t("showMarginGuides")} />
+          </div>
         </section>
 
         <section className="space-y-2 border-t pt-3">
@@ -191,15 +194,26 @@ export function DocumentLayoutPanel({
           {settings.cover.enabled && <>
             <Field label={t("eyebrow")}><Input className="h-8" value={settings.cover.eyebrow} onChange={(event) => patch({ cover: { ...settings.cover, eyebrow: event.target.value } })} /></Field>
             <Field label={t("subtitle")}><Input className="h-8" value={settings.cover.subtitle} onChange={(event) => patch({ cover: { ...settings.cover, subtitle: event.target.value } })} /></Field>
+            <Field label={t("author")}><Input className="h-8" value={settings.cover.author} onChange={(event) => patch({ cover: { ...settings.cover, author: event.target.value } })} /></Field>
+            <Field label={t("organization")}><Input className="h-8" value={settings.cover.organization} onChange={(event) => patch({ cover: { ...settings.cover, organization: event.target.value } })} /></Field>
+            <Field label={t("date")}><Input className="h-8" value={settings.cover.date} onChange={(event) => patch({ cover: { ...settings.cover, date: event.target.value } })} /></Field>
           </>}
           <Toggle checked={settings.header.enabled} onChange={(enabled) => patch({ header: { ...settings.header, enabled } })} label={t("header")} />
           {settings.header.enabled && <div className="grid gap-2">
             <Field label={t("left")}><Input className="h-8" value={settings.header.left} onChange={(event) => patch({ header: { ...settings.header, left: event.target.value } })} /></Field>
+            <Field label={t("center")}><Input className="h-8" value={settings.header.center} onChange={(event) => patch({ header: { ...settings.header, center: event.target.value } })} /></Field>
             <Field label={t("right")}><Input className="h-8" value={settings.header.right} onChange={(event) => patch({ header: { ...settings.header, right: event.target.value } })} /></Field>
           </div>}
           <Toggle checked={settings.footer.enabled} onChange={(enabled) => patch({ footer: { ...settings.footer, enabled } })} label={t("footer")} />
+          {settings.footer.enabled && <div className="grid gap-2">
+            <Field label={t("left")}><Input className="h-8" value={settings.footer.left} onChange={(event) => patch({ footer: { ...settings.footer, left: event.target.value } })} /></Field>
+            <Field label={t("center")}><Input className="h-8" value={settings.footer.center} onChange={(event) => patch({ footer: { ...settings.footer, center: event.target.value } })} /></Field>
+            <Field label={t("right")}><Input className="h-8" value={settings.footer.right} onChange={(event) => patch({ footer: { ...settings.footer, right: event.target.value } })} /></Field>
+          </div>}
           <Toggle checked={settings.footer.pageNumbers} onChange={(pageNumbers) => patch({ footer: { ...settings.footer, pageNumbers } })} label={t("pageNumbers")} />
+          {settings.footer.pageNumbers && <Field label={t("pageNumberStart")}><Input className="h-8" type="number" min={0} value={settings.footer.pageNumberStart} onChange={(event) => patch({ footer: { ...settings.footer, pageNumberStart: Number(event.target.value) } })} /></Field>}
           <Toggle checked={settings.bibliography.enabled} onChange={(enabled) => patch({ bibliography: { ...settings.bibliography, enabled } })} label={t("bibliography")} />
+          {settings.bibliography.enabled && <Field label={t("bibliographyHeading")}><Input className="h-8" value={settings.bibliography.heading} onChange={(event) => patch({ bibliography: { ...settings.bibliography, heading: event.target.value } })} /></Field>}
           <Toggle checked={settings.figures.enabled} onChange={(enabled) => patch({ figures: { ...settings.figures, enabled } })} label={t("figureIndex")} />
           {settings.figures.enabled && <div className="grid gap-2 rounded-lg border bg-muted/35 p-2">
             <Field label={t("figureIndexHeading")}><Input className="h-8" value={settings.figures.heading} onChange={(event) => patch({ figures: { ...settings.figures, heading: event.target.value } })} /></Field>

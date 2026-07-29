@@ -1,15 +1,17 @@
 import fs from "node:fs";
 import { eq } from "drizzle-orm";
 import { db } from "@/db";
-import { wikiPages } from "@/db/schema";
+import { wikiPages, wikiSvgAssets } from "@/db/schema";
 import { getAttachment, getAttachmentAbsolutePath } from "@/lib/files";
 import { formatBibliographyEntry } from "./citations";
-import { parseDocumentSettings } from "./document-settings";
+import { formatIeeeBibliography } from "./citations.server";
+import { localizeDocumentSettings, parseDocumentSettings } from "./document-settings";
 import { renderDocumentHtml, type RenderedDocument } from "./document-renderer";
 import { parseStoredDocument } from "./tiptap";
 import { getCitationSourcesForPage } from "../research-queries";
 import { renderDocumentPdfBytes } from "./document-pdf-engine";
 import type { WikiTypographySettingsV1 } from "./wiki-typography";
+import { renderSvgAsset } from "../svg-assets";
 
 const EXPORT_IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/svg+xml"]);
 
@@ -21,6 +23,15 @@ function dataUriForAttachment(attachmentId: string, pageId: string) {
     || attachment.entityId !== pageId
     || !EXPORT_IMAGE_TYPES.has(attachment.mimeType)
   ) return null;
+  if (attachment.mimeType === "image/svg+xml") {
+    const asset = db.select({ id: wikiSvgAssets.id }).from(wikiSvgAssets)
+      .where(eq(wikiSvgAssets.attachmentId, attachmentId))
+      .get();
+    if (asset) {
+      const rendered = renderSvgAsset(asset.id);
+      if (rendered) return `data:image/svg+xml;base64,${Buffer.from(rendered.svg).toString("base64")}`;
+    }
+  }
   const absolute = getAttachmentAbsolutePath(attachment.storedName);
   if (!fs.existsSync(absolute)) return null;
   return `data:${attachment.mimeType};base64,${fs.readFileSync(absolute).toString("base64")}`;
@@ -32,9 +43,12 @@ export async function renderStoredWikiDocument(pageId: string, typography: WikiT
 }> {
   const page = db.select().from(wikiPages).where(eq(wikiPages.id, pageId)).get();
   if (!page || page.deletedAt) throw new Error("Page not found");
-  const settings = parseDocumentSettings(page.documentSettingsJson);
+  const settings = localizeDocumentSettings(
+    parseDocumentSettings(page.documentSettingsJson),
+    page.citationLocale,
+  );
   const doc = parseStoredDocument(page.contentJson);
-  const references = getCitationSourcesForPage(page.id).map(formatBibliographyEntry);
+  const references = getCitationSourcesForPage(page.id).map((source, index) => `[${index + 1}] ${formatIeeeBibliography(source, page.citationLocale) || formatBibliographyEntry(source, page.citationLocale)}`);
   const rendered = await renderDocumentHtml({
     title: page.title,
     doc,
@@ -52,7 +66,10 @@ export async function renderStoredWikiDocument(pageId: string, typography: WikiT
 
 export async function generateWikiDocumentPdf(pageId: string, typography: WikiTypographySettingsV1) {
   const { page: storedPage, rendered } = await renderStoredWikiDocument(pageId, typography);
-  const settings = parseDocumentSettings(storedPage.documentSettingsJson);
+  const settings = localizeDocumentSettings(
+    parseDocumentSettings(storedPage.documentSettingsJson),
+    storedPage.citationLocale,
+  );
   const pdf = await renderDocumentPdfBytes({
     rendered,
     settings,

@@ -1163,6 +1163,9 @@
     "linkedPages": "Verknüpfte Dokumente",
     "usedIn": "Verwendet in",
     "history": "Verlauf",
+    "checkpoint": "Version merken",
+    "checkpointLabelPrompt": "Optionaler Name für diese Version:",
+    "revisionKinds": { "autosave": "Automatischer Stand", "manual": "Gemerkte Version", "conflict": "Gesicherter Entwurf", "restore": "Vor Wiederherstellung" },
     "noHistory": "Keine früheren Versionen.",
     "historyComparisonDescription": "Vergleiche eine frühere Version mit dem aktuellen Dokument. Abweichende Zeilen sind farbig markiert.",
     "selectedVersion": "Version {version}",
@@ -1187,6 +1190,26 @@
     "supportingSources": "Unterstützende Quellen",
     "chooseSource": "Quelle auswählen",
     "references": "Literaturverzeichnis",
+    "citeSource": "Quelle zitieren",
+    "graphics": {
+      "title": "Grafiken",
+      "description": "SVG-Texte bearbeiten und mit Dokumentfeldern verbinden.",
+      "close": "Grafiken schließen",
+      "assets": "SVG-Grafiken",
+      "empty": "Noch keine SVG-Grafik",
+      "emptyHint": "Füge eine SVG- oder SVGZ-Datei als Bild oder Anhang hinzu.",
+      "version": "Version {version}",
+      "textLayers": "Textebenen",
+      "noText": "Diese Grafik enthält keine direkt bearbeitbaren Text- oder tspan-Elemente.",
+      "fixedText": "Fester Text",
+      "save": "Grafik speichern",
+      "history": "Versionsverlauf",
+      "restore": "Wiederherstellen",
+      "loadFailed": "Die Grafiken konnten nicht geladen werden.",
+      "saveFailed": "Die Grafik konnte nicht gespeichert werden.",
+      "restoreFailed": "Die Grafikversion konnte nicht wiederhergestellt werden.",
+      "conflict": "Die Grafik wurde inzwischen geändert. Öffne den Bereich erneut."
+    },
     "comments": "Kommentare",
     "hideComments": "Kommentare ausblenden",
     "showComments": "Kommentare anzeigen",
@@ -1225,6 +1248,7 @@
       "portrait": "Hochformat",
       "landscape": "Querformat",
       "margin": { "top": "Oben (mm)", "right": "Rechts (mm)", "bottom": "Unten (mm)", "left": "Links (mm)" },
+      "showMarginGuides": "Seitenränder anzeigen",
       "typography": "Typografie und Farben",
       "bodyFont": "Grundschrift",
       "headingFont": "Überschriften",
@@ -1238,15 +1262,21 @@
       "cover": "Deckblatt",
       "eyebrow": "Deckblatt-Kicker",
       "subtitle": "Untertitel",
+      "author": "Autor:in",
+      "organization": "Organisation",
+      "date": "Datum",
       "header": "Kopfzeile",
       "footer": "Fußzeile",
       "pageNumbers": "Seitennummern",
+      "pageNumberStart": "Seitennummer beginnt bei",
       "bibliography": "Literaturverzeichnis",
+      "bibliographyHeading": "Überschrift des Literaturverzeichnisses",
       "figureIndex": "Abbildungsverzeichnis",
       "figureIndexHeading": "Überschrift des Verzeichnisses",
       "figureIndexCount": "{count, plural, =0 {Noch keine beschrifteten Abbildungen} one {# beschriftete Abbildung} other {# beschriftete Abbildungen}}",
       "figureNumber": "Abbildung {number}",
       "left": "Links",
+      "center": "Mitte",
       "right": "Rechts",
       "insert": "Dokumentbausteine",
       "pageBreak": "Seitenumbruch",
@@ -1302,6 +1332,7 @@
         "heading1": "Überschrift 1", "heading2": "Überschrift 2", "heading3": "Überschrift 3",
         "bulletList": "Aufzählung", "orderedList": "Nummerierte Liste", "taskList": "Aufgabenliste",
         "format": "Format", "insert": "Einfügen", "more": "Mehr", "actions": "Aktionen", "settings": "Ansicht und Einstellungen",
+        "zoom": "Zoom", "zoomIn": "Vergrößern", "zoomOut": "Verkleinern", "zoomReset": "Zoom auf 100 % zurücksetzen",
         "groups": { "history": "Verlauf", "writing": "Text gestalten", "insert": "Inhalte einfügen", "review": "Prüfen und kommentieren", "document": "Dokumentansicht" },
         "underline": "Unterstreichen", "highlight": "Hervorheben",
         "strike": "Durchstreichen", "inlineCode": "Inline-Code", "blockquote": "Zitatblock", "codeBlock": "Codeblock"
@@ -1312,6 +1343,7 @@
         "remove": "Link entfernen", "open": "Link öffnen", "apply": "Übernehmen"
       },
       "save": { "unsaved": "Nicht gespeichert", "offline": "Offline · lokal gesichert", "error": "Speichern fehlgeschlagen", "retry": "Erneut versuchen" },
+      "lease": { "locked": "Diese Seite wird bereits in einem anderen Fenster bearbeitet. Dein lokaler Entwurf bleibt erhalten.", "takeover": "Bearbeitung übernehmen", "takeoverFailed": "Die Bearbeitung konnte nicht übernommen werden." },
       "search": {
         "title": "Suchen und ersetzen", "placeholder": "In dieser Notiz suchen…", "replacement": "Ersetzen durch…",
         "results": "{current} von {total}", "noResults": "Keine Treffer", "caseSensitive": "Groß-/Kleinschreibung",
@@ -1558,9 +1590,9 @@
           "keywords": ["link", "url", "webseite", "extern"]
         },
         "citation": {
-          "label": "Zitat einfügen",
-          "description": "Quelle mit Seitenangabe zitieren",
-          "keywords": ["zitat", "quelle", "citation", "beleg"]
+          "label": "Quelle zitieren",
+          "description": "IEEE-Quellenangabe mit optionaler Seitenzahl einfügen",
+          "keywords": ["zitat", "quelle", "citation", "beleg", "ieee", "literatur"]
         },
         "pdfEvidence": {
           "label": "PDF-Nachweis einfügen",
@@ -1578,8 +1610,8 @@
           "keywords": ["anhang", "anhänge", "anhange", "datei", "upload"]
         },
         "supportingSource": {
-          "label": "Quelle verknüpfen",
-          "description": "Unterstützende Quelle mit der Seite verbinden",
+          "label": "Quelle nur verknüpfen",
+          "description": "Quelle als Unterstützung verbinden, ohne sie im Text zu zitieren",
           "keywords": [
             "quelle",
             "verknüpfung",

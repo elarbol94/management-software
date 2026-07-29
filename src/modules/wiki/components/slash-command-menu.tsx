@@ -67,7 +67,7 @@ const SlashCommandMenu = forwardRef<SlashCommandMenuHandle, SlashCommandMenuProp
   }), [command, items, selectedIndex]);
 
   if (items.length === 0) {
-    return <div role="status" className="w-80 rounded-xl border bg-popover p-3 text-sm text-muted-foreground shadow-xl">{emptyLabel}</div>;
+    return <div role="status" className="z-[80] w-80 rounded-xl border bg-popover p-3 text-sm text-muted-foreground shadow-xl">{emptyLabel}</div>;
   }
 
   let previousGroup = "";
@@ -76,7 +76,7 @@ const SlashCommandMenu = forwardRef<SlashCommandMenuHandle, SlashCommandMenuProp
       role="listbox"
       aria-label={ariaLabel}
       aria-activedescendant={`slash-command-${items[selectedIndex]?.id}`}
-      className="max-h-[min(24rem,60vh)] w-80 overflow-y-auto rounded-xl border bg-popover p-1.5 text-popover-foreground shadow-xl"
+      className="z-[80] max-h-[min(24rem,60vh)] w-80 overflow-y-auto rounded-xl border bg-popover p-1.5 text-popover-foreground shadow-xl"
     >
       {items.map((item, index) => {
         const Icon = item.icon;
@@ -129,6 +129,7 @@ export function createSlashCommandExtension({
         allowedPrefixes: null,
         placement: "bottom-start",
         offset: { mainAxis: 6 },
+        flip: true,
         items: ({ query }) => filterSlashCommands(commands, query),
         allow: ({ state, range }) => {
           const $slash = state.doc.resolve(range.from);

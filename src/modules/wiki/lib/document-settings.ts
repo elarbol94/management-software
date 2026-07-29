@@ -21,6 +21,7 @@ export type DocumentSettingsV1 = {
   page: {
     size: DocumentPageSize;
     orientation: DocumentOrientation;
+    showMarginGuides: boolean;
     marginsMm: { top: number; right: number; bottom: number; left: number };
   };
   theme: {
@@ -37,12 +38,16 @@ export type DocumentSettingsV1 = {
     enabled: boolean;
     eyebrow: string;
     subtitle: string;
+    author: string;
+    organization: string;
+    date: string;
   };
   header: {
     enabled: boolean;
     left: string;
     center: string;
     right: string;
+    differentFirstPage: boolean;
   };
   footer: {
     enabled: boolean;
@@ -50,6 +55,8 @@ export type DocumentSettingsV1 = {
     center: string;
     right: string;
     pageNumbers: boolean;
+    differentFirstPage: boolean;
+    pageNumberStart: number;
   };
   bibliography: {
     enabled: boolean;
@@ -99,6 +106,7 @@ export const DEFAULT_DOCUMENT_SETTINGS: DocumentSettingsV1 = {
   page: {
     size: "A4",
     orientation: "portrait",
+    showMarginGuides: true,
     marginsMm: { top: 22, right: 20, bottom: 22, left: 24 },
   },
   theme: {
@@ -111,9 +119,9 @@ export const DEFAULT_DOCUMENT_SETTINGS: DocumentSettingsV1 = {
     accentColor: "#315EFB",
     mutedColor: "#667085",
   },
-  cover: { enabled: true, eyebrow: "DOCUMENT", subtitle: "" },
-  header: { enabled: true, left: "{title}", center: "", right: "{programme}" },
-  footer: { enabled: true, left: "{applicant}", center: "", right: "", pageNumbers: true },
+  cover: { enabled: true, eyebrow: "DOCUMENT", subtitle: "", author: "", organization: "", date: "" },
+  header: { enabled: true, left: "{title}", center: "", right: "{programme}", differentFirstPage: true },
+  footer: { enabled: true, left: "{applicant}", center: "", right: "", pageNumbers: true, differentFirstPage: true, pageNumberStart: 1 },
   bibliography: { enabled: true, heading: "References", pageBreakBefore: true },
   figures: { enabled: false, heading: "List of figures", pageBreakBefore: true },
   variables: {
@@ -186,6 +194,7 @@ export function normalizeDocumentSettings(value: unknown): DocumentSettingsV1 {
     page: {
       size: page.size === "Letter" ? "Letter" : "A4",
       orientation: page.orientation === "landscape" ? "landscape" : "portrait",
+      showMarginGuides: page.showMarginGuides !== false,
       marginsMm: {
         top: finiteNumber(page.marginsMm?.top, fallback.page.marginsMm.top, 8, 50),
         right: finiteNumber(page.marginsMm?.right, fallback.page.marginsMm.right, 8, 50),
@@ -207,12 +216,16 @@ export function normalizeDocumentSettings(value: unknown): DocumentSettingsV1 {
       enabled: cover.enabled !== false,
       eyebrow: safeText(cover.eyebrow, fallback.cover.eyebrow),
       subtitle: safeText(cover.subtitle),
+      author: safeText(cover.author),
+      organization: safeText(cover.organization),
+      date: safeText(cover.date),
     },
     header: {
       enabled: header.enabled !== false,
       left: safeText(header.left, fallback.header.left),
       center: safeText(header.center),
       right: safeText(header.right, fallback.header.right),
+      differentFirstPage: header.differentFirstPage !== false,
     },
     footer: {
       enabled: footer.enabled !== false,
@@ -220,6 +233,8 @@ export function normalizeDocumentSettings(value: unknown): DocumentSettingsV1 {
       center: safeText(footer.center),
       right: safeText(footer.right),
       pageNumbers: footer.pageNumbers !== false,
+      differentFirstPage: footer.differentFirstPage !== false,
+      pageNumberStart: Math.floor(finiteNumber(footer.pageNumberStart, 1, 0, 10_000)),
     },
     bibliography: {
       enabled: bibliography.enabled !== false,
@@ -252,6 +267,28 @@ export function parseDocumentSettings(value: string | null | undefined): Documen
 
 export function serializeDocumentSettings(settings: DocumentSettingsV1) {
   return JSON.stringify(normalizeDocumentSettings(settings));
+}
+
+export function localizeDocumentSettings(
+  settings: DocumentSettingsV1,
+  locale: string,
+): DocumentSettingsV1 {
+  if (!locale.toLocaleLowerCase().startsWith("de")) return settings;
+  return {
+    ...settings,
+    bibliography: {
+      ...settings.bibliography,
+      heading: settings.bibliography.heading === "References"
+        ? "Literaturverzeichnis"
+        : settings.bibliography.heading,
+    },
+    figures: {
+      ...settings.figures,
+      heading: settings.figures.heading === "List of figures"
+        ? "Abbildungsverzeichnis"
+        : settings.figures.heading,
+    },
+  };
 }
 
 function withTheme(

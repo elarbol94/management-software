@@ -6,6 +6,7 @@ import {
   type DocumentSettingsV1,
 } from "./document-settings";
 import type { TiptapNode } from "./tiptap";
+import { formatIeeeCitation } from "./citations";
 import {
   normalizeWikiTypography,
   wikiFontStack,
@@ -17,6 +18,28 @@ export type DocumentAssetResolver = (input: {
   src: string;
   alt: string;
 }) => Promise<string | null>;
+
+function normalizeDocumentCitations(doc: TiptapNode): TiptapNode {
+  const order = new Map<string, number>();
+  const visit = (node: TiptapNode): TiptapNode => {
+    let attrs = node.attrs;
+    if (node.type === "citation" && Array.isArray(node.attrs?.items)) {
+      const labels: string[] = [];
+      for (const item of node.attrs.items as Array<{ sourceId?: unknown; locator?: unknown }>) {
+        if (typeof item.sourceId !== "string") continue;
+        if (!order.has(item.sourceId)) order.set(item.sourceId, order.size + 1);
+        labels.push(formatIeeeCitation(order.get(item.sourceId)!, typeof item.locator === "string" ? item.locator : undefined));
+      }
+      if (labels.length) attrs = { ...node.attrs, label: labels.join(", ") };
+    }
+    return {
+      ...node,
+      ...(attrs ? { attrs } : {}),
+      ...(node.content ? { content: node.content.map(visit) } : {}),
+    };
+  };
+  return visit(doc);
+}
 
 export type RenderDocumentInput = {
   title: string;
@@ -334,6 +357,7 @@ function printCss(settings: DocumentSettingsV1, typography: WikiTypographySettin
     [data-keep-together] { break-inside: avoid; page-break-inside: avoid; }
     .unresolved { color: #b42318; background: #fee4e2; }
     .bibliography { ${settings.bibliography.pageBreakBefore ? "break-before: page; page-break-before: always;" : ""} }
+    .bibliography ol { list-style: none; padding: 0; }
     .bibliography li { padding-left: 6mm; text-indent: -6mm; }
     .figure-index { ${settings.figures.pageBreakBefore ? "break-before: page; page-break-before: always;" : ""} }
     .figure-index ol { list-style: none; padding: 0; }
@@ -367,10 +391,11 @@ function marginTemplate(
 export async function renderDocumentHtml(input: RenderDocumentInput): Promise<RenderedDocument> {
   const settings = normalizeDocumentSettings(input.settings);
   const typography = normalizeWikiTypography(input.typography);
-  const normalizedInput = { ...input, settings, typography };
-  const headings = collectHeadings(input.doc);
-  const figures = collectFigures(input.doc);
-  const content = await renderNode(input.doc, normalizedInput, headings, figures);
+  const normalizedDoc = normalizeDocumentCitations(input.doc);
+  const normalizedInput = { ...input, doc: normalizedDoc, settings, typography };
+  const headings = collectHeadings(normalizedDoc);
+  const figures = collectFigures(normalizedDoc);
+  const content = await renderNode(normalizedDoc, normalizedInput, headings, figures);
   const cover = settings.cover.enabled
     ? `<section class="cover"><p class="eyebrow">${escapeHtml(settings.cover.eyebrow)}</p><h1>${escapeHtml(input.title)}</h1>${settings.cover.subtitle ? `<p class="subtitle">${escapeHtml(settings.cover.subtitle)}</p>` : ""}<p class="meta">${escapeHtml(settings.variables.applicant)}${settings.variables.programme ? ` · ${escapeHtml(settings.variables.programme)}` : ""}${settings.variables.date ? ` · ${escapeHtml(settings.variables.date)}` : ""}</p></section>`
     : "";
@@ -445,5 +470,5 @@ export function renderDocumentMarkdown(doc: TiptapNode, settings: DocumentSettin
       default: return content;
     }
   }
-  return render(doc).trim() + "\n";
+  return render(normalizeDocumentCitations(doc)).trim() + "\n";
 }

@@ -21,59 +21,118 @@ export type CitationSource = {
   url: string;
   accessedAt: string;
   contributors: Contributor[];
+  ieeeBibliography?: string;
+  pdfDocumentId?: string;
 };
 
 function year(source: CitationSource) {
   return source.issuedDate.slice(0, 4) || "n.d.";
 }
 
-function contributorLabel(source: CitationSource, bibliography = false) {
+function dateParts(value: string) {
+  const parts = value
+    .split(/[-/]/)
+    .map((part) => Number(part))
+    .filter((part) => Number.isInteger(part) && part > 0)
+    .slice(0, 3);
+  return parts.length ? { "date-parts": [parts] } : undefined;
+}
+
+export function toCslJson(source: CitationSource) {
+  const type = {
+    journalArticle: "article-journal",
+    book: "book",
+    bookChapter: "chapter",
+    report: "report",
+    webPage: "webpage",
+    document: "document",
+  }[source.type] ?? "document";
+  return {
+    id: source.id,
+    type,
+    title: source.title,
+    author: source.contributors
+      .filter((person) => person.role === "author")
+      .map((person) => person.literal
+        ? { literal: person.literal }
+        : { given: person.given, family: person.family }),
+    editor: source.contributors
+      .filter((person) => person.role === "editor")
+      .map((person) => person.literal
+        ? { literal: person.literal }
+        : { given: person.given, family: person.family }),
+    issued: dateParts(source.issuedDate),
+    accessed: dateParts(source.accessedAt),
+    "container-title": source.containerTitle || undefined,
+    publisher: source.publisher || source.institution || undefined,
+    volume: source.volume || undefined,
+    issue: source.issue || undefined,
+    page: source.pages || undefined,
+    DOI: source.doi || undefined,
+    URL: source.url || undefined,
+  };
+}
+
+function contributorLabel(source: CitationSource) {
   const authors = source.contributors.filter((person) => person.role === "author");
   if (authors.length === 0) return source.institution || source.publisher || source.title;
-  const name = (person: Contributor) => person.literal || person.family || person.given;
-  if (!bibliography) {
-    if (authors.length === 1) return name(authors[0]);
-    if (authors.length === 2) return `${name(authors[0])} & ${name(authors[1])}`;
-    return `${name(authors[0])} et al.`;
-  }
+  const name = (person: Contributor) => {
+    if (person.literal) return person.literal;
+    const initials = person.given
+      .split(/\s+/)
+      .filter(Boolean)
+      .map((part) => `${part[0]?.toUpperCase()}.`)
+      .join(" ");
+    return [initials, person.family].filter(Boolean).join(" ");
+  };
   return authors
-    .map((person) => {
-      if (person.literal) return person.literal;
-      const initials = person.given
-        .split(/\s+/)
-        .filter(Boolean)
-        .map((part) => `${part[0]?.toUpperCase()}.`)
-        .join(" ");
-      return [person.family, initials].filter(Boolean).join(", ");
-    })
-    .join(authors.length > 1 ? ", & " : "");
+    .map(name)
+    .join(authors.length > 1 ? ", " : "");
 }
 
 export function formatInlineCitation(
-  source: CitationSource,
+  _source: CitationSource,
   locator?: string,
-  locale = "en-US",
+  _locale = "en-US",
+  citationNumber = 1,
 ) {
-  const pageLabel = locale.startsWith("de") ? "S." : "p.";
-  return `(${contributorLabel(source)}, ${year(source)}${locator ? `, ${pageLabel} ${locator}` : ""})`;
+  void _locale;
+  return formatIeeeCitation(citationNumber, locator);
 }
 
-export function formatBibliographyEntry(source: CitationSource) {
-  const creators = contributorLabel(source, true);
-  const date = year(source);
-  const container = source.containerTitle ? ` ${source.containerTitle}` : "";
-  const volume = source.volume ? `, ${source.volume}${source.issue ? `(${source.issue})` : ""}` : "";
-  const pages = source.pages ? `, ${source.pages}` : "";
+export function formatIeeeCitation(citationNumber: number, locator?: string) {
+  return `[${citationNumber}${locator ? `, p. ${locator}` : ""}]`;
+}
+
+export function formatBibliographyEntry(source: CitationSource, locale = "en-US") {
+  if (source.ieeeBibliography) return source.ieeeBibliography;
+  void locale;
+  const creators = contributorLabel(source);
+  const issuedYear = year(source);
   const publisher = source.publisher || source.institution;
-  const link = source.doi
-    ? ` https://doi.org/${source.doi.replace(/^https?:\/\/(?:dx\.)?doi\.org\//i, "")}`
-    : source.url
-      ? ` ${source.url}`
-      : "";
+  const pages = source.pages ? `${source.pages.includes("-") ? "pp." : "p."} ${source.pages}` : "";
+  const identifiers = [
+    source.doi ? `doi: ${normalizeDoi(source.doi)}` : "",
+    source.url ? `[Online]. Available: ${source.url}` : "",
+  ].filter(Boolean);
+  const authorPrefix = creators ? `${creators}, ` : "";
+  let entry: string;
   if (source.type === "journalArticle") {
-    return `${creators} (${date}). ${source.title}.${container}${volume}${pages}.${link}`.replace(/\s+/g, " ").trim();
+    entry = `${authorPrefix}“${source.title},”${source.containerTitle ? ` ${source.containerTitle}` : ""}${source.volume ? `, vol. ${source.volume}` : ""}${source.issue ? `, no. ${source.issue}` : ""}${pages ? `, ${pages}` : ""}, ${issuedYear}`;
+  } else if (source.type === "bookChapter") {
+    entry = `${authorPrefix}“${source.title},”${source.containerTitle ? ` in ${source.containerTitle}` : ""}${publisher ? `, ${publisher}` : ""}, ${issuedYear}${pages ? `, ${pages}` : ""}`;
+  } else if (source.type === "book") {
+    entry = `${authorPrefix}${source.title}${publisher ? `, ${publisher}` : ""}, ${issuedYear}`;
+  } else {
+    entry = `${authorPrefix}“${source.title},”${publisher ? ` ${publisher},` : ""} ${issuedYear}`;
   }
-  return `${creators} (${date}). ${source.title}.${publisher ? ` ${publisher}.` : ""}${link}`.replace(/\s+/g, " ").trim();
+  return `${entry}${identifiers.length ? `, ${identifiers.join(", ")}` : ""}.`.replace(/\s+/g, " ").trim();
+}
+
+export function formatBibliography(sources: CitationSource[], locale = "en-US") {
+  const unique = [...new Map(sources.map((source) => [source.id, source])).values()];
+  return unique
+    .map((source, index) => ({ source, text: `[${index + 1}] ${formatBibliographyEntry(source, locale)}` }));
 }
 
 export function normalizeDoi(value: string) {

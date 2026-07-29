@@ -402,7 +402,28 @@ export function ResearchSidebar({
             )}
           </div>
 
-          {searchBox({ id: searchId, inputRef, onNavigate })}
+          {compact && !sheet ? (
+            <div className="flex justify-center px-2 py-3">
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <button
+                      type="button"
+                      aria-label={t("searchEverything")}
+                      className="grid size-9 place-items-center rounded-md border border-transparent text-muted-foreground outline-none transition-colors hover:border-border hover:bg-background hover:text-foreground focus-visible:ring-2 focus-visible:ring-indigo-500"
+                      onClick={() => {
+                        setExpanded(true);
+                        requestAnimationFrame(() => desktopSearchRef.current?.focus());
+                      }}
+                    />
+                  }
+                >
+                  <Search className="size-4" />
+                </TooltipTrigger>
+                <TooltipContent side="right">{t("searchEverything")}</TooltipContent>
+              </Tooltip>
+            </div>
+          ) : searchBox({ id: searchId, inputRef, onNavigate })}
 
           <nav
             id={navigationId}

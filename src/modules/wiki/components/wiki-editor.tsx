@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useEffectEvent, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState, type CSSProperties } from "react";
 import { useRouter } from "next/navigation";
 import { useFormatter, useTranslations } from "next-intl";
 import { toast } from "sonner";
@@ -13,7 +13,7 @@ import Placeholder from "@tiptap/extension-placeholder";
 import TaskList from "@tiptap/extension-task-list";
 import TaskItem from "@tiptap/extension-task-item";
 import { Fragment, Slice } from "@tiptap/pm/model";
-import { AlertCircle, AlignCenter, AlignLeft, AlignRight, Bold, BookMarked, CalendarClock, Captions, Check, ClipboardCheck, CloudOff, Code, Columns2, Eye, EyeOff, FileText, Heading1, Heading2, Heading3, Highlighter, ImagePlus, Italic, Keyboard, Languages, Link2, List, ListOrdered, ListTree, ListTodo, MessageSquareText, Minus, MoreHorizontal, PanelRightClose, PanelRightOpen, Paperclip, Pilcrow, Quote, Redo2, RotateCcw, Rows3, Scan, ScissorsLineDashed, Search, Settings2, Strikethrough, Trash2, Underline as UnderlineIcon, Undo2, WifiOff } from "lucide-react";
+import { AlertCircle, AlignCenter, AlignLeft, AlignRight, Bold, BookMarked, CalendarClock, Captions, Check, ClipboardCheck, CloudOff, Code, Columns2, Eye, EyeOff, FileText, Heading1, Heading2, Heading3, Highlighter, ImagePlus, Italic, Keyboard, Languages, Layers3, Link2, List, ListOrdered, ListTree, ListTodo, MessageSquareText, Minus, MoreHorizontal, PanelRightClose, PanelRightOpen, Paperclip, Pilcrow, Quote, Redo2, RotateCcw, Rows3, Scan, ScissorsLineDashed, Search, Settings2, Strikethrough, Trash2, Underline as UnderlineIcon, Undo2, WifiOff, ZoomIn, ZoomOut } from "lucide-react";
 import { addComment, restorePageRevision } from "../research-actions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -42,6 +42,7 @@ import { DocumentLayoutPanel } from "./document-layout-panel";
 import { WikiTypographyDialog, type WikiEditorPreferences } from "./wiki-typography-dialog";
 import {
   collectDocumentPreflightIssues,
+  localizeDocumentSettings,
   parseDocumentSettings,
   serializeDocumentSettings,
   type DocumentPreflightIssue,
@@ -74,12 +75,16 @@ import { useTaskCreator } from "@/modules/tasks/components/task-create-provider"
 import { useDeadlineCreator } from "@/modules/tasks/components/deadline-create-provider";
 import { localDateValue } from "@/modules/tasks/deadline-utils";
 import type { ContextDeadlineMarker, ContextTaskMarker } from "@/modules/tasks/types";
+import { formatBibliography, formatIeeeCitation, formatInlineCitation, type CitationSource } from "../lib/citations";
+import { NewSourceDialog } from "./new-source-dialog";
+import { SvgGraphicsPanel } from "./svg-graphics-panel";
 
 type PageRef = { id: string; title: string; slug: string };
-type SourceRef = { id: string; title: string; issuedDate: string; contributors: string };
+type SourceRef = CitationSource;
 type WikiEditorPageActions = { addAttachment: () => void; linkSupportingSource: () => void };
 type CachedSpellcheckMatch = Omit<SpellcheckResponseMatch, "paragraph">;
 type FigureCaption = { nodeId: string; caption: string };
+type CitationTarget = { sourceId: string; documentId?: string; annotationId?: string; locator?: string };
 type WikiSaveInput = {
   id: string;
   contentJson: string;
@@ -88,12 +93,13 @@ type WikiSaveInput = {
   documentSettingsJson?: string;
   baseDocumentMode?: boolean;
   baseDocumentSettingsJson?: string;
-  expectedVersion?: number;
+  expectedContentVersion: number;
+  editorSessionId: string;
 };
 type WikiSaveResult =
-  | { saved: true; conflict: false; version: number }
-  | { saved: false; conflict?: false }
-  | { saved: false; conflict: true; version: number; revisionId: string; contentJson: string; documentMode: boolean; documentSettingsJson: string };
+  | { saved: true; conflict: false; contentVersion: number }
+  | { saved: false; conflict?: false; locked?: boolean; contentVersion?: number }
+  | { saved: false; conflict: true; contentVersion: number; revisionId: string; contentJson: string; documentMode: boolean; documentSettingsJson: string };
 
 async function savePageContentRequest(input: WikiSaveInput): Promise<WikiSaveResult> {
   const response = await fetch(`/api/wiki/pages/${encodeURIComponent(input.id)}/content`, {
@@ -132,6 +138,7 @@ type WikiEditorProps = {
   pageTitle: string;
   pageSlug: string;
   pageVersion: number;
+  pageContentVersion: number;
   initialContent: string;
   initialProofingLanguage: ProofingLanguage;
   initialDocumentMode: boolean;
@@ -186,6 +193,38 @@ const Citation = Node.create({
   parseHTML() { return [{ tag: "span[data-citation]" }]; },
   renderHTML({ HTMLAttributes }) { return ["span", mergeAttributes(HTMLAttributes, { "data-citation": "", class: "wiki-citation" }), HTMLAttributes.label || "(citation)"]; },
 });
+
+function citationNumberForSource(editor: Editor, sourceId: string) {
+  const order = new Map<string, number>();
+  editor.state.doc.descendants((node) => {
+    if (node.type.name !== "citation" || !Array.isArray(node.attrs.items)) return;
+    for (const item of node.attrs.items as Array<{ sourceId?: unknown }>) {
+      if (typeof item.sourceId === "string" && !order.has(item.sourceId)) order.set(item.sourceId, order.size + 1);
+    }
+  });
+  return order.get(sourceId) ?? order.size + 1;
+}
+
+function normalizeIeeeCitationLabels(editor: Editor) {
+  const order = new Map<string, number>();
+  const updates: Array<{ position: number; attrs: Record<string, unknown> }> = [];
+  editor.state.doc.descendants((node, position) => {
+    if (node.type.name !== "citation" || !Array.isArray(node.attrs.items)) return;
+    const labels: string[] = [];
+    for (const item of node.attrs.items as Array<{ sourceId?: unknown; locator?: unknown }>) {
+      if (typeof item.sourceId !== "string") continue;
+      if (!order.has(item.sourceId)) order.set(item.sourceId, order.size + 1);
+      labels.push(formatIeeeCitation(order.get(item.sourceId)!, typeof item.locator === "string" ? item.locator : undefined));
+    }
+    const label = labels.join(", ");
+    if (label && node.attrs.label !== label) updates.push({ position, attrs: { ...node.attrs, label } });
+  });
+  if (!updates.length) return false;
+  const transaction = editor.state.tr;
+  for (const update of updates) transaction.setNodeMarkup(update.position, undefined, update.attrs);
+  editor.view.dispatch(transaction);
+  return true;
+}
 
 const PdfEvidence = Node.create({
   name: "pdfEvidence", group: "block", atom: true, selectable: true,
@@ -480,10 +519,12 @@ function PageLinkPicker({ editor, pages, open, onOpenChange }: { editor: Editor;
   return <Popover open={open} onOpenChange={onOpenChange}><PopoverTrigger render={<Button type="button" variant="ghost" size="icon-sm" title={t("linkPage")} aria-label={t("linkPage")} />}><Link2 className="size-4" /></PopoverTrigger><PopoverContent className="w-72 p-2"><Input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t("filterPages")} className="mb-2 h-8" /><div className="max-h-60 overflow-y-auto">{pages.filter((page) => page.title.toLocaleLowerCase().includes(query.toLocaleLowerCase())).map((page) => <button key={page.id} type="button" className="block w-full rounded px-2 py-1.5 text-left text-sm hover:bg-accent" onClick={() => { const { empty } = editor.state.selection; const href = `/wiki/pages/${page.slug}`; if (empty) editor.chain().focus().insertContent({ type: "text", text: page.title, marks: [{ type: "link", attrs: { href } }] }).run(); else editor.chain().focus().setLink({ href }).run(); onOpenChange(false); }}>{page.title}</button>)}</div></PopoverContent></Popover>;
 }
 
-function CitationPicker({ editor, sources, locale, open, onOpenChange }: { editor: Editor; sources: SourceRef[]; locale: string; open: boolean; onOpenChange: (open: boolean) => void }) {
+function CitationPicker({ editor, sources, locale, pageSlug, open, onOpenChange }: { editor: Editor; sources: SourceRef[]; locale: string; pageSlug: string; open: boolean; onOpenChange: (open: boolean) => void }) {
   const t = useTranslations("wiki"); const [query, setQuery] = useState(""); const [locator, setLocator] = useState("");
-  function insert(source: SourceRef) { const author = source.contributors.split(",")[0]?.trim() || source.title; const year = source.issuedDate.slice(0, 4) || (locale.startsWith("de") ? "o. J." : "n.d."); const label = `(${author}, ${year}${locator ? `, ${locale.startsWith("de") ? "S." : "p."} ${locator}` : ""})`; editor.chain().focus().insertContent({ type: "citation", attrs: { items: [{ sourceId: source.id, locator: locator || undefined, locatorType: "page" }], label } }).run(); onOpenChange(false); setLocator(""); setQuery(""); }
-  return <Popover open={open} onOpenChange={onOpenChange}><PopoverTrigger render={<Button type="button" variant="ghost" size="icon-sm" title={t("insertCitation")} aria-label={t("insertCitation")} />}><BookMarked className="size-4" /></PopoverTrigger><PopoverContent className="w-80 p-2"><div className="grid grid-cols-[1fr_5rem] gap-2"><Input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t("findSource")} className="h-8" /><Input value={locator} onChange={(event) => setLocator(event.target.value)} placeholder={t("pageShort")} className="h-8" /></div><div className="mt-2 max-h-64 overflow-y-auto">{sources.filter((source) => `${source.title} ${source.contributors}`.toLocaleLowerCase().includes(query.toLocaleLowerCase())).map((source) => <button key={source.id} type="button" className="block w-full rounded px-2 py-1.5 text-left hover:bg-accent" onClick={() => insert(source)}><span className="block text-sm font-medium">{source.title}</span><span className="text-xs text-muted-foreground">{source.contributors || "—"} · {source.issuedDate.slice(0,4) || "—"}</span></button>)}</div></PopoverContent></Popover>;
+  function preview(source: SourceRef) { return formatInlineCitation(source, locator, locale, citationNumberForSource(editor, source.id)); }
+  function insert(source: SourceRef) { const label = preview(source); editor.chain().focus().insertContent({ type: "citation", attrs: { items: [{ sourceId: source.id, locator: locator || undefined, locatorType: "page" }], label } }).run(); onOpenChange(false); setLocator(""); setQuery(""); }
+  const filtered = sources.filter((source) => `${source.title} ${source.contributors.map((person) => `${person.given} ${person.family} ${person.literal}`).join(" ")}`.toLocaleLowerCase().includes(query.toLocaleLowerCase()));
+  return <Popover open={open} onOpenChange={onOpenChange}><PopoverTrigger render={<Button type="button" variant="ghost" size="sm" className="gap-1.5 px-2 text-xs" title={t("citeSource")} aria-label={t("citeSource")} />}><BookMarked className="size-4" /><span className="hidden 2xl:inline">{t("citeSource")}</span></PopoverTrigger><PopoverContent className="w-96 p-2"><div className="grid grid-cols-[1fr_5rem] gap-2"><Input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t("findSource")} className="h-8" /><Input value={locator} onChange={(event) => setLocator(event.target.value)} placeholder={t("pageShort")} className="h-8" /></div><div className="mt-2 max-h-64 overflow-y-auto">{filtered.map((source) => <button key={source.id} type="button" className="block w-full rounded px-2 py-2 text-left hover:bg-accent" onClick={() => insert(source)}><span className="block text-sm font-medium">{source.title}</span><span className="text-xs text-muted-foreground">{preview(source)}</span></button>)}</div><div className="mt-2 flex items-center justify-between border-t pt-2"><span className="text-[11px] text-muted-foreground">IEEE</span><NewSourceDialog compactButton redirectTo={`/wiki/pages/${pageSlug}`} /></div></PopoverContent></Popover>;
 }
 
 type EvidenceRef = {
@@ -540,7 +581,7 @@ function EvidencePicker({ editor, pageId, locale, open, onOpenChange }: { editor
         content: [{
           type: "citation",
           attrs: {
-            items: [{ sourceId: item.sourceId, annotationId: item.id, locator: String(item.pageNumber), locatorType: "page" }],
+            items: [{ sourceId: item.sourceId, documentId: item.documentId, annotationId: item.id, locator: String(item.pageNumber), locatorType: "page" }],
             label: `(${item.sourceTitle}, ${pageLabel} ${item.pageNumber})`,
           },
         }],
@@ -579,6 +620,7 @@ export function WikiEditor({
   pageTitle,
   pageSlug,
   pageVersion,
+  pageContentVersion,
   initialContent,
   initialProofingLanguage,
   initialDocumentMode,
@@ -601,20 +643,27 @@ export function WikiEditor({
   isPrimaryAuthor,
 }: WikiEditorProps) {
   const t = useTranslations("wiki"); const tTasks = useTranslations("tasks"); const tDeadlines = useTranslations("deadlines"); const format = useFormatter(); const router = useRouter(); const { openTaskCreator } = useTaskCreator(); const { openDeadlineCreator } = useDeadlineCreator(); const [saveState, setSaveState] = useState<"idle" | "unsaved" | "saving" | "saved" | "offline" | "error" | "conflict">("idle");
+  const localizedInitialDocumentSettings = localizeDocumentSettings(
+    parseDocumentSettings(initialDocumentSettings),
+    citationLocale,
+  );
   const [conflictRevision, setConflictRevision] = useState<string | null>(null); const [activeThreadId, setActiveThreadId] = useState<string | null>(null); const [optimisticCommentThreads, setOptimisticCommentThreads] = useState<CommentThread[]>([]); const [commentFocusRequest, setCommentFocusRequest] = useState(0); const [imagePickerRequest, setImagePickerRequest] = useState(0); const [commentOpen, setCommentOpen] = useState(false); const [commentBody, setCommentBody] = useState(""); const [pendingAnchor, setPendingAnchor] = useState<CommentAnchor | null>(null); const [regionTarget, setRegionTarget] = useState<{ nodeId: string; label: string } | null>(null); const [imageError, setImageError] = useState(""); const [imageUploading, setImageUploading] = useState(false); const [assigneeId, setAssigneeId] = useState("none");
   const commentThreads = useMemo(
     () => [...optimisticCommentThreads.filter((thread) => !comments.some((item) => item.id === thread.id)), ...comments],
     [comments, optimisticCommentThreads],
   );
   const [pageLinkOpen, setPageLinkOpen] = useState(false); const [citationOpen, setCitationOpen] = useState(false); const [evidenceOpen, setEvidenceOpen] = useState(false); const [markdownHelpOpen, setMarkdownHelpOpen] = useState(false); const [shortcutsOpen, setShortcutsOpen] = useState(false); const [linkEditorRequest, setLinkEditorRequest] = useState(0);
+  const [graphicsOpen, setGraphicsOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false); const [outlineOpen, setOutlineOpen] = useState(false); const [outline, setOutline] = useState<OutlineItem[]>([]); const [activeHeadingPosition, setActiveHeadingPosition] = useState<number | null>(null);
   const [writingStats, setWritingStats] = useState<WritingStats>({ words: 0, characters: 0, selectedWords: 0, readingMinutes: 0 });
   const [documentMode, setDocumentMode] = useState(initialDocumentMode);
-  const [documentSettings, setDocumentSettings] = useState<DocumentSettingsV1>(() => parseDocumentSettings(initialDocumentSettings));
+  const [documentSettings, setDocumentSettings] = useState<DocumentSettingsV1>(() => localizedInitialDocumentSettings);
   const [documentIssues, setDocumentIssues] = useState<DocumentPreflightIssue[]>([]);
   const [documentPageCount, setDocumentPageCount] = useState(1);
   const [documentZoom, setDocumentZoom] = useState(loadDocumentZoom);
   const [figureCaptions, setFigureCaptions] = useState<FigureCaption[]>([]);
+  const [citedSourceIds, setCitedSourceIds] = useState<string[]>([]);
+  const [citationTargets, setCitationTargets] = useState<CitationTarget[]>([]);
   const [typography, setTypography] = useState(() => normalizeWikiTypography(initialTypography));
   const [personalTypography, setPersonalTypography] = useState(() => normalizeWikiTypography(editableTypography));
   const [personalTypographyTemplates, setPersonalTypographyTemplates] = useState(typographyTemplates);
@@ -634,26 +683,58 @@ export function WikiEditor({
   const [wikiShortcuts, setWikiShortcuts] = useState(loadWikiShortcutBindings);
   const [initialPreferences] = useState(loadEditorPreferences);
   const [statusVisible, setStatusVisible] = useState(initialPreferences.statusVisible); const [minimalToolbar, setMinimalToolbar] = useState(initialPreferences.minimalToolbar); const [typewriterMode, setTypewriterMode] = useState(initialPreferences.typewriterMode); const typewriterModeRef = useRef(initialPreferences.typewriterMode);
-  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null); const version = useRef(pageVersion); const lastServerContent = useRef(initialContent); const lastServerDocumentMode = useRef(initialDocumentMode); const lastServerDocumentSettings = useRef(serializeDocumentSettings(parseDocumentSettings(initialDocumentSettings))); const documentModeRef = useRef(initialDocumentMode); const documentSettingsRef = useRef(parseDocumentSettings(initialDocumentSettings)); const pendingSave = useRef<string | null>(null); const persistContentRef = useRef<(json: string) => Promise<void>>(async () => {}); const conflictBlocked = useRef(false); const selection = useRef<{ from: number; to: number } | null>(null); const toolbarSelection = useRef<{ from: number; to: number } | null>(null); const imageInputRef = useRef<HTMLInputElement>(null); const editorRootRef = useRef<HTMLDivElement>(null); const commentRailRef = useRef<CommentRailHandle>(null);
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null); const maxSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null); const recoveryTimer = useRef<ReturnType<typeof setTimeout> | null>(null); const contentVersion = useRef(pageContentVersion); const lastServerContent = useRef(initialContent); const lastServerDocumentMode = useRef(initialDocumentMode); const lastServerDocumentSettings = useRef(serializeDocumentSettings(localizedInitialDocumentSettings)); const documentModeRef = useRef(initialDocumentMode); const documentSettingsRef = useRef(localizedInitialDocumentSettings); const pendingSave = useRef<string | null>(null); const queuedSave = useRef<string | null>(null); const saveInFlight = useRef(false); const persistContentRef = useRef<(json: string) => Promise<void>>(async () => {}); const conflictBlocked = useRef(false); const editorSessionId = useRef(globalThis.crypto.randomUUID()); const selection = useRef<{ from: number; to: number } | null>(null); const toolbarSelection = useRef<{ from: number; to: number } | null>(null); const imageInputRef = useRef<HTMLInputElement>(null); const editorRootRef = useRef<HTMLDivElement>(null); const commentRailRef = useRef<CommentRailHandle>(null);
+  const [leaseState, setLeaseState] = useState<"checking" | "editable" | "locked">("checking");
+  const leaseStateRef = useRef<"checking" | "editable" | "locked">("checking");
+  const recoveryApplied = useRef(false);
   const commentsPreferenceKey = `wiki:page:${pageId}:comments-visible`;
   const layoutPreferenceKey = `wiki:page:${pageId}:document-layout-visible`;
   const [commentsVisible, setCommentsVisible] = useState(() => loadBooleanPreference(commentsPreferenceKey, false));
   const [documentLayoutVisible, setDocumentLayoutVisible] = useState(() => loadBooleanPreference(layoutPreferenceKey, false));
   const storageKey = `wiki-draft:${pageId}`; const preferencesKey = `wiki-editor-preferences`;
   let content: object | undefined; try { content = initialContent ? JSON.parse(initialContent) : undefined; } catch { content = undefined; }
-  if (typeof window !== "undefined") { const draft = window.localStorage.getItem(storageKey); if (draft && draft !== initialContent) { try { content = JSON.parse(draft); } catch { /* ignore damaged recovery */ } } }
+  if (typeof window !== "undefined") {
+    const draft = window.localStorage.getItem(storageKey);
+    if (draft && draft !== initialContent) {
+      try {
+        const parsed = JSON.parse(draft) as ({ contentJson?: string } & object) | null;
+        content = parsed && "contentJson" in parsed && typeof parsed.contentJson === "string"
+          ? JSON.parse(parsed.contentJson)
+          : parsed ?? undefined;
+      } catch { /* ignore damaged recovery */ }
+    }
+  }
 
   function updateDerivedState(currentEditor: Editor) {
     const items: OutlineItem[] = [];
     const captions: FigureCaption[] = [];
+    const citations = new Set<string>();
+    const targets = new Map<string, CitationTarget>();
     currentEditor.state.doc.descendants((node, position) => {
       if (node.type.name === "heading") items.push({ level: Number(node.attrs.level), text: node.textContent, position, id: String(node.attrs.id ?? `heading-${position}`) });
       if (node.type.name === "commentableImage" && node.attrs.includeInFigureIndex !== false && String(node.attrs.caption ?? "").trim()) {
         captions.push({ nodeId: String(node.attrs.nodeId ?? `figure-${position}`), caption: String(node.attrs.caption).trim() });
       }
+      if (node.type.name === "citation" && Array.isArray(node.attrs.items)) {
+        for (const item of node.attrs.items as Array<{ sourceId?: unknown; documentId?: unknown; annotationId?: unknown; locator?: unknown }>) {
+          if (typeof item.sourceId === "string") {
+            citations.add(item.sourceId);
+            if (!targets.has(item.sourceId)) {
+              targets.set(item.sourceId, {
+                sourceId: item.sourceId,
+                ...(typeof item.documentId === "string" && item.documentId ? { documentId: item.documentId } : {}),
+                ...(typeof item.annotationId === "string" && item.annotationId ? { annotationId: item.annotationId } : {}),
+                ...(typeof item.locator === "string" && item.locator ? { locator: item.locator } : {}),
+              });
+            }
+          }
+        }
+      }
     });
     setOutline(items);
     setFigureCaptions(captions);
+    setCitedSourceIds([...citations]);
+    setCitationTargets([...targets.values()]);
     const cursor = currentEditor.state.selection.from;
     setActiveHeadingPosition([...items].reverse().find((item) => item.position < cursor)?.position ?? null);
     setWritingStats(calculateWritingStats(currentEditor.state.doc, currentEditor.state.selection));
@@ -662,12 +743,15 @@ export function WikiEditor({
 
   async function persistContent(json: string, attempt = 0) {
     pendingSave.current = json;
+    if (leaseStateRef.current !== "editable") { setSaveState(leaseStateRef.current === "locked" ? "conflict" : "unsaved"); return; }
     if (typeof navigator !== "undefined" && !navigator.onLine) { setSaveState("offline"); return; }
     if (conflictBlocked.current) { setSaveState("conflict"); return; }
+    if (saveInFlight.current) { queuedSave.current = json; return; }
+    saveInFlight.current = true;
     setSaveState("saving");
     try {
       const settingsJson = serializeDocumentSettings(documentSettingsRef.current);
-      let result = await savePageContentRequest({
+      const result = await savePageContentRequest({
         id: pageId,
         contentJson: json,
         baseContentJson: lastServerContent.current,
@@ -675,26 +759,11 @@ export function WikiEditor({
         documentSettingsJson: settingsJson,
         baseDocumentMode: lastServerDocumentMode.current,
         baseDocumentSettingsJson: lastServerDocumentSettings.current,
-        expectedVersion: version.current,
+        expectedContentVersion: contentVersion.current,
+        editorSessionId: editorSessionId.current,
       });
-      if (!result.saved && "conflict" in result && result.conflict
-        && result.contentJson === lastServerContent.current
-        && result.documentMode === lastServerDocumentMode.current
-        && result.documentSettingsJson === lastServerDocumentSettings.current) {
-        version.current = result.version;
-        result = await savePageContentRequest({
-          id: pageId,
-          contentJson: json,
-          baseContentJson: lastServerContent.current,
-          documentMode: documentModeRef.current,
-          documentSettingsJson: settingsJson,
-          baseDocumentMode: lastServerDocumentMode.current,
-          baseDocumentSettingsJson: lastServerDocumentSettings.current,
-          expectedVersion: version.current,
-        });
-      }
       if (result.saved) {
-        version.current = result.version ?? version.current;
+        contentVersion.current = result.contentVersion;
         lastServerContent.current = json;
         lastServerDocumentMode.current = documentModeRef.current;
         lastServerDocumentSettings.current = settingsJson;
@@ -703,18 +772,48 @@ export function WikiEditor({
         localStorage.removeItem(storageKey);
         setConflictRevision(null);
         setSaveState("saved");
+        if (maxSaveTimer.current) {
+          clearTimeout(maxSaveTimer.current);
+          maxSaveTimer.current = null;
+        }
       } else if ("conflict" in result && result.conflict) {
-        version.current = result.version;
+        contentVersion.current = result.contentVersion;
         conflictBlocked.current = true;
         setConflictRevision(result.revisionId);
+        setSaveState("conflict");
+      } else if ("locked" in result && result.locked) {
+        leaseStateRef.current = "locked";
+        setLeaseState("locked");
         setSaveState("conflict");
       }
     } catch {
       setSaveState(typeof navigator !== "undefined" && !navigator.onLine ? "offline" : "error");
       if (attempt < 2) saveTimer.current = setTimeout(() => void persistContent(json, attempt + 1), 1_000 * (2 ** attempt));
+    } finally {
+      saveInFlight.current = false;
+      const queued = queuedSave.current;
+      queuedSave.current = null;
+      if (queued && queued !== json && !conflictBlocked.current) void persistContent(queued);
     }
   }
   persistContentRef.current = (json: string) => persistContent(json);
+
+  async function takeOverEditing() {
+    const response = await fetch(`/api/wiki/pages/${encodeURIComponent(pageId)}/lease`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "takeover", sessionId: editorSessionId.current }),
+    });
+    if (!response.ok) {
+      toast.error(t("editor.lease.takeoverFailed"));
+      return;
+    }
+    leaseStateRef.current = "editable";
+    setLeaseState("editable");
+    conflictBlocked.current = false;
+    setSaveState(pendingSave.current ? "unsaved" : "idle");
+    if (pendingSave.current) void persistContentRef.current(pendingSave.current);
+  }
 
   function requestWikiTask(targetEditor: Editor) {
     const { from, to } = targetEditor.state.selection;
@@ -804,7 +903,7 @@ export function WikiEditor({
   ];
   const slashExtension = createSlashCommandExtension({ commands: slashCommands, ariaLabel: t("slash.ariaLabel"), emptyLabel: t("slash.empty") });
 
-  const editor = useEditor({ immediatelyRender: false, enableInputRules: ["blockquote", "bulletList", "codeBlock", "heading", "orderedList", "taskItem"], extensions: [StarterKit.configure({ bold: false, code: false, heading: false, listItem: false, italic: false, link: { openOnClick: false }, strike: false }), CollapsibleHeading.configure({ levels: [1, 2, 3] }), HeadingListItem, ...MarkdownShortcutMarks, ...MarkdownDocumentExtensions, ...DocumentExtensions, TaskList, TaskItem.configure({ nested: true }), Citation, PdfEvidence, TaskReference, DeadlineReference, CommentableImage, CommentMark, Highlight, Placeholder.configure({ placeholder: ({ node }) => node.type.name === "heading" ? t("editor.placeholder.heading") : t("editor.placeholder.empty") }), EditorSearchExtension, createSpellcheckExtension((issue, target) => setSpellcheckIssue({ issue, rect: target.getBoundingClientRect() })), MarkdownShortcuts, slashExtension], content,
+  const editor = useEditor({ immediatelyRender: false, editable: false, enableInputRules: ["blockquote", "bulletList", "codeBlock", "heading", "orderedList", "taskItem"], extensions: [StarterKit.configure({ bold: false, code: false, heading: false, listItem: false, italic: false, link: { openOnClick: false }, strike: false }), CollapsibleHeading.configure({ levels: [1, 2, 3] }), HeadingListItem, ...MarkdownShortcutMarks, ...MarkdownDocumentExtensions, ...DocumentExtensions, TaskList, TaskItem.configure({ nested: true }), Citation, PdfEvidence, TaskReference, DeadlineReference, CommentableImage, CommentMark, Highlight, Placeholder.configure({ placeholder: ({ node }) => node.type.name === "heading" ? t("editor.placeholder.heading") : t("editor.placeholder.empty") }), EditorSearchExtension, createSpellcheckExtension((issue, target) => setSpellcheckIssue({ issue, rect: target.getBoundingClientRect() })), MarkdownShortcuts, slashExtension], content,
     editorProps: {
       attributes: { class: "prose prose-neutral dark:prose-invert max-w-none min-h-[28rem] focus:outline-none", spellcheck: "false" },
       handlePaste(view, event) {
@@ -855,16 +954,36 @@ export function WikiEditor({
         return true;
       },
     },
-    onCreate({ editor }) { backfillCommentNodeIds(editor); updateDerivedState(editor); },
+    onCreate({ editor }) {
+      backfillCommentNodeIds(editor);
+      if (!normalizeIeeeCitationLabels(editor)) updateDerivedState(editor);
+    },
     onUpdate({ editor }) {
+      if (normalizeIeeeCitationLabels(editor)) return;
       updateDerivedState(editor);
       const json = JSON.stringify(editor.getJSON());
-      localStorage.setItem(storageKey, json);
+      if (recoveryTimer.current) clearTimeout(recoveryTimer.current);
+      recoveryTimer.current = setTimeout(() => {
+        localStorage.setItem(storageKey, JSON.stringify({
+          contentJson: json,
+          documentMode: documentModeRef.current,
+          documentSettingsJson: serializeDocumentSettings(documentSettingsRef.current),
+          baseContentVersion: contentVersion.current,
+          editorSessionId: editorSessionId.current,
+          savedAt: Date.now(),
+        }));
+      }, 250);
       pendingSave.current = json;
       if (saveTimer.current) clearTimeout(saveTimer.current);
       if (conflictBlocked.current) { setSaveState("conflict"); return; }
       setSaveState("unsaved");
-      saveTimer.current = setTimeout(() => void persistContent(json), 800);
+      saveTimer.current = setTimeout(() => void persistContent(json), 2_000);
+      if (!maxSaveTimer.current) {
+        maxSaveTimer.current = setTimeout(() => {
+          maxSaveTimer.current = null;
+          if (pendingSave.current) void persistContent(pendingSave.current);
+        }, 10_000);
+      }
     },
     onSelectionUpdate({ editor }) {
       updateDerivedState(editor);
@@ -892,7 +1011,111 @@ export function WikiEditor({
     };
   }, [currentUserId, editor, users]);
 
-  useEffect(() => () => { if (saveTimer.current) clearTimeout(saveTimer.current); }, []);
+  useEffect(() => {
+    if (!editor || recoveryApplied.current) return;
+    recoveryApplied.current = true;
+    const draft = window.localStorage.getItem(storageKey);
+    if (!draft) return;
+    try {
+      const recovered = JSON.parse(draft) as {
+        contentJson?: unknown;
+        documentMode?: unknown;
+        documentSettingsJson?: unknown;
+      };
+      if (typeof recovered.contentJson !== "string" || recovered.contentJson === initialContent) return;
+      pendingSave.current = recovered.contentJson;
+      let recoveredMode: boolean | undefined;
+      let recoveredSettings: DocumentSettingsV1 | undefined;
+      if (typeof recovered.documentMode === "boolean") {
+        documentModeRef.current = recovered.documentMode;
+        recoveredMode = recovered.documentMode;
+      }
+      if (typeof recovered.documentSettingsJson === "string") {
+        const settings = localizeDocumentSettings(
+          parseDocumentSettings(recovered.documentSettingsJson),
+          citationLocale,
+        );
+        documentSettingsRef.current = settings;
+        recoveredSettings = settings;
+      }
+      const applyRecoveredLayout = window.setTimeout(() => {
+        if (recoveredMode !== undefined) setDocumentMode(recoveredMode);
+        if (recoveredSettings) {
+          setDocumentSettings(recoveredSettings);
+          setDocumentIssues(collectDocumentPreflightIssues(editor.getJSON(), recoveredSettings));
+        }
+        setSaveState("unsaved");
+      }, 0);
+      return () => window.clearTimeout(applyRecoveredLayout);
+    } catch {
+      // A damaged local journal must never prevent the server version from opening.
+    }
+  }, [citationLocale, editor, initialContent, storageKey]);
+
+  useEffect(() => {
+    if (!editor) return;
+    const requestLease = async (action: "acquire" | "heartbeat" | "takeover" | "release") => {
+      const response = await fetch(`/api/wiki/pages/${encodeURIComponent(pageId)}/lease`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action, sessionId: editorSessionId.current }),
+        keepalive: action === "release",
+      });
+      if (!response.ok) throw new Error("Edit lease failed");
+      return response.json() as Promise<{ editable?: boolean }>;
+    };
+    let disposed = false;
+    void requestLease("acquire")
+      .then((result) => {
+        if (disposed) return;
+        const nextLeaseState = result.editable ? "editable" : "locked";
+        leaseStateRef.current = nextLeaseState;
+        setLeaseState(nextLeaseState);
+        if (nextLeaseState === "editable" && pendingSave.current) void persistContentRef.current(pendingSave.current);
+      })
+      .catch(() => {
+        if (!disposed) {
+          leaseStateRef.current = "locked";
+          setLeaseState("locked");
+        }
+      });
+    const heartbeat = window.setInterval(() => {
+      if (disposed) return;
+      void requestLease("heartbeat").then((result) => {
+        if (!disposed && !result.editable) {
+          leaseStateRef.current = "locked";
+          setLeaseState("locked");
+        }
+      }).catch(() => undefined);
+    }, 15_000);
+    const release = () => {
+      if (recoveryTimer.current) clearTimeout(recoveryTimer.current);
+      if (pendingSave.current) {
+        localStorage.setItem(storageKey, JSON.stringify({
+          contentJson: pendingSave.current,
+          documentMode: documentModeRef.current,
+          documentSettingsJson: serializeDocumentSettings(documentSettingsRef.current),
+          baseContentVersion: contentVersion.current,
+          editorSessionId: editorSessionId.current,
+          savedAt: Date.now(),
+        }));
+      }
+      void requestLease("release").catch(() => undefined);
+    };
+    window.addEventListener("pagehide", release);
+    return () => {
+      disposed = true;
+      window.clearInterval(heartbeat);
+      window.removeEventListener("pagehide", release);
+      void requestLease("release").catch(() => undefined);
+    };
+  }, [editor, pageId, storageKey]);
+  useEffect(() => { editor?.setEditable(leaseState === "editable"); }, [editor, leaseState]);
+  useEffect(() => () => {
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    if (maxSaveTimer.current) clearTimeout(maxSaveTimer.current);
+    if (recoveryTimer.current) clearTimeout(recoveryTimer.current);
+  }, [editor]);
   useEffect(() => {
     const controller = new AbortController();
     void fetch(`/api/wiki/proofing-dictionary?language=${encodeURIComponent(proofingLanguage)}`, { signal: controller.signal })
@@ -1138,7 +1361,7 @@ export function WikiEditor({
       setDocumentPaginationBreaks(editor, []);
     };
   }, [documentMode, documentSettings.page, documentZoom, editor]);
-  useEffect(() => { if (!conflictBlocked.current && pageVersion > version.current) version.current = pageVersion; }, [pageVersion]);
+  useEffect(() => { void pageVersion; }, [pageVersion]);
   useEffect(() => { if (commentFocusRequest > 0) commentRailRef.current?.focusGeneralComment(); }, [commentFocusRequest]);
   useEffect(() => { if (imagePickerRequest > 0) imageInputRef.current?.click(); }, [imagePickerRequest]);
   useEffect(() => {
@@ -1150,19 +1373,48 @@ export function WikiEditor({
   useEffect(() => { window.localStorage.setItem(DOCUMENT_ZOOM_KEY, String(documentZoom)); }, [documentZoom]);
   useEffect(() => {
     const workspace = editorRootRef.current;
-    if (!workspace || !documentMode) return;
+    if (!workspace) return;
+    let controlPressed = false;
 
-    const zoomDocument = (event: WheelEvent) => {
-      if (!event.ctrlKey) return;
+    const zoomEditor = (event: WheelEvent) => {
+      const target = event.target;
+      const activeElement = document.activeElement;
+      const belongsToEditor = target instanceof globalThis.Node && workspace.contains(target);
+      const editorFocused = activeElement instanceof globalThis.Node && workspace.contains(activeElement);
+      if ((!event.ctrlKey && !event.metaKey && !controlPressed) || (!belongsToEditor && !editorFocused)) return;
       event.preventDefault();
+      event.stopPropagation();
       const direction = event.deltaY < 0 ? 1 : -1;
       const intensity = Math.max(1, Math.min(4, Math.round(Math.abs(event.deltaY) / 25)));
       setDocumentZoom((value) => Math.min(DOCUMENT_ZOOM_MAX, Math.max(DOCUMENT_ZOOM_MIN, value + direction * intensity * 2)));
     };
+    const trackControlKey = (event: KeyboardEvent) => {
+      if (event.key === "Control" || event.key === "Meta") controlPressed = event.type === "keydown";
+      if (event.type !== "keydown" || (!event.ctrlKey && !event.metaKey)) return;
+      if (event.key === "+" || event.key === "=") {
+        event.preventDefault();
+        setDocumentZoom((value) => Math.min(DOCUMENT_ZOOM_MAX, value + 10));
+      } else if (event.key === "-") {
+        event.preventDefault();
+        setDocumentZoom((value) => Math.max(DOCUMENT_ZOOM_MIN, value - 10));
+      } else if (event.key === "0") {
+        event.preventDefault();
+        setDocumentZoom(100);
+      }
+    };
+    const releaseControlKey = () => { controlPressed = false; };
 
-    workspace.addEventListener("wheel", zoomDocument, { passive: false });
-    return () => workspace.removeEventListener("wheel", zoomDocument);
-  }, [documentMode]);
+    window.addEventListener("wheel", zoomEditor, { capture: true, passive: false });
+    window.addEventListener("keydown", trackControlKey, true);
+    window.addEventListener("keyup", trackControlKey, true);
+    window.addEventListener("blur", releaseControlKey);
+    return () => {
+      window.removeEventListener("wheel", zoomEditor, true);
+      window.removeEventListener("keydown", trackControlKey, true);
+      window.removeEventListener("keyup", trackControlKey, true);
+      window.removeEventListener("blur", releaseControlKey);
+    };
+  }, [editor]);
   useEffect(() => { window.localStorage.setItem(WIKI_SHORTCUTS_KEY, JSON.stringify(wikiShortcuts)); }, [wikiShortcuts]);
   useEffect(() => {
     const online = () => { if (pendingSave.current) void persistContentRef.current(pendingSave.current); };
@@ -1335,6 +1587,17 @@ export function WikiEditor({
     window.addEventListener("keydown", shortcut, true);
     return () => window.removeEventListener("keydown", shortcut, true);
   }, [editor]);
+  const handleSvgAssetReady = useCallback((attachmentId: string, contentUrl: string) => {
+    if (!editor) return;
+    const transaction = editor.state.tr;
+    let changed = false;
+    editor.state.doc.descendants((node, position) => {
+      if (node.type.name !== "commentableImage" || node.attrs.attachmentId !== attachmentId || node.attrs.src === contentUrl) return;
+      transaction.setNodeMarkup(position, undefined, { ...node.attrs, src: contentUrl });
+      changed = true;
+    });
+    if (changed) editor.view.dispatch(transaction);
+  }, [editor]);
   if (!editor) return <div className="min-h-[28rem]" />;
   const activeEditor = editor;
   function rememberToolbarSelection() {
@@ -1356,10 +1619,21 @@ export function WikiEditor({
   function scheduleDocumentSave() {
     const json = JSON.stringify(activeEditor.getJSON());
     pendingSave.current = json;
-    localStorage.setItem(storageKey, json);
+    localStorage.setItem(storageKey, JSON.stringify({
+      contentJson: json,
+      documentMode: documentModeRef.current,
+      documentSettingsJson: serializeDocumentSettings(documentSettingsRef.current),
+      baseContentVersion: contentVersion.current,
+      editorSessionId: editorSessionId.current,
+      savedAt: Date.now(),
+    }));
     setSaveState(conflictBlocked.current ? "conflict" : "unsaved");
     if (saveTimer.current) clearTimeout(saveTimer.current);
-    if (!conflictBlocked.current) saveTimer.current = setTimeout(() => void persistContent(json), 500);
+    if (!conflictBlocked.current) saveTimer.current = setTimeout(() => void persistContent(json), 2_000);
+    if (!maxSaveTimer.current) maxSaveTimer.current = setTimeout(() => {
+      maxSaveTimer.current = null;
+      if (pendingSave.current) void persistContent(pendingSave.current);
+    }, 10_000);
   }
   function changeDocumentSettings(settings: DocumentSettingsV1) {
     documentSettingsRef.current = settings;
@@ -1372,8 +1646,35 @@ export function WikiEditor({
     setDocumentMode(enabled);
     scheduleDocumentSave();
   }
+  const layoutVisible = documentMode && documentLayoutVisible;
+  const figureIndexVisible = documentMode && documentSettings.figures.enabled && figureCaptions.length > 0;
+  const bibliography = formatBibliography(
+    citedSourceIds.flatMap((sourceId) => {
+      const source = sources.find((candidate) => candidate.id === sourceId);
+      return source ? [source] : [];
+    }),
+    citationLocale,
+  );
+  const bibliographyVisible = documentMode && documentSettings.bibliography.enabled && bibliography.length > 0;
+  function bibliographyHref(source: SourceRef) {
+    const target = citationTargets.find((item) => item.sourceId === source.id);
+    const documentId = target?.documentId || source.pdfDocumentId;
+    if (!documentId) return `/wiki/sources/${source.id}`;
+    const query = new URLSearchParams();
+    if (target?.locator && /^\d+$/.test(target.locator)) query.set("page", target.locator);
+    if (target?.annotationId) query.set("annotation", target.annotationId);
+    const suffix = query.size ? `?${query.toString()}` : "";
+    return `/wiki/sources/${source.id}/read/${documentId}${suffix}`;
+  }
   const paperWidth = documentSettings.page.size === "A4" ? 210 : 215.9;
   const paperHeight = documentSettings.page.size === "A4" ? 297 : 279.4;
+  const orientedPaperHeight = documentSettings.page.orientation === "portrait" ? paperHeight : paperWidth;
+  const coverPageCount = documentSettings.cover.enabled ? 1 : 0;
+  const bibliographyPageCount = bibliographyVisible ? 1 : 0;
+  const figurePageCount = figureIndexVisible ? 1 : 0;
+  const visibleDocumentPages = coverPageCount + documentPageCount + bibliographyPageCount + figurePageCount;
+  const pageStackPosition = (index: number) => index * (orientedPaperHeight + 12);
+  const resolveDocumentText = (value: string) => value.replace(/\{([^}]+)\}/g, (_, key: string) => key === "title" ? pageTitle : documentSettings.variables[key] ?? `{${key}}`);
   const documentCanvasStyle = {
     ...wikiTypographyCssVariables(typography),
     "--document-paper-width": `${documentSettings.page.orientation === "portrait" ? paperWidth : paperHeight}mm`,
@@ -1384,13 +1685,18 @@ export function WikiEditor({
     "--document-margin-left": `${documentSettings.page.marginsMm.left}mm`,
     "--document-page-gap": "12mm",
     "--document-content-pages": String(documentPageCount),
-    "--document-page-count": String(documentPageCount + (documentSettings.figures.enabled && figureCaptions.length ? 1 : 0)),
+    "--document-page-count": String(visibleDocumentPages),
     "--document-content-stack-height": `${documentPageCount * (documentSettings.page.orientation === "portrait" ? paperHeight : paperWidth) + Math.max(0, documentPageCount - 1) * 12}mm`,
-    "--document-figure-index-top": `${documentPageCount * (documentSettings.page.orientation === "portrait" ? paperHeight : paperWidth) + documentPageCount * 12}mm`,
-    "--document-stack-height": `${(documentPageCount + (documentSettings.figures.enabled && figureCaptions.length ? 1 : 0)) * (documentSettings.page.orientation === "portrait" ? paperHeight : paperWidth) + Math.max(0, documentPageCount + (documentSettings.figures.enabled && figureCaptions.length ? 1 : 0) - 1) * 12}mm`,
+    "--document-content-offset": `${coverPageCount ? orientedPaperHeight + 12 : 0}mm`,
+    "--document-bibliography-top": `${pageStackPosition(coverPageCount + documentPageCount)}mm`,
+    "--document-figure-index-top": `${pageStackPosition(coverPageCount + documentPageCount + bibliographyPageCount)}mm`,
+    "--document-stack-height": `${visibleDocumentPages * orientedPaperHeight + Math.max(0, visibleDocumentPages - 1) * 12}mm`,
     zoom: documentZoom / 100,
   } as CSSProperties;
-  const editorTypographyStyle = wikiTypographyCssVariables(typography) as CSSProperties;
+  const editorTypographyStyle = {
+    ...wikiTypographyCssVariables(typography),
+    zoom: documentZoom / 100,
+  } as CSSProperties;
   function openCommentComposer(anchor: CommentAnchor) {
     setPendingAnchor(anchor);
     requestAnimationFrame(() => setCommentOpen(true));
@@ -1564,9 +1870,6 @@ export function WikiEditor({
   const proofingButtonTitle = proofingStatus === "error"
     ? t("editor.proofing.browserFallback")
     : t("editor.proofing.switch", { language: proofingLanguageLabel, nextLanguage: nextProofingLanguageLabel });
-  const layoutVisible = documentMode && documentLayoutVisible;
-  const figureIndexVisible = documentMode && documentSettings.figures.enabled && figureCaptions.length > 0;
-  const visibleDocumentPages = documentPageCount + (figureIndexVisible ? 1 : 0);
 
   return <div className="relative flex flex-col gap-3"><div className="sticky top-0 z-40 flex flex-wrap items-center gap-1.5 rounded-xl border bg-background/95 p-1.5 shadow-sm backdrop-blur supports-[backdrop-filter]:bg-background/80">
     <ToolbarGroup label={t("editor.toolbar.groups.history")}>
@@ -1599,7 +1902,7 @@ export function WikiEditor({
     </ToolbarGroup>
     <ToolbarGroup label={t("editor.toolbar.groups.insert")}>
       <EditorLinkPopover editor={activeEditor} pages={allPages} request={linkEditorRequest} />
-      <PageLinkPicker editor={editor} pages={allPages} open={pageLinkOpen} onOpenChange={setPageLinkOpen} /><CitationPicker editor={editor} sources={sources} locale={citationLocale} open={citationOpen} onOpenChange={setCitationOpen} /><EvidencePicker editor={editor} pageId={pageId} locale={citationLocale} open={evidenceOpen} onOpenChange={setEvidenceOpen} />
+      <PageLinkPicker editor={editor} pages={allPages} open={pageLinkOpen} onOpenChange={setPageLinkOpen} /><CitationPicker editor={editor} sources={sources} locale={citationLocale} pageSlug={pageSlug} open={citationOpen} onOpenChange={setCitationOpen} /><EvidencePicker editor={editor} pageId={pageId} locale={citationLocale} open={evidenceOpen} onOpenChange={setEvidenceOpen} />
       <ToolbarMenu label={t("editor.toolbar.insert")} icon={<ImagePlus className="size-4" />} onPointerDown={rememberToolbarSelection}>
       <DropdownMenuItem onClick={() => imageInputRef.current?.click()}><ImagePlus />{t("insertImage")}<DropdownMenuShortcut>{shortcutLabel("image")}</DropdownMenuShortcut></DropdownMenuItem>
       <DropdownMenuItem onClick={() => toolbarChain().setHorizontalRule().run()}><Minus />{t("slash.commands.horizontalRule.label")}<DropdownMenuShortcut>{shortcutLabel("horizontalRule")}</DropdownMenuShortcut></DropdownMenuItem>
@@ -1642,6 +1945,7 @@ export function WikiEditor({
         <DropdownMenuLabel>{t("editor.toolbar.actions")}</DropdownMenuLabel>
         <DropdownMenuItem onClick={() => requestWikiTask(activeEditor)}><ClipboardCheck />{tTasks("createTask")}<DropdownMenuShortcut>{tTasks("globalShortcut")}</DropdownMenuShortcut></DropdownMenuItem>
         <DropdownMenuItem onClick={() => requestWikiDeadline(activeEditor)}><CalendarClock />{tDeadlines("createDeadline")}<DropdownMenuShortcut>{tDeadlines("globalShortcut")}</DropdownMenuShortcut></DropdownMenuItem>
+        <DropdownMenuItem onClick={() => setGraphicsOpen(true)}><Layers3 />{t("graphics.title")}</DropdownMenuItem>
       </DropdownMenuGroup>
       <DropdownMenuSeparator />
       <DropdownMenuGroup>
@@ -1651,12 +1955,26 @@ export function WikiEditor({
         <DropdownMenuItem onClick={() => setShortcutsOpen(true)}><Keyboard />{t("shortcuts.title")}<DropdownMenuShortcut>{shortcutLabel("shortcuts")}</DropdownMenuShortcut></DropdownMenuItem>
       </DropdownMenuGroup>
     </ToolbarMenu>
+    <ToolbarGroup label={t("editor.toolbar.zoom")}>
+      <ToolbarButton title={t("editor.toolbar.zoomOut")} onClick={() => setDocumentZoom((value) => Math.max(DOCUMENT_ZOOM_MIN, value - 10))}><ZoomOut className="size-4" /></ToolbarButton>
+      <button
+        type="button"
+        className="min-w-11 rounded-md px-1.5 py-1 text-xs font-medium tabular-nums text-muted-foreground hover:bg-accent hover:text-foreground"
+        title={t("editor.toolbar.zoomReset")}
+        aria-label={t("editor.toolbar.zoomReset")}
+        onClick={() => setDocumentZoom(100)}
+      >
+        {documentZoom}%
+      </button>
+      <ToolbarButton title={t("editor.toolbar.zoomIn")} onClick={() => setDocumentZoom((value) => Math.min(DOCUMENT_ZOOM_MAX, value + 10))}><ZoomIn className="size-4" /></ToolbarButton>
+    </ToolbarGroup>
     <span role={saveState === "error" || saveState === "conflict" ? "alert" : "status"} aria-live={saveState === "error" || saveState === "conflict" ? "assertive" : "polite"} className={`ml-auto flex items-center gap-1 px-2 text-xs ${savePresentation.className}`}>{savePresentation.icon}{savePresentation.label}</span>
     {(saveState === "error" || saveState === "offline") && pendingSave.current && <Button type="button" size="xs" variant="ghost" onClick={() => void persistContent(pendingSave.current!)}>{t("editor.save.retry")}</Button>}
   </div>
   <EditorSearchPanel editor={activeEditor} open={searchOpen} onOpenChange={setSearchOpen} />
   {imageUploading && <p className="text-xs text-muted-foreground">{t("uploadingImage")}</p>}
   {imageError && <p className="text-xs text-destructive">{imageError}</p>}
+  {leaseState === "locked" && <div className="flex flex-wrap items-center gap-3 rounded-lg border border-indigo-200 bg-indigo-50/70 p-3 text-sm text-indigo-950 dark:border-indigo-900 dark:bg-indigo-950/30 dark:text-indigo-100"><CloudOff className="size-4" /><span className="flex-1">{t("editor.lease.locked")}</span><Button size="sm" onClick={() => void takeOverEditing()}>{t("editor.lease.takeover")}</Button></div>}
   {saveState === "conflict" && conflictRevision && <div className="flex flex-wrap items-center gap-3 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950 dark:bg-amber-950/30 dark:text-amber-100"><RotateCcw className="size-4" /><span className="flex-1">{t("editConflictDescription")}</span><Button size="sm" variant="outline" onClick={discardDraftAndReload}>{t("loadCurrent")}</Button><Button size="sm" onClick={() => void restoreConflictDraft()}>{t("restoreMine")}</Button></div>}
   <div className={
     documentMode
@@ -1673,7 +1991,7 @@ export function WikiEditor({
   }>
     <div
       ref={editorRootRef}
-      className={documentMode ? "wiki-document-workspace relative min-w-0" : "relative min-w-0"}
+      className={documentMode ? "wiki-document-workspace relative min-w-0" : "relative min-w-0 overflow-x-auto"}
       onKeyDownCapture={(event) => {
         if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLocaleLowerCase() === "a") {
           event.preventDefault();
@@ -1713,10 +2031,34 @@ export function WikiEditor({
       </BubbleMenu>}
       <div
         className={`wiki-editor-surface${documentMode ? " wiki-document-canvas" : ""}`}
+        data-margin-guides={documentSettings.page.showMarginGuides ? "true" : "false"}
         style={documentMode ? documentCanvasStyle : editorTypographyStyle}
       >
         {documentMode && Array.from({ length: visibleDocumentPages }, (_, index) => <div key={index} className="wiki-document-page-sheet" style={{ top: `calc(${index} * (var(--document-paper-height) + var(--document-page-gap)))` }} aria-hidden="true" />)}
+        {documentMode && documentSettings.cover.enabled && <section className="wiki-document-cover" aria-label={t("document.cover")}>
+          <p>{documentSettings.cover.eyebrow}</p>
+          <h1>{pageTitle}</h1>
+          {documentSettings.cover.subtitle && <h2>{resolveDocumentText(documentSettings.cover.subtitle)}</h2>}
+          <dl>
+            {(documentSettings.cover.author || documentSettings.metadata.author) && <div><dt>{t("document.author")}</dt><dd>{resolveDocumentText(documentSettings.cover.author || documentSettings.metadata.author)}</dd></div>}
+            {documentSettings.cover.organization && <div><dt>{t("document.organization")}</dt><dd>{resolveDocumentText(documentSettings.cover.organization)}</dd></div>}
+            {(documentSettings.cover.date || documentSettings.variables.date) && <div><dt>{t("document.date")}</dt><dd>{resolveDocumentText(documentSettings.cover.date || documentSettings.variables.date)}</dd></div>}
+          </dl>
+        </section>}
+        {documentMode && Array.from({ length: documentPageCount }, (_, index) => {
+          const pageNumber = documentSettings.footer.pageNumberStart + index;
+          const top = pageStackPosition(coverPageCount + index);
+          return <div key={`chrome-${index}`} className="wiki-document-page-chrome" style={{ top: `${top}mm` }} aria-hidden="true">
+            {documentSettings.header.enabled && <header><span>{resolveDocumentText(documentSettings.header.left)}</span><span>{resolveDocumentText(documentSettings.header.center)}</span><span>{resolveDocumentText(documentSettings.header.right)}</span></header>}
+            {documentSettings.footer.enabled && <footer><span>{resolveDocumentText(documentSettings.footer.left)}</span><span>{resolveDocumentText(documentSettings.footer.center)}</span><span>{resolveDocumentText(documentSettings.footer.right)}</span>{documentSettings.footer.pageNumbers && <b>{pageNumber}</b>}</footer>}
+          </div>;
+        })}
         <EditorContent editor={editor} data-testid="wiki-editor" data-document-mode={documentMode ? "true" : "false"} />
+        {bibliographyVisible && <section className="wiki-document-bibliography" aria-label={documentSettings.bibliography.heading}>
+          <p className="wiki-document-figure-index-kicker">IEEE</p>
+          <h2>{documentSettings.bibliography.heading || t("references")}</h2>
+          <ol>{bibliography.map(({ source, text }) => <li key={source.id}><a href={bibliographyHref(source)}>{text}</a></li>)}</ol>
+        </section>}
         {figureIndexVisible && <section className="wiki-document-figure-index" aria-label={documentSettings.figures.heading}>
           <p className="wiki-document-figure-index-kicker">{t("document.figureIndex")}</p>
           <h2>{documentSettings.figures.heading}</h2>
@@ -1758,6 +2100,7 @@ export function WikiEditor({
     <span className="ml-auto">{t("editor.stats.block", { type: activeEditor.state.selection.$from.parent.type.name })}</span>
   </footer>}
   {regionTarget && <ImageRegionSelector rootRef={editorRootRef} {...regionTarget} onCancel={() => setRegionTarget(null)} onSelect={(anchor) => { setRegionTarget(null); openCommentComposer(anchor); }} />}
+  <SvgGraphicsPanel pageId={pageId} open={graphicsOpen} onOpenChange={setGraphicsOpen} variables={{ title: pageTitle, author: documentSettings.metadata.author, ...documentSettings.variables }} onAssetReady={handleSvgAssetReady} />
   <Dialog open={imageDescriptionOpen} onOpenChange={setImageDescriptionOpen}><DialogContent className="w-[min(28rem,calc(100vw-2rem))]"><DialogHeader><DialogTitle>{t("imageDescription.title")}</DialogTitle></DialogHeader>
     <div className="grid gap-4">
       <label className="grid gap-1.5 text-sm font-medium">{t("imageDescription.caption")}<Input value={imageCaptionDraft} onChange={(event) => setImageCaptionDraft(event.target.value)} placeholder={t("imageDescription.captionPlaceholder")} /></label>

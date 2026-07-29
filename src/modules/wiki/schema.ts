@@ -8,7 +8,7 @@ import {
   type AnySQLiteColumn,
 } from "drizzle-orm/sqlite-core";
 import { createId } from "@paralleldrive/cuid2";
-import { user } from "@/db/core-schema";
+import { attachments, user } from "@/db/core-schema";
 import type { StoredCommentAnchorData } from "./lib/comment-anchors";
 
 export const wikiPageStatuses = ["inbox", "working", "evergreen"] as const;
@@ -61,6 +61,7 @@ export const wikiPages = sqliteTable(
     documentSettingsJson: text("document_settings_json").notNull().default(""),
     documentTemplateId: text("document_template_id").references(() => wikiDocumentTemplates.id, { onDelete: "set null" }),
     version: integer("version").notNull().default(1),
+    contentVersion: integer("content_version").notNull().default(1),
     createdBy: text("created_by")
       .notNull()
       .references(() => user.id),
@@ -221,6 +222,9 @@ export const wikiPageRevisions = sqliteTable(
     id: text("id").primaryKey().$defaultFn(() => createId()),
     pageId: text("page_id").notNull().references(() => wikiPages.id, { onDelete: "cascade" }),
     version: integer("version").notNull(),
+    contentVersion: integer("content_version").notNull().default(1),
+    contentHash: text("content_hash").notNull().default(""),
+    label: text("label"),
     title: text("title").notNull(),
     contentJson: text("content_json").notNull(),
     status: text("status", { enum: wikiPageStatuses }).notNull(),
@@ -228,11 +232,62 @@ export const wikiPageRevisions = sqliteTable(
     documentMode: integer("document_mode", { mode: "boolean" }).notNull().default(false),
     documentSettingsJson: text("document_settings_json").notNull().default(""),
     documentTemplateId: text("document_template_id").references(() => wikiDocumentTemplates.id, { onDelete: "set null" }),
-    kind: text("kind", { enum: ["autosave", "conflict", "restore"] }).notNull().default("autosave"),
+    kind: text("kind", { enum: ["autosave", "manual", "conflict", "restore"] }).notNull().default("autosave"),
     createdBy: text("created_by").notNull().references(() => user.id),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
   },
   (table) => [index("wiki_page_revisions_page_idx").on(table.pageId, table.createdAt)],
+);
+
+export const wikiPageEditLeases = sqliteTable(
+  "wiki_page_edit_leases",
+  {
+    pageId: text("page_id").primaryKey().references(() => wikiPages.id, { onDelete: "cascade" }),
+    sessionId: text("session_id").notNull(),
+    userId: text("user_id").notNull().references(() => user.id, { onDelete: "cascade" }),
+    acquiredAt: integer("acquired_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+    heartbeatAt: integer("heartbeat_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("wiki_page_edit_leases_heartbeat_idx").on(table.heartbeatAt),
+    index("wiki_page_edit_leases_user_idx").on(table.userId),
+  ],
+);
+
+export const wikiSvgAssets = sqliteTable(
+  "wiki_svg_assets",
+  {
+    id: text("id").primaryKey().$defaultFn(() => createId()),
+    pageId: text("page_id").notNull().references(() => wikiPages.id, { onDelete: "cascade" }),
+    attachmentId: text("attachment_id").notNull().references(() => attachments.id, { onDelete: "cascade" }),
+    currentSvg: text("current_svg").notNull(),
+    bindingsJson: text("bindings_json").notNull().default("{}"),
+    version: integer("version").notNull().default(1),
+    updatedBy: text("updated_by").notNull().references(() => user.id),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex("wiki_svg_assets_attachment_unique").on(table.attachmentId),
+    index("wiki_svg_assets_page_idx").on(table.pageId, table.updatedAt),
+  ],
+);
+
+export const wikiSvgRevisions = sqliteTable(
+  "wiki_svg_revisions",
+  {
+    id: text("id").primaryKey().$defaultFn(() => createId()),
+    assetId: text("asset_id").notNull().references(() => wikiSvgAssets.id, { onDelete: "cascade" }),
+    version: integer("version").notNull(),
+    svg: text("svg").notNull(),
+    bindingsJson: text("bindings_json").notNull().default("{}"),
+    createdBy: text("created_by").notNull().references(() => user.id),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex("wiki_svg_revisions_asset_version_unique").on(table.assetId, table.version),
+    index("wiki_svg_revisions_asset_created_idx").on(table.assetId, table.createdAt),
+  ],
 );
 
 export const wikiSourceRevisions = sqliteTable(
