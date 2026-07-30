@@ -352,6 +352,9 @@ export function getPageResearchMeta(pageId: string, userId: string) {
       and(
         eq(wikiPageSources.pageId, pageId),
         eq(wikiPageSources.relation, "supporting"),
+        // A Literaturstelle in the trash is gone from the library, so it must not
+        // keep sitting in the page's sidebar linking to a deleted record.
+        isNull(wikiSources.deletedAt),
       ),
     )
     .all();

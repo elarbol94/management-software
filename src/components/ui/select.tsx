@@ -6,7 +6,44 @@ import { Select as SelectPrimitive } from "@base-ui/react/select"
 import { cn } from "@/lib/utils"
 import { ChevronDownIcon, CheckIcon, ChevronUpIcon } from "lucide-react"
 
-const Select = SelectPrimitive.Root
+/**
+ * Base UI renders the raw value in `Select.Value` unless `Select.Root` is given an
+ * `items` map, so a status select showed "inbox" instead of "Eingang". Deriving the
+ * map from the `SelectItem` children keeps every call site working as written.
+ */
+function collectItemLabels(
+  children: React.ReactNode,
+  labels: Record<string, React.ReactNode>,
+) {
+  React.Children.forEach(children, (child) => {
+    if (!React.isValidElement(child)) return
+    const props = child.props as { value?: unknown; children?: React.ReactNode }
+    if (child.type === SelectItem) {
+      if (typeof props.value === "string" || typeof props.value === "number") {
+        labels[String(props.value)] = props.children
+      }
+      return
+    }
+    collectItemLabels(props.children, labels)
+  })
+}
+
+function Select<Value, Multiple extends boolean | undefined = false>({
+  items,
+  children,
+  ...props
+}: SelectPrimitive.Root.Props<Value, Multiple>) {
+  const labels: Record<string, React.ReactNode> = {}
+  if (!items) collectItemLabels(children, labels)
+  return (
+    <SelectPrimitive.Root
+      items={items ?? (Object.keys(labels).length ? labels : undefined)}
+      {...props}
+    >
+      {children}
+    </SelectPrimitive.Root>
+  )
+}
 
 function SelectGroup({ className, ...props }: SelectPrimitive.Group.Props) {
   return (

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
-import { BookMarked, ChevronDown, FolderUp, Images, Loader2, Plus } from "lucide-react";
+import { BookMarked, ChevronDown, FolderUp, Images, Loader2, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { SvgAssetDto, SvgFolderSyncResult } from "../svg-assets";
 import { batchGraphicsFiles, clearFolderHandle, collectGraphicsFiles, folderPermission, loadFolderHandle, pickFolder, saveFolderHandle, supportsFolderLink } from "../lib/svg-folder-source";
@@ -27,6 +27,7 @@ export function SvgGraphicsSection({ pageId, onInsert }: Props) {
   const [folderName, setFolderName] = useState("");
   const [importProgress, setImportProgress] = useState<{ done: number; total: number } | null>(null);
   const [collapsed, setCollapsed] = useState(true);
+  const [removingId, setRemovingId] = useState("");
   const folderInput = useRef<HTMLInputElement | null>(null);
   const autoSynced = useRef(false);
   const canLinkFolder = supportsFolderLink();
@@ -97,6 +98,25 @@ export function SvgGraphicsSection({ pageId, onInsert }: Props) {
     return () => { cancelled = true; };
   }, [pageId, refreshAssets, syncFiles, t]);
 
+  // Removing the file removes the graphic with it: the asset row hangs off the
+  // attachment. Without this the only way out of the panel was hunting the file
+  // down in the attachment list.
+  async function removeAsset(asset: SvgAssetDto) {
+    if (!confirm(t("removeConfirm"))) return;
+    setRemovingId(asset.id);
+    setError("");
+    try {
+      const response = await fetch(`/api/files/${encodeURIComponent(asset.attachmentId)}`, { method: "DELETE" });
+      const body = await response.json().catch(() => ({})) as { error?: string };
+      if (!response.ok) throw new Error(body.error === "attachmentInUse" ? t("removeInUse") : t("removeFailed"));
+      setAssets((current) => current.filter((item) => item.id !== asset.id));
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : t("removeFailed"));
+    } finally {
+      setRemovingId("");
+    }
+  }
+
   async function linkFolder() {
     try {
       const handle = await pickFolder();
@@ -148,6 +168,7 @@ export function SvgGraphicsSection({ pageId, onInsert }: Props) {
         <span className="min-w-0 flex-1 truncate text-xs" title={asset.sourcePath ?? asset.fileName}>{asset.fileName}</span>
         {asset.sourceTitle && <BookMarked className="size-3.5 shrink-0 text-emerald-600" aria-label={t("linkedSource", { title: asset.sourceTitle })} />}
         <Button type="button" size="xs" variant="ghost" data-testid={`svg-insert-${asset.id}`} title={t("insert")} aria-label={`${t("insert")}: ${asset.fileName}`} onClick={() => onInsert(asset)}><Plus className="size-3.5" /></Button>
+        <Button type="button" size="xs" variant="ghost" data-testid={`svg-remove-${asset.id}`} disabled={removingId === asset.id} title={t("remove")} aria-label={`${t("remove")}: ${asset.fileName}`} onClick={() => void removeAsset(asset)}>{removingId === asset.id ? <Loader2 className="size-3.5 animate-spin" /> : <Trash2 className="size-3.5 text-destructive" />}</Button>
       </div>)}</div>}
     </>}
   </section>;

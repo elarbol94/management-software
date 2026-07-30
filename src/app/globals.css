@@ -563,6 +563,10 @@
   }
 
   .wiki-document-canvas {
+    /* flow-root: the editor's --document-content-offset top margin would otherwise
+       collapse through the canvas and move the canvas itself down, dropping the
+       absolutely positioned cover, sheets and indexes on top of the text. */
+    display: flow-root;
     position: relative;
     box-sizing: border-box;
     width: var(--document-paper-width);
@@ -613,6 +617,8 @@
       var(--document-margin-bottom)
       var(--document-margin-left);
     color: var(--wiki-text-color);
+    /* Preview chrome, like the page sheets: never swallow a click meant for the text. */
+    pointer-events: none;
   }
 
   .wiki-document-cover > p {
@@ -793,6 +799,8 @@
       var(--document-margin-bottom)
       var(--document-margin-left);
     color: var(--wiki-text-color);
+    /* Same as the cover: only the reference links stay clickable. */
+    pointer-events: none;
   }
 
   .wiki-document-bibliography h2 {
@@ -820,6 +828,7 @@
   .wiki-document-bibliography a {
     color: inherit;
     text-decoration: none;
+    pointer-events: auto;
   }
 
   .wiki-document-bibliography a:hover {

@@ -122,4 +122,43 @@ describe("document renderer", () => {
     expect(result.html).toContain('href="#figure-1"');
     expect(result.html).toContain("Figure 1.");
   });
+
+  it("numbers figures in the document language", async () => {
+    const settings = {
+      ...DEFAULT_DOCUMENT_SETTINGS,
+      cover: { ...DEFAULT_DOCUMENT_SETTINGS.cover, enabled: false },
+      figures: { ...DEFAULT_DOCUMENT_SETTINGS.figures, enabled: true, heading: "Abbildungen" },
+    };
+    const result = await renderDocumentHtml({ title: "Antrag", doc, settings, figureLabel: "Abbildung" });
+    expect(result.html).toContain("Abbildung 1.");
+    expect(result.html).not.toContain("Figure 1");
+  });
+
+  it("leaves a caption that already carries its own number unnumbered", async () => {
+    const settings = {
+      ...DEFAULT_DOCUMENT_SETTINGS,
+      cover: { ...DEFAULT_DOCUMENT_SETTINGS.cover, enabled: false },
+      figures: { ...DEFAULT_DOCUMENT_SETTINGS.figures, enabled: true },
+    };
+    const numbered: TiptapNode = {
+      type: "doc",
+      content: [{
+        type: "commentableImage",
+        attrs: { nodeId: "figure-own", src: "data:image/png;base64,AA==", alt: "Chart", caption: "Abbildung 4: Hauseigentum nach Gemeindegröße", includeInFigureIndex: true },
+      }],
+    };
+    const result = await renderDocumentHtml({ title: "Antrag", doc: numbered, settings, figureLabel: "Abbildung" });
+    expect(result.html).toContain("Abbildung 4: Hauseigentum nach Gemeindegröße");
+    expect(result.html).not.toContain("Abbildung 1.");
+    expect(result.html).not.toContain('class="figure-number"');
+  });
+
+  it("makes image paths absolute for a downloaded markdown file", () => {
+    const markdown = renderDocumentMarkdown(
+      { type: "doc", content: [{ type: "commentableImage", attrs: { src: "/api/wiki/svg-assets/abc/content?v=1.2", alt: "Chart", caption: "" } }] },
+      DEFAULT_DOCUMENT_SETTINGS,
+      "https://wiki.example.org",
+    );
+    expect(markdown).toContain("(https://wiki.example.org/api/wiki/svg-assets/abc/content?v=1.2)");
+  });
 });

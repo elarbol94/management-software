@@ -4,7 +4,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import { gunzipSync } from "node:zlib";
 import { DOMParser, XMLSerializer } from "@xmldom/xmldom";
-import { and, desc, eq, isNull } from "drizzle-orm";
+import { and, asc, desc, eq, isNull, ne } from "drizzle-orm";
 import { db } from "@/db";
 import {
   attachments,
@@ -78,14 +78,21 @@ export function listSvgAssets(pageId: string, userId: string): SvgAssetDto[] {
   for (const file of files) {
     const existing = db.select().from(wikiSvgAssets).where(eq(wikiSvgAssets.attachmentId, file.id)).get();
     if (existing) continue;
-    const original = fs.readFileSync(getAttachmentAbsolutePath(file.storedName));
-    const currentSvg = annotateSvg(decodeSvg(original, file.fileName));
-    db.insert(wikiSvgAssets).values({
-      pageId,
-      attachmentId: file.id,
-      currentSvg,
-      updatedBy: userId,
-    }).run();
+    try {
+      const original = fs.readFileSync(getAttachmentAbsolutePath(file.storedName));
+      const currentSvg = annotateSvg(decodeSvg(original, file.fileName));
+      db.insert(wikiSvgAssets).values({
+        pageId,
+        attachmentId: file.id,
+        currentSvg,
+        updatedBy: userId,
+      }).run();
+    } catch {
+      // A file that only looks like an SVG — wrong content type, corrupt, or gone
+      // from disk — is skipped. Failing here would take every other graphic on the
+      // page down with it.
+      continue;
+    }
   }
   return db.select({
     id: wikiSvgAssets.id,
@@ -101,8 +108,13 @@ export function listSvgAssets(pageId: string, userId: string): SvgAssetDto[] {
   })
     .from(wikiSvgAssets)
     .innerJoin(attachments, eq(wikiSvgAssets.attachmentId, attachments.id))
-    .leftJoin(wikiSources, eq(wikiSvgAssets.sourceId, wikiSources.id))
+    // The deleted check belongs in the join, not the where: a graphic whose
+    // Literaturstelle sits in the trash still lists, just without the badge.
+    .leftJoin(wikiSources, and(eq(wikiSvgAssets.sourceId, wikiSources.id), isNull(wikiSources.deletedAt)))
     .where(eq(wikiSvgAssets.pageId, pageId))
+    // A numbered set (01_… to 07_…) has to stay in its own order; without this the
+    // rows come back in storage order and re-shuffle on every edit.
+    .orderBy(asc(attachments.fileName))
     .all()
     .map((asset) => {
       const revisions = db.select({
@@ -131,6 +143,20 @@ export function listSvgAssets(pageId: string, userId: string): SvgAssetDto[] {
     });
 }
 
+/**
+ * Attachments the graphics panel owns. The attachment list leaves these out so a
+ * synced diagram is not listed twice in the same sidebar.
+ */
+export function listGraphicAttachmentIds(pageId: string) {
+  return new Set(
+    db.select({ attachmentId: wikiSvgAssets.attachmentId })
+      .from(wikiSvgAssets)
+      .where(eq(wikiSvgAssets.pageId, pageId))
+      .all()
+      .map((row) => row.attachmentId),
+  );
+}
+
 export type SvgFolderSyncResult = {
   added: number;
   updated: number;
@@ -145,9 +171,32 @@ function sidecarKey(filePath: string) {
 }
 
 /**
+ * The record a sidecar should revise. Trashed entries never qualify — reviving one
+ * in place would leave the edit invisible in the Quellenliste — so a deleted
+ * Literaturstelle really does start over.
+ */
+function sidecarTarget(assetId: string, ownSourceId: string | null, title: string) {
+  if (ownSourceId) {
+    const own = db.select({ id: wikiSources.id }).from(wikiSources)
+      .where(and(eq(wikiSources.id, ownSourceId), isNull(wikiSources.deletedAt)))
+      .get();
+    // The caller already ruled out an unchanged sidecar, so this one always saves.
+    if (own) return { id: own.id, sidecarSha256: null as string | null };
+  }
+  // The same folder synced into a second page shares one Literaturstelle instead of
+  // filling the library with byte-identical copies. Only entries another graphic
+  // imported are candidates, so hand-written sources are never touched.
+  return db.select({ id: wikiSources.id, sidecarSha256: wikiSvgAssets.sidecarSha256 })
+    .from(wikiSvgAssets)
+    .innerJoin(wikiSources, eq(wikiSvgAssets.sourceId, wikiSources.id))
+    .where(and(ne(wikiSvgAssets.id, assetId), eq(wikiSources.title, title), isNull(wikiSources.deletedAt)))
+    .get();
+}
+
+/**
  * Imports the Literaturstelle that sits beside a graphic. The source record is
- * reused across syncs, so editing the sidecar revises the existing entry rather
- * than piling up duplicates.
+ * reused across syncs and across pages, so editing the sidecar revises the
+ * existing entry rather than piling up duplicates.
  */
 async function applySidecar(input: { assetId: string; pageId: string; file: File }) {
   const raw = await input.file.text();
@@ -156,14 +205,17 @@ async function applySidecar(input: { assetId: string; pageId: string; file: File
     .from(wikiSvgAssets).where(eq(wikiSvgAssets.id, input.assetId)).get();
   if (!asset || asset.sidecarSha256 === sidecarSha256) return false;
   const { caption, ...source } = graphicsSidecarSchema.parse(JSON.parse(raw));
-  // Only reuse the previous record if it still exists; a deleted one starts over.
-  const existingId = asset.sourceId
-    && db.select({ id: wikiSources.id }).from(wikiSources).where(eq(wikiSources.id, asset.sourceId)).get()?.id;
-  const result = await saveSource({ ...source, ...(existingId ? { id: existingId } : {}) });
-  if (!result.ok) throw new Error(`Duplicate of source "${result.duplicate.title}"`);
-  await linkSupportingSource(input.pageId, result.id);
+  const target = sidecarTarget(input.assetId, asset.sourceId, source.title);
+  // An entry another graphic already imported from these exact bytes is current;
+  // adopting it must not write a source revision that changes nothing.
+  const sourceId = target?.sidecarSha256 === sidecarSha256 ? target.id : await (async () => {
+    const result = await saveSource({ ...source, ...(target ? { id: target.id } : {}) });
+    if (!result.ok) throw new Error(`Duplicate of source "${result.duplicate.title}"`);
+    return result.id;
+  })();
+  await linkSupportingSource(input.pageId, sourceId);
   db.update(wikiSvgAssets)
-    .set({ sourceId: result.id, caption, sidecarSha256 })
+    .set({ sourceId, caption, sidecarSha256 })
     .where(eq(wikiSvgAssets.id, input.assetId))
     .run();
   return true;
@@ -311,11 +363,27 @@ export function updateSvgAsset(input: {
     const element = elements.find((candidate) => candidate.getAttribute("data-wiki-text-id") === layer.id);
     if (!element || element.getElementsByTagName("tspan").length > 0) continue;
     while (element.firstChild) element.removeChild(element.firstChild);
-    element.appendChild(document.createTextNode(layer.text.slice(0, 10_000)));
+    // An empty text node is not the same as no children to the serializer
+    // (`<tspan></tspan>` vs `<tspan/>`), which would make a no-op save look like a change.
+    const text = layer.text.slice(0, 10_000);
+    if (text) element.appendChild(document.createTextNode(text));
     if (layer.binding) bindings[layer.id] = layer.binding.slice(0, 50);
   }
   const nextSvg = new XMLSerializer().serializeToString(document);
   if (!isSafeInlineSvg(new TextEncoder().encode(nextSvg))) throw new Error("Unsafe SVG result");
+  const nextBindingsJson = JSON.stringify(bindings);
+  const nextScale = input.sizeScale ?? null;
+  const page = db.select({ version: wikiPages.version }).from(wikiPages).where(eq(wikiPages.id, input.pageId)).get();
+  // Saving without having changed anything must not spend a version or a history
+  // entry — the list is ordered by name, but the history should stay meaningful.
+  if (nextSvg === asset.currentSvg && nextBindingsJson === asset.bindingsJson && nextScale === asset.sizeScale) {
+    return {
+      saved: true as const,
+      version: asset.version,
+      layers: extractSvgTextLayers(asset.currentSvg, asset.bindingsJson),
+      contentUrl: svgContentUrl(asset.id, asset.version, page?.version ?? 0),
+    };
+  }
   const nextVersion = asset.version + 1;
   db.transaction(() => {
     db.insert(wikiSvgRevisions).values({
@@ -327,15 +395,14 @@ export function updateSvgAsset(input: {
     }).onConflictDoNothing().run();
     db.update(wikiSvgAssets).set({
       currentSvg: nextSvg,
-      bindingsJson: JSON.stringify(bindings),
+      bindingsJson: nextBindingsJson,
       version: nextVersion,
       // The version bump also re-points contentUrl, so a changed scale is never served from cache.
-      sizeScale: input.sizeScale ?? null,
+      sizeScale: nextScale,
       updatedBy: input.userId,
       updatedAt: new Date(),
     }).where(and(eq(wikiSvgAssets.id, asset.id), eq(wikiSvgAssets.version, asset.version))).run();
   });
-  const page = db.select({ version: wikiPages.version }).from(wikiPages).where(eq(wikiPages.id, input.pageId)).get();
   return {
     saved: true as const,
     version: nextVersion,

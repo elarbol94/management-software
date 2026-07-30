@@ -7,11 +7,14 @@ import {
 } from "./document-settings";
 import type { TiptapNode } from "./tiptap";
 import { formatIeeeCitation } from "./citations";
+import { figureNumberLabel } from "./figure-caption";
 import {
   normalizeWikiTypography,
   wikiFontStack,
   type WikiTypographySettingsV1,
 } from "./wiki-typography";
+
+const DEFAULT_FIGURE_LABEL = "Figure";
 
 export type DocumentAssetResolver = (input: {
   attachmentId: string;
@@ -48,6 +51,8 @@ export type RenderDocumentInput = {
   references?: string[];
   resolveAsset?: DocumentAssetResolver;
   typography?: WikiTypographySettingsV1;
+  /** Word in front of a figure number, so a German export does not read "Figure 1.". */
+  figureLabel?: string;
 };
 
 export type RenderedDocument = {
@@ -205,9 +210,10 @@ async function renderNode(
       const caption = String(attrs.caption ?? "");
       const figureNumber = figures.findIndex((figure) => figure.nodeId && figure.nodeId === String(attrs.nodeId ?? "")) + 1;
       const figureId = figureNumber ? `figure-${figureNumber}` : "";
-      const figureLabel = figureNumber && input.settings.figures.enabled
-        ? `<span class="figure-number">Figure ${figureNumber}.</span> `
+      const numbering = figureNumber && input.settings.figures.enabled
+        ? figureNumberLabel(caption, input.figureLabel ?? DEFAULT_FIGURE_LABEL, figureNumber)
         : "";
+      const figureLabel = numbering ? `<span class="figure-number">${escapeHtml(numbering)}.</span> ` : "";
       return `<figure${figureId ? ` id="${figureId}"` : ""} class="image align-${alignment}" style="width:${width}%" ${keepAttrs}><img src="${resolved}" alt="${escapeHtml(alt)}" style="object-position:${cropX}% ${cropY}%">${caption ? `<figcaption>${figureLabel}${escapeHtml(caption)}</figcaption>` : ""}</figure>`;
     }
     case "footnoteReference": {
@@ -402,8 +408,9 @@ export async function renderDocumentHtml(input: RenderDocumentInput): Promise<Re
   const references = settings.bibliography.enabled && input.references?.length
     ? `<section class="bibliography"><h2>${escapeHtml(settings.bibliography.heading)}</h2><ol>${input.references.map((entry) => `<li>${escapeHtml(entry)}</li>`).join("")}</ol></section>`
     : "";
+  const figureLabel = input.figureLabel ?? DEFAULT_FIGURE_LABEL;
   const figureIndex = settings.figures.enabled && figures.length
-    ? `<section class="figure-index"><h2>${escapeHtml(settings.figures.heading)}</h2><ol>${figures.map((figure, index) => `<li><a class="figure-index-number" href="#figure-${index + 1}">Figure ${index + 1}</a><a href="#figure-${index + 1}">${escapeHtml(figure.caption)}</a></li>`).join("")}</ol></section>`
+    ? `<section class="figure-index"><h2>${escapeHtml(settings.figures.heading)}</h2><ol>${figures.map((figure, index) => `<li><a class="figure-index-number" href="#figure-${index + 1}">${escapeHtml(figureNumberLabel(figure.caption, figureLabel, index + 1))}</a><a href="#figure-${index + 1}">${escapeHtml(figure.caption)}</a></li>`).join("")}</ol></section>`
     : "";
   const article = `<article>${content}${figureIndex}${references}</article>`;
   const bodyHtml = `${cover}${article}`;
@@ -434,7 +441,12 @@ function markdownText(node: TiptapNode): string {
   return (node.content ?? []).map(markdownText).join("");
 }
 
-export function renderDocumentMarkdown(doc: TiptapNode, settings: DocumentSettingsV1): string {
+/**
+ * `baseUrl` turns the app-relative image paths into absolute ones. A downloaded
+ * .md file is read outside the app, where `/api/wiki/svg-assets/…` resolves nowhere.
+ */
+export function renderDocumentMarkdown(doc: TiptapNode, settings: DocumentSettingsV1, baseUrl = ""): string {
+  const absolute = (src: string) => baseUrl && src.startsWith("/") ? `${baseUrl.replace(/\/$/, "")}${src}` : src;
   function render(node: TiptapNode, depth = 0, listMarker = "-"): string {
     const children = node.content ?? [];
     const content = children.map((child) => render(child, depth + 1)).join("");
@@ -463,7 +475,7 @@ export function renderDocumentMarkdown(doc: TiptapNode, settings: DocumentSettin
       case "pageBreak": return "\n<div style=\"page-break-after: always\"></div>\n\n";
       case "commentableImage": {
         const caption = String(node.attrs?.caption ?? "").trim();
-        return `![${String(node.attrs?.alt ?? "")}](${String(node.attrs?.src ?? "")})\n${caption ? `\n*${caption}*\n` : ""}\n`;
+        return `![${String(node.attrs?.alt ?? "")}](${absolute(String(node.attrs?.src ?? ""))})\n${caption ? `\n*${caption}*\n` : ""}\n`;
       }
       case "footnoteReference": return `[^${String(node.attrs?.label ?? "")}]`;
       case "footnoteDefinition": return `[^${String(node.attrs?.label ?? "")}]: ${content.trim()}\n\n`;

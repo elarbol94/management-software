@@ -48,6 +48,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
     const markdown = `# ${page.title}\n\n${renderDocumentMarkdown(
       parseStoredDocument(page.contentJson),
       parseDocumentSettings(page.documentSettingsJson),
+      url.origin,
     )}`;
     return new Response(markdown, {
       headers: {

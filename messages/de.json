@@ -1224,7 +1224,11 @@
       "loadFailed": "Die Grafiken konnten nicht geladen werden.",
       "saveFailed": "Die Grafik konnte nicht gespeichert werden.",
       "restoreFailed": "Die Grafikversion konnte nicht wiederhergestellt werden.",
-      "conflict": "Die Grafik wurde inzwischen geändert. Öffne den Bereich erneut."
+      "conflict": "Die Grafik wurde inzwischen geändert. Öffne den Bereich erneut.",
+      "remove": "Grafik entfernen",
+      "removeConfirm": "Diese Grafik und ihre Datei wirklich entfernen?",
+      "removeFailed": "Die Grafik konnte nicht entfernt werden.",
+      "removeInUse": "Die Grafik wird im Dokument verwendet. Entferne sie zuerst dort."
     },
     "comments": "Kommentare",
     "hideComments": "Kommentare ausblenden",

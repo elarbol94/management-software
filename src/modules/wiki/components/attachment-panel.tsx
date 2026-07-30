@@ -5,6 +5,13 @@ import { ChevronDown, Download, File, Loader2, Paperclip, Trash2 } from "lucide-
 import { Button } from "@/components/ui/button";
 
 type Attachment = { id: string; fileName: string; mimeType: string; sizeBytes: number };
+
+/** Picks the unit that keeps a digit: an SVG diagram of 3 KB read "0.0 MB" before. */
+function formatFileSize(bytes: number) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
 export type AttachmentPanelHandle = { openFilePicker: () => void };
 type AttachmentPanelProps = { entityType: "wikiPage" | "wikiSource"; entityId: string; initial: Attachment[] };
 
@@ -46,6 +53,6 @@ function AttachmentPanelContent({ entityType, entityId, initial, panelRef }: Att
     }
   }
   return <section className="space-y-2"><button type="button" aria-expanded={!collapsed} onClick={() => setCollapsed((value) => !value)} className="flex w-full items-center gap-2 text-left text-sm font-medium"><ChevronDown className={`size-4 shrink-0 text-muted-foreground transition-transform ${collapsed ? "-rotate-90" : ""}`} /><Paperclip className="size-4 text-indigo-500" />{t("attachments")}</button>{!collapsed && <><div className="flex justify-end"><Button type="button" variant="outline" size="sm" disabled={pending} onClick={() => input.current?.click()}>{pending ? <Loader2 className="size-4 animate-spin" /> : <Paperclip className="size-4" />}{t("addFile")}</Button><input ref={input} data-testid="wiki-attachment-input" hidden type="file" onChange={(event) => { const file = event.target.files?.[0]; if (file) void upload(file); event.target.value = ""; }} /></div>{error && <p className="text-xs text-destructive">{error}</p>}
-    {files.length === 0 ? <p className="rounded-md border border-dashed p-3 text-xs text-muted-foreground">{t("noAttachments")}</p> : <div className="divide-y rounded-md border">{files.map((file) => <div key={file.id} className="flex items-center gap-2 p-2 text-sm"><File className="size-4 text-indigo-400" /><span className="min-w-0 flex-1 truncate">{file.fileName}</span><span className="text-xs text-muted-foreground">{(file.sizeBytes / 1024 / 1024).toFixed(1)} MB</span><Button aria-label={t("downloadAttachment", { name: file.fileName })} title={t("downloadAttachment", { name: file.fileName })} variant="ghost" size="icon-xs" nativeButton={false} render={<a href={`/api/files/${file.id}`} target="_blank" rel="noreferrer" />}><Download className="size-3.5" /></Button><Button aria-label={`${common("delete")}: ${file.fileName}`} title={`${common("delete")}: ${file.fileName}`} variant="ghost" size="icon-xs" disabled={removingId === file.id} onClick={() => remove(file.id)}>{removingId === file.id ? <Loader2 className="size-3.5 animate-spin" /> : <Trash2 className="size-3.5" />}</Button></div>)}</div>}</>}
+    {files.length === 0 ? <p className="rounded-md border border-dashed p-3 text-xs text-muted-foreground">{t("noAttachments")}</p> : <div className="divide-y rounded-md border">{files.map((file) => <div key={file.id} className="flex items-center gap-2 p-2 text-sm"><File className="size-4 text-indigo-400" /><span className="min-w-0 flex-1 truncate">{file.fileName}</span><span className="text-xs text-muted-foreground">{formatFileSize(file.sizeBytes)}</span><Button aria-label={t("downloadAttachment", { name: file.fileName })} title={t("downloadAttachment", { name: file.fileName })} variant="ghost" size="icon-xs" nativeButton={false} render={<a href={`/api/files/${file.id}`} target="_blank" rel="noreferrer" />}><Download className="size-3.5" /></Button><Button aria-label={`${common("delete")}: ${file.fileName}`} title={`${common("delete")}: ${file.fileName}`} variant="ghost" size="icon-xs" disabled={removingId === file.id} onClick={() => remove(file.id)}>{removingId === file.id ? <Loader2 className="size-3.5 animate-spin" /> : <Trash2 className="size-3.5" />}</Button></div>)}</div>}</>}
   </section>;
 }

@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
-import { History, ImageIcon, Layers3, Loader2, RotateCcw, Save, Type, X } from "lucide-react";
+import { BookMarked, History, ImageIcon, Layers3, Loader2, RotateCcw, Save, Type, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -170,7 +170,9 @@ export function SvgGraphicsPanel({ pageId, open, onOpenChange, variables, onAsse
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img src={asset.contentUrl} alt="" className="mb-2 aspect-[4/3] w-full rounded bg-white object-contain" />
               <span className="block truncate text-xs font-medium">{asset.fileName}</span>
-              <span className="text-[10px] text-muted-foreground">{t("version", { version: asset.version })}</span>
+              <span className="flex items-center gap-1 text-[10px] text-muted-foreground">{t("version", { version: asset.version })}
+                {asset.sourceTitle && <BookMarked className="size-3 shrink-0 text-emerald-600" aria-label={t("linkedSource", { title: asset.sourceTitle })} />}
+              </span>
             </button>)}
           </nav>
           {selected && <div className="grid min-h-0 grid-rows-[minmax(18rem,52vh)_minmax(0,1fr)_auto]">

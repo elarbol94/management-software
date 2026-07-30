@@ -55,6 +55,7 @@ export async function renderStoredWikiDocument(pageId: string, typography: WikiT
     settings,
     typography,
     references,
+    figureLabel: page.citationLocale.toLocaleLowerCase().startsWith("de") ? "Abbildung" : "Figure",
     resolveAsset: async ({ attachmentId, src }) => {
       const routeId = src.match(/^\/api\/files\/([^/?#]+)/)?.[1];
       const id = attachmentId || routeId || "";

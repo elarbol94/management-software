@@ -48,6 +48,7 @@ import {
   type DocumentPreflightIssue,
   type DocumentSettingsV1,
 } from "../lib/document-settings";
+import { hasOwnFigureNumber } from "../lib/figure-caption";
 import {
   normalizeWikiTypography,
   wikiTypographyCssVariables,
@@ -1622,7 +1623,11 @@ export function WikiEditor({
     if (!actionsRef || !editor) return;
     actionsRef.current = {
       insertGraphic: ({ attachmentId, fileName, contentUrl, caption }) => {
-        editor.chain().focus().insertContent({
+        // Insert *after* the selection rather than into it: a freshly inserted
+        // graphic stays selected as a node, and inserting into that selection
+        // would replace the graphic that was just dropped in.
+        const at = editor.state.selection.to;
+        editor.chain().insertContentAt(at, {
           type: "commentableImage",
           // The rendered URL, not /api/files, so document typography applies immediately.
           attrs: {
@@ -1631,7 +1636,7 @@ export function WikiEditor({
             // The sidecar's ready-made Bildunterschrift wins over the filename.
             ...(caption ? { caption } : {}),
           },
-        }).run();
+        }).focus().run();
       },
     };
     return () => { actionsRef.current = null; };
@@ -2139,7 +2144,8 @@ export function WikiEditor({
         {figureIndexVisible && <section className="wiki-document-figure-index" aria-label={documentSettings.figures.heading}>
           <p className="wiki-document-figure-index-kicker">{t("document.figureIndex")}</p>
           <h2>{documentSettings.figures.heading}</h2>
-          <ol>{figureCaptions.map((figure, index) => <li key={figure.nodeId}><span>{t("document.figureNumber", { number: index + 1 })}</span><span>{figure.caption}</span></li>)}</ol>
+          {/* A caption that already numbers itself ("Abbildung 4: …") is not numbered twice. */}
+          <ol>{figureCaptions.map((figure, index) => <li key={figure.nodeId}><span>{hasOwnFigureNumber(figure.caption) ? "" : t("document.figureNumber", { number: index + 1 })}</span><span>{figure.caption}</span></li>)}</ol>
         </section>}
       </div>
       {spellcheckIssue && <div role="dialog" aria-label={t("editor.proofing.dialog")} className="fixed z-50 max-h-[min(28rem,calc(100vh-2rem))] w-72 overflow-y-auto rounded-lg border bg-popover p-2 shadow-lg" style={{ left: Math.min(spellcheckIssue.rect.left, window.innerWidth - 304), top: Math.min(spellcheckIssue.rect.bottom + 8, window.innerHeight - 210) }}>

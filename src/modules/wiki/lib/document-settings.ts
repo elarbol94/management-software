@@ -300,8 +300,18 @@ export function localizeDocumentSettings(
   locale: string,
 ): DocumentSettingsV1 {
   if (!locale.toLocaleLowerCase().startsWith("de")) return settings;
+  // Only the untouched defaults are translated; anything the author typed stays.
+  const germanDefaults: Record<string, string> = {
+    DOCUMENT: "DOKUMENT",
+    "PROJECT REPORT": "PROJEKTBERICHT",
+    CONCEPT: "KONZEPT",
+  };
   return {
     ...settings,
+    cover: {
+      ...settings.cover,
+      eyebrow: germanDefaults[settings.cover.eyebrow] ?? settings.cover.eyebrow,
+    },
     bibliography: {
       ...settings.bibliography,
       heading: settings.bibliography.heading === "References"

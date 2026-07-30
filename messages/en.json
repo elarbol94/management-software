@@ -1224,7 +1224,11 @@
       "loadFailed": "Graphics could not be loaded.",
       "saveFailed": "The graphic could not be saved.",
       "restoreFailed": "The graphic version could not be restored.",
-      "conflict": "The graphic changed in the meantime. Reopen the panel."
+      "conflict": "The graphic changed in the meantime. Reopen the panel.",
+      "remove": "Remove graphic",
+      "removeConfirm": "Remove this graphic and its file?",
+      "removeFailed": "The graphic could not be removed.",
+      "removeInUse": "The graphic is used in the document. Remove it there first."
     },
     "comments": "Comments",
     "hideComments": "Hide comments",
