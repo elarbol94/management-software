@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
-import { FolderUp, Images, Loader2, Plus } from "lucide-react";
+import { ChevronDown, FolderUp, Images, Loader2, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { SvgAssetDto, SvgFolderSyncResult } from "../svg-assets";
 import { clearFolderHandle, collectSvgFiles, folderPermission, loadFolderHandle, pickFolder, saveFolderHandle, supportsFolderLink } from "../lib/svg-folder-source";
@@ -26,6 +26,7 @@ export function SvgGraphicsSection({ pageId, onInsert }: Props) {
   const [summary, setSummary] = useState("");
   const [folderName, setFolderName] = useState("");
   const [importProgress, setImportProgress] = useState<{ done: number; total: number } | null>(null);
+  const [collapsed, setCollapsed] = useState(true);
   const folderInput = useRef<HTMLInputElement | null>(null);
   const autoSynced = useRef(false);
   const canLinkFolder = supportsFolderLink();
@@ -124,16 +125,16 @@ export function SvgGraphicsSection({ pageId, onInsert }: Props) {
 
   return <section data-testid="wiki-graphics-section" className="space-y-2">
     <div className="flex items-center justify-between gap-2">
-      <h3 className="flex items-center gap-2 text-sm font-medium"><Images className="size-4 text-indigo-500" />{t("title")}</h3>
-      <Button type="button" variant="outline" size="sm" data-testid="svg-folder-sync" disabled={Boolean(importProgress)} onClick={() => { if (canLinkFolder) void syncLinkedFolder(); else folderInput.current?.click(); }}>
+      <button type="button" aria-expanded={!collapsed} onClick={() => setCollapsed((value) => !value)} className="flex min-w-0 items-center gap-2 text-left text-sm font-medium"><ChevronDown className={`size-4 shrink-0 text-muted-foreground transition-transform ${collapsed ? "-rotate-90" : ""}`} /><Images className="size-4 text-indigo-500" />{t("title")}</button>
+      {!collapsed && <Button type="button" variant="outline" size="sm" data-testid="svg-folder-sync" disabled={Boolean(importProgress)} onClick={() => { if (canLinkFolder) void syncLinkedFolder(); else folderInput.current?.click(); }}>
         {importProgress ? <Loader2 className="size-4 animate-spin" /> : <FolderUp className="size-4" />}
         {importProgress ? t("importing", importProgress) : !canLinkFolder ? t("import") : folderName ? t("sync") : t("link")}
-      </Button>
+      </Button>}
       {/* Fallback for browsers without the File System Access API: a one-shot pick, no lasting link. */}
       {/* webkitdirectory has no React typing; set it on the node so one pick reads a whole folder. */}
       <input ref={(node) => { folderInput.current = node; node?.setAttribute("webkitdirectory", ""); }} data-testid="svg-folder-input" hidden type="file" multiple accept=".svg,.svgz,image/svg+xml" onChange={(event) => { void syncFiles(Array.from(event.target.files ?? []).filter((file) => /\.svgz?$/i.test(file.name)).map((file) => ({ path: file.webkitRelativePath || file.name, file })), false); event.target.value = ""; }} />
     </div>
-    {folderName && <p className="truncate text-[11px] text-muted-foreground">{t("linkedFolder", { name: folderName })}</p>}
+    {!collapsed && <>{folderName && <p className="truncate text-[11px] text-muted-foreground">{t("linkedFolder", { name: folderName })}</p>}
     {summary && <p className="text-[11px] text-emerald-700 dark:text-emerald-400">{summary}</p>}
     {error && <p role="alert" className="text-xs text-destructive">{error}</p>}
     {!assets.length
@@ -145,5 +146,6 @@ export function SvgGraphicsSection({ pageId, onInsert }: Props) {
         <span className="min-w-0 flex-1 truncate text-xs" title={asset.sourcePath ?? asset.fileName}>{asset.fileName}</span>
         <Button type="button" size="xs" variant="ghost" data-testid={`svg-insert-${asset.id}`} title={t("insert")} aria-label={`${t("insert")}: ${asset.fileName}`} onClick={() => onInsert(asset)}><Plus className="size-3.5" /></Button>
       </div>)}</div>}
+    </>}
   </section>;
 }
