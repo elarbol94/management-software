@@ -1469,6 +1469,14 @@
     "insertImage": "Bild einfügen",
     "uploadingImage": "Bild wird hochgeladen…",
     "inlineImageUnsupported": "Inline werden PNG-, JPEG-, WebP- und sichere SVG-Bilder unterstützt.",
+    "imagePicker": {
+      "title": "Grafik einfügen",
+      "description": "Wähle eine Grafik aus den Anhängen aus.",
+      "empty": "Noch keine Grafiken vorhanden.",
+      "emptyHint": "Füge eine Bilddatei hinzu, um sie hier auszuwählen.",
+      "addFromPath": "Bild vom Pfad hinzufügen",
+      "loadFailed": "Die Grafiken konnten nicht geladen werden."
+    },
     "image": "Bild",
     "imageDescription": {
       "button": "Bildbeschreibung",

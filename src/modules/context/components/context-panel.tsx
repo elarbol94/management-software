@@ -173,6 +173,7 @@ function ContextPanelContent({
   const [mobileCollapsed, setMobileCollapsed] = useState<Record<string, boolean>>(
     {},
   );
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(compact);
   const subjectKey = `${subjectType}:${subjectId}`;
   const [requestGate] = useState(() => new RequestGate());
 
@@ -344,7 +345,18 @@ function ContextPanelContent({
       data-testid="context-panel"
     >
       <div className="flex items-center justify-between gap-3">
-        <h3 className="flex min-w-0 items-center gap-2 text-sm font-medium">
+        <button
+          type="button"
+          aria-expanded={!sidebarCollapsed}
+          className="flex min-w-0 items-center gap-2 text-left text-sm font-medium"
+          onClick={() => setSidebarCollapsed((collapsed) => !collapsed)}
+        >
+          <ChevronDown
+            className={cn(
+              "size-4 shrink-0 text-muted-foreground transition-transform",
+              sidebarCollapsed && "-rotate-90",
+            )}
+          />
           <span
             className="h-4 w-0.5 rounded-full"
             style={{ backgroundColor: accentColor }}
@@ -356,8 +368,8 @@ function ContextPanelContent({
               {total}
             </span>
           )}
-        </h3>
-        <Button
+        </button>
+        {!sidebarCollapsed && <Button
           type="button"
           size="sm"
           variant="outline"
@@ -365,10 +377,10 @@ function ContextPanelContent({
         >
           <Plus className="size-3.5" />
           {labels.link}
-        </Button>
+        </Button>}
       </div>
 
-      {context.parents.length > 0 && (
+      {!sidebarCollapsed && <>{context.parents.length > 0 && (
         <nav
           aria-label={labels.belongs}
           className="flex min-w-0 flex-wrap items-center gap-1 text-xs"
@@ -596,7 +608,7 @@ function ContextPanelContent({
             )}
           </div>
         </DialogContent>
-      </Dialog>
+      </Dialog></>}
     </section>
   );
 }

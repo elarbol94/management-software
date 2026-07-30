@@ -1469,6 +1469,14 @@
     "insertImage": "Insert image",
     "uploadingImage": "Uploading image…",
     "inlineImageUnsupported": "Inline images support PNG, JPEG, WebP, and safe SVG files.",
+    "imagePicker": {
+      "title": "Insert graphic",
+      "description": "Choose a graphic from this page's attachments.",
+      "empty": "No graphics available yet.",
+      "emptyHint": "Add an image file to choose it here.",
+      "addFromPath": "Add image from path",
+      "loadFailed": "Graphics could not be loaded."
+    },
     "image": "Image",
     "imageDescription": {
       "button": "Image description",

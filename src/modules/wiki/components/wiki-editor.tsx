@@ -427,10 +427,15 @@ function backfillCommentNodeIds(editor: Editor) {
 }
 
 type UploadedAttachment = { id: string; fileName: string; mimeType: string };
+type ExistingImageAttachment = UploadedAttachment & { sizeBytes: number };
 const INLINE_IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/svg+xml"]);
 
 function isInlineImageFile(file: File) {
   return INLINE_IMAGE_TYPES.has(file.type) || (!file.type && file.name.toLocaleLowerCase().endsWith(".svg"));
+}
+
+function isExistingInlineImage(attachment: ExistingImageAttachment) {
+  return INLINE_IMAGE_TYPES.has(attachment.mimeType) || attachment.fileName.toLocaleLowerCase().endsWith(".svg");
 }
 
 function normalizeInlineImageFile(file: File) {
@@ -655,7 +660,7 @@ export function WikiEditor({
     parseDocumentSettings(initialDocumentSettings),
     citationLocale,
   );
-  const [conflictRevision, setConflictRevision] = useState<string | null>(null); const [activeThreadId, setActiveThreadId] = useState<string | null>(null); const [optimisticCommentThreads, setOptimisticCommentThreads] = useState<CommentThread[]>([]); const [commentFocusRequest, setCommentFocusRequest] = useState(0); const [imagePickerRequest, setImagePickerRequest] = useState(0); const [commentOpen, setCommentOpen] = useState(false); const [commentBody, setCommentBody] = useState(""); const [pendingAnchor, setPendingAnchor] = useState<CommentAnchor | null>(null); const [regionTarget, setRegionTarget] = useState<{ nodeId: string; label: string } | null>(null); const [imageError, setImageError] = useState(""); const [imageUploading, setImageUploading] = useState(false); const [assigneeId, setAssigneeId] = useState("none");
+  const [conflictRevision, setConflictRevision] = useState<string | null>(null); const [activeThreadId, setActiveThreadId] = useState<string | null>(null); const [optimisticCommentThreads, setOptimisticCommentThreads] = useState<CommentThread[]>([]); const [commentFocusRequest, setCommentFocusRequest] = useState(0); const [inlineImagePickerOpen, setInlineImagePickerOpen] = useState(false); const [existingImages, setExistingImages] = useState<ExistingImageAttachment[]>([]); const [existingImagesLoading, setExistingImagesLoading] = useState(false); const [existingImagesError, setExistingImagesError] = useState(""); const [commentOpen, setCommentOpen] = useState(false); const [commentBody, setCommentBody] = useState(""); const [pendingAnchor, setPendingAnchor] = useState<CommentAnchor | null>(null); const [regionTarget, setRegionTarget] = useState<{ nodeId: string; label: string } | null>(null); const [imageError, setImageError] = useState(""); const [imageUploading, setImageUploading] = useState(false); const [assigneeId, setAssigneeId] = useState("none");
   const commentThreads = useMemo(
     () => [...optimisticCommentThreads.filter((thread) => !comments.some((item) => item.id === thread.id)), ...comments],
     [comments, optimisticCommentThreads],
@@ -901,7 +906,7 @@ export function WikiEditor({
     slash("externalLink", "wiki", Link2, () => setLinkEditorRequest((value) => value + 1)),
     slash("citation", "wiki", BookMarked, () => setCitationOpen(true)),
     slash("pdfEvidence", "wiki", Highlighter, () => setEvidenceOpen(true)),
-    slash("inlineImage", "wiki", ImagePlus, () => setImagePickerRequest((value) => value + 1)),
+    slash("inlineImage", "wiki", ImagePlus, () => openInlineImagePicker()),
     slash("attachment", "wiki", Paperclip, () => pageActions.addAttachment()),
     slash("supportingSource", "wiki", BookMarked, () => pageActions.linkSupportingSource()),
     slash("pageComment", "wiki", MessageSquareText, () => {
@@ -931,8 +936,14 @@ export function WikiEditor({
           return true;
         }
         const clipboard = event.clipboardData;
-        if (!clipboard || clipboard.getData("text/html")) return false;
+        if (!clipboard) return false;
         const plainText = clipboard.getData("text/plain");
+        if (clipboard.getData("text/html")) {
+          if (!plainText) return false;
+          event.preventDefault();
+          view.dispatch(view.state.tr.insertText(plainText).scrollIntoView());
+          return true;
+        }
         if (!looksLikeMarkdown(plainText)) return false;
         try {
           const parsed = parseMarkdownDocument(plainText);
@@ -1371,7 +1382,6 @@ export function WikiEditor({
   }, [documentMode, documentSettings.page, documentZoom, editor]);
   useEffect(() => { void pageVersion; }, [pageVersion]);
   useEffect(() => { if (commentFocusRequest > 0) commentRailRef.current?.focusGeneralComment(); }, [commentFocusRequest]);
-  useEffect(() => { if (imagePickerRequest > 0) imageInputRef.current?.click(); }, [imagePickerRequest]);
   useEffect(() => {
     typewriterModeRef.current = typewriterMode;
     localStorage.setItem(preferencesKey, JSON.stringify({ statusVisible, minimalToolbar, typewriterMode }));
@@ -1475,7 +1485,7 @@ export function WikiEditor({
         case "markdownHelp": setMarkdownHelpOpen(true); break;
         case "typography": setTypographyOpen(true); break;
         case "shortcuts": setShortcutsOpen(true); break;
-        case "image": imageInputRef.current?.click(); break;
+        case "image": openInlineImagePicker(); break;
         case "pageLink": setPageLinkOpen(true); break;
         case "externalLink": setLinkEditorRequest((value) => value + 1); break;
         case "citation": setCitationOpen(true); break;
@@ -1658,6 +1668,24 @@ export function WikiEditor({
       if (pendingSave.current) void persistContent(pendingSave.current);
     }, 10_000);
   }
+  function openInlineImagePicker() {
+    rememberToolbarSelection();
+    setInlineImagePickerOpen(true);
+    setExistingImagesLoading(true);
+    setExistingImagesError("");
+    void fetch(`/api/files?entityType=wikiPage&entityId=${encodeURIComponent(pageId)}`)
+      .then(async (response) => {
+        if (!response.ok) throw new Error(t("imagePicker.loadFailed"));
+        return response.json() as Promise<ExistingImageAttachment[]>;
+      })
+      .then((attachments) => {
+        setExistingImages(attachments.filter(isExistingInlineImage));
+      })
+      .catch((reason: unknown) => {
+        setExistingImagesError(reason instanceof Error ? reason.message : t("imagePicker.loadFailed"));
+      })
+      .finally(() => setExistingImagesLoading(false));
+  }
   function changeDocumentSettings(settings: DocumentSettingsV1) {
     documentSettingsRef.current = settings;
     setDocumentSettings(settings);
@@ -1766,13 +1794,18 @@ export function WikiEditor({
     setImageUploading(true); setImageError("");
     try {
       const attachment = await uploadInlineAttachment(pageId, file);
-      activeEditor.chain().focus().insertContent({ type: "commentableImage", attrs: imageNodeAttrs(attachment) }).run();
+      toolbarChain().insertContent({ type: "commentableImage", attrs: imageNodeAttrs(attachment) }).run();
+      setInlineImagePickerOpen(false);
       router.refresh();
     } catch (error) {
       setImageError(error instanceof Error ? error.message : t("uploadFailed"));
     } finally {
       setImageUploading(false);
     }
+  }
+  function insertExistingImage(attachment: ExistingImageAttachment) {
+    toolbarChain().insertContent({ type: "commentableImage", attrs: imageNodeAttrs(attachment) }).run();
+    setInlineImagePickerOpen(false);
   }
   async function submitComment() {
     if (!pendingAnchor || !commentBody.trim()) return;
@@ -1927,13 +1960,29 @@ export function WikiEditor({
       <EditorLinkPopover editor={activeEditor} pages={allPages} request={linkEditorRequest} />
       <PageLinkPicker editor={editor} pages={allPages} open={pageLinkOpen} onOpenChange={setPageLinkOpen} /><CitationPicker editor={editor} sources={sources} locale={citationLocale} pageSlug={pageSlug} open={citationOpen} onOpenChange={setCitationOpen} /><EvidencePicker editor={editor} pageId={pageId} locale={citationLocale} open={evidenceOpen} onOpenChange={setEvidenceOpen} />
       <ToolbarMenu label={t("editor.toolbar.insert")} icon={<ImagePlus className="size-4" />} onPointerDown={rememberToolbarSelection}>
-      <DropdownMenuItem onClick={() => imageInputRef.current?.click()}><ImagePlus />{t("insertImage")}<DropdownMenuShortcut>{shortcutLabel("image")}</DropdownMenuShortcut></DropdownMenuItem>
+      <DropdownMenuItem onClick={openInlineImagePicker}><ImagePlus />{t("insertImage")}<DropdownMenuShortcut>{shortcutLabel("image")}</DropdownMenuShortcut></DropdownMenuItem>
       <DropdownMenuItem onClick={() => toolbarChain().setHorizontalRule().run()}><Minus />{t("slash.commands.horizontalRule.label")}<DropdownMenuShortcut>{shortcutLabel("horizontalRule")}</DropdownMenuShortcut></DropdownMenuItem>
       <DropdownMenuItem onClick={() => pageActions.addAttachment()}><Paperclip />{t("slash.commands.attachment.label")}<DropdownMenuShortcut>{shortcutLabel("attachment")}</DropdownMenuShortcut></DropdownMenuItem>
       <DropdownMenuItem onClick={() => pageActions.linkSupportingSource()}><BookMarked />{t("slash.commands.supportingSource.label")}<DropdownMenuShortcut>{shortcutLabel("supportingSource")}</DropdownMenuShortcut></DropdownMenuItem>
       </ToolbarMenu>
     </ToolbarGroup>
     <input ref={imageInputRef} data-testid="wiki-inline-image-input" hidden type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml,.svg" onChange={(event) => { const file = event.target.files?.[0]; if (file) void insertInlineImage(file); event.target.value = ""; }} />
+    <Dialog open={inlineImagePickerOpen} onOpenChange={setInlineImagePickerOpen}>
+      <DialogContent className="max-h-[min(42rem,calc(100dvh-2rem))] overflow-y-auto sm:max-w-3xl">
+        <DialogHeader><DialogTitle>{t("imagePicker.title")}</DialogTitle></DialogHeader>
+        <p className="text-sm text-muted-foreground">{t("imagePicker.description")}</p>
+        {existingImagesLoading ? <div className="grid min-h-44 place-items-center"><RotateCcw className="size-5 animate-spin text-muted-foreground" /></div>
+          : existingImagesError ? <p role="alert" className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">{existingImagesError}</p>
+          : existingImages.length ? <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">{existingImages.map((attachment) => <button key={attachment.id} type="button" data-testid={`wiki-existing-image-${attachment.id}`} onClick={() => insertExistingImage(attachment)} className="group overflow-hidden rounded-lg border bg-card text-left transition-colors hover:border-indigo-400 hover:bg-indigo-50/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 dark:hover:bg-indigo-950/20">
+            {/* Existing graphics are user-uploaded files and cannot use the Next image optimizer. */}
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={`/api/files/${attachment.id}`} alt="" className="aspect-[4/3] w-full bg-muted object-contain" />
+            <span className="block truncate px-2.5 py-2 text-xs font-medium">{attachment.fileName}</span>
+          </button>)}</div>
+            : <div className="rounded-lg border border-dashed p-6 text-center"><ImagePlus className="mx-auto mb-2 size-5 text-muted-foreground" /><p className="text-sm font-medium">{t("imagePicker.empty")}</p><p className="mt-1 text-xs text-muted-foreground">{t("imagePicker.emptyHint")}</p></div>}
+        <div className="flex justify-end border-t pt-3"><Button type="button" size="sm" variant="ghost" className="text-muted-foreground" onClick={() => imageInputRef.current?.click()}><ImagePlus className="size-4" />{t("imagePicker.addFromPath")}</Button></div>
+      </DialogContent>
+    </Dialog>
     <ToolbarGroup label={t("editor.toolbar.groups.review")}>
       <Tooltip>
         <TooltipTrigger render={<Button type="button" data-testid="proofing-language-toggle" size="sm" variant="ghost" className="gap-1 px-2 text-xs" aria-label={proofingButtonTitle} aria-busy={proofingStatus === "checking" || proofingSaving} disabled={proofingSaving} onClick={() => void toggleProofingLanguage()} />}>

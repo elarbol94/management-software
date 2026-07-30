@@ -188,6 +188,21 @@ test("editor productivity tools support links, Markdown paste, search, outline, 
   await expect(editor.getByRole("heading", { level: 2, name: "Imported heading" })).toBeVisible();
   await expect(editor.locator("ul li")).toHaveCount(2);
 
+  await editor.click();
+  await page.keyboard.press("ControlOrMeta+End");
+  await page.keyboard.press("Enter");
+  await page.keyboard.press("Enter");
+  await page.evaluate(() => {
+    const target = document.querySelector(".ProseMirror");
+    const data = new DataTransfer();
+    data.setData("text/plain", "Plain external text");
+    data.setData("text/html", "<h1><strong>Plain external text</strong></h1>");
+    target?.dispatchEvent(new ClipboardEvent("paste", { bubbles: true, cancelable: true, clipboardData: data }));
+  });
+  await expect(editor.getByText("Plain external text", { exact: true })).toBeVisible();
+  await expect(editor.getByRole("heading", { name: "Plain external text" })).toHaveCount(0);
+  await expect(editor.locator("strong").filter({ hasText: "Plain external text" })).toHaveCount(0);
+
   await page.keyboard.press("ControlOrMeta+f");
   const search = page.getByTestId("editor-search-panel");
   await expect(search).toBeVisible();
