@@ -12,6 +12,8 @@ export const UPLOADS_PATH =
   path.join(/* turbopackIgnore: true */ process.cwd(), "data", "uploads");
 
 export const MAX_UPLOAD_BYTES = 50 * 1024 * 1024; // 50 MB
+// Caps gunzip's output so a small, highly-compressed .svgz cannot force an unbounded allocation (decompression bomb).
+const MAX_SVG_DECOMPRESSED_BYTES = 10 * 1024 * 1024; // 10 MB
 
 const ALLOWED_MIME: Record<string, string> = {
   "application/pdf": ".pdf",
@@ -58,9 +60,9 @@ export async function saveAttachment(options: {
   if (file.type === "image/svg+xml") {
     let svgBytes: Uint8Array = buffer;
     try {
-      if (ext === ".svgz" || (buffer[0] === 0x1f && buffer[1] === 0x8b)) svgBytes = gunzipSync(buffer);
+      if (ext === ".svgz" || (buffer[0] === 0x1f && buffer[1] === 0x8b)) svgBytes = gunzipSync(buffer, { maxOutputLength: MAX_SVG_DECOMPRESSED_BYTES });
     } catch {
-      throw new UploadError("SVGZ could not be decompressed");
+      throw new UploadError("SVGZ could not be decompressed, or exceeds the size limit once unpacked");
     }
     if (!isSafeInlineSvg(svgBytes)) throw new UploadError("SVG contains active or externally loaded content");
   }

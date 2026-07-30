@@ -332,7 +332,10 @@ const CommentableImage = Node.create({
       "data-image-alignment": HTMLAttributes.alignment,
       class: "wiki-commentable-media my-5",
       style: `width:${Math.max(20, Math.min(100, Number(HTMLAttributes.widthPercent) || 100))}%;margin-left:${HTMLAttributes.alignment === "right" ? "auto" : HTMLAttributes.alignment === "center" ? "auto" : "0"};margin-right:${HTMLAttributes.alignment === "left" ? "auto" : HTMLAttributes.alignment === "center" ? "auto" : "0"}`,
-    }, ["img", { src: HTMLAttributes.src, alt: HTMLAttributes.alt || label, class: "max-h-[36rem] w-full rounded-lg object-contain", style: `object-position:${Number(HTMLAttributes.cropX) || 50}% ${Number(HTMLAttributes.cropY) || 50}%` }],
+    },
+    // bg-white: images with transparency (diagrams exported from Inkscape/Illustrator commonly
+    // have none) assume a light backing; the wiki background goes dark in dark mode otherwise.
+    ["img", { src: HTMLAttributes.src, alt: HTMLAttributes.alt || label, class: "max-h-[36rem] w-full rounded-lg bg-white object-contain", style: `object-position:${Number(HTMLAttributes.cropX) || 50}% ${Number(HTMLAttributes.cropY) || 50}%` }],
     ...(label ? [["figcaption", { class: "mt-2 text-center text-xs text-muted-foreground" }, label]] : [])];
   },
 });

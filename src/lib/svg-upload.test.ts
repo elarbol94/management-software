@@ -13,4 +13,12 @@ describe("SVG upload validation", () => {
     expect(isSafeInlineSvg(bytes('<svg xmlns="http://www.w3.org/2000/svg"><image href="https://example.com/pixel.png"/></svg>'))).toBe(false);
     expect(isSafeInlineSvg(bytes('<svg xmlns="http://www.w3.org/2000/svg"><rect onclick="alert(1)"/></svg>'))).toBe(false);
   });
+
+  it("rejects a namespace-prefixed script tag", () => {
+    expect(isSafeInlineSvg(bytes('<svg xmlns="http://www.w3.org/2000/svg" xmlns:a="http://www.w3.org/1999/xhtml"><a:script>alert(1)</a:script></svg>'))).toBe(false);
+  });
+
+  it("rejects SMIL animations that could redirect href to javascript:", () => {
+    expect(isSafeInlineSvg(bytes('<svg xmlns="http://www.w3.org/2000/svg"><a href="#"><animate attributeName="href" to="javascript:alert(1)"/></a></svg>'))).toBe(false);
+  });
 });

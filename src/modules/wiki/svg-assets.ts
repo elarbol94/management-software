@@ -12,7 +12,7 @@ import {
   wikiSvgAssets,
   wikiSvgRevisions,
 } from "@/db/schema";
-import { getAttachmentAbsolutePath, saveAttachment } from "@/lib/files";
+import { deleteAttachment, getAttachmentAbsolutePath, saveAttachment } from "@/lib/files";
 import { isSafeInlineSvg } from "@/lib/svg-upload";
 import { parseDocumentSettings } from "./lib/document-settings";
 import { applyDocumentTypography, type SvgDocument, type SvgElement } from "./lib/svg-typography";
@@ -31,12 +31,22 @@ export type SvgAssetDto = {
   revisions: Array<{ id: string; version: number; createdAt: string }>;
 };
 
+// Caps gunzip's output so a small, highly-compressed .svgz cannot force an unbounded allocation (decompression bomb).
+const MAX_SVG_DECOMPRESSED_BYTES = 10 * 1024 * 1024; // 10 MB
+
 function decodeSvg(buffer: Buffer, fileName: string) {
   const bytes = fileName.toLocaleLowerCase().endsWith(".svgz") || (buffer[0] === 0x1f && buffer[1] === 0x8b)
-    ? gunzipSync(buffer)
+    ? gunzipSync(buffer, { maxOutputLength: MAX_SVG_DECOMPRESSED_BYTES })
     : buffer;
   if (!isSafeInlineSvg(bytes)) throw new Error("Unsafe SVG");
   return bytes.toString("utf8");
+}
+
+// The page version also bumps on every document-settings save (see savePageContent), so folding
+// it into the cache-busting query param forces open <img> tags to reload when typography settings
+// change, even though the asset's own version did not.
+function svgContentUrl(assetId: string, assetVersion: number, pageVersion: number) {
+  return `/api/wiki/svg-assets/${assetId}/content?v=${assetVersion}.${pageVersion}`;
 }
 
 function annotateSvg(svg: string) {
@@ -54,6 +64,8 @@ function annotateSvg(svg: string) {
 }
 
 export function listSvgAssets(pageId: string, userId: string): SvgAssetDto[] {
+  const page = db.select({ version: wikiPages.version }).from(wikiPages).where(eq(wikiPages.id, pageId)).get();
+  const pageVersion = page?.version ?? 0;
   const files = db.select().from(attachments)
     .where(and(eq(attachments.entityType, "wikiPage"), eq(attachments.entityId, pageId)))
     .all()
@@ -101,7 +113,7 @@ export function listSvgAssets(pageId: string, userId: string): SvgAssetDto[] {
         fileName: asset.fileName,
         version: asset.version,
         layers: extractSvgTextLayers(asset.currentSvg, asset.bindingsJson),
-        contentUrl: `/api/wiki/svg-assets/${asset.id}/content?v=${asset.version}`,
+        contentUrl: svgContentUrl(asset.id, asset.version, pageVersion),
         sourcePath: asset.sourcePath,
         sizeScale: asset.sizeScale,
         revisions,
@@ -166,14 +178,21 @@ export async function syncSvgAssetsFromFolder(input: {
           entityId: input.pageId,
           userId: input.userId,
         });
-        db.insert(wikiSvgAssets).values({
-          pageId: input.pageId,
-          attachmentId: attachment.id,
-          currentSvg: nextSvg,
-          sourcePath,
-          sourceSha256,
-          updatedBy: input.userId,
-        }).run();
+        try {
+          db.insert(wikiSvgAssets).values({
+            pageId: input.pageId,
+            attachmentId: attachment.id,
+            currentSvg: nextSvg,
+            sourcePath,
+            sourceSha256,
+            updatedBy: input.userId,
+          }).run();
+        } catch (reason) {
+          // A concurrent sync already claimed this sourcePath: the attachment we just
+          // wrote is now orphaned (no wikiSvgAssets row references it), so remove it.
+          deleteAttachment(attachment.id);
+          throw reason;
+        }
         result.added += 1;
         continue;
       }
@@ -262,11 +281,12 @@ export function updateSvgAsset(input: {
       updatedAt: new Date(),
     }).where(and(eq(wikiSvgAssets.id, asset.id), eq(wikiSvgAssets.version, asset.version))).run();
   });
+  const page = db.select({ version: wikiPages.version }).from(wikiPages).where(eq(wikiPages.id, input.pageId)).get();
   return {
     saved: true as const,
     version: nextVersion,
     layers: extractSvgTextLayers(nextSvg, JSON.stringify(bindings)),
-    contentUrl: `/api/wiki/svg-assets/${asset.id}/content?v=${nextVersion}`,
+    contentUrl: svgContentUrl(asset.id, nextVersion, page?.version ?? 0),
   };
 }
 
@@ -306,11 +326,12 @@ export function restoreSvgAsset(input: {
       updatedAt: new Date(),
     }).where(and(eq(wikiSvgAssets.id, asset.id), eq(wikiSvgAssets.version, asset.version))).run();
   });
+  const page = db.select({ version: wikiPages.version }).from(wikiPages).where(eq(wikiPages.id, input.pageId)).get();
   return {
     saved: true as const,
     version: nextVersion,
     layers: extractSvgTextLayers(revision.svg, revision.bindingsJson),
-    contentUrl: `/api/wiki/svg-assets/${asset.id}/content?v=${nextVersion}`,
+    contentUrl: svgContentUrl(asset.id, nextVersion, page?.version ?? 0),
   };
 }
 

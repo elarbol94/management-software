@@ -87,8 +87,9 @@ export function SvgGraphicsSection({ pageId, onInsert }: Props) {
       if (!handle || cancelled) return;
       setFolderName(handle.name);
       if (await folderPermission(handle, false) !== "granted" || cancelled) return;
-      await syncFiles(await collectSvgFiles(handle), true);
-    })().catch(() => undefined);
+      const files = await collectSvgFiles(handle);
+      await syncFiles(files, true);
+    })().catch(() => { if (!cancelled) setError(t("importFailedGeneric")); });
     return () => { cancelled = true; };
   }, [pageId, refreshAssets, syncFiles, t]);
 
@@ -105,15 +106,20 @@ export function SvgGraphicsSection({ pageId, onInsert }: Props) {
   }
 
   async function syncLinkedFolder() {
-    const handle = await loadFolderHandle(pageId);
-    if (!handle) return linkFolder();
-    if (await folderPermission(handle, true) !== "granted") {
-      await clearFolderHandle(pageId);
-      setFolderName("");
-      setError(t("folderPermissionDenied"));
-      return;
+    try {
+      const handle = await loadFolderHandle(pageId);
+      if (!handle) return await linkFolder();
+      if (await folderPermission(handle, true) !== "granted") {
+        await clearFolderHandle(pageId);
+        setFolderName("");
+        setError(t("folderPermissionDenied"));
+        return;
+      }
+      const files = await collectSvgFiles(handle);
+      await syncFiles(files, false);
+    } catch {
+      setError(t("importFailedGeneric"));
     }
-    await syncFiles(await collectSvgFiles(handle), false).catch(() => setError(t("importFailedGeneric")));
   }
 
   return <section data-testid="wiki-graphics-section" className="space-y-2">

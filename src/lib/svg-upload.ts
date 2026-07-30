@@ -1,7 +1,9 @@
 const FORBIDDEN_SVG_MARKUP = [
   /<!doctype/i,
   /<!entity/i,
-  /<\s*(?:script|foreignObject|iframe|object|embed|audio|video|canvas|style|link|meta|base)\b/i,
+  // Allows an optional namespace prefix (e.g. <a:script>) so a colon between "<" and the tag
+  // name cannot slip a blocked element past this check.
+  /<\s*(?:[\w-]+:)?(?:script|foreignObject|iframe|object|embed|audio|video|canvas|style|link|meta|base|animate|animatetransform|animatemotion|set)\b/i,
   /\bon[a-z]+\s*=/i,
   /\b(?:href|xlink:href)\s*=\s*["']\s*(?!#|data:image\/(?:png|jpeg|gif|webp);base64,)/i,
   /\b(?:src|data)\s*=\s*["']\s*(?:https?:|\/\/|\/)/i,
