@@ -1,16 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
-import { FolderUp, History, ImageIcon, Layers3, Loader2, RotateCcw, Save, Type, X } from "lucide-react";
+import { History, ImageIcon, Layers3, Loader2, RotateCcw, Save, Type, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import type { SvgAssetDto, SvgFolderSyncResult, SvgTextLayer } from "../svg-assets";
-import { clearFolderHandle, collectSvgFiles, folderPermission, loadFolderHandle, pickFolder, saveFolderHandle, supportsFolderLink } from "../lib/svg-folder-source";
-
-const SYNC_BATCH_SIZE = 20;
+import type { SvgAssetDto, SvgTextLayer } from "../svg-assets";
 
 type Props = {
   pageId: string;
@@ -29,13 +26,7 @@ export function SvgGraphicsPanel({ pageId, open, onOpenChange, variables, onAsse
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [baseSvg, setBaseSvg] = useState("");
-  const [importProgress, setImportProgress] = useState<{ done: number; total: number } | null>(null);
-  const [folderName, setFolderName] = useState("");
-  const [summary, setSummary] = useState("");
   const [scaleDraft, setScaleDraft] = useState<number | null>(null);
-  const folderInput = useRef<HTMLInputElement | null>(null);
-  const autoSynced = useRef(false);
-  const canLinkFolder = supportsFolderLink();
   const selected = assets.find((asset) => asset.id === selectedId) ?? assets[0];
   const variableKeys = useMemo(() => ["title", "author", ...Object.keys(variables).filter((key) => !["title", "author"].includes(key))], [variables]);
   const livePreviewUrl = useMemo(() => {
@@ -98,27 +89,6 @@ export function SvgGraphicsPanel({ pageId, open, onOpenChange, variables, onAsse
     return () => controller.abort();
   }, [open, selected, t]);
 
-  // Re-reads the linked folder whenever the panel opens, so an edit made in
-  // Nextcloud since the last visit lands here without any manual step.
-  useEffect(() => {
-    if (!open) {
-      autoSynced.current = false;
-      return;
-    }
-    if (autoSynced.current) return;
-    autoSynced.current = true;
-    let cancelled = false;
-    void (async () => {
-      const handle = await loadFolderHandle(pageId);
-      if (!handle || cancelled) return;
-      setFolderName(handle.name);
-      if (await folderPermission(handle, false) !== "granted" || cancelled) return;
-      await syncFiles(await collectSvgFiles(handle), true);
-    })().catch(() => undefined);
-    return () => { cancelled = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- one pass per opening; the sync helpers read fresh state through setters
-  }, [open, pageId]);
-
   async function refreshAssets(preferredId: string) {
     const response = await fetch(`/api/wiki/pages/${encodeURIComponent(pageId)}/svg-assets`);
     if (!response.ok) throw new Error(t("loadFailed"));
@@ -129,67 +99,6 @@ export function SvgGraphicsPanel({ pageId, open, onOpenChange, variables, onAsse
     setDraft(refreshed?.layers.map((layer) => ({ ...layer })) ?? []);
     setScaleDraft(refreshed?.sizeScale ?? null);
     if (refreshed) onAssetReady(refreshed.attachmentId, refreshed.contentUrl);
-  }
-
-  async function syncFiles(files: Array<{ path: string; file: File }>, silent: boolean) {
-    if (!files.length) {
-      if (!silent) setError(t("importNothing"));
-      return;
-    }
-    setError("");
-    setSummary("");
-    setImportProgress({ done: 0, total: files.length });
-    const totals = { added: 0, updated: 0, unchanged: 0, failed: [] as string[] };
-    // Batched so one huge multipart request cannot trip a proxy body limit.
-    for (let start = 0; start < files.length; start += SYNC_BATCH_SIZE) {
-      const batch = files.slice(start, start + SYNC_BATCH_SIZE);
-      const data = new FormData();
-      for (const item of batch) {
-        data.append("files", item.file);
-        data.append("paths", item.path);
-      }
-      const response = await fetch(`/api/wiki/pages/${encodeURIComponent(pageId)}/svg-assets`, { method: "POST", body: data }).catch(() => null);
-      const body = response?.ok ? await response.json().catch(() => null) as SvgFolderSyncResult | null : null;
-      if (!body) {
-        totals.failed.push(...batch.map((item) => item.path));
-      } else {
-        totals.added += body.added;
-        totals.updated += body.updated;
-        totals.unchanged += body.unchanged;
-        totals.failed.push(...body.failed.map((entry) => entry.path));
-      }
-      setImportProgress({ done: Math.min(start + SYNC_BATCH_SIZE, files.length), total: files.length });
-    }
-    await refreshAssets(selectedId).catch(() => setError(t("loadFailed")));
-    setImportProgress(null);
-    if (!silent || totals.added || totals.updated) {
-      setSummary(t("importSummary", { added: totals.added, updated: totals.updated, unchanged: totals.unchanged }));
-    }
-    if (totals.failed.length) setError(t("importFailed", { count: totals.failed.length, names: totals.failed.slice(0, 3).join(", ") }));
-  }
-
-  async function linkFolder() {
-    try {
-      const handle = await pickFolder();
-      await saveFolderHandle(pageId, handle);
-      setFolderName(handle.name);
-      await syncFiles(await collectSvgFiles(handle), false);
-    } catch (reason) {
-      if (reason instanceof DOMException && reason.name === "AbortError") return;
-      setError(reason instanceof Error ? reason.message : t("importFailedGeneric"));
-    }
-  }
-
-  async function syncLinkedFolder() {
-    const handle = await loadFolderHandle(pageId);
-    if (!handle) return linkFolder();
-    if (await folderPermission(handle, true) !== "granted") {
-      await clearFolderHandle(pageId);
-      setFolderName("");
-      setError(t("folderPermissionDenied"));
-      return;
-    }
-    await syncFiles(await collectSvgFiles(handle), false).catch(() => setError(t("importFailedGeneric")));
   }
 
   async function save() {
@@ -247,16 +156,7 @@ export function SvgGraphicsPanel({ pageId, open, onOpenChange, variables, onAsse
           <div className="min-w-0 flex-1">
             <DialogTitle>{t("title")}</DialogTitle>
             <DialogDescription>{t("description")}</DialogDescription>
-            {folderName && <p className="mt-1 truncate text-xs text-muted-foreground">{t("linkedFolder", { name: folderName })}</p>}
-            {summary && <p className="mt-1 text-xs text-emerald-700 dark:text-emerald-400">{summary}</p>}
           </div>
-          <Button type="button" variant="outline" size="sm" data-testid="svg-folder-sync" disabled={Boolean(importProgress)} onClick={() => { if (canLinkFolder) void syncLinkedFolder(); else folderInput.current?.click(); }}>
-            {importProgress ? <Loader2 className="size-4 animate-spin" /> : <FolderUp className="size-4" />}
-            {importProgress ? t("importing", importProgress) : !canLinkFolder ? t("import") : folderName ? t("sync") : t("link")}
-          </Button>
-          {/* Fallback for browsers without the File System Access API: a one-shot pick, no lasting link. */}
-          {/* webkitdirectory has no React typing; set it on the node so one pick reads a whole folder. */}
-          <input ref={(node) => { folderInput.current = node; node?.setAttribute("webkitdirectory", ""); }} data-testid="svg-folder-input" hidden type="file" multiple accept=".svg,.svgz,image/svg+xml" onChange={(event) => { void syncFiles(Array.from(event.target.files ?? []).filter((file) => /\.svgz?$/i.test(file.name)).map((file) => ({ path: file.webkitRelativePath || file.name, file })), false); event.target.value = ""; }} />
           <Button type="button" variant="ghost" size="icon-sm" aria-label={t("close")} onClick={() => onOpenChange(false)}><X /></Button>
         </div>
       </DialogHeader>

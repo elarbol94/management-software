@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState, type CSSProperties, type RefObject } from "react";
 import { useRouter } from "next/navigation";
 import { useFormatter, useTranslations } from "next-intl";
 import { toast } from "sonner";
@@ -82,6 +82,9 @@ import { SvgGraphicsPanel } from "./svg-graphics-panel";
 type PageRef = { id: string; title: string; slug: string };
 type SourceRef = CitationSource;
 type WikiEditorPageActions = { addAttachment: () => void; linkSupportingSource: () => void };
+export type WikiEditorHandle = {
+  insertGraphic: (asset: { attachmentId: string; fileName: string; contentUrl: string }) => void;
+};
 type CachedSpellcheckMatch = Omit<SpellcheckResponseMatch, "paragraph">;
 type FigureCaption = { nodeId: string; caption: string };
 type CitationTarget = { sourceId: string; documentId?: string; annotationId?: string; locator?: string };
@@ -155,6 +158,7 @@ type WikiEditorProps = {
   focusTaskId?: string;
   focusDeadlineId?: string;
   pageActions: WikiEditorPageActions;
+  actionsRef?: RefObject<WikiEditorHandle | null>;
   initialTypography: WikiTypographySettingsV1;
   editableTypography: WikiTypographySettingsV1;
   typographyTemplates: WikiTypographyTemplate[];
@@ -637,6 +641,7 @@ export function WikiEditor({
   focusDeadlineId,
   currentUserId,
   pageActions,
+  actionsRef,
   initialTypography,
   editableTypography,
   typographyTemplates,
@@ -1598,6 +1603,21 @@ export function WikiEditor({
     });
     if (changed) editor.view.dispatch(transaction);
   }, [editor]);
+  // Lets the sidebar graphics section drop a graphic in at the cursor. The
+  // editor owns the document, so it exposes the action rather than the reverse.
+  useEffect(() => {
+    if (!actionsRef || !editor) return;
+    actionsRef.current = {
+      insertGraphic: ({ attachmentId, fileName, contentUrl }) => {
+        editor.chain().focus().insertContent({
+          type: "commentableImage",
+          // The rendered URL, not /api/files, so document typography applies immediately.
+          attrs: { ...imageNodeAttrs({ id: attachmentId, fileName, mimeType: "image/svg+xml" }), src: contentUrl },
+        }).run();
+      },
+    };
+    return () => { actionsRef.current = null; };
+  }, [actionsRef, editor]);
   if (!editor) return <div className="min-h-[28rem]" />;
   const activeEditor = editor;
   function rememberToolbarSelection() {
