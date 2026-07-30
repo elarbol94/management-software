@@ -71,14 +71,42 @@ export async function pickFolder() {
   return await picker({ mode: "read" });
 }
 
-/** Walks the linked folder and returns every SVG with its folder-relative path. */
-export async function collectSvgFiles(handle: DirectoryHandle, prefix = ""): Promise<Array<{ path: string; file: File }>> {
+/**
+ * Splits an upload into request-sized batches without ever separating a graphic
+ * from its sidecar — the server pairs them within a single request, so a split
+ * pair would silently drop the Literaturstelle.
+ */
+export function batchGraphicsFiles<T extends { path: string }>(files: T[], size: number): T[][] {
+  const pairs = new Map<string, T[]>();
+  for (const file of files) {
+    const key = file.path.replace(/\.[^./]+$/, "");
+    pairs.set(key, [...(pairs.get(key) ?? []), file]);
+  }
+  const batches: T[][] = [];
+  let current: T[] = [];
+  for (const pair of pairs.values()) {
+    if (current.length && current.length + pair.length > size) {
+      batches.push(current);
+      current = [];
+    }
+    current.push(...pair);
+  }
+  if (current.length) batches.push(current);
+  return batches;
+}
+
+/**
+ * Walks the linked folder for graphics and their `.json` sidecars, each with its
+ * folder-relative path. The server pairs a sidecar to a graphic by that path
+ * minus the extension.
+ */
+export async function collectGraphicsFiles(handle: DirectoryHandle, prefix = ""): Promise<Array<{ path: string; file: File }>> {
   const found: Array<{ path: string; file: File }> = [];
   for await (const entry of handle.values()) {
     const path = prefix ? `${prefix}/${entry.name}` : entry.name;
     if (entry.kind === "directory") {
-      found.push(...await collectSvgFiles(entry, path));
-    } else if (/\.svgz?$/i.test(entry.name)) {
+      found.push(...await collectGraphicsFiles(entry, path));
+    } else if (/\.(?:svgz?|json)$/i.test(entry.name)) {
       found.push({ path, file: await entry.getFile() });
     }
   }

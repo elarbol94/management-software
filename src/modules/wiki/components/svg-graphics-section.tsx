@@ -2,10 +2,10 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
-import { ChevronDown, FolderUp, Images, Loader2, Plus } from "lucide-react";
+import { BookMarked, ChevronDown, FolderUp, Images, Loader2, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { SvgAssetDto, SvgFolderSyncResult } from "../svg-assets";
-import { clearFolderHandle, collectSvgFiles, folderPermission, loadFolderHandle, pickFolder, saveFolderHandle, supportsFolderLink } from "../lib/svg-folder-source";
+import { batchGraphicsFiles, clearFolderHandle, collectGraphicsFiles, folderPermission, loadFolderHandle, pickFolder, saveFolderHandle, supportsFolderLink } from "../lib/svg-folder-source";
 
 const SYNC_BATCH_SIZE = 20;
 
@@ -46,10 +46,11 @@ export function SvgGraphicsSection({ pageId, onInsert }: Props) {
     setError("");
     setSummary("");
     setImportProgress({ done: 0, total: files.length });
-    const totals = { added: 0, updated: 0, unchanged: 0, failed: [] as string[] };
-    // Batched so one huge multipart request cannot trip a proxy body limit.
-    for (let start = 0; start < files.length; start += SYNC_BATCH_SIZE) {
-      const batch = files.slice(start, start + SYNC_BATCH_SIZE);
+    const totals = { added: 0, updated: 0, unchanged: 0, sources: 0, failed: [] as string[] };
+    // Batched so one huge multipart request cannot trip a proxy body limit,
+    // keeping each graphic together with its sidecar.
+    let done = 0;
+    for (const batch of batchGraphicsFiles(files, SYNC_BATCH_SIZE)) {
       const data = new FormData();
       for (const item of batch) {
         data.append("files", item.file);
@@ -63,14 +64,17 @@ export function SvgGraphicsSection({ pageId, onInsert }: Props) {
         totals.added += body.added;
         totals.updated += body.updated;
         totals.unchanged += body.unchanged;
+        totals.sources += body.sources;
         totals.failed.push(...body.failed.map((entry) => entry.path));
       }
-      setImportProgress({ done: Math.min(start + SYNC_BATCH_SIZE, files.length), total: files.length });
+      done += batch.length;
+      setImportProgress({ done, total: files.length });
     }
     await refreshAssets().catch(() => setError(t("loadFailed")));
     setImportProgress(null);
-    if (!silent || totals.added || totals.updated) {
-      setSummary(t("importSummary", { added: totals.added, updated: totals.updated, unchanged: totals.unchanged }));
+    if (!silent || totals.added || totals.updated || totals.sources) {
+      setSummary(t("importSummary", { added: totals.added, updated: totals.updated, unchanged: totals.unchanged })
+        + (totals.sources ? ` ${t("importSources", { count: totals.sources })}` : ""));
     }
     if (totals.failed.length) setError(t("importFailed", { count: totals.failed.length, names: totals.failed.slice(0, 3).join(", ") }));
   }, [pageId, refreshAssets, t]);
@@ -88,8 +92,7 @@ export function SvgGraphicsSection({ pageId, onInsert }: Props) {
       if (!handle || cancelled) return;
       setFolderName(handle.name);
       if (await folderPermission(handle, false) !== "granted" || cancelled) return;
-      const files = await collectSvgFiles(handle);
-      await syncFiles(files, true);
+      await syncFiles(await collectGraphicsFiles(handle), true);
     })().catch(() => { if (!cancelled) setError(t("importFailedGeneric")); });
     return () => { cancelled = true; };
   }, [pageId, refreshAssets, syncFiles, t]);
@@ -99,7 +102,7 @@ export function SvgGraphicsSection({ pageId, onInsert }: Props) {
       const handle = await pickFolder();
       await saveFolderHandle(pageId, handle);
       setFolderName(handle.name);
-      await syncFiles(await collectSvgFiles(handle), false);
+      await syncFiles(await collectGraphicsFiles(handle), false);
     } catch (reason) {
       if (reason instanceof DOMException && reason.name === "AbortError") return;
       setError(reason instanceof Error ? reason.message : t("importFailedGeneric"));
@@ -116,8 +119,7 @@ export function SvgGraphicsSection({ pageId, onInsert }: Props) {
         setError(t("folderPermissionDenied"));
         return;
       }
-      const files = await collectSvgFiles(handle);
-      await syncFiles(files, false);
+      await syncFiles(await collectGraphicsFiles(handle), false);
     } catch {
       setError(t("importFailedGeneric"));
     }
@@ -132,7 +134,7 @@ export function SvgGraphicsSection({ pageId, onInsert }: Props) {
       </Button>}
       {/* Fallback for browsers without the File System Access API: a one-shot pick, no lasting link. */}
       {/* webkitdirectory has no React typing; set it on the node so one pick reads a whole folder. */}
-      <input ref={(node) => { folderInput.current = node; node?.setAttribute("webkitdirectory", ""); }} data-testid="svg-folder-input" hidden type="file" multiple accept=".svg,.svgz,image/svg+xml" onChange={(event) => { void syncFiles(Array.from(event.target.files ?? []).filter((file) => /\.svgz?$/i.test(file.name)).map((file) => ({ path: file.webkitRelativePath || file.name, file })), false); event.target.value = ""; }} />
+      <input ref={(node) => { folderInput.current = node; node?.setAttribute("webkitdirectory", ""); }} data-testid="svg-folder-input" hidden type="file" multiple accept=".svg,.svgz,.json,image/svg+xml" onChange={(event) => { void syncFiles(Array.from(event.target.files ?? []).filter((file) => /\.(?:svgz?|json)$/i.test(file.name)).map((file) => ({ path: file.webkitRelativePath || file.name, file })), false); event.target.value = ""; }} />
     </div>
     {!collapsed && <>{folderName && <p className="truncate text-[11px] text-muted-foreground">{t("linkedFolder", { name: folderName })}</p>}
     {summary && <p className="text-[11px] text-emerald-700 dark:text-emerald-400">{summary}</p>}
@@ -144,6 +146,7 @@ export function SvgGraphicsSection({ pageId, onInsert }: Props) {
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img src={asset.contentUrl} alt="" className="size-9 shrink-0 rounded bg-white object-contain" />
         <span className="min-w-0 flex-1 truncate text-xs" title={asset.sourcePath ?? asset.fileName}>{asset.fileName}</span>
+        {asset.sourceTitle && <BookMarked className="size-3.5 shrink-0 text-emerald-600" aria-label={t("linkedSource", { title: asset.sourceTitle })} />}
         <Button type="button" size="xs" variant="ghost" data-testid={`svg-insert-${asset.id}`} title={t("insert")} aria-label={`${t("insert")}: ${asset.fileName}`} onClick={() => onInsert(asset)}><Plus className="size-3.5" /></Button>
       </div>)}</div>}
     </>}

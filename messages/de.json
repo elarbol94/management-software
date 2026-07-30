@@ -1203,6 +1203,8 @@
       "linkedFolder": "Verknüpft mit {name} – wird bei jedem Öffnen abgeglichen.",
       "importSummary": "{added} neu, {updated} aktualisiert, {unchanged} unverändert.",
       "insert": "In Dokument einfügen",
+      "importSources": "{count, plural, one {# Literaturstelle importiert} other {# Literaturstellen importiert}}.",
+      "linkedSource": "Quelle: {title}",
       "scale": "Skalierung",
       "scaleInherit": "auto",
       "scaleHint": "Überschreibt die Diagramm-Skalierung des Dokuments nur für diese Grafik. Leer folgt dem Dokument.",

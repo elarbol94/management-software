@@ -83,7 +83,7 @@ type PageRef = { id: string; title: string; slug: string };
 type SourceRef = CitationSource;
 type WikiEditorPageActions = { addAttachment: () => void; linkSupportingSource: () => void };
 export type WikiEditorHandle = {
-  insertGraphic: (asset: { attachmentId: string; fileName: string; contentUrl: string }) => void;
+  insertGraphic: (asset: { attachmentId: string; fileName: string; contentUrl: string; caption?: string | null }) => void;
 };
 type CachedSpellcheckMatch = Omit<SpellcheckResponseMatch, "paragraph">;
 type FigureCaption = { nodeId: string; caption: string };
@@ -1621,11 +1621,16 @@ export function WikiEditor({
   useEffect(() => {
     if (!actionsRef || !editor) return;
     actionsRef.current = {
-      insertGraphic: ({ attachmentId, fileName, contentUrl }) => {
+      insertGraphic: ({ attachmentId, fileName, contentUrl, caption }) => {
         editor.chain().focus().insertContent({
           type: "commentableImage",
           // The rendered URL, not /api/files, so document typography applies immediately.
-          attrs: { ...imageNodeAttrs({ id: attachmentId, fileName, mimeType: "image/svg+xml" }), src: contentUrl },
+          attrs: {
+            ...imageNodeAttrs({ id: attachmentId, fileName, mimeType: "image/svg+xml" }),
+            src: contentUrl,
+            // The sidecar's ready-made Bildunterschrift wins over the filename.
+            ...(caption ? { caption } : {}),
+          },
         }).run();
       },
     };

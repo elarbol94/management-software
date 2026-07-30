@@ -9,9 +9,12 @@ import { db } from "@/db";
 import {
   attachments,
   wikiPages,
+  wikiSources,
   wikiSvgAssets,
   wikiSvgRevisions,
 } from "@/db/schema";
+import { linkSupportingSource, saveSource } from "./research-actions";
+import { graphicsSidecarSchema } from "./lib/source-input";
 import { deleteAttachment, getAttachmentAbsolutePath, saveAttachment } from "@/lib/files";
 import { isSafeInlineSvg } from "@/lib/svg-upload";
 import { parseDocumentSettings } from "./lib/document-settings";
@@ -28,6 +31,8 @@ export type SvgAssetDto = {
   contentUrl: string;
   sourcePath: string | null;
   sizeScale: number | null;
+  caption: string | null;
+  sourceTitle: string | null;
   revisions: Array<{ id: string; version: number; createdAt: string }>;
 };
 
@@ -91,9 +96,12 @@ export function listSvgAssets(pageId: string, userId: string): SvgAssetDto[] {
     bindingsJson: wikiSvgAssets.bindingsJson,
     sourcePath: wikiSvgAssets.sourcePath,
     sizeScale: wikiSvgAssets.sizeScale,
+    caption: wikiSvgAssets.caption,
+    sourceTitle: wikiSources.title,
   })
     .from(wikiSvgAssets)
     .innerJoin(attachments, eq(wikiSvgAssets.attachmentId, attachments.id))
+    .leftJoin(wikiSources, eq(wikiSvgAssets.sourceId, wikiSources.id))
     .where(eq(wikiSvgAssets.pageId, pageId))
     .all()
     .map((asset) => {
@@ -116,6 +124,8 @@ export function listSvgAssets(pageId: string, userId: string): SvgAssetDto[] {
         contentUrl: svgContentUrl(asset.id, asset.version, pageVersion),
         sourcePath: asset.sourcePath,
         sizeScale: asset.sizeScale,
+        caption: asset.caption,
+        sourceTitle: asset.sourceTitle,
         revisions,
       };
     });
@@ -125,8 +135,39 @@ export type SvgFolderSyncResult = {
   added: number;
   updated: number;
   unchanged: number;
+  sources: number;
   failed: Array<{ path: string; reason: string }>;
 };
+
+/** `folder/01_x.svg` and `folder/01_x.json` pair on everything before the extension. */
+function sidecarKey(filePath: string) {
+  return filePath.replace(/\.[^./]+$/, "");
+}
+
+/**
+ * Imports the Literaturstelle that sits beside a graphic. The source record is
+ * reused across syncs, so editing the sidecar revises the existing entry rather
+ * than piling up duplicates.
+ */
+async function applySidecar(input: { assetId: string; pageId: string; file: File }) {
+  const raw = await input.file.text();
+  const sidecarSha256 = crypto.createHash("sha256").update(raw).digest("hex");
+  const asset = db.select({ sourceId: wikiSvgAssets.sourceId, sidecarSha256: wikiSvgAssets.sidecarSha256 })
+    .from(wikiSvgAssets).where(eq(wikiSvgAssets.id, input.assetId)).get();
+  if (!asset || asset.sidecarSha256 === sidecarSha256) return false;
+  const { caption, ...source } = graphicsSidecarSchema.parse(JSON.parse(raw));
+  // Only reuse the previous record if it still exists; a deleted one starts over.
+  const existingId = asset.sourceId
+    && db.select({ id: wikiSources.id }).from(wikiSources).where(eq(wikiSources.id, asset.sourceId)).get()?.id;
+  const result = await saveSource({ ...source, ...(existingId ? { id: existingId } : {}) });
+  if (!result.ok) throw new Error(`Duplicate of source "${result.duplicate.title}"`);
+  await linkSupportingSource(input.pageId, result.id);
+  db.update(wikiSvgAssets)
+    .set({ sourceId: result.id, caption, sidecarSha256 })
+    .where(eq(wikiSvgAssets.id, input.assetId))
+    .run();
+  return true;
+}
 
 /**
  * Re-imports a picked source folder. Files are matched by their folder-relative
@@ -138,8 +179,15 @@ export async function syncSvgAssetsFromFolder(input: {
   userId: string;
   files: Array<{ path: string; file: File }>;
 }): Promise<SvgFolderSyncResult> {
-  const result: SvgFolderSyncResult = { added: 0, updated: 0, unchanged: 0, failed: [] };
-  for (const { path: sourcePath, file } of input.files) {
+  const result: SvgFolderSyncResult = { added: 0, updated: 0, unchanged: 0, sources: 0, failed: [] };
+  const sidecars = new Map<string, File>();
+  const graphics: typeof input.files = [];
+  for (const entry of input.files) {
+    if (/\.json$/i.test(entry.path)) sidecars.set(sidecarKey(entry.path), entry.file);
+    else graphics.push(entry);
+  }
+  for (const { path: sourcePath, file } of graphics) {
+    let assetId = "";
     try {
       const buffer = Buffer.from(await file.arrayBuffer());
       const sourceSha256 = crypto.createHash("sha256").update(buffer).digest("hex");
@@ -166,12 +214,12 @@ export async function syncSvgAssetsFromFolder(input: {
           .get();
 
       if (existing?.sourceSha256 === sourceSha256) {
+        // Untouched artwork still gets its sidecar checked — the Literaturstelle
+        // can change on its own.
         result.unchanged += 1;
-        continue;
-      }
-      const nextSvg = annotateSvg(decodeSvg(buffer, file.name));
-
-      if (!existing) {
+        assetId = existing.id;
+      } else if (!existing) {
+        const nextSvg = annotateSvg(decodeSvg(buffer, file.name));
         const attachment = await saveAttachment({
           file,
           entityType: "wikiPage",
@@ -179,14 +227,14 @@ export async function syncSvgAssetsFromFolder(input: {
           userId: input.userId,
         });
         try {
-          db.insert(wikiSvgAssets).values({
+          assetId = db.insert(wikiSvgAssets).values({
             pageId: input.pageId,
             attachmentId: attachment.id,
             currentSvg: nextSvg,
             sourcePath,
             sourceSha256,
             updatedBy: input.userId,
-          }).run();
+          }).returning({ id: wikiSvgAssets.id }).get().id;
         } catch (reason) {
           // A concurrent sync already claimed this sourcePath: the attachment we just
           // wrote is now orphaned (no wikiSvgAssets row references it), so remove it.
@@ -194,37 +242,43 @@ export async function syncSvgAssetsFromFolder(input: {
           throw reason;
         }
         result.added += 1;
-        continue;
+      } else {
+        const nextSvg = annotateSvg(decodeSvg(buffer, file.name));
+        const attachment = db.select().from(attachments).where(eq(attachments.id, existing.attachmentId)).get();
+        db.transaction(() => {
+          db.insert(wikiSvgRevisions).values({
+            assetId: existing.id,
+            version: existing.version,
+            svg: existing.currentSvg,
+            bindingsJson: existing.bindingsJson,
+            createdBy: input.userId,
+          }).onConflictDoNothing().run();
+          // Bindings survive by design: they are keyed by data-wiki-text-id, not by content.
+          db.update(wikiSvgAssets).set({
+            currentSvg: nextSvg,
+            version: existing.version + 1,
+            sourcePath,
+            sourceSha256,
+            updatedBy: input.userId,
+            updatedAt: new Date(),
+          }).where(and(eq(wikiSvgAssets.id, existing.id), eq(wikiSvgAssets.version, existing.version))).run();
+          if (attachment) {
+            db.update(attachments)
+              .set({ sha256: sourceSha256, sizeBytes: buffer.length })
+              .where(eq(attachments.id, attachment.id))
+              .run();
+          }
+        });
+        // After the commit, so a failed transaction never leaves a rewritten file behind.
+        if (attachment) fs.writeFileSync(getAttachmentAbsolutePath(attachment.storedName), buffer);
+        assetId = existing.id;
+        result.updated += 1;
       }
 
-      const attachment = db.select().from(attachments).where(eq(attachments.id, existing.attachmentId)).get();
-      db.transaction(() => {
-        db.insert(wikiSvgRevisions).values({
-          assetId: existing.id,
-          version: existing.version,
-          svg: existing.currentSvg,
-          bindingsJson: existing.bindingsJson,
-          createdBy: input.userId,
-        }).onConflictDoNothing().run();
-        // Bindings survive by design: they are keyed by data-wiki-text-id, not by content.
-        db.update(wikiSvgAssets).set({
-          currentSvg: nextSvg,
-          version: existing.version + 1,
-          sourcePath,
-          sourceSha256,
-          updatedBy: input.userId,
-          updatedAt: new Date(),
-        }).where(and(eq(wikiSvgAssets.id, existing.id), eq(wikiSvgAssets.version, existing.version))).run();
-        if (attachment) {
-          db.update(attachments)
-            .set({ sha256: sourceSha256, sizeBytes: buffer.length })
-            .where(eq(attachments.id, attachment.id))
-            .run();
-        }
-      });
-      // After the commit, so a failed transaction never leaves a rewritten file behind.
-      if (attachment) fs.writeFileSync(getAttachmentAbsolutePath(attachment.storedName), buffer);
-      result.updated += 1;
+      const sidecar = sidecars.get(sidecarKey(sourcePath));
+      if (sidecar && await applySidecar({ assetId, pageId: input.pageId, file: sidecar })) {
+        result.sources += 1;
+      }
     } catch (reason) {
       result.failed.push({ path: sourcePath, reason: reason instanceof Error ? reason.message : "Import failed" });
     }

@@ -1203,6 +1203,8 @@
       "linkedFolder": "Linked to {name} — synced each time this panel opens.",
       "importSummary": "{added} new, {updated} updated, {unchanged} unchanged.",
       "insert": "Insert into document",
+      "importSources": "{count, plural, one {# source imported} other {# sources imported}}.",
+      "linkedSource": "Source: {title}",
       "scale": "Scale",
       "scaleInherit": "auto",
       "scaleHint": "Overrides the document diagram scale for this graphic only. Empty follows the document.",

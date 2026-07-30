@@ -270,6 +270,12 @@ export const wikiSvgAssets = sqliteTable(
     sourceSha256: text("source_sha256"),
     /** Overrides the document's diagram scale for this one graphic. */
     sizeScale: real("size_scale"),
+    /** Literaturstelle imported from the graphic's sidecar file. */
+    sourceId: text("source_id").references(() => wikiSources.id, { onDelete: "set null" }),
+    /** Ready-made figure caption from the sidecar, used when inserting. */
+    caption: text("caption"),
+    /** Hash of the last imported sidecar, so an unchanged one is not re-saved. */
+    sidecarSha256: text("sidecar_sha256"),
     updatedBy: text("updated_by").notNull().references(() => user.id),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
     updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),

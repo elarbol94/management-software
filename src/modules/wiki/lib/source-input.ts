@@ -32,3 +32,12 @@ export const sourceInputSchema = z.object({
   contributors: z.array(contributorSchema).max(100).default([]),
   tagNames: z.array(z.string().trim().min(1).max(40)).max(30).default([]),
 });
+
+/**
+ * A `.json` file sitting next to a graphic in the synced folder, holding the
+ * Literaturstelle for it. Same shape as a source, minus the id (a sidecar may
+ * never point at an existing record), plus the ready-made figure caption.
+ */
+export const graphicsSidecarSchema = sourceInputSchema.omit({ id: true }).extend({
+  caption: z.string().trim().max(2_000).default(""),
+});
