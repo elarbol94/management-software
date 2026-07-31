@@ -19,7 +19,8 @@ import { deleteAttachment, getAttachmentAbsolutePath, saveAttachment } from "@/l
 import { isSafeInlineSvg } from "@/lib/svg-upload";
 import { parseDocumentSettings } from "./lib/document-settings";
 import { applyDocumentTypography, type SvgDocument, type SvgElement } from "./lib/svg-typography";
-import { extractSvgTextLayers, parseSvgBindings, type SvgTextLayer } from "./lib/svg-text";
+import { getWikiTypographyForUser } from "./lib/wiki-typography.server";
+import { extractSvgTextLayers, isEditableSvgText, ownSvgText, parseSvgBindings, setOwnSvgText, type SvgTextLayer } from "./lib/svg-text";
 export type { SvgTextLayer } from "./lib/svg-text";
 
 export type SvgAssetDto = {
@@ -56,16 +57,42 @@ function svgContentUrl(assetId: string, assetVersion: number, pageVersion: numbe
 
 function annotateSvg(svg: string) {
   const document = new DOMParser().parseFromString(svg, "image/svg+xml");
-  const candidates = [
+  const all = [
     ...Array.from(document.getElementsByTagName("text")),
     ...Array.from(document.getElementsByTagName("tspan")),
-  ].filter((element) => element.getElementsByTagName("tspan").length === 0);
-  candidates.forEach((element, index) => {
+  ];
+  const label = (elements: typeof all, prefix: string) => elements.forEach((element, index) => {
     if (!element.getAttribute("data-wiki-text-id")) {
-      element.setAttribute("data-wiki-text-id", `svg-text-${index + 1}`);
+      element.setAttribute("data-wiki-text-id", `${prefix}-${index + 1}`);
     }
   });
+  label(all.filter((element) => element.getElementsByTagName("tspan").length === 0), "svg-text");
+  // A <text> that wraps a tspan still owns the text in front of it. Numbered in a
+  // series of its own so the ids above keep their numbers, and with them the
+  // bindings of graphics that were imported before this existed.
+  label(all.filter((element) => element.getElementsByTagName("tspan").length > 0 && ownSvgText(element).trim()), "svg-label");
   return new XMLSerializer().serializeToString(document);
+}
+
+/**
+ * Gives a graphic imported before mixed-content labels existed its `svg-label-*`
+ * ids, so the headline number in "4.025 €/Monat" becomes editable without waiting
+ * for the artwork to change. Only ever adds attributes, so the drawing and the
+ * version stay as they are.
+ */
+function backfillOwnTextLabels(assetId: string, currentSvg: string) {
+  if (currentSvg.includes(`data-wiki-text-id="svg-label-`)) return currentSvg;
+  let annotated: string;
+  try {
+    annotated = annotateSvg(currentSvg);
+  } catch {
+    return currentSvg;
+  }
+  // Guarded on the new ids rather than on inequality, so a serializer quirk can
+  // never turn every read into a write.
+  if (!annotated.includes(`data-wiki-text-id="svg-label-`)) return currentSvg;
+  db.update(wikiSvgAssets).set({ currentSvg: annotated }).where(eq(wikiSvgAssets.id, assetId)).run();
+  return annotated;
 }
 
 export function listSvgAssets(pageId: string, userId: string): SvgAssetDto[] {
@@ -117,6 +144,7 @@ export function listSvgAssets(pageId: string, userId: string): SvgAssetDto[] {
     .orderBy(asc(attachments.fileName))
     .all()
     .map((asset) => {
+      const currentSvg = backfillOwnTextLabels(asset.id, asset.currentSvg);
       const revisions = db.select({
         id: wikiSvgRevisions.id,
         version: wikiSvgRevisions.version,
@@ -132,7 +160,7 @@ export function listSvgAssets(pageId: string, userId: string): SvgAssetDto[] {
         attachmentId: asset.attachmentId,
         fileName: asset.fileName,
         version: asset.version,
-        layers: extractSvgTextLayers(asset.currentSvg, asset.bindingsJson),
+        layers: extractSvgTextLayers(currentSvg, asset.bindingsJson),
         contentUrl: svgContentUrl(asset.id, asset.version, pageVersion),
         sourcePath: asset.sourcePath,
         sizeScale: asset.sizeScale,
@@ -361,12 +389,8 @@ export function updateSvgAsset(input: {
       ...Array.from(document.getElementsByTagName("tspan")),
     ];
     const element = elements.find((candidate) => candidate.getAttribute("data-wiki-text-id") === layer.id);
-    if (!element || element.getElementsByTagName("tspan").length > 0) continue;
-    while (element.firstChild) element.removeChild(element.firstChild);
-    // An empty text node is not the same as no children to the serializer
-    // (`<tspan></tspan>` vs `<tspan/>`), which would make a no-op save look like a change.
-    const text = layer.text.slice(0, 10_000);
-    if (text) element.appendChild(document.createTextNode(text));
+    if (!element || !isEditableSvgText(element)) continue;
+    setOwnSvgText(element, layer.text.slice(0, 10_000));
     if (layer.binding) bindings[layer.id] = layer.binding.slice(0, 50);
   }
   const nextSvg = new XMLSerializer().serializeToString(document);
@@ -462,6 +486,7 @@ export function renderSvgAsset(assetId: string) {
     bindingsJson: wikiSvgAssets.bindingsJson,
     pageTitle: wikiPages.title,
     settingsJson: wikiPages.documentSettingsJson,
+    pageOwner: wikiPages.createdBy,
     version: wikiSvgAssets.version,
     sizeScale: wikiSvgAssets.sizeScale,
   }).from(wikiSvgAssets)
@@ -481,14 +506,19 @@ export function renderSvgAsset(assetId: string) {
   ];
   for (const [id, key] of Object.entries(bindings)) {
     const element = elements.find((candidate) => candidate.getAttribute("data-wiki-text-id") === id);
-    if (!element || element.getElementsByTagName("tspan").length > 0) continue;
-    while (element.firstChild) element.removeChild(element.firstChild);
-    element.appendChild(document.createTextNode(variables[key] ?? ""));
+    if (!element || !isEditableSvgText(element)) continue;
+    setOwnSvgText(element, variables[key] ?? "");
   }
   // Cast at the boundary: the xmldom node types differ from the DOM lib ones,
   // and only the two accessors in SvgElement are used.
   if (matchesTypography) {
-    applyDocumentTypography(document as unknown as SvgDocument, elements as unknown as SvgElement[], settings, row.sizeScale);
+    applyDocumentTypography(
+      document as unknown as SvgDocument,
+      elements as unknown as SvgElement[],
+      settings,
+      row.sizeScale,
+      getWikiTypographyForUser(row.pageOwner),
+    );
   }
   const svg = new XMLSerializer().serializeToString(document);
   if (!isSafeInlineSvg(new TextEncoder().encode(svg))) throw new Error("Unsafe SVG result");

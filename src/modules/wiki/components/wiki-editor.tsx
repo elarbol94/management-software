@@ -2183,7 +2183,7 @@ export function WikiEditor({
     <span className="ml-auto">{t("editor.stats.block", { type: activeEditor.state.selection.$from.parent.type.name })}</span>
   </footer>}
   {regionTarget && <ImageRegionSelector rootRef={editorRootRef} {...regionTarget} onCancel={() => setRegionTarget(null)} onSelect={(anchor) => { setRegionTarget(null); openCommentComposer(anchor); }} />}
-  <SvgGraphicsPanel pageId={pageId} open={graphicsOpen} onOpenChange={setGraphicsOpen} variables={{ title: pageTitle, author: documentSettings.metadata.author, ...documentSettings.variables }} onAssetReady={handleSvgAssetReady} />
+  <SvgGraphicsPanel pageId={pageId} open={graphicsOpen} onOpenChange={setGraphicsOpen} variables={{ title: pageTitle, author: documentSettings.metadata.author, ...documentSettings.variables }} documentSettings={documentSettings} typography={typography} onDocumentSettingsChange={changeDocumentSettings} onAssetReady={handleSvgAssetReady} />
   <Dialog open={imageDescriptionOpen} onOpenChange={setImageDescriptionOpen}><DialogContent className="w-[min(28rem,calc(100vw-2rem))]"><DialogHeader><DialogTitle>{t("imageDescription.title")}</DialogTitle></DialogHeader>
     <div className="grid gap-4">
       <label className="grid gap-1.5 text-sm font-medium">{t("imageDescription.caption")}<Input value={imageCaptionDraft} onChange={(event) => setImageCaptionDraft(event.target.value)} placeholder={t("imageDescription.captionPlaceholder")} /></label>

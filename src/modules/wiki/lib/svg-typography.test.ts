@@ -113,6 +113,27 @@ describe("applyDocumentTypography", () => {
     expect(styled.values.style).toContain("fill:#000");
   });
 
+  it("matches the writing style the document is drawn with, not the stored theme", () => {
+    const label = node({ "font-size": "7" });
+    const documentRoot = root();
+    const document = { documentElement: documentRoot, getElementsByTagName: () => [] };
+
+    // The theme only holds what a template once saved; the page renders from the
+    // author's personal Schreibbild, so that is what a diagram has to match.
+    applyDocumentTypography(
+      document,
+      [label] as SvgElement[],
+      settingsWith({ matchFont: true, sizeMode: "scale" }),
+      null,
+      { bodyFont: "serif", bodySizePt: 21 },
+    );
+
+    expect(label.values["font-family"]).toContain("Georgia");
+    expect(label.values["font-family"]).not.toContain("Segoe UI");
+    // 21 pt against a dominant 7 px label: the drawing is scaled to suit.
+    expect(Number(documentRoot.values.width)).toBeGreaterThan(600);
+  });
+
   it("scales the drawing instead of resizing text, leaving font-size untouched", () => {
     const label = node({ "font-size": "7" });
     const documentRoot = root();

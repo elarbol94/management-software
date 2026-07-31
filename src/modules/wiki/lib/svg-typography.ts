@@ -108,6 +108,17 @@ export type SvgDocument = {
   getElementsByTagName: (name: string) => ArrayLike<SvgElement>;
 };
 
+/** The two writing-style values a diagram can be matched to. */
+export type DiagramTypographyTarget = Pick<DocumentSettingsV1["theme"], "bodyFont" | "bodySizePt">;
+
+/** What "Diagramme nutzen die Dokumentschrift" resolves to, for showing it in the UI. */
+export function diagramTypographyTarget(
+  settings: DocumentSettingsV1,
+  typography?: DiagramTypographyTarget | null,
+): DiagramTypographyTarget {
+  return { ...settings.theme, ...(typography ?? {}) };
+}
+
 function collectFontSizes(elements: SvgElement[]) {
   return elements.flatMap((element) => {
     const size = parseFontSize(
@@ -128,8 +139,16 @@ export function applyDocumentTypography(
   settings: DocumentSettingsV1,
   /** Per-graphic override of the document multiplier, when that graphic needs to disagree. */
   sizeScaleOverride?: number | null,
+  /**
+   * The writing style the document body is actually drawn with. `settings.theme`
+   * only holds what a template once stored — the page renders from the author's
+   * personal Schreibbild — so matching against the theme would size diagrams to a
+   * font the reader never sees.
+   */
+  typography?: DiagramTypographyTarget | null,
 ) {
-  const { diagrams, theme } = settings;
+  const { diagrams } = settings;
+  const theme = { ...settings.theme, ...(typography ?? {}) };
   if (diagrams.matchFont) {
     const stack = wikiFontStack(theme.bodyFont);
     for (const element of elements) {
