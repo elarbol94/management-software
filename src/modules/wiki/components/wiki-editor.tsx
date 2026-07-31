@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState, type CSSProperties, type RefObject } from "react";
+import { useCallback, useEffect, useEffectEvent, useLayoutEffect, useMemo, useReducer, useRef, useState, type CSSProperties, type RefObject } from "react";
 import { useRouter } from "next/navigation";
 import { useFormatter, useTranslations } from "next-intl";
 import { toast } from "sonner";
@@ -37,7 +37,7 @@ import { collectSpellcheckParagraphs, createSpellcheckBatches, createSpellcheckE
 import { looksLikeMarkdown, parseMarkdownDocument } from "../lib/markdown-import";
 import { calculateWritingStats, type WritingStats } from "../lib/editor-writing";
 import { userMarkColorStyle, type UserMarkColor } from "@/lib/user-mark-colors";
-import { DocumentExtensions, setDocumentPaginationBreaks, type DocumentPaginationBreak } from "./document-extension";
+import { DocumentExtensions, getDocumentPaginationBreaks, samePaginationBreaks, setDocumentPaginationBreaks, type DocumentPaginationBreak } from "./document-extension";
 import { DocumentLayoutPanel } from "./document-layout-panel";
 import { WikiTypographyDialog, type WikiEditorPreferences } from "./wiki-typography-dialog";
 import {
@@ -123,11 +123,49 @@ const WIKI_SHORTCUTS_KEY = "wiki:editor-shortcuts:v1";
 const DOCUMENT_ZOOM_KEY = "wiki:document-zoom:v1";
 const DOCUMENT_ZOOM_MIN = 70;
 const DOCUMENT_ZOOM_MAX = 200;
+// Typing bursts arrive faster than a frame. Both the page measurement and the
+// content snapshot wait out the burst instead of running per keystroke.
+const PAGINATION_TYPING_DELAY = 120;
+const CONTENT_SYNC_DELAY = 200;
 
 function loadDocumentZoom() {
   if (typeof window === "undefined") return 100;
-  const stored = Number(window.localStorage.getItem(DOCUMENT_ZOOM_KEY));
-  return Number.isFinite(stored) ? Math.min(DOCUMENT_ZOOM_MAX, Math.max(DOCUMENT_ZOOM_MIN, stored)) : 100;
+  // Without this guard an absent entry parses as 0 and clamps to the minimum,
+  // so a first visit opened the document at 70 % instead of 100 %.
+  const stored = Number(window.localStorage.getItem(DOCUMENT_ZOOM_KEY) ?? Number.NaN);
+  return Number.isFinite(stored) && stored > 0 ? Math.min(DOCUMENT_ZOOM_MAX, Math.max(DOCUMENT_ZOOM_MIN, stored)) : 100;
+}
+
+function scrollableAncestor(element: Element | null, axis: "x" | "y") {
+  for (let node = element?.parentElement ?? null; node; node = node.parentElement) {
+    const style = getComputedStyle(node);
+    if (!/^(auto|scroll|overlay)$/.test(axis === "y" ? style.overflowY : style.overflowX)) continue;
+    const scrollable = axis === "y" ? node.scrollHeight - node.clientHeight : node.scrollWidth - node.clientWidth;
+    if (scrollable > 1) return node;
+  }
+  return null;
+}
+
+// Zooming keeps the point under the cursor in place: whatever the mouse pointed
+// at before the wheel notch is scrolled back under the pointer afterwards.
+function keepZoomAnchorInPlace(surface: HTMLElement, deltaX: number, deltaY: number) {
+  let restX = deltaX;
+  let restY = deltaY;
+  const horizontal = scrollableAncestor(surface, "x");
+  if (horizontal && restX) {
+    const before = horizontal.scrollLeft;
+    horizontal.scrollLeft = before + restX;
+    restX -= horizontal.scrollLeft - before;
+  }
+  const vertical = scrollableAncestor(surface, "y");
+  if (vertical && restY) {
+    const before = vertical.scrollTop;
+    vertical.scrollTop = before + restY;
+    restY -= vertical.scrollTop - before;
+  }
+  if (Math.abs(restX) > 0.5 || Math.abs(restY) > 0.5) {
+    window.scrollBy({ left: restX, top: restY, behavior: "instant" });
+  }
 }
 // These are TipTap's built-in editing combinations. Capture them as well when
 // a user has moved the corresponding action, otherwise TipTap would still run
@@ -670,11 +708,18 @@ export function WikiEditor({
   const [graphicsOpen, setGraphicsOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false); const [outlineOpen, setOutlineOpen] = useState(false); const [outline, setOutline] = useState<OutlineItem[]>([]); const [activeHeadingPosition, setActiveHeadingPosition] = useState<number | null>(null);
   const [writingStats, setWritingStats] = useState<WritingStats>({ words: 0, characters: 0, selectedWords: 0, readingMinutes: 0 });
+  // TipTap v3 no longer re-renders per transaction, so the toolbar needs an
+  // explicit nudge to show the marks under the caret. It stays on the keystroke
+  // path because it is cheap; the document-wide derived state does not.
+  const [, refreshToolbarState] = useReducer((value: number) => value + 1, 0);
   const [documentMode, setDocumentMode] = useState(initialDocumentMode);
   const [documentSettings, setDocumentSettings] = useState<DocumentSettingsV1>(() => localizedInitialDocumentSettings);
   const [documentIssues, setDocumentIssues] = useState<DocumentPreflightIssue[]>([]);
   const [documentPageCount, setDocumentPageCount] = useState(1);
   const [documentZoom, setDocumentZoom] = useState(loadDocumentZoom);
+  const appliedZoom = useRef(documentZoom);
+  const zoomAnchor = useRef<{ clientX: number; clientY: number; contentX: number; contentY: number } | null>(null);
+  const captureZoomAnchorRef = useRef<(clientX: number, clientY: number) => void>(() => {});
   const [figureCaptions, setFigureCaptions] = useState<FigureCaption[]>([]);
   const [citedSourceIds, setCitedSourceIds] = useState<string[]>([]);
   const [citationTargets, setCitationTargets] = useState<CitationTarget[]>([]);
@@ -697,7 +742,7 @@ export function WikiEditor({
   const [wikiShortcuts, setWikiShortcuts] = useState(loadWikiShortcutBindings);
   const [initialPreferences] = useState(loadEditorPreferences);
   const [statusVisible, setStatusVisible] = useState(initialPreferences.statusVisible); const [minimalToolbar, setMinimalToolbar] = useState(initialPreferences.minimalToolbar); const [typewriterMode, setTypewriterMode] = useState(initialPreferences.typewriterMode); const typewriterModeRef = useRef(initialPreferences.typewriterMode);
-  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null); const maxSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null); const recoveryTimer = useRef<ReturnType<typeof setTimeout> | null>(null); const contentVersion = useRef(pageContentVersion); const lastServerContent = useRef(initialContent); const lastServerDocumentMode = useRef(initialDocumentMode); const lastServerDocumentSettings = useRef(serializeDocumentSettings(localizedInitialDocumentSettings)); const documentModeRef = useRef(initialDocumentMode); const documentSettingsRef = useRef(localizedInitialDocumentSettings); const pendingSave = useRef<string | null>(null); const queuedSave = useRef<string | null>(null); const saveInFlight = useRef(false); const persistContentRef = useRef<(json: string) => Promise<void>>(async () => {}); const conflictBlocked = useRef(false); const editorSessionId = useRef(globalThis.crypto.randomUUID()); const selection = useRef<{ from: number; to: number } | null>(null); const toolbarSelection = useRef<{ from: number; to: number } | null>(null); const imageInputRef = useRef<HTMLInputElement>(null); const editorRootRef = useRef<HTMLDivElement>(null); const commentRailRef = useRef<CommentRailHandle>(null);
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null); const maxSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null); const contentSyncTimer = useRef<ReturnType<typeof setTimeout> | null>(null); const contentSyncEditor = useRef<Editor | null>(null); const liveEditor = useRef<Editor | null>(null); const contentSyncDirty = useRef(false); const flushContentSyncRef = useRef<() => void>(() => {}); const contentVersion = useRef(pageContentVersion); const lastServerContent = useRef(initialContent); const lastServerDocumentMode = useRef(initialDocumentMode); const lastServerDocumentSettings = useRef(serializeDocumentSettings(localizedInitialDocumentSettings)); const documentModeRef = useRef(initialDocumentMode); const documentSettingsRef = useRef(localizedInitialDocumentSettings); const pendingSave = useRef<string | null>(null); const queuedSave = useRef<string | null>(null); const saveInFlight = useRef(false); const persistContentRef = useRef<(json: string) => Promise<void>>(async () => {}); const conflictBlocked = useRef(false); const editorSessionId = useRef(globalThis.crypto.randomUUID()); const selection = useRef<{ from: number; to: number } | null>(null); const toolbarSelection = useRef<{ from: number; to: number } | null>(null); const imageInputRef = useRef<HTMLInputElement>(null); const editorRootRef = useRef<HTMLDivElement>(null); const commentRailRef = useRef<CommentRailHandle>(null);
   const [leaseState, setLeaseState] = useState<"checking" | "editable" | "locked">("checking");
   const leaseStateRef = useRef<"checking" | "editable" | "locked">("checking");
   const recoveryApplied = useRef(false);
@@ -753,6 +798,85 @@ export function WikiEditor({
     setActiveHeadingPosition([...items].reverse().find((item) => item.position < cursor)?.position ?? null);
     setWritingStats(calculateWritingStats(currentEditor.state.doc, currentEditor.state.selection));
     setDocumentIssues(collectDocumentPreflightIssues(currentEditor.getJSON(), documentSettingsRef.current));
+  }
+
+  // Walking the document, serializing it and re-rendering the editor shell on
+  // every keystroke is what made writing feel heavy. The work now runs at most
+  // once per CONTENT_SYNC_DELAY, and the timer is never pushed back, so a long
+  // typing burst still snapshots regularly.
+  function flushContentSync() {
+    if (contentSyncTimer.current) {
+      clearTimeout(contentSyncTimer.current);
+      contentSyncTimer.current = null;
+    }
+    const currentEditor = contentSyncEditor.current;
+    if (!currentEditor) return;
+    contentSyncEditor.current = null;
+    updateDerivedState(currentEditor);
+    if (!contentSyncDirty.current) return;
+    contentSyncDirty.current = false;
+    const json = JSON.stringify(currentEditor.getJSON());
+    localStorage.setItem(storageKey, JSON.stringify({
+      contentJson: json,
+      documentMode: documentModeRef.current,
+      documentSettingsJson: serializeDocumentSettings(documentSettingsRef.current),
+      baseContentVersion: contentVersion.current,
+      editorSessionId: editorSessionId.current,
+      savedAt: Date.now(),
+    }));
+    pendingSave.current = json;
+    if (conflictBlocked.current) { setSaveState("conflict"); return; }
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(persistLatestContent, 2_000);
+    if (!maxSaveTimer.current) {
+      maxSaveTimer.current = setTimeout(() => {
+        maxSaveTimer.current = null;
+        persistLatestContent();
+      }, 10_000);
+    }
+  }
+  flushContentSyncRef.current = flushContentSync;
+
+  // A save takes its snapshot when the timer fires, never when it was armed:
+  // a request carrying text from a moment ago would drop the local journal of
+  // the newer keystrokes once the server confirmed it.
+  function persistLatestContent() {
+    const json = liveEditor.current ? JSON.stringify(liveEditor.current.getJSON()) : pendingSave.current;
+    if (json) void persistContent(json);
+  }
+
+  // Remember where the pointer sits on the page so the next zoom step can put
+  // that exact spot back under it. Coordinates outside the visible page (toolbar
+  // and keyboard zoom, events without pointer position) fall back to the nearest
+  // visible point instead of dragging the page to a corner.
+  function captureZoomAnchor(clientX: number, clientY: number) {
+    const surface = editorRootRef.current?.querySelector<HTMLElement>(".wiki-editor-surface");
+    if (!surface) return;
+    const rect = surface.getBoundingClientRect();
+    const left = Math.max(rect.left, 0);
+    const top = Math.max(rect.top, 0);
+    const anchorX = Math.min(Math.max(clientX, left), Math.max(left, Math.min(rect.right, window.innerWidth)));
+    const anchorY = Math.min(Math.max(clientY, top), Math.max(top, Math.min(rect.bottom, window.innerHeight)));
+    const scale = appliedZoom.current / 100;
+    zoomAnchor.current = {
+      clientX: anchorX,
+      clientY: anchorY,
+      contentX: (anchorX - rect.left) / scale,
+      contentY: (anchorY - rect.top) / scale,
+    };
+  }
+  captureZoomAnchorRef.current = captureZoomAnchor;
+
+  function captureViewportZoomAnchor() {
+    captureZoomAnchor(window.innerWidth / 2, window.innerHeight / 2);
+  }
+
+  function scheduleContentSync(currentEditor: Editor, changed: boolean) {
+    liveEditor.current = currentEditor;
+    contentSyncEditor.current = currentEditor;
+    if (changed) contentSyncDirty.current = true;
+    if (contentSyncTimer.current) return;
+    contentSyncTimer.current = setTimeout(() => flushContentSyncRef.current(), CONTENT_SYNC_DELAY);
   }
 
   async function persistContent(json: string, attempt = 0) {
@@ -975,38 +1099,20 @@ export function WikiEditor({
       },
     },
     onCreate({ editor }) {
+      liveEditor.current = editor;
       backfillCommentNodeIds(editor);
       if (!normalizeIeeeCitationLabels(editor)) updateDerivedState(editor);
     },
     onUpdate({ editor }) {
       if (normalizeIeeeCitationLabels(editor)) return;
-      updateDerivedState(editor);
-      const json = JSON.stringify(editor.getJSON());
-      if (recoveryTimer.current) clearTimeout(recoveryTimer.current);
-      recoveryTimer.current = setTimeout(() => {
-        localStorage.setItem(storageKey, JSON.stringify({
-          contentJson: json,
-          documentMode: documentModeRef.current,
-          documentSettingsJson: serializeDocumentSettings(documentSettingsRef.current),
-          baseContentVersion: contentVersion.current,
-          editorSessionId: editorSessionId.current,
-          savedAt: Date.now(),
-        }));
-      }, 250);
-      pendingSave.current = json;
-      if (saveTimer.current) clearTimeout(saveTimer.current);
-      if (conflictBlocked.current) { setSaveState("conflict"); return; }
-      setSaveState("unsaved");
-      saveTimer.current = setTimeout(() => void persistContent(json), 2_000);
-      if (!maxSaveTimer.current) {
-        maxSaveTimer.current = setTimeout(() => {
-          maxSaveTimer.current = null;
-          if (pendingSave.current) void persistContent(pendingSave.current);
-        }, 10_000);
-      }
+      if (conflictBlocked.current) setSaveState("conflict");
+      else setSaveState("unsaved");
+      refreshToolbarState();
+      scheduleContentSync(editor, true);
     },
     onSelectionUpdate({ editor }) {
-      updateDerivedState(editor);
+      refreshToolbarState();
+      scheduleContentSync(editor, false);
       if (typewriterModeRef.current) editor.view.domAtPos(editor.state.selection.from).node.parentElement?.scrollIntoView({ block: "center", behavior: "smooth" });
     },
   });
@@ -1109,7 +1215,8 @@ export function WikiEditor({
       }).catch(() => undefined);
     }, 15_000);
     const release = () => {
-      if (recoveryTimer.current) clearTimeout(recoveryTimer.current);
+      // Snapshot whatever was typed inside the last sync window before leaving.
+      flushContentSyncRef.current();
       if (pendingSave.current) {
         localStorage.setItem(storageKey, JSON.stringify({
           contentJson: pendingSave.current,
@@ -1134,7 +1241,7 @@ export function WikiEditor({
   useEffect(() => () => {
     if (saveTimer.current) clearTimeout(saveTimer.current);
     if (maxSaveTimer.current) clearTimeout(maxSaveTimer.current);
-    if (recoveryTimer.current) clearTimeout(recoveryTimer.current);
+    if (contentSyncTimer.current) clearTimeout(contentSyncTimer.current);
   }, [editor]);
   useEffect(() => {
     const controller = new AbortController();
@@ -1272,112 +1379,137 @@ export function WikiEditor({
     }
 
     let frame = 0;
+    let typingTimer: ReturnType<typeof setTimeout> | null = null;
     const paginate = () => {
-      cancelAnimationFrame(frame);
-      setDocumentPaginationBreaks(editor, []);
-      frame = requestAnimationFrame(() => {
-        const canvas = editorRootRef.current?.querySelector<HTMLElement>(".wiki-document-canvas");
-        const proseMirror = editor.view.dom;
-        if (!canvas || !proseMirror.isConnected) return;
+      const canvas = editorRootRef.current?.querySelector<HTMLElement>(".wiki-document-canvas");
+      const proseMirror = editor.view.dom;
+      if (!canvas || !proseMirror.isConnected) return;
+      // Dispatching into a running composition drops dead keys and IME candidates.
+      // The update that ends the composition schedules the next run.
+      if (editor.view.composing) return;
 
-        const portraitWidthMm = documentSettings.page.size === "A4" ? 210 : 215.9;
-        const portraitHeightMm = documentSettings.page.size === "A4" ? 297 : 279.4;
-        const paperWidthMm = documentSettings.page.orientation === "portrait" ? portraitWidthMm : portraitHeightMm;
-        const paperHeightMm = documentSettings.page.orientation === "portrait" ? portraitHeightMm : portraitWidthMm;
-        const zoomFactor = documentZoom / 100;
-        const pixelsPerMm = canvas.offsetWidth / paperWidthMm;
-        const pageHeight = paperHeightMm * pixelsPerMm;
-        const pageGap = 12 * pixelsPerMm;
-        const marginTop = documentSettings.page.marginsMm.top * pixelsPerMm;
-        const marginBottom = documentSettings.page.marginsMm.bottom * pixelsPerMm;
-        const usableHeight = pageHeight - marginTop - marginBottom;
-        const cycle = pageHeight + pageGap;
-        const canvasTop = canvas.getBoundingClientRect().top;
-        const breaks: DocumentPaginationBreak[] = [];
-        let accumulated = 0;
-        let forceNextPage = false;
-        let finalBottom = marginTop;
+      // The spacers are removed, measured against and restored within this single
+      // frame, so no paint ever shows the collapsed page stack.
+      const previousBreaks = getDocumentPaginationBreaks(editor);
+      if (previousBreaks.length) setDocumentPaginationBreaks(editor, []);
 
-        const paginationElements: HTMLElement[] = [];
-        const collectPaginationElements = (element: HTMLElement) => {
-          const elementHeight = element.getBoundingClientRect().height / zoomFactor;
-          const canSplit = element.matches("ul, ol, li, blockquote, section[data-document-columns]");
-          if (canSplit && elementHeight > usableHeight && element.children.length > 0) {
-            for (const child of Array.from(element.children) as HTMLElement[]) collectPaginationElements(child);
-            return;
-          }
-          paginationElements.push(element);
-        };
-        for (const element of Array.from(proseMirror.children) as HTMLElement[]) collectPaginationElements(element);
+      const portraitWidthMm = documentSettings.page.size === "A4" ? 210 : 215.9;
+      const portraitHeightMm = documentSettings.page.size === "A4" ? 297 : 279.4;
+      const paperWidthMm = documentSettings.page.orientation === "portrait" ? portraitWidthMm : portraitHeightMm;
+      const paperHeightMm = documentSettings.page.orientation === "portrait" ? portraitHeightMm : portraitWidthMm;
+      const zoomFactor = documentZoom / 100;
+      const pixelsPerMm = canvas.offsetWidth / paperWidthMm;
+      const pageHeight = paperHeightMm * pixelsPerMm;
+      const pageGap = 12 * pixelsPerMm;
+      const marginTop = documentSettings.page.marginsMm.top * pixelsPerMm;
+      const marginBottom = documentSettings.page.marginsMm.bottom * pixelsPerMm;
+      const usableHeight = pageHeight - marginTop - marginBottom;
+      const cycle = pageHeight + pageGap;
+      const canvasTop = canvas.getBoundingClientRect().top;
+      const breaks: DocumentPaginationBreak[] = [];
+      let accumulated = 0;
+      let forceNextPage = false;
+      let finalBottom = marginTop;
 
-        for (const element of paginationElements) {
-          if (element.classList.contains("wiki-document-auto-page-break")) continue;
-          if (element.hasAttribute("data-document-page-break")) {
-            forceNextPage = true;
-            continue;
-          }
-          const rect = element.getBoundingClientRect();
-          const naturalTop = (rect.top - canvasTop) / zoomFactor;
-          const naturalBottom = (rect.bottom - canvasTop) / zoomFactor;
-          let flowTop = naturalTop + accumulated;
-          let flowBottom = naturalBottom + accumulated;
-          let pageIndex = Math.max(0, Math.floor(flowTop / cycle));
-          const pageStart = pageIndex * cycle;
-          const contentStart = pageStart + marginTop;
-          const contentEnd = pageStart + pageHeight - marginBottom;
-          let offset = 0;
+      const paginationElements: HTMLElement[] = [];
+      const collectPaginationElements = (element: HTMLElement) => {
+        const elementHeight = element.getBoundingClientRect().height / zoomFactor;
+        const canSplit = element.matches("ul, ol, li, blockquote, section[data-document-columns]");
+        if (canSplit && elementHeight > usableHeight && element.children.length > 0) {
+          for (const child of Array.from(element.children) as HTMLElement[]) collectPaginationElements(child);
+          return;
+        }
+        paginationElements.push(element);
+      };
+      for (const element of Array.from(proseMirror.children) as HTMLElement[]) collectPaginationElements(element);
 
-          if (forceNextPage) {
-            offset = (pageIndex + 1) * cycle + marginTop - flowTop;
-            forceNextPage = false;
-          } else if (flowTop < contentStart) {
-            offset = contentStart - flowTop;
-          } else if (flowBottom > contentEnd + 1 && rect.height / zoomFactor <= usableHeight) {
-            offset = (pageIndex + 1) * cycle + marginTop - flowTop;
-          }
+      for (const element of paginationElements) {
+        if (element.classList.contains("wiki-document-auto-page-break")) continue;
+        if (element.hasAttribute("data-document-page-break")) {
+          forceNextPage = true;
+          continue;
+        }
+        const rect = element.getBoundingClientRect();
+        const naturalTop = (rect.top - canvasTop) / zoomFactor;
+        const naturalBottom = (rect.bottom - canvasTop) / zoomFactor;
+        let flowTop = naturalTop + accumulated;
+        let flowBottom = naturalBottom + accumulated;
+        let pageIndex = Math.max(0, Math.floor(flowTop / cycle));
+        const pageStart = pageIndex * cycle;
+        const contentStart = pageStart + marginTop;
+        const contentEnd = pageStart + pageHeight - marginBottom;
+        let offset = 0;
 
-          if (offset > 0.5) {
-            const position = Math.max(0, editor.view.posAtDOM(element, 0) - 1);
-            pageIndex = Math.max(1, Math.floor((flowTop + offset) / cycle));
-            breaks.push({ position, height: offset, page: pageIndex + 1, kind: element.tagName === "LI" ? "listItem" : "block" });
-            accumulated += offset;
-            flowTop += offset;
-            flowBottom += offset;
-          }
-          finalBottom = Math.max(finalBottom, flowBottom);
+        if (forceNextPage) {
+          offset = (pageIndex + 1) * cycle + marginTop - flowTop;
+          forceNextPage = false;
+        } else if (flowTop < contentStart) {
+          offset = contentStart - flowTop;
+        } else if (flowBottom > contentEnd + 1 && rect.height / zoomFactor <= usableHeight) {
+          offset = (pageIndex + 1) * cycle + marginTop - flowTop;
         }
 
+        if (offset > 0.5) {
+          const position = Math.max(0, editor.view.posAtDOM(element, 0) - 1);
+          pageIndex = Math.max(1, Math.floor((flowTop + offset) / cycle));
+          breaks.push({ position, height: offset, page: pageIndex + 1, kind: element.tagName === "LI" ? "listItem" : "block" });
+          accumulated += offset;
+          flowTop += offset;
+          flowBottom += offset;
+        }
+        finalBottom = Math.max(finalBottom, flowBottom);
+      }
+
+      // Re-dispatching an unchanged set would rebuild every spacer widget for nothing.
+      if (samePaginationBreaks(previousBreaks, breaks)) {
+        if (previousBreaks.length) setDocumentPaginationBreaks(editor, previousBreaks);
+      } else {
         setDocumentPaginationBreaks(editor, breaks);
-        setDocumentPageCount(Math.max(1, Math.floor((finalBottom + marginBottom) / cycle) + 1));
-      });
+      }
+      setDocumentPageCount(Math.max(1, Math.floor((finalBottom + marginBottom) / cycle) + 1));
     };
 
-    const schedule = () => {
+    const schedule = (delay = 0) => {
+      if (typingTimer) clearTimeout(typingTimer);
       cancelAnimationFrame(frame);
-      frame = requestAnimationFrame(paginate);
+      if (!delay) {
+        frame = requestAnimationFrame(paginate);
+        return;
+      }
+      typingTimer = setTimeout(() => {
+        typingTimer = null;
+        frame = requestAnimationFrame(paginate);
+      }, delay);
     };
-    const mediaResizeObserver = new ResizeObserver(schedule);
+    // Re-measuring every block on each keystroke forces a full reflow and makes
+    // typing lag; the mapped spacers stay put until the burst settles.
+    const scheduleAfterTyping = () => schedule(PAGINATION_TYPING_DELAY);
+    const mediaResizeObserver = new ResizeObserver(() => schedule());
     for (const element of editor.view.dom.querySelectorAll("img, figure, table")) {
       mediaResizeObserver.observe(element);
     }
     const scheduleAfterMediaLoad = (event: Event) => {
       if (event.target instanceof HTMLImageElement) schedule();
     };
+    const scheduleFromEvent = () => schedule();
     editor.view.dom.addEventListener("load", scheduleAfterMediaLoad, true);
+    editor.view.dom.addEventListener("compositionend", scheduleAfterTyping);
     let disposed = false;
     void document.fonts?.ready.then(() => {
       if (!disposed) schedule();
     });
-    editor.on("update", schedule);
-    window.addEventListener("resize", schedule);
+    editor.on("update", scheduleAfterTyping);
+    window.addEventListener("resize", scheduleFromEvent);
     paginate();
     return () => {
       disposed = true;
       cancelAnimationFrame(frame);
+      if (typingTimer) clearTimeout(typingTimer);
       mediaResizeObserver.disconnect();
       editor.view.dom.removeEventListener("load", scheduleAfterMediaLoad, true);
-      editor.off("update", schedule);
-      window.removeEventListener("resize", schedule);
+      editor.view.dom.removeEventListener("compositionend", scheduleAfterTyping);
+      editor.off("update", scheduleAfterTyping);
+      window.removeEventListener("resize", scheduleFromEvent);
       setDocumentPaginationBreaks(editor, []);
     };
   }, [documentMode, documentSettings.page, documentZoom, editor]);
@@ -1390,6 +1522,21 @@ export function WikiEditor({
   useEffect(() => { window.localStorage.setItem(commentsPreferenceKey, String(commentsVisible)); }, [commentsPreferenceKey, commentsVisible]);
   useEffect(() => { window.localStorage.setItem(layoutPreferenceKey, String(documentLayoutVisible)); }, [documentLayoutVisible, layoutPreferenceKey]);
   useEffect(() => { window.localStorage.setItem(DOCUMENT_ZOOM_KEY, String(documentZoom)); }, [documentZoom]);
+  useLayoutEffect(() => {
+    const anchor = zoomAnchor.current;
+    appliedZoom.current = documentZoom;
+    zoomAnchor.current = null;
+    const surface = editorRootRef.current?.querySelector<HTMLElement>(".wiki-editor-surface");
+    if (!anchor || !surface) return;
+    // Runs before paint, so the correction is part of the same frame as the zoom.
+    const rect = surface.getBoundingClientRect();
+    const scale = documentZoom / 100;
+    keepZoomAnchorInPlace(
+      surface,
+      rect.left + anchor.contentX * scale - anchor.clientX,
+      rect.top + anchor.contentY * scale - anchor.clientY,
+    );
+  }, [documentZoom]);
   useEffect(() => {
     const workspace = editorRootRef.current;
     if (!workspace) return;
@@ -1405,6 +1552,7 @@ export function WikiEditor({
       event.stopPropagation();
       const direction = event.deltaY < 0 ? 1 : -1;
       const intensity = Math.max(1, Math.min(4, Math.round(Math.abs(event.deltaY) / 25)));
+      captureZoomAnchorRef.current(event.clientX, event.clientY);
       setDocumentZoom((value) => Math.min(DOCUMENT_ZOOM_MAX, Math.max(DOCUMENT_ZOOM_MIN, value + direction * intensity * 2)));
     };
     const trackControlKey = (event: KeyboardEvent) => {
@@ -1412,12 +1560,15 @@ export function WikiEditor({
       if (event.type !== "keydown" || (!event.ctrlKey && !event.metaKey)) return;
       if (event.key === "+" || event.key === "=") {
         event.preventDefault();
+        captureZoomAnchorRef.current(window.innerWidth / 2, window.innerHeight / 2);
         setDocumentZoom((value) => Math.min(DOCUMENT_ZOOM_MAX, value + 10));
       } else if (event.key === "-") {
         event.preventDefault();
+        captureZoomAnchorRef.current(window.innerWidth / 2, window.innerHeight / 2);
         setDocumentZoom((value) => Math.max(DOCUMENT_ZOOM_MIN, value - 10));
       } else if (event.key === "0") {
         event.preventDefault();
+        captureZoomAnchorRef.current(window.innerWidth / 2, window.innerHeight / 2);
         setDocumentZoom(100);
       }
     };
@@ -1672,10 +1823,10 @@ export function WikiEditor({
     }));
     setSaveState(conflictBlocked.current ? "conflict" : "unsaved");
     if (saveTimer.current) clearTimeout(saveTimer.current);
-    if (!conflictBlocked.current) saveTimer.current = setTimeout(() => void persistContent(json), 2_000);
+    if (!conflictBlocked.current) saveTimer.current = setTimeout(persistLatestContent, 2_000);
     if (!maxSaveTimer.current) maxSaveTimer.current = setTimeout(() => {
       maxSaveTimer.current = null;
-      if (pendingSave.current) void persistContent(pendingSave.current);
+      persistLatestContent();
     }, 10_000);
   }
   function openInlineImagePicker() {
@@ -2038,17 +2189,17 @@ export function WikiEditor({
       </DropdownMenuGroup>
     </ToolbarMenu>
     <ToolbarGroup label={t("editor.toolbar.zoom")}>
-      <ToolbarButton title={t("editor.toolbar.zoomOut")} onClick={() => setDocumentZoom((value) => Math.max(DOCUMENT_ZOOM_MIN, value - 10))}><ZoomOut className="size-4" /></ToolbarButton>
+      <ToolbarButton title={t("editor.toolbar.zoomOut")} onClick={() => { captureViewportZoomAnchor(); setDocumentZoom((value) => Math.max(DOCUMENT_ZOOM_MIN, value - 10)); }}><ZoomOut className="size-4" /></ToolbarButton>
       <button
         type="button"
         className="min-w-11 rounded-md px-1.5 py-1 text-xs font-medium tabular-nums text-muted-foreground hover:bg-accent hover:text-foreground"
         title={t("editor.toolbar.zoomReset")}
         aria-label={t("editor.toolbar.zoomReset")}
-        onClick={() => setDocumentZoom(100)}
+        onClick={() => { captureViewportZoomAnchor(); setDocumentZoom(100); }}
       >
         {documentZoom}%
       </button>
-      <ToolbarButton title={t("editor.toolbar.zoomIn")} onClick={() => setDocumentZoom((value) => Math.min(DOCUMENT_ZOOM_MAX, value + 10))}><ZoomIn className="size-4" /></ToolbarButton>
+      <ToolbarButton title={t("editor.toolbar.zoomIn")} onClick={() => { captureViewportZoomAnchor(); setDocumentZoom((value) => Math.min(DOCUMENT_ZOOM_MAX, value + 10)); }}><ZoomIn className="size-4" /></ToolbarButton>
     </ToolbarGroup>
     <span role={saveState === "error" || saveState === "conflict" ? "alert" : "status"} aria-live={saveState === "error" || saveState === "conflict" ? "assertive" : "polite"} className={`ml-auto flex items-center gap-1 px-2 text-xs ${savePresentation.className}`}>{savePresentation.icon}{savePresentation.label}</span>
     {(saveState === "error" || saveState === "offline") && pendingSave.current && <Button type="button" size="xs" variant="ghost" onClick={() => void persistContent(pendingSave.current!)}>{t("editor.save.retry")}</Button>}
