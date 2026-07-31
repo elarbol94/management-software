@@ -74,6 +74,11 @@ export type DocumentSettingsV1 = {
     /** Redraw SVG label text in the document's body font. */
     matchFont: boolean;
     /**
+     * Recolour label text to the document's ink. Only greys are touched — the
+     * colours a diagram uses to carry meaning stay exactly as drawn.
+     */
+    matchColor: boolean;
+    /**
      * How label size is matched to the body size:
      * - `scale` resizes the whole drawing, keeping its layout intact.
      * - `rewrite` resizes only the text, keeping the drawing's size — this can
@@ -140,7 +145,7 @@ export const DEFAULT_DOCUMENT_SETTINGS: DocumentSettingsV1 = {
   bibliography: { enabled: true, heading: "References", pageBreakBefore: true },
   figures: { enabled: false, heading: "List of figures", pageBreakBefore: true },
   // Off by default: matching is a display-time override of artwork the author drew deliberately.
-  diagrams: { matchFont: false, sizeMode: "off", sizeScale: 1 },
+  diagrams: { matchFont: false, matchColor: false, sizeMode: "off", sizeScale: 1 },
   variables: {
     applicant: "",
     programme: "",
@@ -266,6 +271,7 @@ export function normalizeDocumentSettings(value: unknown): DocumentSettingsV1 {
     },
     diagrams: {
       matchFont: diagrams.matchFont === true,
+      matchColor: diagrams.matchColor === true,
       sizeMode: DOCUMENT_DIAGRAM_SIZE_MODES.includes(diagrams.sizeMode)
         ? diagrams.sizeMode
         // Reads the boolean this field replaced, so settings saved before the rewrite mode existed keep working.

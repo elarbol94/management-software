@@ -113,6 +113,38 @@ describe("applyDocumentTypography", () => {
     expect(styled.values.style).toContain("fill:#000");
   });
 
+  it("recolours the greys and leaves the data colours alone", () => {
+    // A diagram draws its headline near-black, its labels grey, and its bars in
+    // colours that carry meaning.
+    const headline = node({ fill: "#0b0b0b" });
+    const label = node({ fill: "#52514e" });
+    const source = node({ style: "fill:#898781" });
+    const bar = node({ fill: "#2a78d6" });
+    const document = { documentElement: root(), getElementsByTagName: () => [] };
+
+    applyDocumentTypography(
+      document,
+      [headline, label, source, bar] as SvgElement[],
+      settingsWith({ matchColor: true }),
+      null,
+      { textColor: "#172033", mutedColor: "#667085" },
+    );
+
+    expect(headline.values.fill).toBe("#172033");
+    expect(label.values.fill).toBe("#667085");
+    expect(source.values.style).toBe("fill:#667085");
+    expect(bar.values.fill).toBe("#2a78d6");
+  });
+
+  it("leaves every colour alone while colour matching is off", () => {
+    const label = node({ fill: "#52514e" });
+    const document = { documentElement: root(), getElementsByTagName: () => [] };
+
+    applyDocumentTypography(document, [label] as SvgElement[], settingsWith({ matchFont: true }));
+
+    expect(label.values.fill).toBe("#52514e");
+  });
+
   it("matches the writing style the document is drawn with, not the stored theme", () => {
     const label = node({ "font-size": "7" });
     const documentRoot = root();

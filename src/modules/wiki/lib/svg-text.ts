@@ -4,7 +4,30 @@ export type SvgTextLayer = {
   id: string;
   text: string;
   binding: string;
+  /** Label geometry in the drawing's own user units; null when the element carries none. */
+  fontSize: number | null;
+  x: number | null;
+  y: number | null;
 };
+
+/** Reads a single-value geometry attribute; lists ("10 20 30") are left alone. */
+export function readSvgNumber(element: Element, name: string) {
+  const value = element.getAttribute(name);
+  if (!value || /[\s,]/.test(value.trim())) return null;
+  const parsed = Number.parseFloat(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+/**
+ * Writes a geometry attribute only where it actually differs, so a save that
+ * changed nothing leaves the markup — and with it the version — untouched.
+ */
+export function writeSvgNumber(element: Element, name: string, value: number | null) {
+  if (value === null) return;
+  const current = readSvgNumber(element, name);
+  if (current === null || Math.abs(current - value) < 0.0005) return;
+  element.setAttribute(name, String(Math.round(value * 100) / 100));
+}
 
 const TEXT_NODE = 3;
 
@@ -65,6 +88,13 @@ export function extractSvgTextLayers(svg: string, bindingsJson = "{}"): SvgTextL
     if (!id) return [];
     const text = ownSvgText(element);
     if (!isEditableSvgText(element, text)) return [];
-    return [{ id, text, binding: bindings[id] ?? "" }];
+    return [{
+      id,
+      text,
+      binding: bindings[id] ?? "",
+      fontSize: readSvgNumber(element, "font-size"),
+      x: readSvgNumber(element, "x"),
+      y: readSvgNumber(element, "y"),
+    }];
   });
 }

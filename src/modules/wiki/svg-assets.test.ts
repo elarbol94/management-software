@@ -1,13 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { DOMParser, XMLSerializer } from "@xmldom/xmldom";
-import { extractSvgTextLayers, ownSvgText, setOwnSvgText } from "./lib/svg-text";
+import { extractSvgTextLayers, ownSvgText, setOwnSvgText, writeSvgNumber } from "./lib/svg-text";
 
 describe("SVG text layers", () => {
   it("extracts stable leaf text and bindings", () => {
     const svg = `<svg xmlns="http://www.w3.org/2000/svg"><text data-wiki-text-id="title"><tspan data-wiki-text-id="line-1">Hello</tspan></text><text data-wiki-text-id="plain">World</text></svg>`;
     expect(extractSvgTextLayers(svg, JSON.stringify({ plain: "title" }))).toEqual([
-      { id: "plain", text: "World", binding: "title" },
-      { id: "line-1", text: "Hello", binding: "" },
+      { id: "plain", text: "World", binding: "title", fontSize: null, x: null, y: null },
+      { id: "line-1", text: "Hello", binding: "", fontSize: null, x: null, y: null },
     ]);
   });
 
@@ -18,10 +18,10 @@ describe("SVG text layers", () => {
 
   it("exposes the text an element owns next to its children", () => {
     // The headline number in "4.025 €/Monat": editable without touching the unit.
-    const svg = `<svg xmlns="http://www.w3.org/2000/svg"><text data-wiki-text-id="svg-label-1">4.025<tspan data-wiki-text-id="svg-text-1"> €/Monat</tspan></text></svg>`;
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg"><text x="40" y="114" font-size="25" data-wiki-text-id="svg-label-1">4.025<tspan font-size="13" data-wiki-text-id="svg-text-1"> €/Monat</tspan></text></svg>`;
     expect(extractSvgTextLayers(svg)).toEqual([
-      { id: "svg-label-1", text: "4.025", binding: "" },
-      { id: "svg-text-1", text: " €/Monat", binding: "" },
+      { id: "svg-label-1", text: "4.025", binding: "", fontSize: 25, x: 40, y: 114 },
+      { id: "svg-text-1", text: " €/Monat", binding: "", fontSize: 13, x: null, y: null },
     ]);
   });
 
@@ -34,6 +34,21 @@ describe("SVG text layers", () => {
     expect(ownSvgText(element)).toBe("4.025");
     setOwnSvgText(element, "4.200");
     expect(new XMLSerializer().serializeToString(document)).toContain(`<text id="a">4.200<tspan> €/Monat</tspan></text>`);
+  });
+
+  it("writes geometry only where it moved", () => {
+    const document = new DOMParser().parseFromString(
+      `<svg xmlns="http://www.w3.org/2000/svg"><text x="40" y="114">a</text><text>b</text></svg>`,
+      "image/svg+xml",
+    );
+    const [positioned, inherited] = Array.from(document.getElementsByTagName("text"));
+    writeSvgNumber(positioned, "x", 40);
+    writeSvgNumber(positioned, "y", 130.126);
+    // An element with no x of its own inherits one; giving it a value would move it.
+    writeSvgNumber(inherited, "x", 12);
+    const svg = new XMLSerializer().serializeToString(document);
+    expect(svg).toContain(`<text x="40" y="130.13">a</text>`);
+    expect(svg).toContain(`<text>b</text>`);
   });
 
   it("leaves nothing behind when the owned text is cleared", () => {

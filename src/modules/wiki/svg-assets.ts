@@ -20,7 +20,7 @@ import { isSafeInlineSvg } from "@/lib/svg-upload";
 import { parseDocumentSettings } from "./lib/document-settings";
 import { applyDocumentTypography, type SvgDocument, type SvgElement } from "./lib/svg-typography";
 import { getWikiTypographyForUser } from "./lib/wiki-typography.server";
-import { extractSvgTextLayers, isEditableSvgText, ownSvgText, parseSvgBindings, setOwnSvgText, type SvgTextLayer } from "./lib/svg-text";
+import { extractSvgTextLayers, isEditableSvgText, ownSvgText, parseSvgBindings, setOwnSvgText, writeSvgNumber, type SvgTextLayer } from "./lib/svg-text";
 export type { SvgTextLayer } from "./lib/svg-text";
 
 export type SvgAssetDto = {
@@ -391,6 +391,9 @@ export function updateSvgAsset(input: {
     const element = elements.find((candidate) => candidate.getAttribute("data-wiki-text-id") === layer.id);
     if (!element || !isEditableSvgText(element)) continue;
     setOwnSvgText(element, layer.text.slice(0, 10_000));
+    writeSvgNumber(element, "font-size", layer.fontSize);
+    writeSvgNumber(element, "x", layer.x);
+    writeSvgNumber(element, "y", layer.y);
     if (layer.binding) bindings[layer.id] = layer.binding.slice(0, 50);
   }
   const nextSvg = new XMLSerializer().serializeToString(document);
@@ -480,7 +483,12 @@ export function restoreSvgAsset(input: {
   };
 }
 
-export function renderSvgAsset(assetId: string) {
+/**
+ * `raw` serves the stored artwork untouched. The graphics panel applies the
+ * document's typography itself while you are editing, so it needs the drawing
+ * without it — applying it twice would compound the font and size match.
+ */
+export function renderSvgAsset(assetId: string, options: { raw?: boolean } = {}) {
   const row = db.select({
     currentSvg: wikiSvgAssets.currentSvg,
     bindingsJson: wikiSvgAssets.bindingsJson,
@@ -494,9 +502,10 @@ export function renderSvgAsset(assetId: string) {
     .where(eq(wikiSvgAssets.id, assetId))
     .get();
   if (!row) return null;
+  if (options.raw) return { svg: row.currentSvg, version: row.version };
   const bindings = parseSvgBindings(row.bindingsJson);
   const settings = parseDocumentSettings(row.settingsJson);
-  const matchesTypography = settings.diagrams.matchFont || settings.diagrams.sizeMode !== "off";
+  const matchesTypography = settings.diagrams.matchFont || settings.diagrams.matchColor || settings.diagrams.sizeMode !== "off";
   if (!Object.keys(bindings).length && !matchesTypography) return { svg: row.currentSvg, version: row.version };
   const variables: Record<string, string> = { title: row.pageTitle, author: settings.metadata.author, ...settings.variables };
   const document = new DOMParser().parseFromString(row.currentSvg, "image/svg+xml");

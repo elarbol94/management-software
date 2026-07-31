@@ -108,15 +108,48 @@ export type SvgDocument = {
   getElementsByTagName: (name: string) => ArrayLike<SvgElement>;
 };
 
-/** The two writing-style values a diagram can be matched to. */
-export type DiagramTypographyTarget = Pick<DocumentSettingsV1["theme"], "bodyFont" | "bodySizePt">;
+/** The writing-style values a diagram can be matched to. */
+export type DiagramTypographyTarget = Pick<DocumentSettingsV1["theme"], "bodyFont" | "bodySizePt" | "textColor" | "mutedColor">;
+
+/** Whatever of those a caller can supply; the rest falls back to the document theme. */
+export type DiagramTypographySource = Partial<DiagramTypographyTarget>;
+
+/** `#abc`, `#aabbcc` and `rgb(1, 2, 3)` — what SVG authoring tools actually emit. */
+export function parseColor(value: string | null | undefined) {
+  if (!value) return null;
+  const hex = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(value.trim());
+  if (hex) {
+    const digits = hex[1].length === 3 ? [...hex[1]].map((digit) => digit + digit) : [hex[1].slice(0, 2), hex[1].slice(2, 4), hex[1].slice(4, 6)];
+    const [red, green, blue] = digits.map((part) => Number.parseInt(part, 16));
+    return { red, green, blue };
+  }
+  const rgb = /^rgba?\(\s*(\d+)[\s,]+(\d+)[\s,]+(\d+)/i.exec(value.trim());
+  if (!rgb) return null;
+  return { red: Number(rgb[1]), green: Number(rgb[2]), blue: Number(rgb[3]) };
+}
+
+/**
+ * Whether a fill is a shade of grey rather than a colour that carries meaning.
+ * The blue and orange of a bar chart must survive recolouring untouched.
+ */
+export function isGreyFill(value: string | null | undefined) {
+  const color = parseColor(value);
+  if (!color) return false;
+  return Math.max(color.red, color.green, color.blue) - Math.min(color.red, color.green, color.blue) <= 24;
+}
+
+function fillLightness(value: string | null | undefined) {
+  const color = parseColor(value);
+  return color ? (color.red + color.green + color.blue) / 3 : null;
+}
 
 /** What "Diagramme nutzen die Dokumentschrift" resolves to, for showing it in the UI. */
 export function diagramTypographyTarget(
   settings: DocumentSettingsV1,
-  typography?: DiagramTypographyTarget | null,
+  typography?: DiagramTypographySource | null,
 ): DiagramTypographyTarget {
-  return { ...settings.theme, ...(typography ?? {}) };
+  const supplied = Object.fromEntries(Object.entries(typography ?? {}).filter(([, value]) => value !== undefined));
+  return { ...settings.theme, ...supplied };
 }
 
 function collectFontSizes(elements: SvgElement[]) {
@@ -126,6 +159,40 @@ function collectFontSizes(elements: SvgElement[]) {
     );
     return size ? [size] : [];
   });
+}
+
+/**
+ * Recolours label text to the document's ink. A diagram usually draws its
+ * headline in near-black and everything else in greys, so the darkest grey
+ * becomes the body colour and the rest the muted one. Deriving the split from
+ * the artwork rather than from a fixed threshold keeps diagrams drawn light or
+ * dark readable, and anything that is not a grey is left alone.
+ */
+function applyDocumentInk(elements: SvgElement[], theme: DiagramTypographyTarget) {
+  const fillOf = (element: SvgElement) =>
+    element.getAttribute("fill") ?? readStyleProperty(element.getAttribute("style"), "fill");
+  const greys = elements
+    .map(fillOf)
+    .filter(isGreyFill)
+    .map(fillLightness)
+    .filter((value): value is number => value !== null);
+  if (!greys.length) return;
+  const darkest = Math.min(...greys);
+  for (const element of elements) {
+    const fill = fillOf(element);
+    if (!isGreyFill(fill)) continue;
+    const lightness = fillLightness(fill);
+    if (lightness === null) continue;
+    // A hair of tolerance: the same grey may be written #0b0b0b in one place and
+    // #0B0B0C in another.
+    const ink = lightness <= darkest + 8 ? theme.textColor : theme.mutedColor;
+    const style = element.getAttribute("style");
+    if (style && readStyleProperty(style, "fill")) {
+      element.setAttribute("style", writeStyleProperty(style, "fill", ink));
+    } else {
+      element.setAttribute("fill", ink);
+    }
+  }
 }
 
 /**
@@ -145,10 +212,10 @@ export function applyDocumentTypography(
    * personal Schreibbild — so matching against the theme would size diagrams to a
    * font the reader never sees.
    */
-  typography?: DiagramTypographyTarget | null,
+  typography?: DiagramTypographySource | null,
 ) {
   const { diagrams } = settings;
-  const theme = { ...settings.theme, ...(typography ?? {}) };
+  const theme = diagramTypographyTarget(settings, typography);
   if (diagrams.matchFont) {
     const stack = wikiFontStack(theme.bodyFont);
     for (const element of elements) {
@@ -160,6 +227,7 @@ export function applyDocumentTypography(
       }
     }
   }
+  if (diagrams.matchColor) applyDocumentInk(elements, theme);
   if (diagrams.sizeMode === "off") return;
   const sizeScale = typeof sizeScaleOverride === "number" && sizeScaleOverride > 0
     ? sizeScaleOverride

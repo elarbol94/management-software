@@ -222,6 +222,7 @@ export function DocumentLayoutPanel({
             <p className="text-[11px] text-muted-foreground">{t("figureIndexCount", { count: figureCount })}</p>
           </div>}
           <Toggle checked={settings.diagrams.matchFont} onChange={(matchFont) => patch({ diagrams: { ...settings.diagrams, matchFont } })} label={t("diagramMatchFont")} />
+          <Toggle checked={settings.diagrams.matchColor} onChange={(matchColor) => patch({ diagrams: { ...settings.diagrams, matchColor } })} label={t("diagramMatchColor")} />
           <Field label={t("diagramSizeMode")}>
             <Select value={settings.diagrams.sizeMode} onValueChange={(value) => patch({ diagrams: { ...settings.diagrams, sizeMode: (value ?? "off") as DocumentDiagramSizeMode } })}>
               <SelectTrigger className="h-8"><SelectValue /></SelectTrigger>

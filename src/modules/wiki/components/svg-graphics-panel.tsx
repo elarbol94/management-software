@@ -2,14 +2,14 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
-import { BookMarked, ChevronDown, History, ImageIcon, Layers3, Loader2, RotateCcw, Save, Search, Type, X } from "lucide-react";
+import { BookMarked, ChevronDown, History, ImageIcon, Layers3, Loader2, PenLine, RotateCcw, Save, Search, Type, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import type { SvgAssetDto, SvgTextLayer } from "../svg-assets";
 import type { DocumentSettingsV1 } from "../lib/document-settings";
-import { diagramTypographyTarget } from "../lib/svg-typography";
+import { applyDocumentTypography, diagramTypographyTarget, type SvgDocument, type SvgElement } from "../lib/svg-typography";
 import type { WikiTypographySettingsV1 } from "../lib/wiki-typography";
 
 type Props = {
@@ -24,8 +24,11 @@ type Props = {
 };
 
 type Box = { left: number; top: number; width: number; height: number; containerWidth: number; containerHeight: number };
+type Drag = { id: string; startX: number; startY: number; originX: number; originY: number; perPixel: number; moved: boolean };
 
 const EDITOR_HEIGHT = 44;
+const DRAG_THRESHOLD = 3;
+const TEXT_NODE = 3;
 
 /** Sits under the label it edits, and flips above it near the bottom edge. */
 function editorPosition(box: Box) {
@@ -37,8 +40,6 @@ function editorPosition(box: Box) {
     minWidth: Math.max(box.width + 32, 240),
   };
 }
-
-const TEXT_NODE = 3;
 
 /**
  * Rewrites only what the element owns, mirroring `setOwnSvgText` on the server so
@@ -66,33 +67,52 @@ export function SvgGraphicsPanel({ pageId, open, onOpenChange, variables, docume
   const [error, setError] = useState("");
   const [baseSvg, setBaseSvg] = useState("");
   const [scaleDraft, setScaleDraft] = useState<number | null>(null);
+  const [scaleForAll, setScaleForAll] = useState(false);
+  // The style switches are drafted like everything else: the preview follows at
+  // once, the document only learns about it when the graphic is saved.
+  const [diagramsDraft, setDiagramsDraft] = useState(documentSettings.diagrams);
   const [activeId, setActiveId] = useState("");
   const [activeBox, setActiveBox] = useState<Box | null>(null);
   const [hoverBox, setHoverBox] = useState<Box | null>(null);
   const [listOpen, setListOpen] = useState(false);
   const [query, setQuery] = useState("");
   const previewRef = useRef<HTMLDivElement>(null);
-  const escapeValue = useRef("");
+  const dragRef = useRef<Drag | null>(null);
+  const escapeValue = useRef<SvgTextLayer | null>(null);
   const selected = assets.find((asset) => asset.id === selectedId) ?? assets[0];
   const variableKeys = useMemo(() => ["title", "author", ...Object.keys(variables).filter((key) => !["title", "author"].includes(key))], [variables]);
   const layerValue = useCallback((layer: SvgTextLayer) => layer.binding ? variables[layer.binding] ?? "" : layer.text, [variables]);
+  const settingsDraft = useMemo(() => ({ ...documentSettings, diagrams: diagramsDraft }), [diagramsDraft, documentSettings]);
+  const changes = selected
+    ? draft.filter((layer, index) => JSON.stringify(layer) !== JSON.stringify(selected.layers[index]))
+    : [];
+  const stylesChanged = JSON.stringify(diagramsDraft) !== JSON.stringify(documentSettings.diagrams);
   const dirty = Boolean(selected) && (
-    JSON.stringify(draft) !== JSON.stringify(selected?.layers ?? [])
+    changes.length > 0
     || scaleDraft !== (selected?.sizeScale ?? null)
+    || scaleForAll
+    || stylesChanged
   );
 
   // Inlined rather than dropped into an <img>, so every label is a real node that
-  // can be clicked, measured and edited where it sits. The markup is the SVG the
-  // server already sanitised (see isSafeInlineSvg).
+  // can be clicked, dragged and measured. The markup is the SVG the server already
+  // sanitised (see isSafeInlineSvg), fetched raw so the draft styling below is not
+  // laid on top of a copy that already carries it.
   const previewSvg = useMemo(() => {
     if (!baseSvg || typeof DOMParser === "undefined") return "";
     const parsed = new DOMParser().parseFromString(baseSvg, "image/svg+xml");
     for (const layer of draft) {
       const element = parsed.querySelector(`[data-wiki-text-id="${CSS.escape(layer.id)}"]`);
-      if (element instanceof SVGElement) setOwnText(element, layerValue(layer));
+      if (!(element instanceof SVGElement)) continue;
+      setOwnText(element, layerValue(layer));
+      if (layer.fontSize !== null) element.setAttribute("font-size", String(layer.fontSize));
+      if (layer.x !== null) element.setAttribute("x", String(layer.x));
+      if (layer.y !== null) element.setAttribute("y", String(layer.y));
     }
+    const elements = [...parsed.getElementsByTagName("text"), ...parsed.getElementsByTagName("tspan")];
+    applyDocumentTypography(parsed as unknown as SvgDocument, elements as unknown as SvgElement[], settingsDraft, scaleDraft, typography);
     return new XMLSerializer().serializeToString(parsed);
-  }, [baseSvg, draft, layerValue]);
+  }, [baseSvg, draft, layerValue, scaleDraft, settingsDraft, typography]);
 
   const boxFor = useCallback((id: string): Box | null => {
     const container = previewRef.current;
@@ -116,7 +136,7 @@ export function SvgGraphicsPanel({ pageId, open, onOpenChange, variables, docume
   const activate = useCallback((id: string) => {
     const layer = draft.find((item) => item.id === id);
     if (!layer) return;
-    escapeValue.current = layer.text;
+    escapeValue.current = { ...layer };
     setActiveId(id);
     setActiveBox(boxFor(id));
   }, [boxFor, draft]);
@@ -124,6 +144,10 @@ export function SvgGraphicsPanel({ pageId, open, onOpenChange, variables, docume
   const closeEditor = useCallback(() => {
     setActiveId("");
     setActiveBox(null);
+  }, []);
+
+  const patchLayer = useCallback((id: string, patch: Partial<SvgTextLayer>) => {
+    setDraft((current) => current.map((layer) => layer.id === id ? { ...layer, ...patch } : layer));
   }, []);
 
   // The box is measured once per label so the field does not jump around while
@@ -144,6 +168,7 @@ export function SvgGraphicsPanel({ pageId, open, onOpenChange, variables, docume
     setSelectedId(next?.id ?? "");
     setDraft(next?.layers.map((layer) => ({ ...layer })) ?? []);
     setScaleDraft(next?.sizeScale ?? null);
+    setScaleForAll(false);
     return result.assets;
   }, [pageId, t]);
 
@@ -153,6 +178,7 @@ export function SvgGraphicsPanel({ pageId, open, onOpenChange, variables, docume
     const start = async () => {
       setLoading(true);
       setError("");
+      setDiagramsDraft(documentSettings.diagrams);
       try {
         const next = await load("");
         if (cancelled) return;
@@ -165,12 +191,14 @@ export function SvgGraphicsPanel({ pageId, open, onOpenChange, variables, docume
     };
     void start();
     return () => { cancelled = true; };
+    // documentSettings.diagrams is the value to start the draft from, not a trigger to reload.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [load, onAssetReady, open, t]);
 
   useEffect(() => {
     if (!open || !selected) return;
     const controller = new AbortController();
-    void fetch(selected.contentUrl, { signal: controller.signal })
+    void fetch(`/api/wiki/svg-assets/${encodeURIComponent(selected.id)}/content?raw=1&v=${selected.version}`, { signal: controller.signal })
       .then((response) => {
         if (!response.ok) throw new Error(t("loadFailed"));
         return response.text();
@@ -183,14 +211,6 @@ export function SvgGraphicsPanel({ pageId, open, onOpenChange, variables, docume
     return () => controller.abort();
   }, [open, selected, t]);
 
-  function editLayer(id: string, text: string) {
-    setDraft((current) => current.map((layer) => layer.id === id ? { ...layer, text } : layer));
-  }
-
-  function bindLayer(id: string, binding: string) {
-    setDraft((current) => current.map((layer) => layer.id === id ? { ...layer, binding } : layer));
-  }
-
   function selectAsset(asset: SvgAssetDto) {
     if (asset.id === selected?.id) return;
     if (dirty && !confirm(t("discardConfirm"))) return;
@@ -199,6 +219,7 @@ export function SvgGraphicsPanel({ pageId, open, onOpenChange, variables, docume
     setSelectedId(asset.id);
     setDraft(asset.layers.map((layer) => ({ ...layer })));
     setScaleDraft(asset.sizeScale ?? null);
+    setScaleForAll(false);
   }
 
   /** Tab walks the labels in list order so the whole graphic is reachable from the keyboard. */
@@ -208,18 +229,34 @@ export function SvgGraphicsPanel({ pageId, open, onOpenChange, variables, docume
     if (next) activate(next.id);
   }
 
+  /** How many user units one screen pixel is, so a drag moves the label with the pointer. */
+  function userUnitsPerPixel() {
+    const svg = previewRef.current?.querySelector("svg");
+    const matrix = svg?.getScreenCTM();
+    return matrix && matrix.a ? 1 / matrix.a : 1;
+  }
+
   const save = useCallback(async () => {
     if (!selected) return;
     setSaving(true);
     setError("");
     try {
-      const response = await fetch(`/api/wiki/pages/${encodeURIComponent(pageId)}/svg-assets`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "update", assetId: selected.id, expectedVersion: selected.version, layers: draft, sizeScale: scaleDraft }),
-      });
-      const result = await response.json() as { saved?: boolean; conflict?: boolean; error?: string };
-      if (!response.ok || !result.saved) throw new Error(result.conflict ? t("conflict") : result.error ?? t("saveFailed"));
+      const patch = async (assetId: string, layers: SvgTextLayer[], expectedVersion: number, sizeScale: number | null) => {
+        const response = await fetch(`/api/wiki/pages/${encodeURIComponent(pageId)}/svg-assets`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "update", assetId, expectedVersion, layers, sizeScale }),
+        });
+        const result = await response.json() as { saved?: boolean; conflict?: boolean; error?: string };
+        if (!response.ok || !result.saved) throw new Error(result.conflict ? t("conflict") : result.error ?? t("saveFailed"));
+      };
+      await patch(selected.id, draft, selected.version, scaleDraft);
+      if (scaleForAll) {
+        for (const asset of assets.filter((item) => item.id !== selected.id && (item.sizeScale ?? null) !== scaleDraft)) {
+          await patch(asset.id, asset.layers, asset.version, scaleDraft);
+        }
+      }
+      if (stylesChanged) onDocumentSettingsChange({ ...documentSettings, diagrams: diagramsDraft });
       closeEditor();
       const next = await load(selected.id);
       const refreshed = next.find((asset) => asset.id === selected.id);
@@ -229,7 +266,7 @@ export function SvgGraphicsPanel({ pageId, open, onOpenChange, variables, docume
     } finally {
       setSaving(false);
     }
-  }, [closeEditor, draft, load, onAssetReady, pageId, scaleDraft, selected, t]);
+  }, [assets, closeEditor, diagramsDraft, documentSettings, draft, load, onAssetReady, onDocumentSettingsChange, pageId, scaleDraft, scaleForAll, selected, stylesChanged, t]);
 
   useEffect(() => {
     if (!open) return;
@@ -266,11 +303,17 @@ export function SvgGraphicsPanel({ pageId, open, onOpenChange, variables, docume
 
   const activeLayer = draft.find((layer) => layer.id === activeId);
   const savedLayer = selected?.layers.find((layer) => layer.id === activeId);
-  const matchFont = documentSettings.diagrams.matchFont;
-  const target = diagramTypographyTarget(documentSettings, typography);
+  const target = diagramTypographyTarget(settingsDraft, typography);
+  const styled = diagramsDraft.matchFont || diagramsDraft.matchColor;
   const visibleLayers = query.trim()
     ? draft.filter((layer) => layerValue(layer).toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()))
     : draft;
+
+  function labelAt(target: EventTarget | null) {
+    const element = target instanceof globalThis.Element ? target.closest("[data-wiki-text-id]") : null;
+    const id = element?.getAttribute("data-wiki-text-id") ?? "";
+    return draft.some((layer) => layer.id === id) ? id : "";
+  }
 
   return <Dialog open={open} onOpenChange={onOpenChange}>
     <DialogContent
@@ -284,7 +327,7 @@ export function SvgGraphicsPanel({ pageId, open, onOpenChange, variables, docume
           <div className="grid size-9 shrink-0 place-items-center rounded-lg bg-indigo-600 text-white"><Layers3 className="size-4" /></div>
           <div className="min-w-0 flex-1">
             <DialogTitle>{t("title")}</DialogTitle>
-            <DialogDescription>{t("editInGraphic")}</DialogDescription>
+            <DialogDescription>{t("moveHint")}</DialogDescription>
           </div>
           <Button type="button" variant="ghost" size="icon-sm" aria-label={t("close")} onClick={() => onOpenChange(false)}><X /></Button>
         </div>
@@ -310,21 +353,26 @@ export function SvgGraphicsPanel({ pageId, open, onOpenChange, variables, docume
               <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] text-muted-foreground">{t("version", { version: selected.version })}</span>
               {dirty && <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-800 dark:bg-amber-950 dark:text-amber-300">{t("unsaved")}</span>}
               {/* The one typography question worth answering here; the rest stays in the layout panel. */}
-              <label className="ml-auto flex items-center gap-2 rounded-lg border px-2 py-1 text-xs" title={t("matchFontHint")}>
-                <input
-                  type="checkbox"
-                  data-testid="svg-match-font"
-                  className="size-3.5 accent-indigo-600"
-                  checked={matchFont}
-                  onChange={(event) => onDocumentSettingsChange({ ...documentSettings, diagrams: { ...documentSettings.diagrams, matchFont: event.target.checked } })}
-                />
-                <span className="text-muted-foreground">{matchFont
+              <div className="ml-auto flex items-center gap-2.5 rounded-lg border px-2 py-1 text-xs" title={t("matchFontHint")}>
+                <span className="text-muted-foreground">{styled
                   ? t("matchesDocument", { font: tDocument(`font.${target.bodyFont}`), size: target.bodySizePt })
                   : t("ownFont")}</span>
-              </label>
+                <label className="flex items-center gap-1">
+                  <input type="checkbox" data-testid="svg-match-font" className="size-3.5 accent-indigo-600" checked={diagramsDraft.matchFont} onChange={(event) => setDiagramsDraft((current) => ({ ...current, matchFont: event.target.checked }))} />
+                  {t("styleFont")}
+                </label>
+                <label className="flex items-center gap-1">
+                  <input type="checkbox" data-testid="svg-match-color" className="size-3.5 accent-indigo-600" checked={diagramsDraft.matchColor} onChange={(event) => setDiagramsDraft((current) => ({ ...current, matchColor: event.target.checked }))} />
+                  {t("styleColor")}
+                </label>
+              </div>
               <label className="flex items-center gap-1.5 text-xs text-muted-foreground" title={t("scaleHint")}>
                 {t("scale")}
                 <Input className="h-7 w-20" type="number" min={0.25} max={4} step={0.05} data-testid="svg-asset-scale" placeholder={t("scaleInherit")} value={scaleDraft ?? ""} onChange={(event) => setScaleDraft(event.target.value === "" ? null : Number(event.target.value))} />
+              </label>
+              <label className="flex items-center gap-1 text-xs text-muted-foreground" title={t("scaleForAllHint")}>
+                <input type="checkbox" data-testid="svg-scale-all" className="size-3.5 accent-indigo-600" checked={scaleForAll} onChange={(event) => setScaleForAll(event.target.checked)} />
+                {t("scaleForAll")}
               </label>
               <Button type="button" size="sm" disabled={saving || !dirty} onClick={() => void save()}>{saving ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}{t("save")}</Button>
             </div>
@@ -333,17 +381,37 @@ export function SvgGraphicsPanel({ pageId, open, onOpenChange, variables, docume
               <div ref={previewRef} className="relative size-full rounded-lg border bg-white shadow-sm">
                 <div
                   data-testid="svg-preview"
-                  className="size-full [&>svg]:size-full [&_[data-wiki-text-id]]:cursor-text"
-                  onClick={(event) => {
-                    const label = (event.target as globalThis.Element).closest("[data-wiki-text-id]");
-                    const id = label?.getAttribute("data-wiki-text-id") ?? "";
-                    if (draft.some((layer) => layer.id === id)) activate(id);
-                    else closeEditor();
+                  className="size-full touch-none [&>svg]:size-full [&_[data-wiki-text-id]]:cursor-move"
+                  onPointerDown={(event) => {
+                    const id = labelAt(event.target);
+                    const layer = draft.find((item) => item.id === id);
+                    if (!layer) { closeEditor(); return; }
+                    // Only a label that positions itself can be moved; one that inherits
+                    // its place from a parent would jump somewhere unrelated.
+                    if (layer.x === null || layer.y === null) { activate(id); return; }
+                    dragRef.current = { id, startX: event.clientX, startY: event.clientY, originX: layer.x, originY: layer.y, perPixel: userUnitsPerPixel(), moved: false };
+                    event.currentTarget.setPointerCapture(event.pointerId);
+                  }}
+                  onPointerMove={(event) => {
+                    const drag = dragRef.current;
+                    if (!drag) return;
+                    const deltaX = event.clientX - drag.startX;
+                    const deltaY = event.clientY - drag.startY;
+                    if (!drag.moved && Math.hypot(deltaX, deltaY) < DRAG_THRESHOLD) return;
+                    if (!drag.moved) { drag.moved = true; closeEditor(); setHoverBox(null); }
+                    patchLayer(drag.id, { x: drag.originX + deltaX * drag.perPixel, y: drag.originY + deltaY * drag.perPixel });
+                  }}
+                  onPointerUp={(event) => {
+                    const drag = dragRef.current;
+                    dragRef.current = null;
+                    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+                    // Below the threshold it was a click, and a click opens the editor.
+                    if (drag && !drag.moved) activate(drag.id);
                   }}
                   onMouseOver={(event) => {
-                    const label = (event.target as globalThis.Element).closest("[data-wiki-text-id]");
-                    const id = label?.getAttribute("data-wiki-text-id") ?? "";
-                    setHoverBox(id && id !== activeId && draft.some((layer) => layer.id === id) ? boxFor(id) : null);
+                    if (dragRef.current) return;
+                    const id = labelAt(event.target);
+                    setHoverBox(id && id !== activeId ? boxFor(id) : null);
                   }}
                   onMouseLeave={() => setHoverBox(null)}
                   dangerouslySetInnerHTML={{ __html: previewSvg }}
@@ -361,20 +429,32 @@ export function SvgGraphicsPanel({ pageId, open, onOpenChange, variables, docume
                     className="h-8 flex-1"
                     value={layerValue(activeLayer)}
                     disabled={Boolean(activeLayer.binding)}
-                    onChange={(event) => editLayer(activeLayer.id, event.target.value)}
+                    onChange={(event) => patchLayer(activeLayer.id, { text: event.target.value })}
                     onKeyDown={(event) => {
                       // Escape belongs to the label being edited, not to the dialog
                       // behind it — without this it would close the whole panel.
-                      if (event.key === "Escape") { event.stopPropagation(); editLayer(activeLayer.id, escapeValue.current); closeEditor(); }
+                      if (event.key === "Escape") { event.stopPropagation(); if (escapeValue.current) patchLayer(activeLayer.id, escapeValue.current); closeEditor(); }
                       if (event.key === "Enter") { event.stopPropagation(); closeEditor(); }
                       if (event.key === "Tab") { event.preventDefault(); stepLayer(event.shiftKey ? -1 : 1); }
                     }}
                   />
-                  <Select value={activeLayer.binding || "fixed"} onValueChange={(value) => bindLayer(activeLayer.id, value === "fixed" ? "" : value ?? "")}>
+                  {activeLayer.fontSize !== null && <Input
+                    className="h-8 w-16"
+                    type="number"
+                    min={1}
+                    max={400}
+                    step={0.5}
+                    data-testid="svg-inline-size"
+                    aria-label={t("fontSize")}
+                    title={t("fontSize")}
+                    value={activeLayer.fontSize}
+                    onChange={(event) => patchLayer(activeLayer.id, { fontSize: event.target.value === "" ? savedLayer?.fontSize ?? null : Number(event.target.value) })}
+                  />}
+                  <Select value={activeLayer.binding || "fixed"} onValueChange={(value) => patchLayer(activeLayer.id, { binding: value === "fixed" ? "" : value ?? "" })}>
                     <SelectTrigger className="h-8 w-32 text-xs" aria-label={t("fixedText")}><SelectValue /></SelectTrigger>
                     <SelectContent><SelectItem value="fixed">{t("fixedText")}</SelectItem>{variableKeys.map((key) => <SelectItem key={key} value={key}>{`{${key}}`}</SelectItem>)}</SelectContent>
                   </Select>
-                  {savedLayer && savedLayer.text !== activeLayer.text && !activeLayer.binding && <Button type="button" size="icon-sm" variant="ghost" title={t("resetLayer")} aria-label={t("resetLayer")} onClick={() => editLayer(activeLayer.id, savedLayer.text)}><RotateCcw className="size-3.5" /></Button>}
+                  {savedLayer && JSON.stringify(savedLayer) !== JSON.stringify(activeLayer) && <Button type="button" size="icon-sm" variant="ghost" title={t("resetLayer")} aria-label={t("resetLayer")} onClick={() => patchLayer(activeLayer.id, savedLayer)}><RotateCcw className="size-3.5" /></Button>}
                   <Button type="button" size="sm" variant="ghost" onClick={closeEditor}>{t("done")}</Button>
                 </div>}
                 {activeLayer?.binding && <p className="absolute inset-x-2 bottom-1 text-center text-[11px] text-muted-foreground">{t("boundTo", { field: `{${activeLayer.binding}}` })}</p>}
@@ -389,9 +469,26 @@ export function SvgGraphicsPanel({ pageId, open, onOpenChange, variables, docume
                   <Type className="size-4 text-indigo-600" />{t("allLayers")}
                   <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] text-muted-foreground">{draft.length}</span>
                 </button>
+                {dirty && <button type="button" data-testid="svg-change-summary" onClick={() => setListOpen(true)} className="flex items-center gap-1.5 text-xs text-amber-700 dark:text-amber-400">
+                  <PenLine className="size-3.5" />{t("changes")} · {changes.length + (scaleDraft !== (selected.sizeScale ?? null) ? 1 : 0) + (stylesChanged ? 1 : 0)}
+                </button>}
                 {error && <p role="alert" className="min-w-0 flex-1 truncate text-xs text-destructive">{error}</p>}
+                <span className="ml-auto text-[11px] text-muted-foreground">{t("previewOnly")}</span>
               </div>
               {listOpen && <div className="max-h-[34vh] overflow-y-auto px-4 pb-4">
+                {/* What a save would write, so the drawing does not have to be diffed by eye. */}
+                {!!changes.length && <ul data-testid="svg-change-list" className="mb-3 space-y-1 rounded-lg border border-amber-200 bg-amber-50/60 p-2 text-xs dark:border-amber-900 dark:bg-amber-950/20">
+                  {changes.map((layer) => {
+                    const before = selected.layers.find((item) => item.id === layer.id);
+                    const moved = before && (before.x !== layer.x || before.y !== layer.y);
+                    const resized = before && before.fontSize !== layer.fontSize;
+                    return <li key={layer.id} className="flex flex-wrap items-center gap-1.5">
+                      {before && before.text !== layer.text && <><span className="text-muted-foreground line-through">{before.text || "—"}</span><span aria-hidden>→</span><span className="font-medium">{layer.text || "—"}</span></>}
+                      {moved && <span className="rounded bg-muted px-1.5 py-0.5 text-[10px]">{t("changeMoved")}</span>}
+                      {resized && <span className="rounded bg-muted px-1.5 py-0.5 text-[10px]">{t("changeResized")}: {layer.fontSize}</span>}
+                    </li>;
+                  })}
+                </ul>}
                 <div className="relative mb-2">
                   <Search className="absolute top-2.5 left-2 size-3.5 text-muted-foreground" />
                   <Input className="h-8 pl-7" placeholder={t("searchLayers")} value={query} onChange={(event) => setQuery(event.target.value)} />

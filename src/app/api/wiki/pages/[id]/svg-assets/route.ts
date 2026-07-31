@@ -15,6 +15,10 @@ const updateSchema = z.object({
     id: z.string().min(1).max(120),
     text: z.string().max(10_000),
     binding: z.string().max(50),
+    // Geometry goes straight into the markup, so it is bounded here rather than trusted.
+    fontSize: z.number().min(0.5).max(400).nullish().default(null),
+    x: z.number().min(-100_000).max(100_000).nullish().default(null),
+    y: z.number().min(-100_000).max(100_000).nullish().default(null),
   })).max(1_000),
   sizeScale: z.number().min(0.25).max(4).nullish(),
 });
