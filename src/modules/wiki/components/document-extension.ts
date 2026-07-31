@@ -15,6 +15,20 @@ export function setDocumentPaginationBreaks(editor: Editor, breaks: DocumentPagi
   editor.view.dispatch(editor.state.tr.setMeta(documentPaginationKey, breaks));
 }
 
+export function getDocumentPaginationBreaks(editor: Editor) {
+  return documentPaginationKey.getState(editor.state) ?? [];
+}
+
+export function samePaginationBreaks(left: DocumentPaginationBreak[], right: DocumentPaginationBreak[]) {
+  return left.length === right.length && left.every((item, index) => {
+    const other = right[index];
+    return item.position === other.position
+      && item.page === other.page
+      && item.kind === other.kind
+      && Math.abs(item.height - other.height) < 0.5;
+  });
+}
+
 const DocumentPagination = Extension.create({
   name: "documentPagination",
   addProseMirrorPlugins() {
@@ -25,7 +39,17 @@ const DocumentPagination = Extension.create({
         apply(transaction, breaks) {
           const replacement = transaction.getMeta(documentPaginationKey) as DocumentPaginationBreak[] | undefined;
           if (replacement) return replacement;
-          return transaction.docChanged ? [] : breaks;
+          if (!transaction.docChanged) return breaks;
+          // Keep the spacers while text changes and only move them along with the
+          // document. Dropping them here collapsed the whole page stack until the
+          // next measurement, which made the document jump under the caret.
+          const mapped: DocumentPaginationBreak[] = [];
+          for (const item of breaks) {
+            const result = transaction.mapping.mapResult(item.position, -1);
+            if (result.deleted || mapped.some((existing) => existing.position === result.pos)) continue;
+            mapped.push({ ...item, position: result.pos });
+          }
+          return mapped;
         },
       },
       props: {
