@@ -1302,6 +1302,9 @@
     },
     "document": {
       "toggle": "Document mode",
+      "noteMode": "Note",
+      "documentMode": "Document",
+      "switchMode": "Switch view: {current} → {next}",
       "showLayout": "Show document layout",
       "hideLayout": "Hide document layout",
       "panelTitle": "Document layout",
@@ -1423,6 +1426,7 @@
         "heading1": "Heading 1", "heading2": "Heading 2", "heading3": "Heading 3",
         "bulletList": "Bullet list", "orderedList": "Numbered list", "taskList": "Task list",
         "format": "Format", "insert": "Insert", "more": "More", "actions": "Actions", "settings": "View and settings",
+        "sideTools": "Document tools", "language": "Language", "outline": "Outline", "view": "View",
         "zoom": "Zoom", "zoomIn": "Zoom in", "zoomOut": "Zoom out", "zoomReset": "Reset zoom to 100%",
         "groups": { "history": "History", "writing": "Format text", "insert": "Insert content", "review": "Review and comment", "document": "Document view" },
         "underline": "Underline", "highlight": "Highlight",

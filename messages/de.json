@@ -1302,6 +1302,9 @@
     },
     "document": {
       "toggle": "Dokumentmodus",
+      "noteMode": "Notiz",
+      "documentMode": "Dokument",
+      "switchMode": "Ansicht wechseln: {current} → {next}",
       "showLayout": "Dokumentlayout anzeigen",
       "hideLayout": "Dokumentlayout ausblenden",
       "panelTitle": "Dokumentlayout",
@@ -1423,6 +1426,7 @@
         "heading1": "Überschrift 1", "heading2": "Überschrift 2", "heading3": "Überschrift 3",
         "bulletList": "Aufzählung", "orderedList": "Nummerierte Liste", "taskList": "Aufgabenliste",
         "format": "Format", "insert": "Einfügen", "more": "Mehr", "actions": "Aktionen", "settings": "Ansicht und Einstellungen",
+        "sideTools": "Dokumentwerkzeuge", "language": "Sprache", "outline": "Gliederung", "view": "Ansicht",
         "zoom": "Zoom", "zoomIn": "Vergrößern", "zoomOut": "Verkleinern", "zoomReset": "Zoom auf 100 % zurücksetzen",
         "groups": { "history": "Verlauf", "writing": "Text gestalten", "insert": "Inhalte einfügen", "review": "Prüfen und kommentieren", "document": "Dokumentansicht" },
         "underline": "Unterstreichen", "highlight": "Hervorheben",

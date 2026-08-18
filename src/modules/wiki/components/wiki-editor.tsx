@@ -13,7 +13,7 @@ import Placeholder from "@tiptap/extension-placeholder";
 import TaskList from "@tiptap/extension-task-list";
 import TaskItem from "@tiptap/extension-task-item";
 import { Fragment, Slice } from "@tiptap/pm/model";
-import { AlertCircle, AlignCenter, AlignLeft, AlignRight, Bold, BookMarked, CalendarClock, Captions, Check, ClipboardCheck, CloudOff, Code, Columns2, Eye, EyeOff, FileText, Heading1, Heading2, Heading3, Highlighter, ImagePlus, Italic, Keyboard, Languages, Layers3, Link2, List, ListOrdered, ListTree, ListTodo, MessageSquareText, Minus, MoreHorizontal, PanelRightClose, PanelRightOpen, Paperclip, Pilcrow, Quote, Redo2, RotateCcw, Rows3, Scan, ScissorsLineDashed, Search, Settings2, Strikethrough, Trash2, Underline as UnderlineIcon, Undo2, WifiOff, ZoomIn, ZoomOut } from "lucide-react";
+import { AlertCircle, AlignCenter, AlignLeft, AlignRight, ArrowLeftRight, Bold, BookMarked, CalendarClock, Captions, Check, ClipboardCheck, CloudOff, Code, Columns2, FileText, Heading1, Heading2, Heading3, Highlighter, ImagePlus, Italic, Keyboard, Languages, Layers3, Link2, List, ListOrdered, ListTree, ListTodo, MessageSquareText, Minus, MoreHorizontal, PanelRightClose, PanelRightOpen, Paperclip, Pilcrow, Quote, Redo2, RotateCcw, Rows3, Scan, ScissorsLineDashed, Search, Settings2, Strikethrough, Trash2, Underline as UnderlineIcon, Undo2, WifiOff } from "lucide-react";
 import { addComment, restorePageRevision } from "../research-actions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -887,9 +887,6 @@ export function WikiEditor({
   }
   captureZoomAnchorRef.current = captureZoomAnchor;
 
-  function captureViewportZoomAnchor() {
-    captureZoomAnchor(window.innerWidth / 2, window.innerHeight / 2);
-  }
 
   function scheduleContentSync(currentEditor: Editor, changed: boolean) {
     liveEditor.current = currentEditor;
@@ -2109,6 +2106,9 @@ export function WikiEditor({
   const proofingButtonTitle = proofingStatus === "error"
     ? t("editor.proofing.browserFallback")
     : t("editor.proofing.switch", { language: proofingLanguageLabel, nextLanguage: nextProofingLanguageLabel });
+  const unresolvedCommentCount = commentThreads.filter((thread) => !thread.resolvedAt).length;
+  const currentDocumentModeLabel = t(documentMode ? "document.documentMode" : "document.noteMode");
+  const nextDocumentModeLabel = t(documentMode ? "document.noteMode" : "document.documentMode");
 
   return <div className="relative flex flex-col gap-3"><div className="sticky top-0 z-40 flex flex-wrap items-center gap-1.5 rounded-xl border bg-background/95 p-1.5 shadow-sm backdrop-blur supports-[backdrop-filter]:bg-background/80">
     <ToolbarGroup label={t("editor.toolbar.groups.history")}>
@@ -2169,20 +2169,17 @@ export function WikiEditor({
     <ToolbarMenu label={t("editor.toolbar.more")} icon={<MoreHorizontal className="size-4" />}>
       <DropdownMenuGroup>
         <DropdownMenuLabel>{t("editor.toolbar.groups.review")}</DropdownMenuLabel>
-        <DropdownMenuItem data-testid="proofing-language-toggle" title={proofingButtonTitle} disabled={proofingSaving} onClick={() => void toggleProofingLanguage()}><Languages />{proofingLanguageLabel}<span className="ml-auto text-xs text-muted-foreground">{proofingLanguage === "de-DE" ? "DE" : "EN"}</span></DropdownMenuItem>
+        <DropdownMenuItem className="xl:hidden" title={proofingButtonTitle} disabled={proofingSaving} onClick={() => void toggleProofingLanguage()}><Languages />{proofingLanguageLabel}<span className="ml-auto text-xs text-muted-foreground">{proofingLanguage === "de-DE" ? "DE → EN" : "EN → DE"}</span></DropdownMenuItem>
         <DropdownMenuItem onClick={() => changeSearchOpen(!searchOpen)}><Search />{t("editor.search.title")}</DropdownMenuItem>
-        <DropdownMenuItem onClick={() => setOutlineOpen(true)}><ListTree />{t("editor.outline.title")}</DropdownMenuItem>
+        <DropdownMenuItem className="xl:hidden" onClick={() => setOutlineOpen(true)}><ListTree />{t("editor.outline.title")}</DropdownMenuItem>
         <DropdownMenuItem onClick={prepareComment}><MessageSquareText />{t("inlineComment")}</DropdownMenuItem>
-        <DropdownMenuItem onClick={() => setCommentsVisible((value) => !value)}>{commentsVisible ? <EyeOff /> : <Eye />}{commentsVisible ? t("hideComments") : t("showComments")}</DropdownMenuItem>
+        <DropdownMenuItem className="xl:hidden" onClick={() => setCommentsVisible((value) => !value)}><MessageSquareText />{commentsVisible ? t("hideComments") : t("showComments")}</DropdownMenuItem>
       </DropdownMenuGroup>
       <DropdownMenuSeparator />
       <DropdownMenuGroup>
         <DropdownMenuLabel>{t("editor.toolbar.groups.document")}</DropdownMenuLabel>
-        <DropdownMenuItem data-testid="document-mode-toggle" onClick={() => changeDocumentMode(!documentMode)}><FileText />{t("document.toggle")}</DropdownMenuItem>
+        <DropdownMenuItem className="xl:hidden" onClick={() => changeDocumentMode(!documentMode)}><FileText />{currentDocumentModeLabel} → {nextDocumentModeLabel}</DropdownMenuItem>
         {documentMode && <DropdownMenuItem onClick={() => setDocumentLayoutVisible((value) => !value)}>{layoutVisible ? <PanelRightClose /> : <PanelRightOpen />}{layoutVisible ? t("document.hideLayout") : t("document.showLayout")}</DropdownMenuItem>}
-        <DropdownMenuItem onClick={() => { captureViewportZoomAnchor(); setDocumentZoom((value) => Math.max(DOCUMENT_ZOOM_MIN, value - 10)); }}><ZoomOut />{t("editor.toolbar.zoomOut")}</DropdownMenuItem>
-        <DropdownMenuItem onClick={() => { captureViewportZoomAnchor(); setDocumentZoom(100); }}><Scan />{t("editor.toolbar.zoomReset")}</DropdownMenuItem>
-        <DropdownMenuItem onClick={() => { captureViewportZoomAnchor(); setDocumentZoom((value) => Math.min(DOCUMENT_ZOOM_MAX, value + 10)); }}><ZoomIn />{t("editor.toolbar.zoomIn")}</DropdownMenuItem>
       </DropdownMenuGroup>
       <DropdownMenuSeparator />
       <DropdownMenuGroup>
@@ -2210,15 +2207,17 @@ export function WikiEditor({
   <div className={
     documentMode
       ? commentsVisible && layoutVisible
-        ? "grid items-start gap-5 2xl:grid-cols-[minmax(0,1fr)_18rem_18rem]"
+        ? "grid items-start gap-4 2xl:grid-cols-[minmax(0,1fr)_8rem_18rem_18rem]"
         : commentsVisible || layoutVisible
-          ? "grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_18rem]"
-          : "block"
+          ? "grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_8rem_18rem]"
+          : "grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_8rem]"
       : commentsVisible
         ? focused
-          ? "grid items-start justify-center gap-8 xl:grid-cols-[minmax(0,56rem)_18rem]"
-          : "grid items-start gap-8 xl:grid-cols-[minmax(0,1fr)_18rem]"
-        : focused ? "w-full" : "block"
+          ? "grid items-start justify-center gap-4 xl:grid-cols-[minmax(0,56rem)_8rem_18rem]"
+          : "grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_8rem_18rem]"
+        : focused
+          ? "grid items-start justify-center gap-4 xl:grid-cols-[minmax(0,56rem)_8rem]"
+          : "grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_8rem]"
   }>
     <div
       ref={editorRootRef}
@@ -2319,6 +2318,18 @@ export function WikiEditor({
       </div>}
       <CommentAnchorOverlay visible={commentsVisible} comments={commentThreads} editor={editor} rootRef={editorRootRef} activeThreadId={activeThreadId} onActiveThreadChange={setActiveThreadId} />
     </div>
+    <aside data-testid="editor-side-tools" aria-label={t("editor.toolbar.sideTools")} className="sticky top-16 hidden w-32 flex-col gap-2 rounded-xl border bg-background/95 p-2 shadow-sm backdrop-blur xl:flex">
+      <Button type="button" data-testid="proofing-language-toggle" variant="outline" className="h-auto w-full flex-col items-stretch gap-1.5 px-2 py-2" aria-label={proofingButtonTitle} disabled={proofingSaving} onClick={() => void toggleProofingLanguage()}>
+        <span className="flex items-center gap-1.5 text-xs font-medium"><Languages className="size-4" />{t("editor.toolbar.language")}</span>
+        <span className="flex items-center justify-center gap-1 text-[10px]"><span className={proofingLanguage === "de-DE" ? "font-semibold text-foreground" : "text-muted-foreground"}>DE</span><ArrowLeftRight className="size-3 text-muted-foreground" /><span className={proofingLanguage === "en-US" ? "font-semibold text-foreground" : "text-muted-foreground"}>EN</span></span>
+      </Button>
+      <Button type="button" variant={outlineOpen ? "secondary" : "outline"} className="h-auto w-full justify-start gap-2 px-2 py-2 text-xs" aria-label={t("editor.outline.title")} aria-pressed={outlineOpen} onClick={() => setOutlineOpen(true)}><ListTree className="size-4" />{t("editor.toolbar.outline")}</Button>
+      <Button type="button" variant={commentsVisible ? "secondary" : "outline"} className="h-auto w-full justify-start gap-2 px-2 py-2 text-xs" aria-label={commentsVisible ? t("hideComments") : t("showComments")} aria-pressed={commentsVisible} onClick={() => setCommentsVisible((value) => !value)}><MessageSquareText className="size-4" /><span className="min-w-0 flex-1 truncate text-left">{t("comments")}</span>{unresolvedCommentCount > 0 && <span className="rounded-full bg-muted px-1.5 py-0.5 text-[9px] tabular-nums">{unresolvedCommentCount}</span>}</Button>
+      <Button type="button" data-testid="document-mode-toggle" variant="outline" className="h-auto w-full flex-col items-stretch gap-1.5 px-2 py-2" aria-label={t("document.switchMode", { current: currentDocumentModeLabel, next: nextDocumentModeLabel })} aria-pressed={documentMode} onClick={() => changeDocumentMode(!documentMode)}>
+        <span className="flex items-center gap-1.5 text-xs font-medium"><FileText className="size-4" />{t("editor.toolbar.view")}</span>
+        <span className="flex items-center justify-center gap-1 text-[10px]"><span className={!documentMode ? "font-semibold text-foreground" : "text-muted-foreground"}>{t("document.noteMode")}</span><ArrowLeftRight className="size-3 text-muted-foreground" /><span className={documentMode ? "font-semibold text-foreground" : "text-muted-foreground"}>{t("document.documentMode")}</span></span>
+      </Button>
+    </aside>
     <CommentRail ref={commentRailRef} visible={commentsVisible} onVisibleChange={setCommentsVisible} pageId={pageId} comments={commentThreads} currentUserId={currentUserId} editor={editor} editorRootRef={editorRootRef} activeThreadId={activeThreadId} onActiveThreadChange={setActiveThreadId} />
     {layoutVisible && <DocumentLayoutPanel
       pageId={pageId}

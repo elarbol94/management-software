@@ -162,7 +162,6 @@ test("document mode persists page layout, document blocks, templates, and PDF ex
   await login(page);
   await quickNote(page, "Funding application", "A structured project description.");
 
-  await openEditorMore(page);
   await page.getByTestId("document-mode-toggle").click();
   const panel = page.getByTestId("document-layout-panel");
   await expect(panel).toBeHidden();
@@ -624,9 +623,7 @@ test("proofing language persists and spelling and writing issues use distinct st
     await login(page);
   }
   await quickNote(page, "Proofing language", "Feler grammar Zweii");
-  await openEditorMore(page);
   await expect(page.getByTestId("proofing-language-toggle")).toContainText("DE");
-  await page.keyboard.press("Escape");
   await expect(page.locator(".ProseMirror")).toHaveAttribute("spellcheck", "false");
   await expect(page.locator(".wiki-spellcheck-issue--spelling")).toHaveCount(2, { timeout: 10_000 });
   await expect(page.locator(".wiki-spellcheck-issue--writing")).toHaveCount(1);
@@ -642,10 +639,8 @@ test("proofing language persists and spelling and writing issues use distinct st
   await expect(page.locator(".wiki-spellcheck-issue--spelling")).toHaveCount(0, { timeout: 10_000 });
   await expect(page.locator(".wiki-spellcheck-issue--writing")).toHaveCount(1);
 
-  await openEditorMore(page);
   await page.getByTestId("proofing-language-toggle").click();
   await expect.poll(() => requestedLanguages.includes("en-US")).toBe(true);
   await page.reload();
-  await openEditorMore(page);
   await expect(page.getByTestId("proofing-language-toggle")).toContainText("EN");
 });
