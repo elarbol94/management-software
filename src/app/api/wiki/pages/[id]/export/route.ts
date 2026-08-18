@@ -3,6 +3,7 @@ import { generateWikiDocumentPdf, renderStoredWikiDocument } from "@/modules/wik
 import { parseDocumentSettings } from "@/modules/wiki/lib/document-settings";
 import { renderDocumentMarkdown } from "@/modules/wiki/lib/document-renderer";
 import { parseStoredDocument } from "@/modules/wiki/lib/tiptap";
+import { generateDocumentDocx } from "@/modules/wiki/lib/document-docx";
 import { getWikiTypographyForUser } from "@/modules/wiki/lib/wiki-typography.server";
 
 function disposition(slug: string, extension: string, inline: boolean) {
@@ -37,6 +38,10 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
     }
 
     const { page, rendered } = await renderStoredWikiDocument(id, typography);
+    if (format === "docx") {
+      const bytes = await generateDocumentDocx(page.title, parseStoredDocument(page.contentJson), parseDocumentSettings(page.documentSettingsJson));
+      return new Response(new Uint8Array(bytes), { headers: { "Content-Type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "Content-Disposition": disposition(page.slug, "docx", inline), "Cache-Control": "no-store" } });
+    }
     if (format === "html") {
       return new Response(rendered.html, {
         headers: {

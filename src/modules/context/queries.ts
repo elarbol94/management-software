@@ -40,6 +40,15 @@ function unique(items: ContextItemDto[]) {
   });
 }
 
+function searchExcerpt(value: string, query: string) {
+  const compact = value.replace(/\s+/g, " ").trim();
+  const index = compact.toLocaleLowerCase().indexOf(query.toLocaleLowerCase());
+  if (index < 0) return "";
+  const start = Math.max(0, index - 52);
+  const end = Math.min(compact.length, index + query.length + 90);
+  return `${start ? "…" : ""}${compact.slice(start, end)}${end < compact.length ? "…" : ""}`;
+}
+
 function emptyContext(): EntityContextDto {
   return { parents: [], tasks: [], wiki: [], sources: [] };
 }
@@ -373,7 +382,7 @@ export function searchKnowledgeCandidates(query: string) {
     : undefined;
 
   const pages = db
-    .select({ id: wikiPages.id, title: wikiPages.title, slug: wikiPages.slug })
+    .select({ id: wikiPages.id, title: wikiPages.title, slug: wikiPages.slug, contentText: wikiPages.contentText })
     .from(wikiPages)
     .where(
       pageWhere
@@ -387,11 +396,11 @@ export function searchKnowledgeCandidates(query: string) {
       type: "wikiPage" as const,
       id: page.id,
       title: page.title,
-      subtitle: "Wiki-Dokument",
+      subtitle: searchExcerpt(page.contentText, query) || "Wiki-Dokument",
       href: canonicalEntityHref("wikiPage", page.id, { slug: page.slug }),
     }));
   const sources = db
-    .select({ id: wikiSources.id, title: wikiSources.title })
+    .select({ id: wikiSources.id, title: wikiSources.title, abstract: wikiSources.abstract, notes: wikiSources.notes, subtitle: wikiSources.subtitle })
     .from(wikiSources)
     .where(
       sourceWhere
@@ -405,7 +414,7 @@ export function searchKnowledgeCandidates(query: string) {
       type: "wikiSource" as const,
       id: source.id,
       title: source.title,
-      subtitle: "Quelle",
+      subtitle: searchExcerpt([source.subtitle, source.abstract, source.notes].join(" "), query) || "Quelle",
       href: canonicalEntityHref("wikiSource", source.id),
     }));
   const pdfs = db
@@ -413,6 +422,7 @@ export function searchKnowledgeCandidates(query: string) {
       id: wikiPdfDocuments.id,
       sourceId: wikiSources.id,
       title: wikiSources.title,
+      text: wikiPdfPages.text,
     })
     .from(wikiPdfDocuments)
     .innerJoin(wikiSources, eq(wikiPdfDocuments.sourceId, wikiSources.id))
@@ -433,9 +443,9 @@ export function searchKnowledgeCandidates(query: string) {
 export function searchWorkCandidates(query: string) {
   const pattern = `%${query.trim()}%`;
   const projectsFound = db
-    .select({ id: projects.id, name: projects.name })
+    .select({ id: projects.id, name: projects.name, description: projects.description })
     .from(projects)
-    .where(query.trim() ? like(projects.name, pattern) : eq(projects.status, "active"))
+    .where(query.trim() ? or(like(projects.name, pattern), like(projects.description, pattern)) : eq(projects.status, "active"))
     .orderBy(desc(projects.updatedAt))
     .limit(8)
     .all()
@@ -450,12 +460,13 @@ export function searchWorkCandidates(query: string) {
     .select({
       id: tasks.id,
       title: tasks.title,
+      description: tasks.description,
       projectId: tasks.projectId,
       projectName: projects.name,
     })
     .from(tasks)
     .leftJoin(projects, eq(tasks.projectId, projects.id))
-    .where(query.trim() ? like(tasks.title, pattern) : eq(tasks.status, "open"))
+    .where(query.trim() ? or(like(tasks.title, pattern), like(tasks.description, pattern)) : eq(tasks.status, "open"))
     .orderBy(desc(tasks.updatedAt))
     .limit(12)
     .all()
@@ -463,7 +474,7 @@ export function searchWorkCandidates(query: string) {
       type: "task" as const,
       id: task.id,
       title: task.title,
-      subtitle: task.projectName || "Persönliche Aufgabe",
+      subtitle: searchExcerpt(task.description, query) || task.projectName || "Persönliche Aufgabe",
       href: canonicalTaskHref(task.id, task.projectId),
     }));
   return [...projectsFound, ...tasksFound];
@@ -487,6 +498,7 @@ export function searchWorkspaceRows(query: string) {
       pageNumber: wikiPdfPages.pageNumber,
       sourceId: wikiSources.id,
       title: wikiSources.title,
+      text: wikiPdfPages.text,
     })
     .from(wikiPdfPages)
     .innerJoin(
@@ -502,7 +514,7 @@ export function searchWorkspaceRows(query: string) {
       type: "pdf" as const,
       id: `${page.documentId}:${page.pageNumber}`,
       title: page.title,
-      subtitle: `PDF · Seite ${page.pageNumber}`,
+      subtitle: searchExcerpt(page.text, trimmed) || `PDF · Seite ${page.pageNumber}`,
       path: `Quelle › Seite ${page.pageNumber}`,
       href: canonicalEntityHref("pdf", page.documentId, {
         sourceId: page.sourceId,

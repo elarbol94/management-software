@@ -886,6 +886,36 @@
     font-size: 0.78rem;
   }
 
+  .wiki-document-canvas[data-numbered-headings="true"] .ProseMirror { counter-reset: wiki-h1; }
+  .wiki-document-canvas[data-numbered-headings="true"] .ProseMirror h1 { counter-reset: wiki-h2; counter-increment: wiki-h1; }
+  .wiki-document-canvas[data-numbered-headings="true"] .ProseMirror h2 { counter-reset: wiki-h3; counter-increment: wiki-h2; }
+  .wiki-document-canvas[data-numbered-headings="true"] .ProseMirror h3 { counter-increment: wiki-h3; }
+  .wiki-document-canvas[data-numbered-headings="true"] .ProseMirror h1::before { content: counter(wiki-h1) ". "; }
+  .wiki-document-canvas[data-numbered-headings="true"] .ProseMirror h2::before { content: counter(wiki-h1) "." counter(wiki-h2) " "; }
+  .wiki-document-canvas[data-numbered-headings="true"] .ProseMirror h3::before { content: counter(wiki-h1) "." counter(wiki-h2) "." counter(wiki-h3) " "; }
+
+  .wiki-proposal-callout { margin-block: 1.25rem; border-left: 4px solid var(--wiki-accent-color); border-radius: 0.5rem; padding: 0.85rem 1rem; background: color-mix(in srgb, var(--wiki-accent-color) 7%, transparent); }
+  .wiki-proposal-callout > strong { display: block; margin-bottom: 0.35rem; color: var(--wiki-accent-color); }
+  .wiki-proposal-callout > div > :last-child { margin-bottom: 0; }
+  .wiki-proposal-callout-warning { border-color: #d97706; background: #fffbeb; }
+  .wiki-proposal-callout-decision { border-color: #059669; background: #ecfdf5; }
+  .wiki-proposal-callout-assumption { border-color: #7c3aed; background: #f5f3ff; }
+
+  .wiki-document-canvas .ProseMirror :is(h1, h2, h3)[data-section-status]:not([data-section-status="open"])::after { margin-left: 0.6rem; border-radius: 999px; padding: 0.15rem 0.45rem; color: var(--wiki-muted-color); background: color-mix(in srgb, var(--wiki-muted-color) 10%, transparent); font: 600 0.62rem/1 ui-sans-serif, system-ui, sans-serif; display: inline-block; width: 0.55rem; height: 0.55rem; padding: 0; background: #64748b; content: ""; vertical-align: middle; }
+  .wiki-document-canvas .ProseMirror :is(h1, h2, h3)[data-section-status="writing"]::after { background: #d97706; }
+  .wiki-document-canvas .ProseMirror :is(h1, h2, h3)[data-section-status="review"]::after { background: #7c3aed; }
+  .wiki-document-canvas .ProseMirror :is(h1, h2, h3)[data-section-status="done"]::after { background: #059669; }
+
+  .wiki-proposal-suggestion-insert { background: color-mix(in srgb, #22c55e 22%, transparent); text-decoration: underline; text-decoration-color: #16a34a; }
+  .wiki-proposal-suggestion-delete { background: color-mix(in srgb, #ef4444 16%, transparent); color: #b91c1c; text-decoration: line-through; }
+
+  .wiki-document-cross-reference { border-bottom: 1px dotted var(--document-accent); color: var(--document-accent); font-weight: 600; }
+
+  .wiki-document-annex { margin-block: 2rem 1rem; border-top: 2px solid var(--document-accent); padding-top: 0.75rem; font-size: 1.35em; }
+
+  .wiki-document-signature { display: grid; gap: 0.25rem; margin-top: 3rem; max-width: 20rem; border-top: 1px solid currentColor; padding-top: 0.5rem; }
+  .wiki-document-signature span, .wiki-document-signature small { color: var(--muted-foreground); font-size: 0.75rem; }
+
   .wiki-document-variable {
     display: inline-flex;
     border-radius: 0.25rem;

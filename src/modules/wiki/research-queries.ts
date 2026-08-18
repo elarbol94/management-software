@@ -28,6 +28,59 @@ import { measureServerOperation } from "@/lib/performance-server";
 
 export type TagDto = { id: string; name: string; color: string };
 
+export type KnowledgeLaunchpadItem = {
+  id: string;
+  title: string;
+  href: string;
+  updatedAt: number;
+  kind: "document" | "source";
+  status: string;
+};
+
+export function getKnowledgeLaunchpad() {
+  const documents = sqlite.prepare(`
+    SELECT id, title, slug, status, updated_at AS updatedAt
+    FROM wiki_pages
+    WHERE deleted_at IS NULL
+    ORDER BY updated_at DESC, id DESC
+    LIMIT 6
+  `).all() as Array<{ id: string; title: string; slug: string; status: string; updatedAt: number }>;
+
+  const sources = sqlite.prepare(`
+    SELECT s.id, s.title, s.reading_status AS status, s.updated_at AS updatedAt,
+      (SELECT d.id FROM wiki_pdf_documents d
+       WHERE d.source_id = s.id AND d.status = 'ready'
+       ORDER BY CASE WHEN d.role = 'primary' THEN 0 ELSE 1 END, d.created_at ASC
+       LIMIT 1) AS documentId
+    FROM wiki_sources s
+    WHERE s.deleted_at IS NULL AND s.reading_status IN ('reading', 'read')
+    ORDER BY CASE WHEN s.reading_status = 'reading' THEN 0 ELSE 1 END,
+      s.updated_at DESC, s.id DESC
+    LIMIT 6
+  `).all() as Array<{ id: string; title: string; status: string; updatedAt: number; documentId: string | null }>;
+
+  return {
+    documents: documents.map((item): KnowledgeLaunchpadItem => ({
+      id: item.id,
+      title: item.title,
+      href: `/wiki/pages/${item.slug}`,
+      updatedAt: item.updatedAt,
+      kind: "document",
+      status: item.status,
+    })),
+    sources: sources.map((item): KnowledgeLaunchpadItem => ({
+      id: item.id,
+      title: item.title,
+      href: item.documentId
+        ? `/wiki/sources/${item.id}/read/${item.documentId}`
+        : `/wiki/sources/${item.id}`,
+      updatedAt: item.updatedAt,
+      kind: "source",
+      status: item.status,
+    })),
+  };
+}
+
 export function getResearchNavigation(userId: string) {
   const counts = sqlite
     .prepare(

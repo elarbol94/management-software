@@ -87,8 +87,10 @@ test("document paper keeps its physical aspect ratio and margin guides can be to
   test.setTimeout(120_000);
   await login(page);
   await createNote(page);
+  await page.getByRole("button", { name: "Mehr", exact: true }).last().click();
   await page.getByTestId("document-mode-toggle").click();
-  await page.getByRole("button", { name: "Dokumentlayout anzeigen" }).click();
+  await page.getByRole("button", { name: "Mehr", exact: true }).last().click();
+  await page.getByRole("menuitem", { name: "Dokumentlayout anzeigen" }).click();
   const canvas = page.locator(".wiki-document-canvas");
   const sheet = canvas.locator(".wiki-document-page-sheet").first();
   await expect(sheet).toBeVisible();
@@ -101,12 +103,16 @@ test("document paper keeps its physical aspect ratio and margin guides can be to
   await expect(canvas).toHaveAttribute("data-margin-guides", "false");
   await guides.check();
   await expect(canvas).toHaveAttribute("data-margin-guides", "true");
-  await page.getByRole("button", { name: "Zoom auf 100 % zurücksetzen" }).click({ force: true });
-  await page.getByRole("button", { name: "Vergrößern" }).click({ force: true });
+  await page.getByRole("button", { name: "Mehr", exact: true }).last().click();
+  await page.getByRole("menuitem", { name: "Zoom auf 100 % zurücksetzen" }).click();
+  await page.getByRole("button", { name: "Mehr", exact: true }).last().click();
+  await page.getByRole("menuitem", { name: "Vergrößern" }).click();
   await expect(canvas).toHaveCSS("zoom", "1.1");
-  await page.getByRole("button", { name: "Zoom auf 100 % zurücksetzen" }).click({ force: true });
+  await page.getByRole("button", { name: "Mehr", exact: true }).last().click();
+  await page.getByRole("menuitem", { name: "Zoom auf 100 % zurücksetzen" }).click();
   await page.locator(".wiki-document-workspace").dispatchEvent("wheel", { ctrlKey: true, deltaY: -100 });
   await expect(canvas).toHaveCSS("zoom", "1.08");
+  await page.getByRole("button", { name: "Mehr", exact: true }).last().click();
   await page.getByTestId("document-mode-toggle").click();
   await expect(page.locator(".wiki-editor-surface")).toHaveCSS("zoom", "1.08");
 });
@@ -120,7 +126,7 @@ test("SVG text updates live and previous versions can be restored", async ({ pag
     buffer: Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="320" height="120"><rect width="100%" height="100%" fill="white"/><text x="20" y="65">Original label</text></svg>'),
   });
   await expect(page.locator("figure[data-commentable-image]")).toBeVisible();
-  await page.getByRole("button", { name: "Mehr" }).click();
+  await page.getByRole("button", { name: "Mehr", exact: true }).last().click();
   await page.getByRole("menuitem", { name: "Grafiken" }).click();
   const panel = page.getByRole("dialog", { name: "Grafiken" });
   await expect(panel).toBeVisible();

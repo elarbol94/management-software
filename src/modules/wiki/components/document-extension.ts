@@ -1,4 +1,4 @@
-import { Extension, Node, mergeAttributes, type Editor } from "@tiptap/core";
+import { Extension, Mark, Node, mergeAttributes, type Editor } from "@tiptap/core";
 import { Plugin, PluginKey } from "@tiptap/pm/state";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
 
@@ -158,6 +158,48 @@ const LayoutSection = Node.create({
   ],
 });
 
+const ProposalCallout = Node.create({
+  name: "proposalCallout",
+  group: "block",
+  content: "block+",
+  defining: true,
+  isolating: true,
+  addAttributes: () => ({ kind: { default: "info" }, title: { default: "" } }),
+  parseHTML: () => [{ tag: "aside[data-proposal-callout]" }],
+  renderHTML: ({ HTMLAttributes }) => ["aside", mergeAttributes(HTMLAttributes, {
+    "data-proposal-callout": HTMLAttributes.kind,
+    class: "wiki-proposal-callout wiki-proposal-callout-" + HTMLAttributes.kind,
+  }), HTMLAttributes.title ? ["strong", { contenteditable: "false" }, HTMLAttributes.title] : ["span", { class: "sr-only" }, "Callout"], ["div", 0]],
+});
+
+const ProposalSuggestion = Mark.create({
+  name: "proposalSuggestion", inclusive: false,
+  addAttributes: () => ({ kind: { default: "insert" }, author: { default: "" }, createdAt: { default: "" } }),
+  parseHTML: () => [{ tag: "span[data-proposal-suggestion]" }],
+  renderHTML: ({ HTMLAttributes }) => ["span", mergeAttributes(HTMLAttributes, { "data-proposal-suggestion": HTMLAttributes.kind, class: `wiki-proposal-suggestion wiki-proposal-suggestion-${HTMLAttributes.kind}` }), 0],
+});
+
+const CrossReference = Node.create({
+  name: "crossReference", group: "inline", inline: true, atom: true, selectable: true,
+  addAttributes: () => ({ targetId: { default: "" }, label: { default: "" } }),
+  parseHTML: () => [{ tag: "span[data-document-cross-reference]" }],
+  renderHTML: ({ HTMLAttributes }) => ["span", mergeAttributes(HTMLAttributes, { "data-document-cross-reference": HTMLAttributes.targetId, class: "wiki-document-cross-reference", contenteditable: "false" }), HTMLAttributes.label || "Reference"],
+});
+
+const AnnexMarker = Node.create({
+  name: "annexMarker", group: "block", atom: true, selectable: true,
+  addAttributes: () => ({ annexId: { default: "" }, title: { default: "Annex" } }),
+  parseHTML: () => [{ tag: "section[data-document-annex]" }],
+  renderHTML: ({ HTMLAttributes }) => ["section", mergeAttributes(HTMLAttributes, { "data-document-annex": HTMLAttributes.annexId, class: "wiki-document-annex", contenteditable: "false" }), ["strong", {}, HTMLAttributes.title || "Annex"]],
+});
+
+const SignatureBlock = Node.create({
+  name: "signatureBlock", group: "block", atom: true, selectable: true,
+  addAttributes: () => ({ name: { default: "" }, role: { default: "" }, location: { default: "" }, date: { default: "" } }),
+  parseHTML: () => [{ tag: "section[data-document-signature]" }],
+  renderHTML: ({ HTMLAttributes }) => ["section", mergeAttributes(HTMLAttributes, { "data-document-signature": "", class: "wiki-document-signature", contenteditable: "false" }), ["span", {}, `${HTMLAttributes.location || "Place"}, ${HTMLAttributes.date || "date"}`], ["strong", {}, HTMLAttributes.name || "Signature"], ["small", {}, HTMLAttributes.role || "Role"]],
+});
+
 const DocumentBlockAttributes = Extension.create({
   name: "documentBlockAttributes",
   addGlobalAttributes() {
@@ -193,9 +235,14 @@ const DocumentBlockAttributes = Extension.create({
 
 export const DocumentExtensions = [
   PageBreak,
+  ProposalCallout,
+  ProposalSuggestion,
   TableOfContents,
   DocumentVariable,
   LayoutSection,
+  CrossReference,
+  AnnexMarker,
+  SignatureBlock,
   DocumentBlockAttributes,
   DocumentPagination,
 ];

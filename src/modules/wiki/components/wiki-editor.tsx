@@ -79,6 +79,7 @@ import type { ContextDeadlineMarker, ContextTaskMarker } from "@/modules/tasks/t
 import { formatBibliography, formatIeeeCitation, formatInlineCitation, type CitationSource } from "../lib/citations";
 import { NewSourceDialog } from "./new-source-dialog";
 import { SvgGraphicsPanel } from "./svg-graphics-panel";
+import type { ProposalWorkspaceData } from "../lib/proposal";
 
 type PageRef = { id: string; title: string; slug: string };
 type SourceRef = CitationSource;
@@ -88,6 +89,7 @@ export type WikiEditorHandle = {
 };
 type CachedSpellcheckMatch = Omit<SpellcheckResponseMatch, "paragraph">;
 type FigureCaption = { nodeId: string; caption: string };
+type TableCaption = { tableId: string; caption: string };
 type CitationTarget = { sourceId: string; documentId?: string; annotationId?: string; locator?: string };
 type WikiSaveInput = {
   id: string;
@@ -194,6 +196,7 @@ type WikiEditorProps = {
   currentUserId: string;
   contextTasks: ContextTaskMarker[];
   contextDeadlines: ContextDeadlineMarker[];
+  proposalData: ProposalWorkspaceData;
   focusTaskId?: string;
   focusDeadlineId?: string;
   pageActions: WikiEditorPageActions;
@@ -684,6 +687,7 @@ export function WikiEditor({
   comments,
   contextTasks,
   contextDeadlines,
+  proposalData,
   focusTaskId,
   focusDeadlineId,
   currentUserId,
@@ -731,6 +735,7 @@ export function WikiEditor({
   const zoomAnchor = useRef<{ clientX: number; clientY: number; contentX: number; contentY: number } | null>(null);
   const captureZoomAnchorRef = useRef<(clientX: number, clientY: number) => void>(() => {});
   const [figureCaptions, setFigureCaptions] = useState<FigureCaption[]>([]);
+  const [tableCaptions, setTableCaptions] = useState<TableCaption[]>([]);
   const [citedSourceIds, setCitedSourceIds] = useState<string[]>([]);
   const [citationTargets, setCitationTargets] = useState<CitationTarget[]>([]);
   const [typography, setTypography] = useState(() => normalizeWikiTypography(initialTypography));
@@ -777,12 +782,16 @@ export function WikiEditor({
   function updateDerivedState(currentEditor: Editor) {
     const items: OutlineItem[] = [];
     const captions: FigureCaption[] = [];
+    const tables: TableCaption[] = [];
     const citations = new Set<string>();
     const targets = new Map<string, CitationTarget>();
     currentEditor.state.doc.descendants((node, position) => {
       if (node.type.name === "heading") items.push({ level: Number(node.attrs.level), text: node.textContent, position, id: String(node.attrs.id ?? `heading-${position}`) });
       if (node.type.name === "commentableImage" && node.attrs.includeInFigureIndex !== false && String(node.attrs.caption ?? "").trim()) {
         captions.push({ nodeId: String(node.attrs.nodeId ?? `figure-${position}`), caption: String(node.attrs.caption).trim() });
+      }
+      if (node.type.name === "markdownTable" && node.attrs.includeInTableIndex !== false && String(node.attrs.caption ?? "").trim()) {
+        tables.push({ tableId: String(node.attrs.tableId ?? ("table-" + position)), caption: String(node.attrs.caption).trim() });
       }
       if (node.type.name === "citation" && Array.isArray(node.attrs.items)) {
         for (const item of node.attrs.items as Array<{ sourceId?: unknown; documentId?: unknown; annotationId?: unknown; locator?: unknown }>) {
@@ -802,6 +811,7 @@ export function WikiEditor({
     });
     setOutline(items);
     setFigureCaptions(captions);
+    setTableCaptions(tables);
     setCitedSourceIds([...citations]);
     setCitationTargets([...targets.values()]);
     const cursor = currentEditor.state.selection.from;
@@ -1870,6 +1880,7 @@ export function WikiEditor({
   }
   const layoutVisible = documentMode && documentLayoutVisible;
   const figureIndexVisible = documentMode && documentSettings.figures.enabled && figureCaptions.length > 0;
+  const tableIndexVisible = documentMode && documentSettings.tables.enabled && tableCaptions.length > 0;
   const bibliography = formatBibliography(
     citedSourceIds.flatMap((sourceId) => {
       const source = sources.find((candidate) => candidate.id === sourceId);
@@ -1912,6 +1923,7 @@ export function WikiEditor({
     "--document-content-offset": `${coverPageCount ? orientedPaperHeight + 12 : 0}mm`,
     "--document-bibliography-top": `${pageStackPosition(coverPageCount + documentPageCount)}mm`,
     "--document-figure-index-top": `${pageStackPosition(coverPageCount + documentPageCount + bibliographyPageCount)}mm`,
+    "--document-table-index-top": pageStackPosition(coverPageCount + documentPageCount + bibliographyPageCount + figurePageCount) + "mm",
     "--document-stack-height": `${visibleDocumentPages * orientedPaperHeight + Math.max(0, visibleDocumentPages - 1) * 12}mm`,
     zoom: documentZoom / 100,
   } as CSSProperties;
@@ -2154,36 +2166,25 @@ export function WikiEditor({
         <div className="flex justify-end border-t pt-3"><Button type="button" size="sm" variant="ghost" className="text-muted-foreground" onClick={() => imageInputRef.current?.click()}><ImagePlus className="size-4" />{t("imagePicker.addFromPath")}</Button></div>
       </DialogContent>
     </Dialog>
-    <ToolbarGroup label={t("editor.toolbar.groups.review")}>
-      <Tooltip>
-        <TooltipTrigger render={<Button type="button" data-testid="proofing-language-toggle" size="sm" variant="ghost" className="gap-1 px-2 text-xs" aria-label={proofingButtonTitle} aria-busy={proofingStatus === "checking" || proofingSaving} disabled={proofingSaving} onClick={() => void toggleProofingLanguage()} />}>
-          {proofingStatus === "checking" || proofingSaving ? <RotateCcw className="size-3.5 animate-spin" /> : proofingStatus === "error" ? <AlertCircle className="size-3.5 text-destructive" /> : <Languages className="size-3.5" />}
-          <span>{proofingLanguage === "de-DE" ? "DE" : "EN"}</span>
-        </TooltipTrigger>
-        <TooltipContent>{proofingButtonTitle}{proofingStatus === "checking" && <span> · {t("editor.proofing.checking")}</span>}</TooltipContent>
-      </Tooltip>
-      <ToolbarButton title={t("editor.search.title")} shortcut={shortcutLabel("search")} active={searchOpen} onClick={() => changeSearchOpen(!searchOpen)}><Search className="size-4" /></ToolbarButton>
-      <ToolbarButton title={t("editor.outline.title")} shortcut={shortcutLabel("outline")} active={outlineOpen} onClick={() => setOutlineOpen(true)}><ListTree className="size-4" /></ToolbarButton>
-      <ToolbarButton title={t("inlineComment")} shortcut={shortcutLabel("inlineComment")} onClick={prepareComment}><MessageSquareText className="size-4" /></ToolbarButton>
-      <ToolbarButton title={commentsVisible ? t("hideComments") : t("showComments")} shortcut={shortcutLabel("toggleComments")} active={commentsVisible} onClick={() => setCommentsVisible((value) => !value)}>{commentsVisible ? <EyeOff className="size-4" /> : <Eye className="size-4" />}</ToolbarButton>
-    </ToolbarGroup>
-    <ToolbarGroup label={t("editor.toolbar.groups.document")}>
-      <Button
-        type="button"
-        data-testid="document-mode-toggle"
-        size="sm"
-        variant={documentMode ? "secondary" : "ghost"}
-        className="gap-1.5 px-2 text-xs"
-        aria-pressed={documentMode}
-        onClick={() => changeDocumentMode(!documentMode)}
-      >
-        <FileText className="size-3.5" />{t("document.toggle")}
-      </Button>
-      {documentMode && <ToolbarButton title={layoutVisible ? t("document.hideLayout") : t("document.showLayout")} active={layoutVisible} onClick={() => setDocumentLayoutVisible((value) => !value)}>
-        {layoutVisible ? <PanelRightClose className="size-4" /> : <PanelRightOpen className="size-4" />}
-      </ToolbarButton>}
-    </ToolbarGroup>
     <ToolbarMenu label={t("editor.toolbar.more")} icon={<MoreHorizontal className="size-4" />}>
+      <DropdownMenuGroup>
+        <DropdownMenuLabel>{t("editor.toolbar.groups.review")}</DropdownMenuLabel>
+        <DropdownMenuItem data-testid="proofing-language-toggle" title={proofingButtonTitle} disabled={proofingSaving} onClick={() => void toggleProofingLanguage()}><Languages />{proofingLanguageLabel}<span className="ml-auto text-xs text-muted-foreground">{proofingLanguage === "de-DE" ? "DE" : "EN"}</span></DropdownMenuItem>
+        <DropdownMenuItem onClick={() => changeSearchOpen(!searchOpen)}><Search />{t("editor.search.title")}</DropdownMenuItem>
+        <DropdownMenuItem onClick={() => setOutlineOpen(true)}><ListTree />{t("editor.outline.title")}</DropdownMenuItem>
+        <DropdownMenuItem onClick={prepareComment}><MessageSquareText />{t("inlineComment")}</DropdownMenuItem>
+        <DropdownMenuItem onClick={() => setCommentsVisible((value) => !value)}>{commentsVisible ? <EyeOff /> : <Eye />}{commentsVisible ? t("hideComments") : t("showComments")}</DropdownMenuItem>
+      </DropdownMenuGroup>
+      <DropdownMenuSeparator />
+      <DropdownMenuGroup>
+        <DropdownMenuLabel>{t("editor.toolbar.groups.document")}</DropdownMenuLabel>
+        <DropdownMenuItem data-testid="document-mode-toggle" onClick={() => changeDocumentMode(!documentMode)}><FileText />{t("document.toggle")}</DropdownMenuItem>
+        {documentMode && <DropdownMenuItem onClick={() => setDocumentLayoutVisible((value) => !value)}>{layoutVisible ? <PanelRightClose /> : <PanelRightOpen />}{layoutVisible ? t("document.hideLayout") : t("document.showLayout")}</DropdownMenuItem>}
+        <DropdownMenuItem onClick={() => { captureViewportZoomAnchor(); setDocumentZoom((value) => Math.max(DOCUMENT_ZOOM_MIN, value - 10)); }}><ZoomOut />{t("editor.toolbar.zoomOut")}</DropdownMenuItem>
+        <DropdownMenuItem onClick={() => { captureViewportZoomAnchor(); setDocumentZoom(100); }}><Scan />{t("editor.toolbar.zoomReset")}</DropdownMenuItem>
+        <DropdownMenuItem onClick={() => { captureViewportZoomAnchor(); setDocumentZoom((value) => Math.min(DOCUMENT_ZOOM_MAX, value + 10)); }}><ZoomIn />{t("editor.toolbar.zoomIn")}</DropdownMenuItem>
+      </DropdownMenuGroup>
+      <DropdownMenuSeparator />
       <DropdownMenuGroup>
         <DropdownMenuLabel>{t("editor.toolbar.actions")}</DropdownMenuLabel>
         <DropdownMenuItem onClick={() => requestWikiTask(activeEditor)}><ClipboardCheck />{tTasks("createTask")}<DropdownMenuShortcut>{tTasks("globalShortcut")}</DropdownMenuShortcut></DropdownMenuItem>
@@ -2198,19 +2199,6 @@ export function WikiEditor({
         <DropdownMenuItem onClick={() => setShortcutsOpen(true)}><Keyboard />{t("shortcuts.title")}<DropdownMenuShortcut>{shortcutLabel("shortcuts")}</DropdownMenuShortcut></DropdownMenuItem>
       </DropdownMenuGroup>
     </ToolbarMenu>
-    <ToolbarGroup label={t("editor.toolbar.zoom")}>
-      <ToolbarButton title={t("editor.toolbar.zoomOut")} onClick={() => { captureViewportZoomAnchor(); setDocumentZoom((value) => Math.max(DOCUMENT_ZOOM_MIN, value - 10)); }}><ZoomOut className="size-4" /></ToolbarButton>
-      <button
-        type="button"
-        className="min-w-11 rounded-md px-1.5 py-1 text-xs font-medium tabular-nums text-muted-foreground hover:bg-accent hover:text-foreground"
-        title={t("editor.toolbar.zoomReset")}
-        aria-label={t("editor.toolbar.zoomReset")}
-        onClick={() => { captureViewportZoomAnchor(); setDocumentZoom(100); }}
-      >
-        {documentZoom}%
-      </button>
-      <ToolbarButton title={t("editor.toolbar.zoomIn")} onClick={() => { captureViewportZoomAnchor(); setDocumentZoom((value) => Math.min(DOCUMENT_ZOOM_MAX, value + 10)); }}><ZoomIn className="size-4" /></ToolbarButton>
-    </ToolbarGroup>
     <span role={saveState === "error" || saveState === "conflict" ? "alert" : "status"} aria-live={saveState === "error" || saveState === "conflict" ? "assertive" : "polite"} className={`ml-auto flex items-center gap-1 px-2 text-xs ${savePresentation.className}`}>{savePresentation.icon}{savePresentation.label}</span>
     {(saveState === "error" || saveState === "offline") && pendingSave.current && <Button type="button" size="xs" variant="ghost" onClick={() => void persistContent(pendingSave.current!)}>{t("editor.save.retry")}</Button>}
   </div>
@@ -2244,6 +2232,10 @@ export function WikiEditor({
       }}
     >
       <BubbleMenu editor={editor} pluginKey="wikiTextCommentMenu" options={{ strategy: "fixed", flip: true, shift: true, offset: 8 }} shouldShow={({ state }) => !state.selection.empty && !(state.selection instanceof NodeSelection)} className="z-40 flex items-center gap-1 rounded-lg border bg-background p-1 shadow-lg">
+        <Button type="button" size="icon-sm" variant={activeEditor.isActive("bold") ? "secondary" : "ghost"} aria-label={t("editor.toolbar.bold")} onClick={() => activeEditor.chain().focus().toggleBold().run()}><Bold className="size-4" /></Button>
+        <Button type="button" size="icon-sm" variant={activeEditor.isActive("italic") ? "secondary" : "ghost"} aria-label={t("editor.toolbar.italic")} onClick={() => activeEditor.chain().focus().toggleItalic().run()}><Italic className="size-4" /></Button>
+        <Button type="button" size="icon-sm" variant={activeEditor.isActive("link") ? "secondary" : "ghost"} aria-label={t("editor.link.button")} onClick={() => setLinkEditorRequest((value) => value + 1)}><Link2 className="size-4" /></Button>
+        <span className="mx-0.5 h-5 w-px bg-border" />
         <Button type="button" size="sm" variant={activeEditor.isActive("highlight") ? "secondary" : "ghost"} onClick={() => activeEditor.chain().focus().toggleMark("highlight", { createdBy: currentUserId }).run()}><Highlighter className="size-4" />{t("highlightSelection")}</Button>
         <Button type="button" size="sm" variant="ghost" onClick={prepareComment}><MessageSquareText className="size-4" />{t("commentSelection")}</Button>
         <Button type="button" size="sm" variant="ghost" onClick={() => requestWikiTask(activeEditor)}><ClipboardCheck className="size-4" />{tTasks("createTask")}</Button>
@@ -2308,6 +2300,11 @@ export function WikiEditor({
           {/* A caption that already numbers itself ("Abbildung 4: …") is not numbered twice. */}
           <ol>{figureCaptions.map((figure, index) => <li key={figure.nodeId}><span>{hasOwnFigureNumber(figure.caption) ? "" : t("document.figureNumber", { number: index + 1 })}</span><span>{figure.caption}</span></li>)}</ol>
         </section>}
+        {tableIndexVisible && <section className="wiki-document-figure-index wiki-document-table-index" style={{ top: "var(--document-table-index-top)" }} aria-label={documentSettings.tables.heading}>
+          <p className="wiki-document-figure-index-kicker">{t("document.tableIndex")}</p>
+          <h2>{documentSettings.tables.heading}</h2>
+          <ol>{tableCaptions.map((table, index) => <li key={table.tableId}><span>{t("document.tableNumber", { number: index + 1 })}</span><span>{table.caption}</span></li>)}</ol>
+        </section>}
       </div>
       {spellcheckIssue && <div role="dialog" aria-label={t("editor.proofing.dialog")} className="fixed z-50 max-h-[min(28rem,calc(100vh-2rem))] w-72 overflow-y-auto rounded-lg border bg-popover p-2 shadow-lg" style={{ left: Math.min(spellcheckIssue.rect.left, window.innerWidth - 304), top: Math.min(spellcheckIssue.rect.bottom + 8, window.innerHeight - 210) }}>
         <p className="px-2 pb-1 text-xs font-medium">{t(spellcheckIssue.issue.kind === "spelling" ? "editor.proofing.types.spelling" : "editor.proofing.types.writing")}{spellcheckIssue.issue.category && <span className="font-normal text-muted-foreground"> · {spellcheckIssue.issue.category}</span>}</p>
@@ -2332,6 +2329,8 @@ export function WikiEditor({
       issues={documentIssues}
       outline={outline}
       figureCount={figureCaptions.length}
+      tableCount={tableCaptions.length}
+      proposalData={proposalData}
       onOpenTypographySettings={() => setTypographyOpen(true)}
       onClose={() => setDocumentLayoutVisible(false)}
     />}

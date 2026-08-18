@@ -121,6 +121,7 @@ test("metadata version changes do not cause repeated conflicts and older revisio
   await login(page);
   await quickNote(page, "Revision Restore", "Original version");
 
+  await page.getByRole("button", { name: "Dokumentdetails öffnen" }).click();
   await page.getByRole("combobox").first().click();
   await page.getByRole("option", { name: "In Arbeit" }).click();
 

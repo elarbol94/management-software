@@ -6,12 +6,10 @@ import { usePathname, useRouter } from "next/navigation";
 import { useLocale, useTranslations } from "next-intl";
 import { toast } from "sonner";
 import {
-  ArchiveRestore,
   Bell,
   BookOpen,
-  ChevronRight,
   FileText,
-  Hash,
+  House,
   Inbox,
   LibraryBig,
   Plus,
@@ -40,8 +38,6 @@ import { useFocusMode } from "@/components/focus-mode";
 import { cn } from "@/lib/utils";
 import { createQuickNote, searchResearch } from "../research-actions";
 import { parseSearchSnippet } from "../lib/search-snippet";
-import type { WikiTreeNode } from "../queries";
-import type { TagDto } from "../research-queries";
 
 type SearchResults = Awaited<ReturnType<typeof searchResearch>>;
 
@@ -80,7 +76,7 @@ function NavItem({
   onNavigate?: () => void;
 }) {
   const pathname = usePathname();
-  const active = pathname === href || (href !== "/wiki/inbox" && pathname.startsWith(`${href}/`));
+  const active = pathname === href || (href !== "/wiki" && href !== "/wiki/inbox" && pathname.startsWith(`${href}/`));
   const link = (
     <Link
       href={href}
@@ -122,51 +118,9 @@ function NavItem({
   );
 }
 
-function PageTree({
-  nodes,
-  depth = 0,
-  onNavigate,
-}: {
-  nodes: WikiTreeNode[];
-  depth?: number;
-  onNavigate?: () => void;
-}) {
-  const t = useTranslations("wiki");
-  const [closed, setClosed] = useState<Record<string, boolean>>({});
-  return <>{nodes.map((node) => (
-    <div key={node.id}>
-      <div className="flex items-center" style={{ paddingLeft: `${depth * 10}px` }}>
-        {node.children.length ? (
-          <button
-            type="button"
-            className="grid size-5 place-items-center text-muted-foreground"
-            aria-expanded={!closed[node.id]}
-            aria-label={`${closed[node.id] ? t("expand") : t("collapse")}: ${node.title}`}
-            onClick={() => setClosed((value) => ({ ...value, [node.id]: !value[node.id] }))}
-          >
-            <ChevronRight className={cn("size-3 transition-transform", !closed[node.id] && "rotate-90")} />
-          </button>
-        ) : <span className="w-5" />}
-        <Link
-          href={`/wiki/pages/${node.slug}`}
-          onClick={onNavigate}
-          className="min-w-0 flex-1 truncate rounded px-1 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
-        >
-          {node.icon ? `${node.icon} ` : ""}{node.title}
-        </Link>
-      </div>
-      {!closed[node.id] && <PageTree nodes={node.children} depth={depth + 1} onNavigate={onNavigate} />}
-    </div>
-  ))}</>;
-}
-
 export function ResearchSidebar({
-  tree,
-  tags,
   counts,
 }: {
-  tree: WikiTreeNode[];
-  tags: TagDto[];
   counts: { inbox: number; sources: number; unread: number; trash: number };
 }) {
   const t = useTranslations("wiki");
@@ -430,33 +384,16 @@ export function ResearchSidebar({
             aria-label={t("researchNavigationLabel")}
             className={cn("flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto", compact ? "p-2" : "p-3")}
           >
-            <NavItem href="/wiki/inbox" icon={Inbox} label={t("inbox")} badge={counts.inbox} compact={compact} onNavigate={onNavigate} />
+            <NavItem href="/wiki" icon={House} label={t("start")} compact={compact} onNavigate={onNavigate} />
             <NavItem href="/wiki/pages" icon={FileText} label={t("documents")} compact={compact} onNavigate={onNavigate} />
             <NavItem href="/wiki/sources" icon={LibraryBig} label={t("sources")} badge={counts.sources} compact={compact} onNavigate={onNavigate} />
-            <NavItem href="/wiki/favorites" icon={Star} label={t("favorites")} compact={compact} onNavigate={onNavigate} />
-            <NavItem href="/wiki/notifications" icon={Bell} label={t("notifications")} badge={counts.unread} compact={compact} onNavigate={onNavigate} />
-            <NavItem href="/wiki/trash" icon={Trash2} label={t("trash")} badge={counts.trash} compact={compact} onNavigate={onNavigate} />
-
-            {!compact && (
-              <div className="mt-3 border-t pt-3">
-                <p className="mb-1 flex items-center gap-1 px-2 text-[10px] font-semibold tracking-wider text-muted-foreground uppercase">
-                  <ArchiveRestore className="size-3" />{t("documentTree")}
-                </p>
-                <PageTree nodes={tree} onNavigate={onNavigate} />
-              </div>
-            )}
-            {!compact && tags.length > 0 && (
-              <div className="mt-3 border-t pt-3">
-                <p className="mb-1 flex items-center gap-1 px-2 text-[10px] font-semibold tracking-wider text-muted-foreground uppercase">
-                  <Hash className="size-3" />{t("tags")}
-                </p>
-                {tags.map((tag) => (
-                  <Link key={tag.id} href={`/wiki/tags/${tag.id}`} onClick={onNavigate} className="flex items-center gap-2 rounded px-2 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground">
-                    <span className="size-1.5 rounded-full bg-indigo-500" />{tag.name}
-                  </Link>
-                ))}
-              </div>
-            )}
+            <div className="mt-2 border-t pt-2">
+              {!compact && <p className="mb-1 px-2 text-[10px] font-semibold tracking-wider text-muted-foreground uppercase">{t("more")}</p>}
+              <NavItem href="/wiki/inbox" icon={Inbox} label={t("inbox")} badge={counts.inbox} compact={compact} onNavigate={onNavigate} />
+              <NavItem href="/wiki/favorites" icon={Star} label={t("favorites")} compact={compact} onNavigate={onNavigate} />
+              <NavItem href="/wiki/notifications" icon={Bell} label={t("notifications")} badge={counts.unread} compact={compact} onNavigate={onNavigate} />
+              <NavItem href="/wiki/trash" icon={Trash2} label={t("trash")} badge={counts.trash} compact={compact} onNavigate={onNavigate} />
+            </div>
           </nav>
         </div>
       </TooltipProvider>

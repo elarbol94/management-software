@@ -24,8 +24,12 @@ async function quickNote(page: Page, title: string, body: string) {
   await expect(page.getByRole("button", { name: title })).toBeVisible();
 }
 
+async function openEditorMore(page: Page) {
+  await page.getByRole("button", { name: "Mehr", exact: true }).last().click();
+}
+
 async function openWritingStyle(page: Page) {
-  await page.getByRole("button", { name: "Mehr", exact: true }).click();
+  await openEditorMore(page);
   await page.getByRole("menuitem", { name: /Schreibbild/ }).click();
 }
 
@@ -35,11 +39,36 @@ test("capture an inbox note and retain autosaved content", async ({ page }) => {
   await expect(page.getByText("Willkommen im Team! Erste Schritte für neue Kollegen.")).toBeVisible();
 });
 
+test("knowledge launchpad prioritizes search, writing, and sources", async ({ page }) => {
+  await login(page);
+  await page.goto("/wiki");
+
+  await expect(page.getByRole("heading", { name: "Was möchtest du heute wissen?" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Dokument schreiben" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Quelle hinzufügen" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Weiterarbeiten" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Zuletzt gelesen" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Alle Dokumente" })).toHaveAttribute("href", "/wiki/pages");
+  await expect(page.getByRole("link", { name: "Alle Quellen" })).toHaveAttribute("href", "/wiki/sources");
+
+  const search = page.getByRole("textbox", { name: "Dokumente und Quellen durchsuchen…" });
+  await search.fill("Onboarding");
+  await expect(page.getByRole("link", { name: /Onboarding/ }).first()).toBeVisible();
+
+  const navigation = page.getByTestId("research-sidebar");
+  await navigation.hover();
+  await expect(navigation.getByRole("link", { name: "Start" })).toBeVisible();
+  await expect(navigation.getByRole("link", { name: "Dokumente" })).toBeVisible();
+  await expect(navigation.getByRole("link", { name: "Quellen" })).toBeVisible();
+  await expect(navigation.getByText("Dokumentbaum")).toHaveCount(0);
+  await expect(navigation.getByText("Schlagwörter")).toHaveCount(0);
+});
+
 test("Markdown reference dialog opens from the editor toolbar and closes on Escape or outside click", async ({ page }) => {
   await login(page);
   await quickNote(page, `Markdown Reference ${Date.now()}`, "Toolbar help.");
 
-  await page.getByRole("button", { name: "Mehr", exact: true }).click();
+  await openEditorMore(page);
   await page.getByTestId("markdown-help-button").click();
   const dialog = page.getByTestId("markdown-reference-dialog");
   await expect(dialog).toBeVisible();
@@ -48,7 +77,7 @@ test("Markdown reference dialog opens from the editor toolbar and closes on Esca
   await page.keyboard.press("Escape");
   await expect(dialog).toBeHidden();
 
-  await page.getByRole("button", { name: "Mehr", exact: true }).click();
+  await openEditorMore(page);
   await page.getByTestId("markdown-help-button").click();
   await expect(dialog).toBeVisible();
   await page.locator('[data-slot="dialog-overlay"]').click({ position: { x: 4, y: 4 } });
@@ -133,10 +162,12 @@ test("document mode persists page layout, document blocks, templates, and PDF ex
   await login(page);
   await quickNote(page, "Funding application", "A structured project description.");
 
+  await openEditorMore(page);
   await page.getByTestId("document-mode-toggle").click();
   const panel = page.getByTestId("document-layout-panel");
   await expect(panel).toBeHidden();
-  await page.getByRole("button", { name: "Dokumentlayout anzeigen" }).click();
+  await openEditorMore(page);
+  await page.getByRole("menuitem", { name: "Dokumentlayout anzeigen" }).click();
   await expect(panel).toBeVisible();
   await expect(page.getByTestId("wiki-editor")).toHaveAttribute("data-document-mode", "true");
 
@@ -593,8 +624,9 @@ test("proofing language persists and spelling and writing issues use distinct st
     await login(page);
   }
   await quickNote(page, "Proofing language", "Feler grammar Zweii");
-  const toggle = page.getByTestId("proofing-language-toggle");
-  await expect(toggle).toContainText("DE");
+  await openEditorMore(page);
+  await expect(page.getByTestId("proofing-language-toggle")).toContainText("DE");
+  await page.keyboard.press("Escape");
   await expect(page.locator(".ProseMirror")).toHaveAttribute("spellcheck", "false");
   await expect(page.locator(".wiki-spellcheck-issue--spelling")).toHaveCount(2, { timeout: 10_000 });
   await expect(page.locator(".wiki-spellcheck-issue--writing")).toHaveCount(1);
@@ -610,9 +642,10 @@ test("proofing language persists and spelling and writing issues use distinct st
   await expect(page.locator(".wiki-spellcheck-issue--spelling")).toHaveCount(0, { timeout: 10_000 });
   await expect(page.locator(".wiki-spellcheck-issue--writing")).toHaveCount(1);
 
-  await toggle.click();
-  await expect(toggle).toContainText("EN");
+  await openEditorMore(page);
+  await page.getByTestId("proofing-language-toggle").click();
   await expect.poll(() => requestedLanguages.includes("en-US")).toBe(true);
   await page.reload();
+  await openEditorMore(page);
   await expect(page.getByTestId("proofing-language-toggle")).toContainText("EN");
 });

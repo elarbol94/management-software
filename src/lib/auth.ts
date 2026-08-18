@@ -15,8 +15,14 @@ function userCount(): number {
   return db.select({ value: count() }).from(schema.user).get()?.value ?? 0;
 }
 
+const trustedOrigins = process.env.BETTER_AUTH_TRUSTED_ORIGINS
+  ?.split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+
 export const auth = betterAuth({
   baseURL: process.env.BETTER_AUTH_URL ?? "http://localhost:3000",
+  trustedOrigins,
   database: drizzleAdapter(db, { provider: "sqlite", schema }),
   // Production enables Better Auth's in-memory limiter by default. The
   // production-mode browser suite deliberately performs many logins from one

@@ -14,6 +14,7 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 ENV NEXT_TELEMETRY_DISABLED=1
+ENV BETTER_AUTH_SECRET=build-only-secret-not-for-runtime
 # Build-time DB path so the build never touches a real database.
 ENV DATABASE_PATH=/tmp/build.db
 RUN npm run build

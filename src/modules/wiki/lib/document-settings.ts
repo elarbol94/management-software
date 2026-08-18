@@ -1,4 +1,5 @@
 import type { TiptapNode } from "./tiptap";
+import { proposalStarterContent } from "./proposal";
 
 export const DOCUMENT_SETTINGS_VERSION = 1 as const;
 
@@ -18,6 +19,12 @@ export type DocumentConstraint = {
   max?: number;
 };
 
+export type DocumentVariableDefinition = {
+  label: string;
+  type: "text" | "date" | "currency";
+  currency: string;
+};
+
 export type DocumentSettingsV1 = {
   version: typeof DOCUMENT_SETTINGS_VERSION;
   page: {
@@ -25,6 +32,7 @@ export type DocumentSettingsV1 = {
     orientation: DocumentOrientation;
     showMarginGuides: boolean;
     marginsMm: { top: number; right: number; bottom: number; left: number };
+    numberedHeadings?: boolean;
   };
   theme: {
     id: DocumentThemeId;
@@ -70,6 +78,11 @@ export type DocumentSettingsV1 = {
     heading: string;
     pageBreakBefore: boolean;
   };
+  tables: {
+    enabled: boolean;
+    heading: string;
+    pageBreakBefore: boolean;
+  };
   diagrams: {
     /** Redraw SVG label text in the document's body font. */
     matchFont: boolean;
@@ -89,6 +102,15 @@ export type DocumentSettingsV1 = {
     sizeScale: number;
   };
   variables: Record<string, string>;
+  variableDefinitions: Record<string, DocumentVariableDefinition>;
+  submission: {
+    maxWords: number | null;
+    requiredAnnexes: string[];
+    requireBudget: boolean;
+    requireSignature: boolean;
+    requireCitations: boolean;
+  };
+  workflow: { status: "draft" | "review" | "approved"; reviewer: string; approvedAt: string };
   constraints: DocumentConstraint[];
   metadata: {
     author: string;
@@ -116,7 +138,13 @@ export type DocumentPreflightIssue = {
     | "section-too-long"
     | "external-image"
     | "missing-image-alt"
-    | "wide-table";
+    | "wide-table"
+    | "word-limit"
+    | "missing-budget"
+    | "missing-signature"
+    | "missing-citation"
+    | "missing-annex"
+    | "broken-cross-reference";
   message: string;
   nodeId?: string;
 };
@@ -128,6 +156,7 @@ export const DEFAULT_DOCUMENT_SETTINGS: DocumentSettingsV1 = {
     orientation: "portrait",
     showMarginGuides: true,
     marginsMm: { top: 22, right: 20, bottom: 22, left: 24 },
+    numberedHeadings: false,
   },
   theme: {
     id: "formal",
@@ -144,6 +173,7 @@ export const DEFAULT_DOCUMENT_SETTINGS: DocumentSettingsV1 = {
   footer: { enabled: true, left: "{applicant}", center: "", right: "", pageNumbers: true, differentFirstPage: true, pageNumberStart: 1 },
   bibliography: { enabled: true, heading: "References", pageBreakBefore: true },
   figures: { enabled: false, heading: "List of figures", pageBreakBefore: true },
+  tables: { enabled: false, heading: "List of tables", pageBreakBefore: true },
   // Off by default: matching is a display-time override of artwork the author drew deliberately.
   diagrams: { matchFont: false, matchColor: false, sizeMode: "off", sizeScale: 1 },
   variables: {
@@ -152,7 +182,18 @@ export const DEFAULT_DOCUMENT_SETTINGS: DocumentSettingsV1 = {
     projectTitle: "",
     date: "",
     fundingPeriod: "",
+    totalBudget: "",
   },
+  variableDefinitions: {
+    applicant: { label: "Applicant", type: "text", currency: "EUR" },
+    programme: { label: "Programme", type: "text", currency: "EUR" },
+    projectTitle: { label: "Project title", type: "text", currency: "EUR" },
+    date: { label: "Date", type: "date", currency: "EUR" },
+    fundingPeriod: { label: "Funding period", type: "text", currency: "EUR" },
+    totalBudget: { label: "Total budget", type: "currency", currency: "EUR" },
+  },
+  submission: { maxWords: null, requiredAnnexes: [], requireBudget: false, requireSignature: false, requireCitations: false },
+  workflow: { status: "draft", reviewer: "", approvedAt: "" },
   constraints: [],
   metadata: { author: "", subject: "", keywords: "" },
 };
@@ -186,8 +227,11 @@ export function normalizeDocumentSettings(value: unknown): DocumentSettingsV1 {
   const footer = input.footer ?? fallback.footer;
   const bibliography = input.bibliography ?? fallback.bibliography;
   const figures = input.figures ?? fallback.figures;
+  const tables = input.tables ?? fallback.tables;
   const diagrams = input.diagrams ?? fallback.diagrams;
   const metadata = input.metadata ?? fallback.metadata;
+  const submission = input.submission ?? fallback.submission;
+  const workflow = input.workflow ?? fallback.workflow;
   const variables = input.variables && typeof input.variables === "object"
     ? Object.fromEntries(
         Object.entries(input.variables)
@@ -195,6 +239,17 @@ export function normalizeDocumentSettings(value: unknown): DocumentSettingsV1 {
           .map(([key, entry]) => [key, entry.slice(0, 2_000)]),
       )
     : fallback.variables;
+  const variableDefinitions = input.variableDefinitions && typeof input.variableDefinitions === "object"
+    ? Object.fromEntries(Object.entries(input.variableDefinitions).flatMap(([key, definition]) => {
+        if (!/^[A-Za-z][\w-]{0,49}$/.test(key) || !definition || typeof definition !== "object") return [];
+        const item = definition as Partial<DocumentVariableDefinition>;
+        return [[key, {
+          label: safeText(item.label, key),
+          type: (["text", "date", "currency"].includes(item.type ?? "") ? item.type : "text") as DocumentVariableDefinition["type"],
+          currency: typeof item.currency === "string" && /^[A-Z]{3}$/.test(item.currency) ? item.currency : "EUR",
+        } satisfies DocumentVariableDefinition]];
+      }))
+    : fallback.variableDefinitions;
   const constraints = Array.isArray(input.constraints)
     ? input.constraints.flatMap((constraint) => {
         if (!constraint || typeof constraint !== "object") return [];
@@ -224,6 +279,7 @@ export function normalizeDocumentSettings(value: unknown): DocumentSettingsV1 {
         bottom: finiteNumber(page.marginsMm?.bottom, fallback.page.marginsMm.bottom, 8, 50),
         left: finiteNumber(page.marginsMm?.left, fallback.page.marginsMm.left, 8, 50),
       },
+      numberedHeadings: page.numberedHeadings === true,
     },
     theme: {
       id: ["formal", "report", "concept", "custom"].includes(theme.id) ? theme.id : fallback.theme.id,
@@ -269,6 +325,11 @@ export function normalizeDocumentSettings(value: unknown): DocumentSettingsV1 {
       heading: safeText(figures.heading, fallback.figures.heading),
       pageBreakBefore: figures.pageBreakBefore !== false,
     },
+    tables: {
+      enabled: tables.enabled === true,
+      heading: safeText(tables.heading, fallback.tables.heading),
+      pageBreakBefore: tables.pageBreakBefore !== false,
+    },
     diagrams: {
       matchFont: diagrams.matchFont === true,
       matchColor: diagrams.matchColor === true,
@@ -279,6 +340,19 @@ export function normalizeDocumentSettings(value: unknown): DocumentSettingsV1 {
       sizeScale: finiteNumber(diagrams.sizeScale, fallback.diagrams.sizeScale, 0.25, 4),
     },
     variables: { ...fallback.variables, ...variables },
+    variableDefinitions: { ...fallback.variableDefinitions, ...variableDefinitions },
+    submission: {
+      maxWords: typeof submission.maxWords === "number" ? Math.max(1, Math.floor(submission.maxWords)) : null,
+      requiredAnnexes: Array.isArray(submission.requiredAnnexes) ? submission.requiredAnnexes.filter((item): item is string => typeof item === "string").slice(0, 30) : [],
+      requireBudget: submission.requireBudget === true,
+      requireSignature: submission.requireSignature === true,
+      requireCitations: submission.requireCitations === true,
+    },
+    workflow: {
+      status: ["draft", "review", "approved"].includes(workflow.status) ? workflow.status : "draft",
+      reviewer: safeText(workflow.reviewer),
+      approvedAt: safeText(workflow.approvedAt),
+    } as DocumentSettingsV1["workflow"],
     constraints,
     metadata: {
       author: safeText(metadata.author),
@@ -330,6 +404,12 @@ export function localizeDocumentSettings(
         ? "Abbildungsverzeichnis"
         : settings.figures.heading,
     },
+    tables: {
+      ...settings.tables,
+      heading: settings.tables.heading === "List of tables"
+        ? "Tabellenverzeichnis"
+        : settings.tables.heading,
+    },
   };
 }
 
@@ -356,7 +436,7 @@ export const BUILT_IN_DOCUMENT_TEMPLATES: DocumentTemplateDefinition[] = [
     name: "Formal application",
     description: "Serif headings, restrained blue accents and generous A4 margins.",
     settings: withTheme("formal", {}),
-    content: null,
+    content: proposalStarterContent("funding"),
     builtIn: true,
   },
   {
@@ -370,7 +450,7 @@ export const BUILT_IN_DOCUMENT_TEMPLATES: DocumentTemplateDefinition[] = [
       lineHeight: 1.45,
       accentColor: "#0F766E",
     }, { cover: { eyebrow: "PROJECT REPORT" } }),
-    content: null,
+    content: proposalStarterContent("project"),
     builtIn: true,
   },
   {
@@ -384,8 +464,26 @@ export const BUILT_IN_DOCUMENT_TEMPLATES: DocumentTemplateDefinition[] = [
       lineHeight: 1.6,
       accentColor: "#7C3AED",
     }, { cover: { eyebrow: "CONCEPT" }, header: { right: "{date}" } }),
-    content: null,
+    content: proposalStarterContent("business"),
     builtIn: true,
+  },
+  {
+    id: "client-proposal", name: "Client proposal",
+    description: "A concise offer with outcomes, scope, timeline, investment and acceptance.",
+    settings: withTheme("concept", { headingFont: "humanist", accentColor: "#2563EB" }, { cover: { eyebrow: "PROPOSAL" } }),
+    content: proposalStarterContent("client"), builtIn: true,
+  },
+  {
+    id: "investor-memo", name: "Investor memo",
+    description: "A decision-focused narrative covering traction, market, team and the funding ask.",
+    settings: withTheme("report", { headingFont: "system", accentColor: "#7C3AED" }, { cover: { eyebrow: "INVESTMENT MEMO" } }),
+    content: proposalStarterContent("investor"), builtIn: true,
+  },
+  {
+    id: "partnership-proposal", name: "Partnership proposal",
+    description: "A practical joint plan with contributions, governance, work packages and commercials.",
+    settings: withTheme("formal", { accentColor: "#0F766E" }, { cover: { eyebrow: "PARTNERSHIP PROPOSAL" } }),
+    content: proposalStarterContent("partnership"), builtIn: true,
   },
 ];
 
@@ -404,11 +502,27 @@ export function collectDocumentPreflightIssues(
   const issues: DocumentPreflightIssue[] = [];
   const headingSections = new Map<string, string>();
   let activeHeadingId = "";
+  let wordCount = 0;
+  let citationCount = 0;
+  let budgetCount = 0;
+  let signatureCount = 0;
+  const annexes = new Set<string>();
+  const targets = new Set<string>();
+  const references: Array<{ targetId: string; index: number }> = [];
 
   function walk(node: TiptapNode) {
+    if (node.text) wordCount += node.text.trim().split(/\s+/).filter(Boolean).length;
+    if (node.type === "citation") citationCount += 1;
+    if (node.type === "signatureBlock") signatureCount += 1;
+    if (node.type === "annexMarker") {
+      const annexId = String(node.attrs?.annexId ?? "");
+      if (annexId) { annexes.add(annexId); targets.add(annexId); }
+    }
+    if (node.type === "crossReference") references.push({ targetId: String(node.attrs?.targetId ?? ""), index: references.length });
+    if (node.type === "markdownTable" && String(node.attrs?.tableId ?? "").startsWith("budget-")) budgetCount += 1;
     if (node.type === "heading") {
       activeHeadingId = typeof node.attrs?.id === "string" ? node.attrs.id : "";
-      if (activeHeadingId) headingSections.set(activeHeadingId, "");
+      if (activeHeadingId) { headingSections.set(activeHeadingId, ""); targets.add(activeHeadingId); }
     } else if (activeHeadingId) {
       headingSections.set(activeHeadingId, `${headingSections.get(activeHeadingId) ?? ""} ${nodeText(node)}`.trim());
     }
@@ -463,6 +577,13 @@ export function collectDocumentPreflightIssues(
     for (const child of node.content ?? []) walk(child);
   }
   walk(doc);
+
+  if (settings.submission.maxWords && wordCount > settings.submission.maxWords) issues.push({ id: "submission:words", severity: "error", code: "word-limit", message: `Document has ${wordCount} words; maximum is ${settings.submission.maxWords}.` });
+  if (settings.submission.requireBudget && budgetCount === 0) issues.push({ id: "submission:budget", severity: "error", code: "missing-budget", message: "A budget table is required." });
+  if (settings.submission.requireSignature && signatureCount === 0) issues.push({ id: "submission:signature", severity: "error", code: "missing-signature", message: "A signature block is required." });
+  if (settings.submission.requireCitations && citationCount === 0) issues.push({ id: "submission:citation", severity: "error", code: "missing-citation", message: "At least one source citation is required." });
+  for (const required of settings.submission.requiredAnnexes) if (!annexes.has(required)) issues.push({ id: `submission:annex:${required}`, severity: "error", code: "missing-annex", message: `Required annex "${required}" is missing.` });
+  for (const reference of references) if (!reference.targetId || !targets.has(reference.targetId)) issues.push({ id: `reference:${reference.index}`, severity: "warning", code: "broken-cross-reference", message: `Cross-reference target "${reference.targetId || "(empty)"}" does not exist.` });
 
   for (const constraint of settings.constraints) {
     const section = headingSections.get(constraint.headingId);

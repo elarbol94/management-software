@@ -12,6 +12,8 @@ services:
       BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET}
       # Public URL of the app (behind your reverse proxy).
       BETTER_AUTH_URL: ${BETTER_AUTH_URL:-https://startup.elarbol.me}
+      # Extra trusted browser origins, for example a local development proxy.
+      BETTER_AUTH_TRUSTED_ORIGINS: ${BETTER_AUTH_TRUSTED_ORIGINS:-}
       # Internal-only endpoint; never expose LanguageTool on a host port.
       LANGUAGETOOL_URL: ${LANGUAGETOOL_URL:-http://languagetool:8010}
       # Optional AI-assisted calendar import; deterministic parsing remains the fallback.

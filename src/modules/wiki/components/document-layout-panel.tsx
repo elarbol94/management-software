@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import type { Editor } from "@tiptap/react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
@@ -28,6 +28,7 @@ import {
   type DocumentSettingsV1,
 } from "../lib/document-settings";
 import type { OutlineItem } from "./editor-tools";
+import { formatEuro, proposalSectionSnippet, proposalTable, type ProposalWorkspaceData } from "../lib/proposal";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -42,6 +43,8 @@ type Props = {
   issues: DocumentPreflightIssue[];
   outline: OutlineItem[];
   figureCount: number;
+  tableCount: number;
+  proposalData: ProposalWorkspaceData;
   onOpenTypographySettings: () => void;
   onClose: () => void;
 };
@@ -69,6 +72,8 @@ export function DocumentLayoutPanel({
   issues,
   outline,
   figureCount,
+  tableCount,
+  proposalData,
   onOpenTypographySettings,
   onClose,
 }: Props) {
@@ -80,6 +85,37 @@ export function DocumentLayoutPanel({
   const [includeContent, setIncludeContent] = useState(false);
   const [constraintHeading, setConstraintHeading] = useState(outline[0]?.id ?? "");
   const [constraintLimit, setConstraintLimit] = useState("1000");
+  const [referenceTarget, setReferenceTarget] = useState(outline[0]?.id ?? "");
+  const [fundingProjectId, setFundingProjectId] = useState(proposalData.fundingProjects[0]?.id ?? "");
+  const [docxStatus, setDocxStatus] = useState<"idle" | "importing" | "error">("idle");
+  const [selectionVersion, setSelectionVersion] = useState(0);
+
+  useEffect(() => {
+    const refreshSelection = () => setSelectionVersion((value) => value + 1);
+    editor.on("selectionUpdate", refreshSelection);
+    editor.on("transaction", refreshSelection);
+    return () => {
+      editor.off("selectionUpdate", refreshSelection);
+      editor.off("transaction", refreshSelection);
+    };
+  }, [editor]);
+
+  function selectedAncestor(type: string) {
+    const { $from } = editor.state.selection;
+    for (let depth = $from.depth; depth > 0; depth -= 1) {
+      if ($from.node(depth).type.name === type) return { node: $from.node(depth), pos: $from.before(depth) };
+    }
+    return null;
+  }
+
+  const localizedVariableLabels: Record<string, string> = {
+    applicant: t("fields.applicant"), programme: t("fields.programme"), projectTitle: t("fields.projectTitle"),
+    date: t("fields.date"), fundingPeriod: t("fields.fundingPeriod"), totalBudget: t("fields.totalBudget"),
+  };
+
+  const selectedTable = selectedAncestor("markdownTable");
+  const selectedHeading = selectedAncestor("heading");
+  void selectionVersion;
 
   const effectiveConstraintHeading = outline.some((item) => item.id === constraintHeading)
     ? constraintHeading
@@ -97,8 +133,38 @@ export function DocumentLayoutPanel({
     patchPage({ marginsMm: { ...settings.page.marginsMm, [key]: value } });
   }
 
+  function insertProposalTable(kind: Parameters<typeof proposalTable>[0], rows?: string[][]) {
+    editor.chain().focus().insertContent(proposalTable(kind, rows) as never).run();
+  }
+
+  function updateSelectedNode(position: number, attrs: Record<string, unknown>) {
+    editor.chain().focus().command(({ tr }) => {
+      const node = tr.doc.nodeAt(position);
+      if (!node) return false;
+      tr.setNodeMarkup(position, undefined, { ...node.attrs, ...attrs });
+      return true;
+    }).run();
+  }
+
+  function insertSnippet(kind: Parameters<typeof proposalSectionSnippet>[0]) {
+    editor.chain().focus().insertContent(proposalSectionSnippet(kind) as never).run();
+  }
+
   function insertVariable(key: string) {
     editor.chain().focus().insertContent({ type: "documentVariable", attrs: { key, label: key } }).run();
+  }
+
+  async function importDocx(file: File | undefined) {
+    if (!file) return;
+    setDocxStatus("importing");
+    try {
+      const form = new FormData(); form.set("file", file);
+      const response = await fetch("/api/wiki/docx/import", { method: "POST", body: form });
+      if (!response.ok) throw new Error("DOCX import failed");
+      const result = await response.json() as { document: object };
+      editor.commands.setContent(result.document);
+      setDocxStatus("idle");
+    } catch { setDocxStatus("error"); }
   }
 
   function applySelectedTemplate() {
@@ -180,6 +246,9 @@ export function DocumentLayoutPanel({
           <div className="rounded-lg border bg-muted/30 px-2.5 py-1.5">
             <Toggle checked={settings.page.showMarginGuides} onChange={(showMarginGuides) => patchPage({ showMarginGuides })} label={t("showMarginGuides")} />
           </div>
+          <div className="rounded-lg border bg-muted/30 px-2.5 py-1.5">
+            <Toggle checked={settings.page.numberedHeadings === true} onChange={(numberedHeadings) => patchPage({ numberedHeadings })} label={t("numberedHeadings")} />
+          </div>
         </section>
 
         <section className="space-y-2 border-t pt-3">
@@ -221,6 +290,11 @@ export function DocumentLayoutPanel({
             <Field label={t("figureIndexHeading")}><Input className="h-8" value={settings.figures.heading} onChange={(event) => patch({ figures: { ...settings.figures, heading: event.target.value } })} /></Field>
             <p className="text-[11px] text-muted-foreground">{t("figureIndexCount", { count: figureCount })}</p>
           </div>}
+          <Toggle checked={settings.tables.enabled} onChange={(enabled) => patch({ tables: { ...settings.tables, enabled } })} label={t("tableIndex")} />
+          {settings.tables.enabled && <div className="grid gap-2 rounded-lg border bg-muted/35 p-2">
+            <Field label={t("tableIndexHeading")}><Input className="h-8" value={settings.tables.heading} onChange={(event) => patch({ tables: { ...settings.tables, heading: event.target.value } })} /></Field>
+            <p className="text-[11px] text-muted-foreground">{t("tableIndexCount", { count: tableCount })}</p>
+          </div>}
           <Toggle checked={settings.diagrams.matchFont} onChange={(matchFont) => patch({ diagrams: { ...settings.diagrams, matchFont } })} label={t("diagramMatchFont")} />
           <Toggle checked={settings.diagrams.matchColor} onChange={(matchColor) => patch({ diagrams: { ...settings.diagrams, matchColor } })} label={t("diagramMatchColor")} />
           <Field label={t("diagramSizeMode")}>
@@ -255,11 +329,62 @@ export function DocumentLayoutPanel({
         </section>
 
         <section className="space-y-2 border-t pt-3">
+          <p className="text-[11px] font-semibold tracking-wide uppercase">{t("proposal.snippets")}</p>
+          <div className="grid grid-cols-2 gap-2">
+            {(["executiveSummary", "objectives", "deliverables", "assumptions", "decision"] as const).map((kind) => <Button key={kind} type="button" size="sm" variant="outline" className="justify-start" onClick={() => insertSnippet(kind)}>{t("proposal.snippet_" + kind)}</Button>)}
+          </div>
+        </section>
+
+        <section className="space-y-2 border-t pt-3">
+          <p className="text-[11px] font-semibold tracking-wide uppercase">{t("proposal.blocks")}</p>
+          <div className="grid grid-cols-2 gap-2">
+            {(["budget", "workPackages", "timeline", "risks", "kpis", "generic"] as const).map((kind) => <Button key={kind} type="button" size="sm" variant="outline" className="justify-start" onClick={() => insertProposalTable(kind)}>{t(`proposal.${kind}`)}</Button>)}
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            {(["info", "decision", "warning", "assumption"] as const).map((kind) => <Button key={kind} type="button" size="sm" variant="outline" onClick={() => editor.chain().focus().insertContent({ type: "proposalCallout", attrs: { kind, title: t("proposal.callout_" + kind) }, content: [{ type: "paragraph" }] }).run()}>{t("proposal.callout_" + kind)}</Button>)}
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <Button type="button" size="sm" variant="outline" onClick={() => editor.chain().focus().insertContent({ type: "annexMarker", attrs: { annexId: crypto.randomUUID(), title: t("proposal.annex") } }).run()}>{t("proposal.annex")}</Button>
+            <Button type="button" size="sm" variant="outline" onClick={() => editor.chain().focus().insertContent({ type: "signatureBlock", attrs: { name: settings.cover.author, role: "", location: "", date: settings.cover.date } }).run()}>{t("proposal.signature")}</Button>
+          </div>
+          {outline.length > 0 && <div className="flex gap-1">
+            <Select value={referenceTarget} onValueChange={(value) => setReferenceTarget(value ?? "")}><SelectTrigger className="h-8 min-w-0 flex-1"><SelectValue placeholder={t("proposal.reference")} /></SelectTrigger><SelectContent>{outline.map((item) => <SelectItem key={`${item.id}-${item.position}`} value={item.id}>{item.text}</SelectItem>)}</SelectContent></Select>
+            <Button type="button" size="sm" variant="outline" disabled={!referenceTarget} onClick={() => editor.chain().focus().insertContent({ type: "crossReference", attrs: { targetId: referenceTarget, label: outline.find((item) => item.id === referenceTarget)?.text || t("proposal.reference") } }).run()}>{t("proposal.insert")}</Button>
+          </div>}
+        </section>
+
+        {(selectedTable || selectedHeading) && <section className="space-y-2 border-t pt-3">
+          <p className="text-[11px] font-semibold tracking-wide uppercase">{t("proposal.selection")}</p>
+          {selectedTable && <div className="grid gap-2 rounded-lg border bg-muted/25 p-2">
+            <Field label={t("proposal.tableCaption")}><Input className="h-8" value={String(selectedTable.node.attrs.caption ?? "")} onChange={(event) => updateSelectedNode(selectedTable.pos, { caption: event.target.value })} placeholder={t("proposal.tableCaptionPlaceholder")} /></Field>
+            <Toggle checked={selectedTable.node.attrs.includeInTableIndex !== false} onChange={(includeInTableIndex) => updateSelectedNode(selectedTable.pos, { includeInTableIndex })} label={t("proposal.includeTableIndex")} />
+          </div>}
+          {selectedHeading && <div className="grid gap-2 rounded-lg border bg-muted/25 p-2">
+            <Field label={t("proposal.sectionOwner")}><Input className="h-8" value={String(selectedHeading.node.attrs.sectionOwner ?? "")} onChange={(event) => updateSelectedNode(selectedHeading.pos, { sectionOwner: event.target.value })} /></Field>
+            <Field label={t("proposal.sectionStatus")}><Select value={String(selectedHeading.node.attrs.sectionStatus ?? "open")} onValueChange={(value) => value && updateSelectedNode(selectedHeading.pos, { sectionStatus: value })}><SelectTrigger className="h-8"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="open">{t("proposal.sectionOpen")}</SelectItem><SelectItem value="writing">{t("proposal.sectionWriting")}</SelectItem><SelectItem value="review">{t("proposal.sectionReview")}</SelectItem><SelectItem value="done">{t("proposal.sectionDone")}</SelectItem></SelectContent></Select></Field>
+            <Field label={t("proposal.sectionDueDate")}><Input className="h-8" type="date" value={String(selectedHeading.node.attrs.sectionDueDate ?? "")} onChange={(event) => updateSelectedNode(selectedHeading.pos, { sectionDueDate: event.target.value })} /></Field>
+          </div>}
+        </section>}
+
+        <section className="space-y-2 border-t pt-3">
+          <p className="text-[11px] font-semibold tracking-wide uppercase">{t("proposal.liveData")}</p>
+          <Button type="button" size="sm" variant="outline" className="w-full justify-start" disabled={!proposalData.company.name} onClick={() => patch({ cover: { ...settings.cover, organization: proposalData.company.name }, variables: { ...settings.variables, applicant: proposalData.company.name, companyAddress: proposalData.company.address, companyUid: proposalData.company.uid } })}>{t("proposal.company", { name: proposalData.company.name || "—" })}</Button>
+          <Button type="button" size="sm" variant="outline" className="w-full justify-start" disabled={!proposalData.people.length} onClick={() => insertProposalTable("team", [[t("proposal.name"), t("proposal.role"), t("proposal.responsibility")], ...proposalData.people.map((person) => [person.name, person.role, ""])])}>{t("proposal.team", { count: proposalData.people.length })}</Button>
+          {proposalData.fundingProjects.length > 0 && <div className="flex gap-1">
+            <Select value={fundingProjectId} onValueChange={(value) => setFundingProjectId(value ?? "")}><SelectTrigger className="h-8 min-w-0 flex-1"><SelectValue /></SelectTrigger><SelectContent>{proposalData.fundingProjects.map((project) => <SelectItem key={project.id} value={project.id}>{project.name}</SelectItem>)}</SelectContent></Select>
+            <Button type="button" size="sm" variant="outline" onClick={() => { const project = proposalData.fundingProjects.find((item) => item.id === fundingProjectId); if (!project) return; patch({ variables: { ...settings.variables, projectTitle: project.name, programme: project.programme, fundingPeriod: [project.start, project.end].filter(Boolean).join(" – ") } }); insertProposalTable("budget", [[t("proposal.project"), t("proposal.programme"), t("proposal.totalCost"), t("proposal.funding")], [project.name, project.programme || project.fundingBody, formatEuro(project.totalCostCents), formatEuro(project.approvedFundingCents)]]); }}>{t("proposal.insert")}</Button>
+          </div>}
+        </section>
+
+        <section className="space-y-2 border-t pt-3">
           <p className="flex items-center gap-1 text-[11px] font-semibold tracking-wide uppercase"><Variable className="size-3" />{t("variables")}</p>
-          {Object.entries(settings.variables).map(([key, value]) => <div key={key} className="grid grid-cols-[1fr_auto] gap-1">
-            <Input className="h-8 text-xs" value={value} placeholder={key} onChange={(event) => patch({ variables: { ...settings.variables, [key]: event.target.value } })} />
-            <Button type="button" size="icon" variant="ghost" aria-label={t("insertVariable", { key })} onClick={() => insertVariable(key)}><Plus /></Button>
-          </div>)}
+          {Object.entries(settings.variables).map(([key, value]) => {
+            const definition = settings.variableDefinitions[key] ?? { label: key, type: "text", currency: "EUR" as const };
+            return <div key={key} className="grid grid-cols-[1fr_auto] gap-1">
+              <Field label={localizedVariableLabels[key] ?? definition.label}><Input className="h-8 text-xs" type={definition.type === "date" ? "date" : definition.type === "currency" ? "number" : "text"} step={definition.type === "currency" ? "0.01" : undefined} value={value} placeholder={definition.type === "currency" ? definition.currency : key} onChange={(event) => patch({ variables: { ...settings.variables, [key]: event.target.value } })} /></Field>
+              <Button type="button" size="icon" variant="ghost" className="mt-4" aria-label={t("insertVariable", { key })} onClick={() => insertVariable(key)}><Plus /></Button>
+            </div>;
+          })}
         </section>
 
         <section className="space-y-2 border-t pt-3">
@@ -285,6 +410,13 @@ export function DocumentLayoutPanel({
             <SelectContent>{templates.map((template) => <SelectItem key={template.id} value={template.id}>{template.name}</SelectItem>)}</SelectContent>
           </Select>
           <Button type="button" size="sm" className="w-full" disabled={pending || !templateId} onClick={applySelectedTemplate}><FilePlus2 />{t("applyTemplate")}</Button>
+          <label className="flex h-8 cursor-pointer items-center justify-center rounded-md border px-3 text-xs font-medium hover:bg-accent">
+            <input type="file" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document" className="sr-only" onChange={(event) => { void importDocx(event.target.files?.[0]); event.currentTarget.value = ""; }} />
+            {docxStatus === "importing" ? t("proposal.importingDocx") : t("proposal.importDocx")}
+          </label>
+          {docxStatus === "error" && <p className="text-[11px] text-destructive">{t("proposal.importDocxError")}</p>}
+          <Button nativeButton={false} render={<a href={`/api/wiki/pages/${pageId}/export?format=docx`} />} type="button" size="sm" variant="outline" className="w-full">{t("proposal.exportDocx")}</Button>
+
           <Field label={t("templateName")}><Input className="h-8" value={templateName} onChange={(event) => setTemplateName(event.target.value)} /></Field>
           <Toggle checked={includeContent} onChange={setIncludeContent} label={t("includeContent")} />
           <Button type="button" size="sm" variant="outline" className="w-full" disabled={pending || !templateName.trim()} onClick={saveTemplate}><Save />{t("saveTemplate")}</Button>
@@ -292,6 +424,27 @@ export function DocumentLayoutPanel({
       </TabsContent>
 
       <TabsContent value="check" className="space-y-2 p-3">
+        <section className="space-y-2 rounded-lg border bg-muted/25 p-2.5">
+          <p className="text-[11px] font-semibold tracking-wide uppercase">{t("proposal.submissionRules")}</p>
+          <Field label={t("proposal.maxWords")}><Input className="h-8" type="number" min={1} value={settings.submission.maxWords ?? ""} onChange={(event) => patch({ submission: { ...settings.submission, maxWords: event.target.value ? Number(event.target.value) : null } })} /></Field>
+          <Toggle checked={settings.submission.requireBudget} onChange={(requireBudget) => patch({ submission: { ...settings.submission, requireBudget } })} label={t("proposal.requireBudget")} />
+          <Toggle checked={settings.submission.requireCitations} onChange={(requireCitations) => patch({ submission: { ...settings.submission, requireCitations } })} label={t("proposal.requireCitations")} />
+          <Toggle checked={settings.submission.requireSignature} onChange={(requireSignature) => patch({ submission: { ...settings.submission, requireSignature } })} label={t("proposal.requireSignature")} />
+          <Field label={t("proposal.requiredAnnexes")}><Input className="h-8" value={settings.submission.requiredAnnexes.join(", ")} onChange={(event) => patch({ submission: { ...settings.submission, requiredAnnexes: event.target.value.split(",").map((item) => item.trim()).filter(Boolean) } })} /></Field>
+        </section>
+        <section className="space-y-2 rounded-lg border bg-muted/25 p-2.5">
+          <p className="text-[11px] font-semibold tracking-wide uppercase">{t("proposal.workflow")}</p>
+          <Select value={settings.workflow.status} onValueChange={(value) => value && patch({ workflow: { ...settings.workflow, status: value as DocumentSettingsV1["workflow"]["status"], approvedAt: value === "approved" ? new Date().toISOString() : "" } })}><SelectTrigger className="h-8"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="draft">{t("proposal.draft")}</SelectItem><SelectItem value="review">{t("proposal.inReview")}</SelectItem><SelectItem value="approved">{t("proposal.approved")}</SelectItem></SelectContent></Select>
+          <Field label={t("proposal.reviewer")}><Input className="h-8" value={settings.workflow.reviewer} onChange={(event) => patch({ workflow: { ...settings.workflow, reviewer: event.target.value } })} /></Field>
+          <div className="grid grid-cols-2 gap-2">
+            <Button type="button" size="sm" variant="outline" disabled={editor.state.selection.empty} onClick={() => editor.chain().focus().setMark("proposalSuggestion", { kind: "insert", author: settings.workflow.reviewer, createdAt: new Date().toISOString() }).run()}>{t("proposal.suggestInsert")}</Button>
+            <Button type="button" size="sm" variant="outline" disabled={editor.state.selection.empty} onClick={() => editor.chain().focus().setMark("proposalSuggestion", { kind: "delete", author: settings.workflow.reviewer, createdAt: new Date().toISOString() }).run()}>{t("proposal.suggestDelete")}</Button>
+            <Button type="button" size="sm" variant="outline" disabled={editor.state.selection.empty} onClick={() => editor.chain().focus().unsetMark("proposalSuggestion", { extendEmptyMarkRange: true }).run()}>{t("proposal.acceptChange")}</Button>
+            <Button type="button" size="sm" variant="outline" disabled={editor.state.selection.empty} onClick={() => { if (editor.isActive("proposalSuggestion", { kind: "insert" })) editor.chain().focus().deleteSelection().run(); else editor.chain().focus().unsetMark("proposalSuggestion", { extendEmptyMarkRange: true }).run(); }}>{t("proposal.rejectChange")}</Button>
+          </div>
+
+        </section>
+
         <div className={`flex items-center gap-2 rounded-lg border p-2.5 text-xs ${issues.some((issue) => issue.severity === "error") ? "border-amber-300 bg-amber-50 text-amber-950 dark:bg-amber-950/20 dark:text-amber-100" : "border-emerald-200 bg-emerald-50 text-emerald-950 dark:bg-emerald-950/20 dark:text-emerald-100"}`}>
           {issues.length ? <AlertTriangle className="size-4 shrink-0" /> : <CheckCircle2 className="size-4 shrink-0" />}
           <span>{issues.length ? t("issuesCount", { count: issues.length }) : t("ready")}</span>

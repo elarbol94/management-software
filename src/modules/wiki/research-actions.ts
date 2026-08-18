@@ -465,13 +465,17 @@ export async function searchResearch(query: string) {
     FROM wiki_pages_fts f JOIN wiki_pages p ON p.id = f.page_id
     WHERE wiki_pages_fts MATCH ? AND p.deleted_at IS NULL ORDER BY rank LIMIT 10`).all(fts);
   const sources = sqlite.prepare(`SELECT s.id, s.title, s.type, s.issued_date AS issuedDate,
-    snippet(wiki_sources_fts, 4, '<mark>', '</mark>', '…', 12) AS snippet
+    snippet(wiki_sources_fts, 4, '<mark>', '</mark>', '…', 12) AS snippet,
+    (SELECT d.id FROM wiki_pdf_documents d
+     WHERE d.source_id = s.id AND d.status = 'ready'
+     ORDER BY CASE WHEN d.role = 'primary' THEN 0 ELSE 1 END, d.created_at ASC
+     LIMIT 1) AS documentId
     FROM wiki_sources_fts f JOIN wiki_sources s ON s.id = f.source_id
     WHERE wiki_sources_fts MATCH ? AND s.deleted_at IS NULL ORDER BY rank LIMIT 10`).all(fts);
   const pdfPages = searchPdfPageText(clean, 15);
   return { pages, sources, pdfPages } as {
     pages: Array<{ id: string; title: string; slug: string; status: string; snippet: string }>;
-    sources: Array<{ id: string; title: string; type: string; issuedDate: string; snippet: string }>;
+    sources: Array<{ id: string; title: string; type: string; issuedDate: string; snippet: string; documentId: string | null }>;
     pdfPages: Array<{ documentId: string; sourceId: string; pageNumber: number; sourceTitle: string; snippet: string }>;
   };
 }

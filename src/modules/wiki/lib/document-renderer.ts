@@ -53,6 +53,7 @@ export type RenderDocumentInput = {
   typography?: WikiTypographySettingsV1;
   /** Word in front of a figure number, so a German export does not read "Figure 1.". */
   figureLabel?: string;
+  tableLabel?: string;
 };
 
 export type RenderedDocument = {
@@ -99,6 +100,7 @@ function renderMarks(text: string, marks: TiptapNode["marks"]) {
       case "link": return `<a href="${safeHref(mark.attrs?.href)}">${html}</a>`;
       // Comment/search marks are editor state, not publication content.
       case "comment": return html;
+      case "proposalSuggestion": return mark.attrs?.kind === "delete" ? "" : html;
       default: return html;
     }
   }, escapeHtml(text));
@@ -135,9 +137,30 @@ function collectFigures(doc: TiptapNode) {
   return figures;
 }
 
+function collectTables(doc: TiptapNode) {
+  const tables: Array<{ tableId: string; caption: string }> = [];
+  function walk(node: TiptapNode) {
+    if (node.type === "markdownTable" && node.attrs?.includeInTableIndex !== false) {
+      const caption = String(node.attrs?.caption ?? "").trim();
+      if (caption) tables.push({ tableId: String(node.attrs?.tableId ?? ""), caption });
+    }
+    for (const child of node.content ?? []) walk(child);
+  }
+  walk(doc);
+  return tables;
+}
+
 function variableValue(node: TiptapNode, settings: DocumentSettingsV1) {
   const key = String(node.attrs?.key ?? "");
-  return settings.variables[key] ?? "";
+  const value = settings.variables[key] ?? "";
+  const definition = settings.variableDefinitions[key];
+  if (!value || !definition) return value;
+  if (definition.type === "date" && /^\d{4}-\d{2}-\d{2}$/.test(value)) return new Intl.DateTimeFormat("de-AT", { day: "2-digit", month: "2-digit", year: "numeric" }).format(new Date(value + "T12:00:00"));
+  if (definition.type === "currency") {
+    const amount = Number(value.replace(",", "."));
+    if (Number.isFinite(amount)) return new Intl.NumberFormat("de-AT", { style: "currency", currency: definition.currency }).format(amount);
+  }
+  return value;
 }
 
 async function renderNode(
@@ -145,9 +168,10 @@ async function renderNode(
   input: RenderDocumentInput,
   headings: ReturnType<typeof collectHeadings>,
   figures: ReturnType<typeof collectFigures>,
+  tables: ReturnType<typeof collectTables>,
 ): Promise<string> {
   const children = async () => (await Promise.all(
-    (node.content ?? []).map((child) => renderNode(child, input, headings, figures)),
+    (node.content ?? []).map((child) => renderNode(child, input, headings, figures, tables)),
   )).join("");
   const attrs = node.attrs ?? {};
   const keepAttrs = [
@@ -234,8 +258,12 @@ async function renderNode(
       const rows = node.content ?? [];
       const headerRows = rows.filter((row) => row.content?.some((cell) => cell.type === "markdownTableHeader"));
       const bodyRows = rows.filter((row) => !headerRows.includes(row));
-      const renderRows = async (items: TiptapNode[]) => (await Promise.all(items.map((row) => renderNode(row, input, headings, figures)))).join("");
-      return `<div class="table-wrap" ${keepAttrs}><table>${headerRows.length ? `<thead>${await renderRows(headerRows)}</thead>` : ""}<tbody>${await renderRows(bodyRows)}</tbody></table></div>`;
+      const renderRows = async (items: TiptapNode[]) => (await Promise.all(items.map((row) => renderNode(row, input, headings, figures, tables)))).join("");
+      const caption = String(attrs.caption ?? "").trim();
+      const tableNumber = tables.findIndex((table) => table.tableId && table.tableId === String(attrs.tableId ?? "")) + 1;
+      const tableId = tableNumber ? " id=\"table-" + tableNumber + "\"" : "";
+      const label = tableNumber && input.settings.tables.enabled ? "<span class=\"table-number\">" + escapeHtml(input.tableLabel ?? "Table") + " " + tableNumber + ".</span> " : "";
+      return "<div" + tableId + " class=\"table-wrap\" " + keepAttrs + ">" + (caption ? "<p class=\"table-caption\">" + label + escapeHtml(caption) + "</p>" : "") + "<table>" + (headerRows.length ? "<thead>" + await renderRows(headerRows) + "</thead>" : "") + "<tbody>" + await renderRows(bodyRows) + "</tbody></table></div>";
     }
     case "markdownTableRow":
       return `<tr>${await children()}</tr>`;
@@ -260,6 +288,14 @@ async function renderNode(
         ? `<span class="document-variable">${escapeHtml(value)}</span>`
         : `<span class="document-variable unresolved">${escapeHtml(`{${attrs.key || "variable"}}`)}</span>`;
     }
+    case "crossReference":
+      return `<a class="cross-reference" href="#${escapeHtml(attrs.targetId)}">${escapeHtml(attrs.label || "Reference")}</a>`;
+    case "annexMarker":
+      return `<section id="${escapeHtml(attrs.annexId)}" class="annex"><h1>${escapeHtml(attrs.title || "Annex")}</h1></section>`;
+    case "signatureBlock":
+      return `<section class="signature"><span>${escapeHtml([attrs.location, attrs.date].filter(Boolean).join(", "))}</span><strong>${escapeHtml(attrs.name || "Signature")}</strong><small>${escapeHtml(attrs.role || "")}</small></section>`;
+    case "proposalCallout":
+      return "<aside class=\"proposal-callout proposal-callout-" + escapeHtml(attrs.kind || "info") + "\">" + (attrs.title ? "<strong>" + escapeHtml(attrs.title) + "</strong>" : "") + await children() + "</aside>";
     case "layoutSection": {
       const columns = clampNumber(attrs.columns, 2, 1, 2);
       const gap = clampNumber(attrs.gapMm, 8, 4, 20);
@@ -310,6 +346,13 @@ function printCss(settings: DocumentSettingsV1, typography: WikiTypographySettin
     .cover h1 { max-width: 150mm; margin: var(--heading-before) 0 var(--heading-after); font-family: var(--heading); font-size: var(--h1-size); font-weight: 650; line-height: var(--heading-line-height); letter-spacing: -.025em; color: var(--ink); }
     .cover .subtitle { max-width: 125mm; margin: 0; color: var(--muted); font-size: 14pt; }
     .cover .meta { margin-top: 22mm; padding-top: 5mm; border-top: .7pt solid color-mix(in srgb, var(--accent) 30%, transparent); color: var(--muted); font-size: 9pt; }
+    article.numbered-headings { counter-reset: h1; }
+    article.numbered-headings h1 { counter-reset: h2; counter-increment: h1; }
+    article.numbered-headings h2 { counter-reset: h3; counter-increment: h2; }
+    article.numbered-headings h3 { counter-increment: h3; }
+    article.numbered-headings h1::before { content: counter(h1) ". "; }
+    article.numbered-headings h2::before { content: counter(h1) "." counter(h2) " "; }
+    article.numbered-headings h3::before { content: counter(h1) "." counter(h2) "." counter(h3) " "; }
     h1, h2, h3, h4, h5, h6 { margin: var(--heading-before) 0 var(--heading-after); color: var(--ink); font-family: var(--heading); line-height: var(--heading-line-height); break-after: avoid; page-break-after: avoid; }
     h1 { font-size: var(--h1-size); letter-spacing: -.02em; }
     h2 { border-top: .6pt solid color-mix(in srgb, var(--accent) 24%, transparent); font-size: var(--h2-size); }
@@ -339,6 +382,13 @@ function printCss(settings: DocumentSettingsV1, typography: WikiTypographySettin
     .image.align-right { margin-left: auto; margin-right: 0; }
     .image img { display: block; width: 100%; max-height: 190mm; object-fit: contain; }
     .image-missing { padding: 8mm; border: 1pt dashed #c7ced9; color: var(--muted); text-align: center; }
+    .table-caption { margin: 0 0 2mm; color: var(--muted); font-size: 8.5pt; font-weight: 600; }
+    .table-number { color: var(--muted); font-weight: 700; }
+    .proposal-callout { margin: 5mm 0; padding: 4mm 5mm; border-left: 2.5pt solid var(--accent); background: color-mix(in srgb, var(--accent) 7%, white); break-inside: avoid; }
+    .proposal-callout > strong { display: block; margin-bottom: 2mm; color: var(--accent); }
+    .proposal-callout-warning { border-color: #d97706; background: #fffbeb; }
+    .proposal-callout-decision { border-color: #059669; background: #ecfdf5; }
+    .proposal-callout-assumption { border-color: #7c3aed; background: #f5f3ff; }
     .table-wrap { margin: 5mm 0; max-width: 100%; break-inside: auto; }
     table { width: 100%; border-collapse: collapse; font-size: 8.8pt; }
     thead { display: table-header-group; }
@@ -356,6 +406,9 @@ function printCss(settings: DocumentSettingsV1, typography: WikiTypographySettin
     .toc .toc-level-2 { padding-left: 5mm; }
     .toc .toc-level-3 { padding-left: 10mm; color: var(--muted); }
     .toc a { color: inherit; text-decoration: none; }
+    .annex { break-before: page; page-break-before: always; }
+    .signature { display: grid; gap: 1.5mm; width: 70mm; margin-top: 20mm; padding-top: 3mm; border-top: .7pt solid var(--ink); }
+    .signature span, .signature small { color: var(--muted); font-size: 8pt; }
     .layout-columns { margin: 5mm 0; }
     .layout-columns > * { break-inside: avoid-column; }
     .page-break { break-after: page; page-break-after: always; height: 0; }
@@ -369,6 +422,10 @@ function printCss(settings: DocumentSettingsV1, typography: WikiTypographySettin
     .figure-index ol { list-style: none; padding: 0; }
     .figure-index li { display: grid; grid-template-columns: 24mm 1fr; gap: 4mm; padding: 2mm 0; border-bottom: .5pt solid #e4e7ec; }
     .figure-index a { color: inherit; text-decoration: none; }
+    .table-index { break-before: page; page-break-before: always; }
+    .table-index ol { list-style: none; padding: 0; }
+    .table-index li { display: grid; grid-template-columns: 24mm 1fr; gap: 4mm; padding: 2mm 0; border-bottom: .5pt solid #e4e7ec; }
+    .table-index a { color: inherit; text-decoration: none; }
     .figure-index .figure-index-number, .figure-number { color: var(--muted); font-weight: 600; }
     @media screen {
       body { background: #e7ebf1; padding: 24px; }
@@ -401,7 +458,8 @@ export async function renderDocumentHtml(input: RenderDocumentInput): Promise<Re
   const normalizedInput = { ...input, doc: normalizedDoc, settings, typography };
   const headings = collectHeadings(normalizedDoc);
   const figures = collectFigures(normalizedDoc);
-  const content = await renderNode(normalizedDoc, normalizedInput, headings, figures);
+  const tables = collectTables(normalizedDoc);
+  const content = await renderNode(normalizedDoc, normalizedInput, headings, figures, tables);
   const cover = settings.cover.enabled
     ? `<section class="cover"><p class="eyebrow">${escapeHtml(settings.cover.eyebrow)}</p><h1>${escapeHtml(input.title)}</h1>${settings.cover.subtitle ? `<p class="subtitle">${escapeHtml(settings.cover.subtitle)}</p>` : ""}<p class="meta">${escapeHtml(settings.variables.applicant)}${settings.variables.programme ? ` · ${escapeHtml(settings.variables.programme)}` : ""}${settings.variables.date ? ` · ${escapeHtml(settings.variables.date)}` : ""}</p></section>`
     : "";
@@ -412,7 +470,10 @@ export async function renderDocumentHtml(input: RenderDocumentInput): Promise<Re
   const figureIndex = settings.figures.enabled && figures.length
     ? `<section class="figure-index"><h2>${escapeHtml(settings.figures.heading)}</h2><ol>${figures.map((figure, index) => `<li><a class="figure-index-number" href="#figure-${index + 1}">${escapeHtml(figureNumberLabel(figure.caption, figureLabel, index + 1))}</a><a href="#figure-${index + 1}">${escapeHtml(figure.caption)}</a></li>`).join("")}</ol></section>`
     : "";
-  const article = `<article>${content}${figureIndex}${references}</article>`;
+  const tableIndex = settings.tables.enabled && tables.length
+    ? "<section class=\"table-index\"><h2>" + escapeHtml(settings.tables.heading) + "</h2><ol>" + tables.map((table, index) => "<li><a href=\"#table-" + (index + 1) + "\">" + escapeHtml(input.tableLabel ?? "Table") + " " + (index + 1) + "</a><a href=\"#table-" + (index + 1) + "\">" + escapeHtml(table.caption) + "</a></li>").join("") + "</ol></section>"
+    : "";
+  const article = "<article class=\"" + (settings.page.numberedHeadings ? "numbered-headings" : "") + "\">" + content + figureIndex + tableIndex + references + "</article>";
   const bodyHtml = `${cover}${article}`;
   const shell = (inner: string, extraCss = "") => `<!doctype html><html><head><meta charset="utf-8"><meta name="color-scheme" content="light"><title>${escapeHtml(input.title)}</title><style>${printCss(settings, typography)}${extraCss}</style></head><body><main class="print-sheet">${inner}</main></body></html>`;
   const html = shell(bodyHtml);

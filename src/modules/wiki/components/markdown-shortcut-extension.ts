@@ -89,11 +89,18 @@ const MarkdownTable = Node.create({
   group: "block",
   content: "markdownTableRow+",
   isolating: true,
+  addAttributes: () => ({
+    tableId: { default: null },
+    caption: { default: "" },
+    includeInTableIndex: { default: true },
+  }),
   parseHTML: () => [{ tag: "table[data-markdown-table]" }],
   renderHTML: ({ HTMLAttributes }) => ["table", mergeAttributes(HTMLAttributes, {
     "data-markdown-table": "",
+    "data-table-id": HTMLAttributes.tableId || undefined,
+    "data-table-caption": HTMLAttributes.caption || undefined,
     class: "wiki-markdown-table",
-  }), ["tbody", 0]],
+  }), ...(HTMLAttributes.caption ? [["caption", { contenteditable: "false" }, HTMLAttributes.caption]] : []), ["tbody", 0]],
 });
 
 const MarkdownTableRow = Node.create({
@@ -140,6 +147,9 @@ const HeadingIds = Extension.create({
           parseHTML: (element) => element.getAttribute("id"),
           renderHTML: (attributes) => attributes.id ? { id: attributes.id } : {},
         },
+        sectionOwner: { default: "", parseHTML: (element) => element.getAttribute("data-section-owner") ?? "", renderHTML: (attributes) => attributes.sectionOwner ? { "data-section-owner": attributes.sectionOwner } : {} },
+        sectionStatus: { default: "open", parseHTML: (element) => element.getAttribute("data-section-status") ?? "open", renderHTML: (attributes) => ({ "data-section-status": attributes.sectionStatus || "open" }) },
+        sectionDueDate: { default: "", parseHTML: (element) => element.getAttribute("data-section-due-date") ?? "", renderHTML: (attributes) => attributes.sectionDueDate ? { "data-section-due-date": attributes.sectionDueDate } : {} },
       },
     }];
   },

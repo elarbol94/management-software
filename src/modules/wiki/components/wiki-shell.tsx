@@ -1,10 +1,10 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useFormatter, useLocale, useTranslations } from "next-intl";
-import { BookMarked, Check, ChevronDown, Clock3, History, Link2, Plus, Star, Trash2, X } from "lucide-react";
+import { ArrowLeft, BookMarked, Check, ChevronDown, Clock3, Download, Eye, FileText, History, Link2, MoreHorizontal, PanelRightClose, PanelRightOpen, Plus, Star, Trash2, X } from "lucide-react";
 import { createPage, deletePage, renamePage } from "../actions";
 import { createPageCheckpoint, linkSupportingSource, restorePageRevision, toggleFavorite, unlinkSupportingSource, updatePageResearchMeta } from "../research-actions";
 import type { CitationSource } from "../lib/citations";
@@ -12,12 +12,12 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { WikiEditor } from "./wiki-editor";
 import { AttachmentPanel, type AttachmentPanelHandle } from "./attachment-panel";
 import { SvgGraphicsSection } from "./svg-graphics-section";
 import type { WikiEditorHandle } from "./wiki-editor";
 import { EvidencePanel } from "./evidence-panel";
-import { PageExportMenu } from "./page-export-menu";
 import type { CommentThread } from "./comment-rail";
 import { FocusModeToggle, useFocusMode } from "@/components/focus-mode";
 import type { UserMarkColor } from "@/lib/user-mark-colors";
@@ -26,11 +26,32 @@ import type { WikiTypographySettingsV1, WikiTypographyTemplate } from "../lib/wi
 import { extractText, parseStoredDocument } from "../lib/tiptap";
 import { RevisionDiffView } from "./revision-diff-view";
 import type { ContextDeadlineMarker, ContextTaskMarker } from "@/modules/tasks/types";
+import type { ProposalWorkspaceData } from "../lib/proposal";
 import { ContextPanel } from "@/modules/context/components/context-panel";
 
 type PageRef = { id: string; title: string; slug: string };
 type SourceRef = CitationSource;
-export function WikiShell({ page, backlinks, allPages, sources, research, comments, currentUserId, users, attachments, documentTemplates, typography, editableTypography, typographyTemplates, tasks, deadlines, focusTaskId, focusDeadlineId, meta }: {
+
+function PageHeaderActions({ pageId, favorite, onNewSubpage, onToggleFavorite, onDelete }: { pageId: string; favorite: boolean; onNewSubpage: () => void; onToggleFavorite: () => void; onDelete: () => void }) {
+  const t = useTranslations("wiki");
+  return <DropdownMenu>
+    <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" title={t("editor.toolbar.more")} aria-label={t("editor.toolbar.more")} />}><MoreHorizontal className="size-4" /></DropdownMenuTrigger>
+    <DropdownMenuContent align="end" className="w-56">
+      <DropdownMenuItem onClick={onNewSubpage}><Plus />{t("newSubpage")}</DropdownMenuItem>
+      <DropdownMenuItem onClick={onToggleFavorite}><Star className={favorite ? "fill-indigo-400 text-indigo-500" : ""} />{t("favorite")}</DropdownMenuItem>
+      <DropdownMenuSeparator />
+      <DropdownMenuItem render={<a href={"/api/wiki/pages/" + pageId + "/export?format=pdf&disposition=inline"} target="_blank" rel="noreferrer" />}><Eye />{t("document.previewPdf")}</DropdownMenuItem>
+      <DropdownMenuItem render={<a href={"/api/wiki/pages/" + pageId + "/export?format=pdf"} />}><Download />{t("document.downloadPdf")}</DropdownMenuItem>
+      <DropdownMenuItem render={<a href={"/api/wiki/pages/" + pageId + "/export?format=markdown"} />}><FileText />Markdown</DropdownMenuItem>
+      <DropdownMenuItem render={<a href={"/api/wiki/pages/" + pageId + "/export?format=html"} />}><FileText />HTML</DropdownMenuItem>
+      <DropdownMenuItem render={<a href={"/api/wiki/pages/" + pageId + "/export?format=docx"} />}><FileText />DOCX</DropdownMenuItem>
+      <DropdownMenuSeparator />
+      <DropdownMenuItem className="text-destructive focus:text-destructive" onClick={onDelete}><Trash2 />{t("deletePage")}</DropdownMenuItem>
+    </DropdownMenuContent>
+  </DropdownMenu>;
+}
+
+export function WikiShell({ page, backlinks, allPages, sources, research, comments, currentUserId, users, attachments, documentTemplates, typography, editableTypography, typographyTemplates, tasks, deadlines, focusTaskId, focusDeadlineId, proposalData, meta }: {
   page: { id: string; title: string; slug: string; contentJson: string; status: "inbox" | "working" | "evergreen"; citationLocale: string; proofingLanguage: "de-DE" | "en-US"; version: number; contentVersion: number; documentMode: boolean; documentSettingsJson: string; createdBy: string };
   backlinks: PageRef[]; allPages: PageRef[]; sources: SourceRef[];
   research: { tags: Array<{ id: string; name: string; color: string }>; supportingSources: Array<{ id: string; title: string; issuedDate: string; relation: string }>; favorite: boolean; revisions: Array<{ id: string; version: number; contentVersion: number; contentHash: string; label: string | null; kind: string; createdAt: Date; createdByName: string; contentJson: string }> };
@@ -44,6 +65,7 @@ export function WikiShell({ page, backlinks, allPages, sources, research, commen
   deadlines: ContextDeadlineMarker[];
   focusTaskId?: string;
   focusDeadlineId?: string;
+  proposalData: ProposalWorkspaceData;
   meta: { updatedAt: number; updatedByName: string } | null;
 }) {
   const t = useTranslations("wiki"); const common = useTranslations("common"); const format = useFormatter(); const locale = useLocale(); const router = useRouter();
@@ -53,6 +75,7 @@ export function WikiShell({ page, backlinks, allPages, sources, research, commen
   const [sourceToLink, setSourceToLink] = useState("");
   const [supportingSourceOpen, setSupportingSourceOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const [supportingSourcesCollapsed, setSupportingSourcesCollapsed] = useState(true);
   const [selectedRevisionId, setSelectedRevisionId] = useState(research.revisions[0]?.id ?? "");
   const editorActions = useRef<WikiEditorHandle | null>(null);
@@ -60,6 +83,30 @@ export function WikiShell({ page, backlinks, allPages, sources, research, commen
   const selectedRevision = research.revisions.find((revision) => revision.id === selectedRevisionId) ?? research.revisions[0];
   const currentText = extractText(parseStoredDocument(page.contentJson));
   const revisionText = selectedRevision ? extractText(parseStoredDocument(selectedRevision.contentJson)) : "";
+
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => setDetailsOpen(localStorage.getItem("wiki:document-details-open") === "true"));
+    return () => cancelAnimationFrame(frame);
+  }, []);
+
+  function changeDetailsOpen(open: boolean) {
+    setDetailsOpen(open);
+    localStorage.setItem("wiki:document-details-open", String(open));
+  }
+
+  function openAttachmentPicker() {
+    changeDetailsOpen(true);
+    setTimeout(() => attachmentRef.current?.openFilePicker(), 0);
+  }
+
+  function openSupportingSourcePicker() {
+    changeDetailsOpen(true);
+    setTimeout(() => {
+      supportingSourceSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+      setSupportingSourceOpen(true);
+      supportingSourceTriggerRef.current?.focus();
+    }, 0);
+  }
 
   async function saveMeta(nextStatus = status, nextLocale = citationLocale) {
     await updatePageResearchMeta({ pageId: page.id, status: nextStatus, citationLocale: nextLocale as "de-DE" | "en-US", tagNames: tags.split(",").map((tag) => tag.trim()).filter(Boolean) });
@@ -71,17 +118,17 @@ export function WikiShell({ page, backlinks, allPages, sources, research, commen
 
   return <div className={isFocused ? "w-full max-w-none p-4 md:p-7" : "mx-auto max-w-[112rem] p-4 md:p-7"}>
     <header className="mb-5 border-b pb-4">
-      <div className="flex flex-wrap items-start justify-between gap-4"><div className="min-w-0"><button type="button" aria-label={`${t("rename")}: ${page.title}`} onClick={rename} className={isFocused ? "max-w-4xl text-left text-2xl font-semibold tracking-tight hover:text-indigo-700 dark:hover:text-indigo-300" : "max-w-4xl text-left text-3xl font-semibold tracking-tight hover:text-indigo-700 dark:hover:text-indigo-300"}>{page.title}</button>{!isFocused && meta && <p className="mt-1 flex items-center gap-1 text-xs text-muted-foreground"><Clock3 className="size-3" />{t("lastEdited", { name: meta.updatedByName })} · {format.dateTime(new Date(meta.updatedAt), { dateStyle: "medium", timeStyle: "short" })}</p>}</div>
-        <div className="flex items-center gap-1">{!isFocused && <><Button variant="ghost" size="icon-sm" title={t("newSubpage")} aria-label={t("newSubpage")} onClick={async () => { const title = prompt(t("pageTitle")); if (!title?.trim()) return; const child = await createPage({ title: title.trim(), parentId: page.id, proofingLanguage: locale === "en" ? "en-US" : "de-DE" }); router.push(`/wiki/pages/${child.slug}`); router.refresh(); }}><Plus className="size-4" /></Button><PageExportMenu pageId={page.id} /><Button variant={research.favorite ? "secondary" : "ghost"} size="icon-sm" title={t("favorite")} aria-label={t("favorite")} aria-pressed={research.favorite} onClick={async () => { await toggleFavorite("page", page.id); router.refresh(); }}><Star className={research.favorite ? "size-4 fill-indigo-400 text-indigo-500" : "size-4"} /></Button><Button variant="ghost" size="icon-sm" title={t("deletePage")} aria-label={t("deletePage")} onClick={remove}><Trash2 className="size-4 text-destructive" /></Button></>}<FocusModeToggle compact={isFocused} /></div></div>
+      <div className="flex flex-wrap items-start justify-between gap-4"><div className="flex min-w-0 items-start gap-2"><Link href="/wiki" aria-label={t("backToWikiStart")} title={t("backToWikiStart")} className="mt-1 grid size-8 shrink-0 place-items-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"><ArrowLeft className="size-4" /></Link><div className="min-w-0"><button type="button" aria-label={`${t("rename")}: ${page.title}`} onClick={rename} className={isFocused ? "max-w-4xl text-left text-2xl font-semibold tracking-tight hover:text-indigo-700 dark:hover:text-indigo-300" : "max-w-4xl text-left text-3xl font-semibold tracking-tight hover:text-indigo-700 dark:hover:text-indigo-300"}>{page.title}</button>{!isFocused && meta && <p className="mt-1 flex items-center gap-1 text-xs text-muted-foreground"><Clock3 className="size-3" />{t("lastEdited", { name: meta.updatedByName })} · {format.dateTime(new Date(meta.updatedAt), { dateStyle: "medium", timeStyle: "short" })}</p>}</div></div>
+        <div className="flex items-center gap-1">{!isFocused && <><Button variant={detailsOpen ? "secondary" : "ghost"} size="sm" className="gap-1.5" title={detailsOpen ? t("hideDocumentDetails") : t("showDocumentDetails")} aria-label={detailsOpen ? t("hideDocumentDetails") : t("showDocumentDetails")} aria-pressed={detailsOpen} onClick={() => changeDetailsOpen(!detailsOpen)}>{detailsOpen ? <PanelRightClose className="size-4" /> : <PanelRightOpen className="size-4" />}<span className="hidden text-xs sm:inline">{t("documentDetails")}</span></Button><PageHeaderActions pageId={page.id} favorite={research.favorite} onNewSubpage={async () => { const title = prompt(t("pageTitle")); if (!title?.trim()) return; const child = await createPage({ title: title.trim(), parentId: page.id, proofingLanguage: locale === "en" ? "en-US" : "de-DE" }); router.push("/wiki/pages/" + child.slug); router.refresh(); }} onToggleFavorite={async () => { await toggleFavorite("page", page.id); router.refresh(); }} onDelete={remove} /></>}<FocusModeToggle compact={isFocused} /></div></div>
     </header>
 
-    <div className={isFocused ? "w-full" : "grid gap-7 xl:grid-cols-[minmax(0,1fr)_17rem]"}>
+    <div className={isFocused || !detailsOpen ? "w-full" : "grid gap-7 xl:grid-cols-[minmax(0,1fr)_17rem]"}>
       <section className="min-w-0">
-        <WikiEditor key={page.id} actionsRef={editorActions} focused={isFocused} pageId={page.id} pageTitle={page.title} pageSlug={page.slug} pageVersion={page.version} pageContentVersion={page.contentVersion} initialContent={page.contentJson} initialProofingLanguage={page.proofingLanguage} initialDocumentMode={page.documentMode} initialDocumentSettings={page.documentSettingsJson} initialTypography={typography} editableTypography={editableTypography} typographyTemplates={typographyTemplates} isPrimaryAuthor={page.createdBy === currentUserId} documentTemplates={documentTemplates} allPages={allPages} sources={sources} users={users} citationLocale={citationLocale} comments={comments} contextTasks={tasks} contextDeadlines={deadlines} focusTaskId={focusTaskId} focusDeadlineId={focusDeadlineId} currentUserId={currentUserId} pageActions={{ addAttachment: () => attachmentRef.current?.openFilePicker(), linkSupportingSource: () => { supportingSourceSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "center" }); setSupportingSourceOpen(true); requestAnimationFrame(() => supportingSourceTriggerRef.current?.focus()); } }} />
+        <WikiEditor key={page.id} actionsRef={editorActions} focused={isFocused} pageId={page.id} pageTitle={page.title} pageSlug={page.slug} pageVersion={page.version} pageContentVersion={page.contentVersion} initialContent={page.contentJson} initialProofingLanguage={page.proofingLanguage} initialDocumentMode={page.documentMode} initialDocumentSettings={page.documentSettingsJson} initialTypography={typography} editableTypography={editableTypography} typographyTemplates={typographyTemplates} isPrimaryAuthor={page.createdBy === currentUserId} documentTemplates={documentTemplates} allPages={allPages} sources={sources} users={users} citationLocale={citationLocale} comments={comments} contextTasks={tasks} contextDeadlines={deadlines} focusTaskId={focusTaskId} focusDeadlineId={focusDeadlineId} proposalData={proposalData} currentUserId={currentUserId} pageActions={{ addAttachment: openAttachmentPicker, linkSupportingSource: openSupportingSourcePicker }} />
         {!isFocused && backlinks.length > 0 && <section className="mt-8 border-t pt-5"><h2 className="mb-3 flex items-center gap-2 text-sm font-medium"><Link2 className="size-4 text-indigo-500" />{t("backlinks")}</h2><div className="flex flex-wrap gap-2">{backlinks.map((item) => <Link key={item.id} href={`/wiki/pages/${item.slug}`} className="rounded-md border px-2 py-1 text-sm hover:bg-accent">{item.title}</Link>)}</div></section>}
       </section>
 
-      {!isFocused && <aside data-testid="note-metadata-sidebar" className="space-y-6 xl:sticky xl:top-4 xl:self-start xl:border-l xl:pl-6">
+      {!isFocused && detailsOpen && <aside data-testid="note-metadata-sidebar" className="mt-6 space-y-6 border-t pt-5 xl:sticky xl:top-4 xl:mt-0 xl:self-start xl:border-l xl:border-t-0 xl:pl-6 xl:pt-0">
         <section data-testid="note-metadata-controls" className="space-y-2">
           <div className="grid grid-cols-2 gap-2">
             <Select value={status} onValueChange={(value) => { if (!value) return; const next = value as typeof status; setStatus(next); void saveMeta(next, citationLocale); }}><SelectTrigger aria-label={t("allPageStatuses")} className="h-8 w-full"><SelectValue /></SelectTrigger><SelectContent>{["inbox","working","evergreen"].map((item) => <SelectItem key={item} value={item}>{t(`pageStatuses.${item}`)}</SelectItem>)}</SelectContent></Select>

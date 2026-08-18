@@ -9,6 +9,9 @@ import { listDocumentTemplates } from "@/modules/wiki/document-queries";
 import { getWikiTypographyForUser, getWikiTypographyProfileForUser } from "@/modules/wiki/lib/wiki-typography.server";
 import { listDeadlinesForContext, listTasksForContext } from "@/modules/projects/queries";
 import { listGraphicAttachmentIds } from "@/modules/wiki/svg-assets";
+import { getAppSettings } from "@/modules/settings/queries";
+import { getPersonnelWorkspace } from "@/modules/personnel/queries";
+import { listFundingProjects } from "@/modules/funding/queries";
 
 export default async function WikiPage({ params, searchParams }: { params: Promise<{ slug: string }>; searchParams: Promise<{ task?: string; deadline?: string }> }) {
   await connection();
@@ -19,6 +22,14 @@ export default async function WikiPage({ params, searchParams }: { params: Promi
   // remove actions; repeating them under attachments only doubles the list.
   const graphicAttachmentIds = listGraphicAttachmentIds(page.id);
   const currentUserTypography = getWikiTypographyProfileForUser(currentUser.id);
+  const company = getAppSettings();
+  const personnel = getPersonnelWorkspace(currentUser);
+  const fundingProjects = listFundingProjects();
+  const proposalData = {
+    company: { name: company.companyName, address: company.address, uid: company.uid },
+    people: personnel.people.map((person) => ({ id: person.id, name: person.name, role: person.employmentType })),
+    fundingProjects: fundingProjects.map((project) => ({ id: project.id, name: project.name, programme: project.programName, fundingBody: project.fundingBody, start: project.projectStart, end: project.projectEnd, totalCostCents: project.totalProjectCostCents, approvedFundingCents: project.approvedFundingCents })),
+  };
   return <WikiShell
     page={{ id: page.id, title: page.title, slug: page.slug, contentJson: page.contentJson, status: page.status, citationLocale: page.citationLocale, proofingLanguage: page.proofingLanguage, version: page.version, contentVersion: page.contentVersion, documentMode: page.documentMode, documentSettingsJson: page.documentSettingsJson, createdBy: page.createdBy }}
     backlinks={getBacklinks(page.id)} allPages={listPagesFlat().filter((item) => item.id !== page.id)}
@@ -34,6 +45,7 @@ export default async function WikiPage({ params, searchParams }: { params: Promi
     deadlines={listDeadlinesForContext("wikiPage", page.id)}
     focusTaskId={query.task}
     focusDeadlineId={query.deadline}
+    proposalData={proposalData}
     meta={meta ? { updatedAt: meta.updatedAt.getTime(), updatedByName: meta.updatedByName } : null}
   />;
 }
