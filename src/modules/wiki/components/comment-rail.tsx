@@ -323,7 +323,7 @@ export const CommentRail = forwardRef<CommentRailHandle, {
       })}
     </aside>}
 
-    <Button type="button" data-testid="mobile-comments-button" variant="outline" size="sm" className="xl:hidden" onClick={() => commentsVisible ? setMobileOpen(true) : onVisibleChange(true)}><MessageSquareText className="size-4" />{commentsVisible ? `${t("comments")} (${unresolvedCount})` : t("showComments")}</Button>
+    <Button type="button" data-testid="mobile-comments-button" variant="outline" size="sm" className="md:hidden" onClick={() => commentsVisible ? setMobileOpen(true) : onVisibleChange(true)}><MessageSquareText className="size-4" />{commentsVisible ? `${t("comments")} (${unresolvedCount})` : t("showComments")}</Button>
     <Sheet open={commentsVisible && mobileOpen} onOpenChange={setMobileOpen}>
       <SheetContent data-testid="comment-sheet" initialFocus={mobileGeneralRef} side="right" className="w-[min(92vw,26rem)] overflow-y-auto p-4 xl:hidden">
         <SheetHeader className="p-0"><SheetTitle>{t("commentRail.mobileTitle")}</SheetTitle><SheetDescription>{t("commentRail.mobileDescription")}</SheetDescription></SheetHeader>

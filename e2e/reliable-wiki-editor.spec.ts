@@ -85,19 +85,39 @@ test("a second editor is read-only until it explicitly takes over", async ({ bro
 
 test("document paper keeps its physical aspect ratio and margin guides can be toggled", async ({ page }) => {
   test.setTimeout(120_000);
+  await page.setViewportSize({ width: 1042, height: 720 });
   await login(page);
   await createNote(page);
   const sideTools = page.getByTestId("editor-side-tools");
   await expect(sideTools).toBeVisible();
   await expect(sideTools.getByRole("button")).toHaveCount(4);
+  await expect.poll(async () => (await sideTools.boundingBox())?.width ?? 0).toBeLessThanOrEqual(48);
+  await sideTools.hover();
+  await expect.poll(async () => (await sideTools.boundingBox())?.width ?? 0).toBeGreaterThanOrEqual(170);
+  await page.mouse.move(4, 4);
+  await expect.poll(async () => (await sideTools.boundingBox())?.width ?? 0).toBeLessThanOrEqual(48);
   await expect(page.getByTestId("proofing-language-toggle")).toContainText("DE");
   await expect(page.getByTestId("proofing-language-toggle")).toContainText("EN");
   await page.getByRole("button", { name: "Dokumentgliederung" }).click();
   await expect(page.getByTestId("editor-outline")).toBeVisible();
   await page.keyboard.press("Escape");
-  await page.getByRole("button", { name: "Kommentare anzeigen" }).click();
-  await expect(page.getByTestId("comment-rail")).toBeVisible();
-  await page.getByRole("button", { name: "Kommentare ausblenden" }).click();
+  await sideTools.getByRole("button", { name: "Kommentare anzeigen" }).click();
+  await expect(page.getByTestId("comment-sheet")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await sideTools.getByRole("button", { name: "Kommentare ausblenden" }).click();
+
+  await page.setViewportSize({ width: 1682, height: 912 });
+  await sideTools.getByRole("button", { name: "Dokumentgliederung" }).click();
+  const outlinePanel = page.getByTestId("editor-outline");
+  await expect(outlinePanel).toBeVisible();
+  const outlineBox = await outlinePanel.boundingBox();
+  await sideTools.getByRole("button", { name: "Kommentare anzeigen" }).click();
+  await expect(outlinePanel).toHaveCount(0);
+  const commentPanel = page.getByTestId("comment-rail");
+  await expect(commentPanel).toBeVisible();
+  const commentBox = await commentPanel.boundingBox();
+  expect(Math.abs((outlineBox?.width ?? 0) - (commentBox?.width ?? 0))).toBeLessThanOrEqual(2);
+  await sideTools.getByRole("button", { name: "Kommentare ausblenden" }).click();
   await page.getByTestId("document-mode-toggle").click();
   await page.getByRole("button", { name: "Mehr", exact: true }).last().click();
   await page.getByRole("menuitem", { name: "Dokumentlayout anzeigen" }).click();

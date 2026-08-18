@@ -158,6 +158,32 @@ export function EditorSearchPanel({ editor, open, onOpenChange, initialQuery = "
   </div>;
 }
 
+function EditorOutlineNavigation({ editor, items, activePosition, onSelect }: { editor: Editor; items: OutlineItem[]; activePosition: number | null; onSelect?: () => void }) {
+  const t = useTranslations("wiki.editor.outline");
+  return <nav className="min-h-0 flex-1 overflow-y-auto p-3" aria-label={t("title")}>
+    {items.length ? items.map((item) => <button key={`${item.position}-${item.id}`} type="button" className={cn("block w-full rounded-md py-1.5 pr-2 text-left text-sm transition-colors hover:bg-accent focus-visible:outline-2", activePosition === item.position && "bg-indigo-50 font-medium text-indigo-700 dark:bg-indigo-950/40 dark:text-indigo-300")} style={{ paddingLeft: `${0.5 + (item.level - 1) * 0.85}rem` }} onClick={() => {
+      const heading = editor.view.nodeDOM(item.position) as HTMLElement | null;
+      const top = heading?.getBoundingClientRect().top ?? 0;
+      window.scrollBy({ top: top - 84, behavior: "smooth" });
+      editor.chain().focus().setTextSelection(item.position + 1).run();
+      onSelect?.();
+    }}>{item.text || t("untitled")}</button>) : <p className="p-3 text-sm text-muted-foreground">{t("empty")}</p>}
+  </nav>;
+}
+
+export function EditorOutlinePanel({ editor, items, activePosition, onClose }: { editor: Editor; items: OutlineItem[]; activePosition: number | null; onClose: () => void }) {
+  const t = useTranslations("wiki.editor.outline");
+  return <aside data-testid="editor-outline" className="relative hidden w-72 xl:block">
+    <div className="sticky top-16 flex max-h-[calc(100vh-5rem)] flex-col overflow-hidden rounded-xl border bg-background shadow-sm">
+      <header className="flex items-start gap-2 border-b p-3">
+        <div className="min-w-0 flex-1"><h2 className="text-sm font-semibold">{t("title")}</h2><p className="mt-1 text-xs text-muted-foreground">{t("description")}</p></div>
+        <Button type="button" size="icon-sm" variant="ghost" aria-label={t("close")} title={t("close")} onClick={onClose}><X className="size-4" /></Button>
+      </header>
+      <EditorOutlineNavigation editor={editor} items={items} activePosition={activePosition} />
+    </div>
+  </aside>;
+}
+
 export function EditorOutlineSheet({ editor, items, activePosition, open, onOpenChange }: { editor: Editor; items: OutlineItem[]; activePosition: number | null; open: boolean; onOpenChange: (open: boolean) => void }) {
   const t = useTranslations("wiki.editor.outline");
   return <Sheet open={open} onOpenChange={onOpenChange}>
@@ -166,15 +192,7 @@ export function EditorOutlineSheet({ editor, items, activePosition, open, onOpen
         <SheetTitle>{t("title")}</SheetTitle>
         <SheetDescription>{t("description")}</SheetDescription>
       </SheetHeader>
-      <nav className="min-h-0 flex-1 overflow-y-auto p-3" aria-label={t("title")}>
-        {items.length ? items.map((item) => <button key={`${item.position}-${item.id}`} type="button" className={cn("block w-full rounded-md py-1.5 pr-2 text-left text-sm transition-colors hover:bg-accent focus-visible:outline-2", activePosition === item.position && "bg-indigo-50 font-medium text-indigo-700 dark:bg-indigo-950/40 dark:text-indigo-300")} style={{ paddingLeft: `${0.5 + (item.level - 1) * 0.85}rem` }} onClick={() => {
-          const heading = editor.view.nodeDOM(item.position) as HTMLElement | null;
-          const top = heading?.getBoundingClientRect().top ?? 0;
-          window.scrollBy({ top: top - 84, behavior: "smooth" });
-          editor.chain().focus().setTextSelection(item.position + 1).run();
-          onOpenChange(false);
-        }}>{item.text || t("untitled")}</button>) : <p className="p-3 text-sm text-muted-foreground">{t("empty")}</p>}
-      </nav>
+      <EditorOutlineNavigation editor={editor} items={items} activePosition={activePosition} onSelect={() => onOpenChange(false)} />
     </SheetContent>
   </Sheet>;
 }
