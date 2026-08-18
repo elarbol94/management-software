@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 import {
   DndContext,
@@ -72,7 +72,9 @@ function loadNavigationOrder(): string[] {
   if (typeof window === "undefined") return defaultOrder;
   try {
     const stored = JSON.parse(window.localStorage.getItem(NAVIGATION_ORDER_STORAGE_KEY) ?? "[]");
-    return Array.isArray(stored) && stored.every((item) => typeof item === "string") ? stored : defaultOrder;
+    return Array.isArray(stored) && stored.every((item) => typeof item === "string")
+      ? orderedNavigationItems(stored).map((item) => item.key)
+      : defaultOrder;
   } catch {
     return defaultOrder;
   }
@@ -133,33 +135,83 @@ function SortableNavLink({
   label,
   active,
   compact,
-  onNavigate,
-  suppressNavigationRef,
+  onActivate,
+  suppressNavigationUntilRef,
 }: {
   item: ModuleNavItem;
   label: string;
   active: boolean;
   compact: boolean;
-  onNavigate?: () => void;
-  suppressNavigationRef: React.RefObject<boolean>;
+  onActivate: () => void;
+  suppressNavigationUntilRef: React.RefObject<number>;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: item.key });
+  const pointerStartRef = useRef<{ x: number; y: number } | null>(null);
+  const pointerMovedRef = useRef(false);
+  const Icon = item.icon;
 
-  return (
-    <div
+  const button = (
+    <button
+      type="button"
       ref={setNodeRef}
+      data-navigation-key={item.key}
       style={{ transform: CSS.Transform.toString(transform), transition }}
-      className={cn(isDragging && "z-10 opacity-45")}
-      onClickCapture={(event) => {
-        if (!suppressNavigationRef.current) return;
-        event.preventDefault();
-        event.stopPropagation();
+      aria-label={compact ? label : undefined}
+      className={cn(
+        "flex h-10 w-full items-center rounded-md text-sm font-medium transition-colors",
+        compact ? "justify-center gap-0 px-0" : "gap-3 px-3",
+        active
+          ? "bg-accent text-accent-foreground"
+          : "text-muted-foreground hover:bg-accent/50 hover:text-accent-foreground",
+        isDragging && "z-10 opacity-45",
+      )}
+      onPointerDownCapture={(event) => {
+        pointerStartRef.current = { x: event.clientX, y: event.clientY };
+        pointerMovedRef.current = false;
+      }}
+      onPointerMoveCapture={(event) => {
+        const start = pointerStartRef.current;
+        if (!start || Math.hypot(event.clientX - start.x, event.clientY - start.y) < 5) return;
+        pointerMovedRef.current = true;
+        suppressNavigationUntilRef.current = Number.POSITIVE_INFINITY;
+      }}
+      onPointerUpCapture={() => {
+        if (pointerMovedRef.current) {
+          suppressNavigationUntilRef.current = Date.now() + 500;
+        }
+        pointerStartRef.current = null;
+      }}
+      onClick={(event) => {
+        if (pointerMovedRef.current || Date.now() < suppressNavigationUntilRef.current) {
+          event.preventDefault();
+          event.stopPropagation();
+          pointerMovedRef.current = false;
+          return;
+        }
+        onActivate();
       }}
       {...attributes}
       {...listeners}
     >
-      <NavLink href={item.href} label={label} icon={item.icon} active={active} compact={compact} onNavigate={onNavigate} />
-    </div>
+      <Icon className="size-5" />
+      <span
+        aria-hidden={compact}
+        className={cn(
+          "min-w-0 truncate whitespace-nowrap transition-all duration-[220ms] ease-out motion-reduce:transition-none",
+          compact ? "max-w-0 -translate-x-1 overflow-hidden opacity-0" : "max-w-44 translate-x-0 opacity-100",
+        )}
+      >
+        {label}
+      </span>
+    </button>
+  );
+
+  if (!compact) return button;
+  return (
+    <Tooltip>
+      <TooltipTrigger render={button} />
+      <TooltipContent side="right" sideOffset={8}>{label}</TooltipContent>
+    </Tooltip>
   );
 }
 
@@ -185,9 +237,10 @@ function AppNavigation({
   const tCalendar = useTranslations("calendar");
   const tTasks = useTranslations("tasks");
   const tDeadlines = useTranslations("deadlines");
+  const router = useRouter();
   const { openTaskCreator } = useTaskCreator();
   const { openDeadlineCreator } = useDeadlineCreator();
-  const suppressNavigationRef = useRef(false);
+  const suppressNavigationUntilRef = useRef(0);
   const [navigationOrder, setNavigationOrder] = useState<string[]>(loadNavigationOrder);
   const navigationItems = useMemo(() => orderedNavigationItems(navigationOrder), [navigationOrder]);
   const sensors = useSensors(
@@ -197,19 +250,19 @@ function AppNavigation({
   const isActive = (href: string) =>
     href === "/" ? pathname === "/" : pathname.startsWith(href);
 
-  function handleNavigationDragEnd(event: DragEndEvent) {
-    const { active, over } = event;
-    if (over && active.id !== over.id) {
-      setNavigationOrder((current) => {
-        const oldIndex = current.indexOf(String(active.id));
-        const newIndex = current.indexOf(String(over.id));
-        if (oldIndex < 0 || newIndex < 0) return current;
-        const next = arrayMove(current, oldIndex, newIndex);
-        window.localStorage.setItem(NAVIGATION_ORDER_STORAGE_KEY, JSON.stringify(next));
-        return next;
-      });
+  function reorderNavigation(activeId: string, overId: string) {
+    const oldIndex = navigationOrder.indexOf(activeId);
+    const newIndex = navigationOrder.indexOf(overId);
+    if (oldIndex >= 0 && newIndex >= 0 && oldIndex !== newIndex) {
+      const next = arrayMove(navigationOrder, oldIndex, newIndex);
+      setNavigationOrder(next);
+      window.localStorage.setItem(NAVIGATION_ORDER_STORAGE_KEY, JSON.stringify(next));
     }
-    window.setTimeout(() => { suppressNavigationRef.current = false; }, 0);
+  }
+
+  function handleNavigationDragEnd(event: DragEndEvent) {
+    if (event.over) reorderNavigation(String(event.active.id), String(event.over.id));
+    suppressNavigationUntilRef.current = Date.now() + 500;
   }
 
   return (
@@ -254,9 +307,11 @@ function AppNavigation({
           <DndContext
             sensors={sensors}
             collisionDetection={closestCenter}
-            onDragStart={() => { suppressNavigationRef.current = true; }}
+            onDragStart={() => {
+              suppressNavigationUntilRef.current = Number.POSITIVE_INFINITY;
+            }}
             onDragEnd={handleNavigationDragEnd}
-            onDragCancel={() => { suppressNavigationRef.current = false; }}
+            onDragCancel={() => { suppressNavigationUntilRef.current = Date.now() + 500; }}
           >
             <SortableContext items={navigationItems.map((item) => item.key)} strategy={verticalListSortingStrategy}>
               {navigationItems.map((item) => (
@@ -266,8 +321,11 @@ function AppNavigation({
                   label={t(item.key)}
                   active={isActive(item.href)}
                   compact={compact}
-                  onNavigate={onNavigate}
-                  suppressNavigationRef={suppressNavigationRef}
+                  onActivate={() => {
+                    router.push(item.href);
+                    onNavigate?.();
+                  }}
+                  suppressNavigationUntilRef={suppressNavigationUntilRef}
                 />
               ))}
             </SortableContext>

@@ -45,8 +45,8 @@ test("desktop navigation rails expand on hover, collapse on leave, and survive f
   await expectWidth(appSidebar, 56);
   await expectWidth(researchSidebar, 56);
 
-  await expect(appSidebar.getByRole("link", { name: "Wiki" })).toBeVisible();
-  await expect(appSidebar.getByRole("link", { name: "Kalender" })).toBeVisible();
+  await expect(appSidebar.getByRole("button", { name: "Wiki" })).toBeVisible();
+  await expect(appSidebar.getByRole("button", { name: "Kalender" })).toBeVisible();
   await expect(researchSidebar.getByRole("link", { name: /Eingang/ })).toBeVisible();
   await expect(appSidebar.getByRole("button", { name: /E2E Admin/ })).toBeVisible();
 
@@ -109,7 +109,37 @@ test("mobile navigation uses full-width content with dismissible app and researc
   await page.getByRole("button", { name: "Hauptnavigation öffnen" }).click();
   const appSheet = page.getByTestId("app-navigation-sheet");
   await expect(appSheet).toBeVisible();
-  await expect(appSheet.getByRole("link", { name: "Projekte" })).toBeVisible();
+  await expect(appSheet.getByRole("button", { name: "Projekte" })).toBeVisible();
+
+  const navigation = appSheet.locator("#app-mobile-navigation");
+  const wikiItem = navigation.locator('[data-navigation-key="wiki"]');
+  const calendarItem = navigation.locator('[data-navigation-key="calendar"]');
+  const wikiBox = (await wikiItem.boundingBox())!;
+  const calendarBox = (await calendarItem.boundingBox())!;
+  const dragStart = {
+    x: wikiBox.x + wikiBox.width / 2,
+    y: wikiBox.y + wikiBox.height / 2,
+  };
+  await page.mouse.move(dragStart.x, dragStart.y);
+  await page.mouse.down();
+  await page.mouse.move(dragStart.x, dragStart.y - 12, { steps: 4 });
+  await expect(wikiItem).toHaveClass(/opacity-45/);
+  await page.mouse.move(
+    calendarBox.x + calendarBox.width / 2,
+    calendarBox.y + calendarBox.height / 2,
+    { steps: 12 },
+  );
+  await page.mouse.up();
+
+  await expect(page).toHaveURL(/\/wiki\/inbox$/);
+  await expect(appSheet).toBeVisible();
+  await expect.poll(async () => {
+    const order = await navigation.locator("[data-navigation-key]").evaluateAll((items) =>
+      items.map((item) => item.getAttribute("data-navigation-key")),
+    );
+    return order.indexOf("wiki") < order.indexOf("calendar");
+  }).toBe(true);
+
   await page.keyboard.press("Escape");
   await expect(appSheet).not.toBeVisible();
 
@@ -138,7 +168,7 @@ test("mobile navigation uses full-width content with dismissible app and researc
   await expect(researchSheet).not.toBeVisible();
 
   await page.getByRole("button", { name: "Hauptnavigation öffnen" }).click();
-  await appSheet.getByRole("link", { name: "Projekte" }).click();
+  await appSheet.getByRole("button", { name: "Projekte" }).click();
   await expect(page).toHaveURL(/\/projects$/);
   await expect(appSheet).not.toBeVisible();
   await expect(page.getByTestId("research-mobile-header")).toBeHidden();
