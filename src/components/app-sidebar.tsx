@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useTranslations } from "next-intl";
@@ -25,7 +25,6 @@ import {
   CalendarClock,
   CalendarPlus,
   ClipboardPlus,
-  GripVertical,
   LayoutDashboard,
   Menu,
   Search,
@@ -135,37 +134,31 @@ function SortableNavLink({
   active,
   compact,
   onNavigate,
-  reorderLabel,
+  suppressNavigationRef,
 }: {
   item: ModuleNavItem;
   label: string;
   active: boolean;
   compact: boolean;
   onNavigate?: () => void;
-  reorderLabel: string;
+  suppressNavigationRef: React.RefObject<boolean>;
 }) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: item.key, disabled: compact });
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: item.key });
 
   return (
     <div
       ref={setNodeRef}
       style={{ transform: CSS.Transform.toString(transform), transition }}
-      className={cn("relative", isDragging && "z-10 opacity-45")}
+      className={cn(isDragging && "z-10 opacity-45")}
+      onClickCapture={(event) => {
+        if (!suppressNavigationRef.current) return;
+        event.preventDefault();
+        event.stopPropagation();
+      }}
+      {...attributes}
+      {...listeners}
     >
       <NavLink href={item.href} label={label} icon={item.icon} active={active} compact={compact} onNavigate={onNavigate} />
-      {!compact && (
-        <button
-          type="button"
-          className="absolute inset-y-0 right-1 grid w-8 cursor-grab place-items-center rounded-md text-muted-foreground opacity-60 touch-none hover:bg-accent hover:text-foreground hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring active:cursor-grabbing"
-          aria-label={reorderLabel}
-          title={reorderLabel}
-          onClick={(event) => event.preventDefault()}
-          {...attributes}
-          {...listeners}
-        >
-          <GripVertical className="size-4" />
-        </button>
-      )}
     </div>
   );
 }
@@ -194,6 +187,7 @@ function AppNavigation({
   const tDeadlines = useTranslations("deadlines");
   const { openTaskCreator } = useTaskCreator();
   const { openDeadlineCreator } = useDeadlineCreator();
+  const suppressNavigationRef = useRef(false);
   const [navigationOrder, setNavigationOrder] = useState<string[]>(loadNavigationOrder);
   const navigationItems = useMemo(() => orderedNavigationItems(navigationOrder), [navigationOrder]);
   const sensors = useSensors(
@@ -205,15 +199,17 @@ function AppNavigation({
 
   function handleNavigationDragEnd(event: DragEndEvent) {
     const { active, over } = event;
-    if (!over || active.id === over.id) return;
-    setNavigationOrder((current) => {
-      const oldIndex = current.indexOf(String(active.id));
-      const newIndex = current.indexOf(String(over.id));
-      if (oldIndex < 0 || newIndex < 0) return current;
-      const next = arrayMove(current, oldIndex, newIndex);
-      window.localStorage.setItem(NAVIGATION_ORDER_STORAGE_KEY, JSON.stringify(next));
-      return next;
-    });
+    if (over && active.id !== over.id) {
+      setNavigationOrder((current) => {
+        const oldIndex = current.indexOf(String(active.id));
+        const newIndex = current.indexOf(String(over.id));
+        if (oldIndex < 0 || newIndex < 0) return current;
+        const next = arrayMove(current, oldIndex, newIndex);
+        window.localStorage.setItem(NAVIGATION_ORDER_STORAGE_KEY, JSON.stringify(next));
+        return next;
+      });
+    }
+    window.setTimeout(() => { suppressNavigationRef.current = false; }, 0);
   }
 
   return (
@@ -255,7 +251,13 @@ function AppNavigation({
               </kbd>
             )}
           </button>
-          <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleNavigationDragEnd}>
+          <DndContext
+            sensors={sensors}
+            collisionDetection={closestCenter}
+            onDragStart={() => { suppressNavigationRef.current = true; }}
+            onDragEnd={handleNavigationDragEnd}
+            onDragCancel={() => { suppressNavigationRef.current = false; }}
+          >
             <SortableContext items={navigationItems.map((item) => item.key)} strategy={verticalListSortingStrategy}>
               {navigationItems.map((item) => (
                 <SortableNavLink
@@ -265,7 +267,7 @@ function AppNavigation({
                   active={isActive(item.href)}
                   compact={compact}
                   onNavigate={onNavigate}
-                  reorderLabel={t("reorderItem", { label: t(item.key) })}
+                  suppressNavigationRef={suppressNavigationRef}
                 />
               ))}
             </SortableContext>
