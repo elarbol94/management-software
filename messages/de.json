@@ -33,7 +33,8 @@
     "expandNavigation": "Hauptnavigation ausklappen",
     "collapseNavigation": "Hauptnavigation einklappen",
     "openNavigation": "Hauptnavigation öffnen",
-    "closeNavigation": "Hauptnavigation schließen"
+    "closeNavigation": "Hauptnavigation schließen",
+    "reorderItem": "{label} verschieben"
   },
   "auth": {
     "loginTitle": "Anmelden",

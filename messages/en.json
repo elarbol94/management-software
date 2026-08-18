@@ -33,7 +33,8 @@
     "expandNavigation": "Expand main navigation",
     "collapseNavigation": "Collapse main navigation",
     "openNavigation": "Open main navigation",
-    "closeNavigation": "Close main navigation"
+    "closeNavigation": "Close main navigation",
+    "reorderItem": "Reorder {label}"
   },
   "auth": {
     "loginTitle": "Sign in",

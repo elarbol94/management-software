@@ -25,6 +25,7 @@ import {
   CalendarClock,
   CalendarPlus,
   ClipboardPlus,
+  GripVertical,
   LayoutDashboard,
   Menu,
   Search,
@@ -134,24 +135,37 @@ function SortableNavLink({
   active,
   compact,
   onNavigate,
+  reorderLabel,
 }: {
   item: ModuleNavItem;
   label: string;
   active: boolean;
   compact: boolean;
   onNavigate?: () => void;
+  reorderLabel: string;
 }) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: item.key });
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: item.key, disabled: compact });
 
   return (
     <div
       ref={setNodeRef}
       style={{ transform: CSS.Transform.toString(transform), transition }}
-      className={cn(isDragging && "z-10 opacity-45")}
-      {...attributes}
-      {...listeners}
+      className={cn("relative", isDragging && "z-10 opacity-45")}
     >
       <NavLink href={item.href} label={label} icon={item.icon} active={active} compact={compact} onNavigate={onNavigate} />
+      {!compact && (
+        <button
+          type="button"
+          className="absolute inset-y-0 right-1 grid w-8 cursor-grab place-items-center rounded-md text-muted-foreground opacity-60 touch-none hover:bg-accent hover:text-foreground hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring active:cursor-grabbing"
+          aria-label={reorderLabel}
+          title={reorderLabel}
+          onClick={(event) => event.preventDefault()}
+          {...attributes}
+          {...listeners}
+        >
+          <GripVertical className="size-4" />
+        </button>
+      )}
     </div>
   );
 }
@@ -251,6 +265,7 @@ function AppNavigation({
                   active={isActive(item.href)}
                   compact={compact}
                   onNavigate={onNavigate}
+                  reorderLabel={t("reorderItem", { label: t(item.key) })}
                 />
               ))}
             </SortableContext>
