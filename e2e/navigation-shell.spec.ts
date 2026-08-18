@@ -89,6 +89,47 @@ test("desktop navigation rails expand on hover, collapse on leave, and survive f
   await expectWidth(researchSidebar, 56);
 });
 
+test("desktop navigation stays expanded and reorders when a drag leaves the rail", async ({ page }) => {
+  await login(page);
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto("/personnel");
+
+  const appSidebar = page.getByTestId("app-sidebar").filter({ visible: true });
+  await appSidebar.hover();
+  await expectWidth(appSidebar, 240);
+
+  const navigation = appSidebar.locator("#app-primary-navigation");
+  const wikiItem = navigation.locator('[data-navigation-key="wiki"]');
+  const calendarItem = navigation.locator('[data-navigation-key="calendar"]');
+  const wikiBox = (await wikiItem.boundingBox())!;
+  const calendarBox = (await calendarItem.boundingBox())!;
+  const dragStart = {
+    x: wikiBox.x + wikiBox.width / 2,
+    y: wikiBox.y + wikiBox.height / 2,
+  };
+
+  await page.mouse.move(dragStart.x, dragStart.y);
+  await page.mouse.down();
+  await page.mouse.move(dragStart.x + 12, dragStart.y - 12, { steps: 4 });
+  await expect(wikiItem).toHaveClass(/opacity-45/);
+  await page.mouse.move(280, dragStart.y, { steps: 8 });
+  await expectWidth(appSidebar, 240);
+  await page.mouse.move(
+    calendarBox.x + calendarBox.width / 2,
+    calendarBox.y + calendarBox.height / 2,
+    { steps: 12 },
+  );
+  await page.mouse.up();
+
+  await expect(page).toHaveURL(/\/personnel$/);
+  await expect.poll(async () => {
+    const order = await navigation.locator("[data-navigation-key]").evaluateAll((items) =>
+      items.map((item) => item.getAttribute("data-navigation-key")),
+    );
+    return order.indexOf("wiki") < order.indexOf("calendar");
+  }).toBe(true);
+});
+
 test("mobile navigation uses full-width content with dismissible app and research sheets", async ({ page }) => {
   await login(page);
   await page.setViewportSize({ width: 390, height: 844 });

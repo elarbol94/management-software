@@ -223,6 +223,7 @@ function AppNavigation({
   onNavigate,
   navigationId,
   onOpenSearch,
+  onDragStateChange,
 }: {
   compact: boolean;
   pathname: string;
@@ -231,6 +232,7 @@ function AppNavigation({
   onNavigate?: () => void;
   navigationId: string;
   onOpenSearch: () => void;
+  onDragStateChange?: (dragging: boolean) => void;
 }) {
   const t = useTranslations("nav");
   const tCommon = useTranslations("common");
@@ -309,9 +311,16 @@ function AppNavigation({
             collisionDetection={closestCenter}
             onDragStart={() => {
               suppressNavigationUntilRef.current = Number.POSITIVE_INFINITY;
+              onDragStateChange?.(true);
             }}
-            onDragEnd={handleNavigationDragEnd}
-            onDragCancel={() => { suppressNavigationUntilRef.current = Date.now() + 500; }}
+            onDragEnd={(event) => {
+              handleNavigationDragEnd(event);
+              onDragStateChange?.(false);
+            }}
+            onDragCancel={() => {
+              suppressNavigationUntilRef.current = Date.now() + 500;
+              onDragStateChange?.(false);
+            }}
           >
             <SortableContext items={navigationItems.map((item) => item.key)} strategy={verticalListSortingStrategy}>
               {navigationItems.map((item) => (
@@ -424,6 +433,14 @@ export function AppSidebar({ userName, userEmail }: { userName: string; userEmai
   const [expanded, setExpanded] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
+  const desktopPointerInsideRef = useRef(false);
+  const desktopDragRef = useRef(false);
+
+  function handleDesktopDragStateChange(dragging: boolean) {
+    desktopDragRef.current = dragging;
+    if (dragging) setExpanded(true);
+    else if (!desktopPointerInsideRef.current) setExpanded(false);
+  }
   useEffect(() => {
     document.documentElement.style.setProperty("--app-rail-width", expanded ? "15rem" : "3.5rem");
     return () => { document.documentElement.style.removeProperty("--app-rail-width"); };
@@ -486,11 +503,17 @@ export function AppSidebar({ userName, userEmail }: { userName: string; userEmai
           "app-rail-transition fixed inset-y-0 left-0 z-40 hidden h-dvh shrink-0 flex-col border-r bg-sidebar duration-[220ms] ease-out motion-reduce:transition-none md:flex",
           expanded ? "w-60" : "w-14",
         )}
-        onMouseEnter={() => setExpanded(true)}
-        onMouseLeave={() => setExpanded(false)}
+        onMouseEnter={() => {
+          desktopPointerInsideRef.current = true;
+          setExpanded(true);
+        }}
+        onMouseLeave={() => {
+          desktopPointerInsideRef.current = false;
+          if (!desktopDragRef.current) setExpanded(false);
+        }}
         onFocusCapture={() => setExpanded(true)}
         onBlur={(event) => {
-          if (!event.currentTarget.contains(event.relatedTarget)) setExpanded(false);
+          if (!desktopDragRef.current && !event.currentTarget.contains(event.relatedTarget)) setExpanded(false);
         }}
       >
         <div className="flex h-14 shrink-0 items-center overflow-hidden border-b px-4">
@@ -513,6 +536,7 @@ export function AppSidebar({ userName, userEmail }: { userName: string; userEmai
           userName={userName}
           userEmail={userEmail}
           onOpenSearch={() => setSearchOpen(true)}
+          onDragStateChange={handleDesktopDragStateChange}
         />
       </aside>
       <WorkspaceSearch open={searchOpen} onOpenChange={setSearchOpen} />
