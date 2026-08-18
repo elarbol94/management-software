@@ -110,7 +110,12 @@ test("document paper keeps its physical aspect ratio and margin guides can be to
   await sideTools.getByRole("button", { name: "Dokumentgliederung" }).click();
   const outlinePanel = page.getByTestId("editor-outline");
   await expect(outlinePanel).toBeVisible();
+  await page.locator(".ProseMirror").evaluate((editor) => { editor.style.minHeight = "1800px"; });
   const outlineBox = await outlinePanel.boundingBox();
+  await page.evaluate(() => window.scrollTo(0, 700));
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(500);
+  await expect.poll(async () => (await outlinePanel.boundingBox())?.y ?? 0).toBeGreaterThanOrEqual(60);
+  await expect.poll(async () => (await outlinePanel.boundingBox())?.y ?? 999).toBeLessThanOrEqual(68);
   await sideTools.getByRole("button", { name: "Kommentare anzeigen" }).click();
   await expect(outlinePanel).toHaveCount(0);
   const commentPanel = page.getByTestId("comment-rail");

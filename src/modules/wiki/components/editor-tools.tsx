@@ -173,14 +173,12 @@ function EditorOutlineNavigation({ editor, items, activePosition, onSelect }: { 
 
 export function EditorOutlinePanel({ editor, items, activePosition, onClose }: { editor: Editor; items: OutlineItem[]; activePosition: number | null; onClose: () => void }) {
   const t = useTranslations("wiki.editor.outline");
-  return <aside data-testid="editor-outline" className="relative hidden w-72 xl:block">
-    <div className="sticky top-16 flex max-h-[calc(100vh-5rem)] flex-col overflow-hidden rounded-xl border bg-background shadow-sm">
-      <header className="flex items-start gap-2 border-b p-3">
-        <div className="min-w-0 flex-1"><h2 className="text-sm font-semibold">{t("title")}</h2><p className="mt-1 text-xs text-muted-foreground">{t("description")}</p></div>
-        <Button type="button" size="icon-sm" variant="ghost" aria-label={t("close")} title={t("close")} onClick={onClose}><X className="size-4" /></Button>
-      </header>
-      <EditorOutlineNavigation editor={editor} items={items} activePosition={activePosition} />
-    </div>
+  return <aside data-testid="editor-outline" className="sticky top-16 hidden max-h-[calc(100vh-5rem)] w-72 flex-col overflow-hidden rounded-xl border bg-background shadow-sm xl:flex">
+    <header className="flex items-start gap-2 border-b p-3">
+      <div className="min-w-0 flex-1"><h2 className="text-sm font-semibold">{t("title")}</h2><p className="mt-1 text-xs text-muted-foreground">{t("description")}</p></div>
+      <Button type="button" size="icon-sm" variant="ghost" aria-label={t("close")} title={t("close")} onClick={onClose}><X className="size-4" /></Button>
+    </header>
+    <EditorOutlineNavigation editor={editor} items={items} activePosition={activePosition} />
   </aside>;
 }
 
