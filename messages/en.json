@@ -1400,7 +1400,7 @@
         "title": "Find and replace", "placeholder": "Search this note…", "replacement": "Replace with…",
         "results": "{current} of {total}", "noResults": "No results", "caseSensitive": "Match case",
         "wholeWord": "Whole words only", "previous": "Previous result", "next": "Next result",
-        "replace": "Replace", "replaceAll": "Replace all"
+        "replace": "Replace", "replaceAll": "Replace all", "close": "Close search"
       },
       "outline": {
         "title": "Document outline", "description": "Jump to a heading in this note.",

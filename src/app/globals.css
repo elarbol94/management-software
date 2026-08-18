@@ -546,8 +546,9 @@
   }
 
   .wiki-search-match-current {
-    background: color-mix(in oklab, var(--chart-4) 68%, transparent);
-    box-shadow: 0 0 0 2px color-mix(in oklab, var(--chart-4) 48%, transparent);
+    background: #facc15;
+    color: #1c1917;
+    box-shadow: 0 0 0 1px #ca8a04;
   }
 
   .wiki-document-workspace {

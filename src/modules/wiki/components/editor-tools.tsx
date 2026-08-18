@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { Editor } from "@tiptap/core";
 import { isAllowedUri } from "@tiptap/extension-link";
 import { useTranslations } from "next-intl";
-import { CaseSensitive, Check, ChevronDown, ExternalLink, Link2, Replace, Search, WholeWord } from "lucide-react";
+import { CaseSensitive, Check, ChevronDown, ExternalLink, Link2, Replace, Search, WholeWord, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -104,10 +104,10 @@ export function EditorLinkPopover({ editor, pages, request = 0 }: { editor: Edit
   </Popover>;
 }
 
-export function EditorSearchPanel({ editor, open, onOpenChange }: { editor: Editor; open: boolean; onOpenChange: (open: boolean) => void }) {
+export function EditorSearchPanel({ editor, open, onOpenChange, initialQuery = "" }: { editor: Editor; open: boolean; onOpenChange: (open: boolean) => void; initialQuery?: string }) {
   const t = useTranslations("wiki.editor.search");
   const inputRef = useRef<HTMLInputElement>(null);
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(initialQuery);
   const [replacement, setReplacement] = useState("");
   const [caseSensitive, setCaseSensitive] = useState(false);
   const [wholeWord, setWholeWord] = useState(false);
@@ -154,6 +154,7 @@ export function EditorSearchPanel({ editor, open, onOpenChange }: { editor: Edit
     <Input value={replacement} onChange={(event) => setReplacement(event.target.value)} className="h-8 min-w-40 flex-1" placeholder={t("replacement")} aria-label={t("replacement")} />
     <Button type="button" size="sm" variant="outline" disabled={!matches.length} onClick={() => replace(false)}><Replace className="size-3.5" />{t("replace")}</Button>
     <Button type="button" size="sm" variant="outline" disabled={!matches.length} onClick={() => replace(true)}>{t("replaceAll")}</Button>
+    <Button type="button" size="icon-sm" variant="ghost" className="ml-auto" aria-label={t("close")} title={t("close")} onClick={() => onOpenChange(false)}><X className="size-4" /></Button>
   </div>;
 }
 

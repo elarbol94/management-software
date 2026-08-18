@@ -33,6 +33,13 @@ export function setEditorSearch(editor: Editor, options: SearchOptions) {
   if (matches.length) {
     const match = matches[Math.min(Math.max(options.current, 0), matches.length - 1)];
     editor.view.dispatch(editor.state.tr.setSelection(TextSelection.create(editor.state.doc, match.from, match.to)).scrollIntoView());
+    requestAnimationFrame(() => {
+      editor.view.dom.querySelector<HTMLElement>(".wiki-search-match-current")?.scrollIntoView({
+        behavior: "smooth",
+        block: "center",
+        inline: "nearest",
+      });
+    });
   }
   return matches;
 }
@@ -62,7 +69,7 @@ export const EditorSearchExtension = Extension.create({
           if (!options?.query) return DecorationSet.empty;
           const matches = findEditorMatches(state.doc, options);
           return DecorationSet.create(state.doc, matches.map((match, index) => Decoration.inline(match.from, match.to, {
-            class: index === options.current ? "wiki-search-match wiki-search-match-current" : "wiki-search-match",
+            class: index === options.current ? "wiki-search-match-current" : "wiki-search-match",
           })));
         },
       },

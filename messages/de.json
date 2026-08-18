@@ -1400,7 +1400,7 @@
         "title": "Suchen und ersetzen", "placeholder": "In dieser Notiz suchen…", "replacement": "Ersetzen durch…",
         "results": "{current} von {total}", "noResults": "Keine Treffer", "caseSensitive": "Groß-/Kleinschreibung",
         "wholeWord": "Nur ganze Wörter", "previous": "Vorheriger Treffer", "next": "Nächster Treffer",
-        "replace": "Ersetzen", "replaceAll": "Alle ersetzen"
+        "replace": "Ersetzen", "replaceAll": "Alle ersetzen", "close": "Suche schließen"
       },
       "outline": {
         "title": "Dokumentgliederung", "description": "Zu einer Überschrift in dieser Notiz springen.",

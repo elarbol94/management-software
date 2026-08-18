@@ -184,7 +184,7 @@ export function WorkspaceSearch({
               {results.map((result) => (
                 <Link
                   key={`${result.type}:${result.id}:${result.href}`}
-                  href={result.href}
+                  href={result.type === "wikiPage" ? `${result.href}?search=${encodeURIComponent(query.trim())}` : result.href}
                   onClick={() => changeOpen(false)}
                   className="flex items-center gap-3 rounded-lg px-3 py-2.5 hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 >

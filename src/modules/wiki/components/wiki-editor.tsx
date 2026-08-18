@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useEffectEvent, useLayoutEffect, useMemo, useReducer, useRef, useState, type CSSProperties, type RefObject } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useFormatter, useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { EditorContent, useEditor, type Editor } from "@tiptap/react";
@@ -694,7 +694,7 @@ export function WikiEditor({
   typographyTemplates,
   isPrimaryAuthor,
 }: WikiEditorProps) {
-  const t = useTranslations("wiki"); const tTasks = useTranslations("tasks"); const tDeadlines = useTranslations("deadlines"); const format = useFormatter(); const router = useRouter(); const { openTaskCreator } = useTaskCreator(); const { openDeadlineCreator } = useDeadlineCreator(); const [saveState, setSaveState] = useState<"idle" | "unsaved" | "saving" | "saved" | "offline" | "error" | "conflict">("idle");
+  const t = useTranslations("wiki"); const tTasks = useTranslations("tasks"); const tDeadlines = useTranslations("deadlines"); const format = useFormatter(); const router = useRouter(); const searchParams = useSearchParams(); const externalSearchQuery = searchParams.get("search")?.trim() ?? ""; const { openTaskCreator } = useTaskCreator(); const { openDeadlineCreator } = useDeadlineCreator(); const [saveState, setSaveState] = useState<"idle" | "unsaved" | "saving" | "saved" | "offline" | "error" | "conflict">("idle");
   const localizedInitialDocumentSettings = localizeDocumentSettings(
     parseDocumentSettings(initialDocumentSettings),
     citationLocale,
@@ -706,7 +706,17 @@ export function WikiEditor({
   );
   const [pageLinkOpen, setPageLinkOpen] = useState(false); const [citationOpen, setCitationOpen] = useState(false); const [evidenceOpen, setEvidenceOpen] = useState(false); const [markdownHelpOpen, setMarkdownHelpOpen] = useState(false); const [shortcutsOpen, setShortcutsOpen] = useState(false); const [linkEditorRequest, setLinkEditorRequest] = useState(0);
   const [graphicsOpen, setGraphicsOpen] = useState(false);
-  const [searchOpen, setSearchOpen] = useState(false); const [outlineOpen, setOutlineOpen] = useState(false); const [outline, setOutline] = useState<OutlineItem[]>([]); const [activeHeadingPosition, setActiveHeadingPosition] = useState<number | null>(null);
+  const [manualSearchOpen, setManualSearchOpen] = useState(false);
+  const searchOpen = manualSearchOpen || Boolean(externalSearchQuery);
+  function changeSearchOpen(open: boolean) {
+    setManualSearchOpen(open);
+    if (!open && externalSearchQuery) {
+      const next = new URLSearchParams(searchParams.toString());
+      next.delete("search");
+      router.replace(`${window.location.pathname}${next.size ? `?${next}` : ""}`, { scroll: false });
+    }
+  }
+  const [outlineOpen, setOutlineOpen] = useState(false); const [outline, setOutline] = useState<OutlineItem[]>([]); const [activeHeadingPosition, setActiveHeadingPosition] = useState<number | null>(null);
   const [writingStats, setWritingStats] = useState<WritingStats>({ words: 0, characters: 0, selectedWords: 0, readingMinutes: 0 });
   // TipTap v3 no longer re-renders per transaction, so the toolbar needs an
   // explicit nudge to show the marks under the caret. It stays on the keystroke
@@ -1629,7 +1639,7 @@ export function WikiEditor({
         case "pageBreak": run(() => editor.chain().focus().insertContent({ type: "pageBreak" }).run()); break;
         case "tableOfContents": run(() => editor.chain().focus().insertContent({ type: "tableOfContents", attrs: { title: t("document.contents"), maxLevel: 3 } }).run()); break;
         case "twoColumns": run(() => editor.chain().focus().insertContent({ type: "layoutSection", attrs: { columns: 2, gapMm: 8 }, content: [{ type: "paragraph" }, { type: "paragraph" }] }).run()); break;
-        case "search": setSearchOpen(true); break;
+        case "search": changeSearchOpen(true); break;
         case "outline": setOutlineOpen(true); break;
         case "inlineComment": prepareComment(); break;
         case "toggleComments": setCommentsVisible((value) => !value); break;
@@ -2152,7 +2162,7 @@ export function WikiEditor({
         </TooltipTrigger>
         <TooltipContent>{proofingButtonTitle}{proofingStatus === "checking" && <span> · {t("editor.proofing.checking")}</span>}</TooltipContent>
       </Tooltip>
-      <ToolbarButton title={t("editor.search.title")} shortcut={shortcutLabel("search")} active={searchOpen} onClick={() => setSearchOpen((value) => !value)}><Search className="size-4" /></ToolbarButton>
+      <ToolbarButton title={t("editor.search.title")} shortcut={shortcutLabel("search")} active={searchOpen} onClick={() => changeSearchOpen(!searchOpen)}><Search className="size-4" /></ToolbarButton>
       <ToolbarButton title={t("editor.outline.title")} shortcut={shortcutLabel("outline")} active={outlineOpen} onClick={() => setOutlineOpen(true)}><ListTree className="size-4" /></ToolbarButton>
       <ToolbarButton title={t("inlineComment")} shortcut={shortcutLabel("inlineComment")} onClick={prepareComment}><MessageSquareText className="size-4" /></ToolbarButton>
       <ToolbarButton title={commentsVisible ? t("hideComments") : t("showComments")} shortcut={shortcutLabel("toggleComments")} active={commentsVisible} onClick={() => setCommentsVisible((value) => !value)}>{commentsVisible ? <EyeOff className="size-4" /> : <Eye className="size-4" />}</ToolbarButton>
@@ -2204,7 +2214,7 @@ export function WikiEditor({
     <span role={saveState === "error" || saveState === "conflict" ? "alert" : "status"} aria-live={saveState === "error" || saveState === "conflict" ? "assertive" : "polite"} className={`ml-auto flex items-center gap-1 px-2 text-xs ${savePresentation.className}`}>{savePresentation.icon}{savePresentation.label}</span>
     {(saveState === "error" || saveState === "offline") && pendingSave.current && <Button type="button" size="xs" variant="ghost" onClick={() => void persistContent(pendingSave.current!)}>{t("editor.save.retry")}</Button>}
   </div>
-  <EditorSearchPanel editor={activeEditor} open={searchOpen} onOpenChange={setSearchOpen} />
+  <EditorSearchPanel key={externalSearchQuery} editor={activeEditor} open={searchOpen} onOpenChange={changeSearchOpen} initialQuery={externalSearchQuery} />
   {imageUploading && <p className="text-xs text-muted-foreground">{t("uploadingImage")}</p>}
   {imageError && <p className="text-xs text-destructive">{imageError}</p>}
   {leaseState === "locked" && <div className="flex flex-wrap items-center gap-3 rounded-lg border border-indigo-200 bg-indigo-50/70 p-3 text-sm text-indigo-950 dark:border-indigo-900 dark:bg-indigo-950/30 dark:text-indigo-100"><CloudOff className="size-4" /><span className="flex-1">{t("editor.lease.locked")}</span><Button size="sm" onClick={() => void takeOverEditing()}>{t("editor.lease.takeover")}</Button></div>}

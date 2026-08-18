@@ -1,9 +1,26 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useTranslations } from "next-intl";
+import {
+  DndContext,
+  KeyboardSensor,
+  PointerSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  arrayMove,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import {
   CalendarClock,
   CalendarPlus,
@@ -32,10 +49,34 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import { moduleNav } from "@/modules/registry";
+import { moduleNav, type ModuleNavItem } from "@/modules/registry";
 import { useTaskCreator } from "@/modules/tasks/components/task-create-provider";
 import { useDeadlineCreator } from "@/modules/tasks/components/deadline-create-provider";
 import { WorkspaceSearch } from "@/modules/context/components/workspace-search";
+
+const NAVIGATION_ORDER_STORAGE_KEY = "app-navigation-order:v1";
+
+function orderedNavigationItems(order: string[]): ModuleNavItem[] {
+  const itemsByKey = new Map(moduleNav.map((item) => [item.key, item]));
+  const savedItems = order.flatMap((key) => {
+    const item = itemsByKey.get(key as ModuleNavItem["key"]);
+    if (!item) return [];
+    itemsByKey.delete(item.key);
+    return [item];
+  });
+  return [...savedItems, ...itemsByKey.values()];
+}
+
+function loadNavigationOrder(): string[] {
+  const defaultOrder = moduleNav.map((item) => item.key);
+  if (typeof window === "undefined") return defaultOrder;
+  try {
+    const stored = JSON.parse(window.localStorage.getItem(NAVIGATION_ORDER_STORAGE_KEY) ?? "[]");
+    return Array.isArray(stored) && stored.every((item) => typeof item === "string") ? stored : defaultOrder;
+  } catch {
+    return defaultOrder;
+  }
+}
 
 function NavLink({
   href,
@@ -87,6 +128,34 @@ function NavLink({
   );
 }
 
+function SortableNavLink({
+  item,
+  label,
+  active,
+  compact,
+  onNavigate,
+}: {
+  item: ModuleNavItem;
+  label: string;
+  active: boolean;
+  compact: boolean;
+  onNavigate?: () => void;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: item.key });
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={{ transform: CSS.Transform.toString(transform), transition }}
+      className={cn(isDragging && "z-10 opacity-45")}
+      {...attributes}
+      {...listeners}
+    >
+      <NavLink href={item.href} label={label} icon={item.icon} active={active} compact={compact} onNavigate={onNavigate} />
+    </div>
+  );
+}
+
 function AppNavigation({
   compact,
   pathname,
@@ -111,8 +180,27 @@ function AppNavigation({
   const tDeadlines = useTranslations("deadlines");
   const { openTaskCreator } = useTaskCreator();
   const { openDeadlineCreator } = useDeadlineCreator();
+  const [navigationOrder, setNavigationOrder] = useState<string[]>(loadNavigationOrder);
+  const navigationItems = useMemo(() => orderedNavigationItems(navigationOrder), [navigationOrder]);
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
   const isActive = (href: string) =>
     href === "/" ? pathname === "/" : pathname.startsWith(href);
+
+  function handleNavigationDragEnd(event: DragEndEvent) {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    setNavigationOrder((current) => {
+      const oldIndex = current.indexOf(String(active.id));
+      const newIndex = current.indexOf(String(over.id));
+      if (oldIndex < 0 || newIndex < 0) return current;
+      const next = arrayMove(current, oldIndex, newIndex);
+      window.localStorage.setItem(NAVIGATION_ORDER_STORAGE_KEY, JSON.stringify(next));
+      return next;
+    });
+  }
 
   return (
     <TooltipProvider>
@@ -153,17 +241,20 @@ function AppNavigation({
               </kbd>
             )}
           </button>
-          {moduleNav.map((item) => (
-            <NavLink
-              key={item.key}
-              href={item.href}
-              label={t(item.key)}
-              icon={item.icon}
-              active={isActive(item.href)}
-              compact={compact}
-              onNavigate={onNavigate}
-            />
-          ))}
+          <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleNavigationDragEnd}>
+            <SortableContext items={navigationItems.map((item) => item.key)} strategy={verticalListSortingStrategy}>
+              {navigationItems.map((item) => (
+                <SortableNavLink
+                  key={item.key}
+                  item={item}
+                  label={t(item.key)}
+                  active={isActive(item.href)}
+                  compact={compact}
+                  onNavigate={onNavigate}
+                />
+              ))}
+            </SortableContext>
+          </DndContext>
           <div className="mt-auto flex flex-col gap-1">
             <NavLink
               href="/settings"
