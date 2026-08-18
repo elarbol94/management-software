@@ -1447,7 +1447,7 @@
       },
       "outline": {
         "title": "Document outline", "description": "Jump to a heading in this note.",
-        "empty": "This note does not have any headings yet.", "untitled": "Untitled heading"
+        "empty": "This note does not have any headings yet.", "untitled": "Untitled heading", "close": "Close document outline"
       },
       "placeholder": { "empty": "Write something, or type / for commands…", "heading": "Heading…" },
       "preferences": {

@@ -1447,7 +1447,7 @@
       },
       "outline": {
         "title": "Dokumentgliederung", "description": "Zu einer Überschrift in dieser Notiz springen.",
-        "empty": "Diese Notiz enthält noch keine Überschriften.", "untitled": "Unbenannte Überschrift"
+        "empty": "Diese Notiz enthält noch keine Überschriften.", "untitled": "Unbenannte Überschrift", "close": "Dokumentgliederung schließen"
       },
       "placeholder": { "empty": "Schreiben oder / für Befehle eingeben …", "heading": "Überschrift …" },
       "preferences": {
