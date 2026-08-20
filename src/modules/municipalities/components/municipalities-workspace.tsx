@@ -37,10 +37,19 @@ function formatPopulationChange(value: number, formatter: Intl.NumberFormat) {
   return `${value > 0 ? "+" : ""}${formatter.format(value)}`;
 }
 
+function calculateAverageAnnualPopulationChange(firstValue: number, currentValue: number, years: number) {
+  if (years <= 0 || firstValue <= 0 || currentValue <= 0) return null;
+  return Math.pow(currentValue / firstValue, 1 / years) - 1;
+}
+
 export function MunicipalitiesWorkspace() {
   const t = useTranslations("municipalities");
   const locale = useLocale();
   const populationFormatter = useMemo(() => new Intl.NumberFormat(locale), [locale]);
+  const percentageFormatter = useMemo(
+    () => new Intl.NumberFormat(locale, { style: "percent", signDisplay: "always", minimumFractionDigits: 1, maximumFractionDigits: 1 }),
+    [locale],
+  );
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -163,6 +172,13 @@ export function MunicipalitiesWorkspace() {
   const selectedPopulation = selected ? activePopulation.values[selected.municipalityCode] : 0;
   const populationChangePreviousYear = selected && previousPopulation ? selectedPopulation - previousPopulation.values[selected.municipalityCode] : null;
   const populationChangeSinceFirstYear = selected && firstPopulation ? selectedPopulation - firstPopulation.values[selected.municipalityCode] : null;
+  const averageAnnualPopulationChange = selected && firstPopulation
+    ? calculateAverageAnnualPopulationChange(
+      firstPopulation.values[selected.municipalityCode],
+      selectedPopulation,
+      selectedPopulationYear - populationSeries.firstYear,
+    )
+    : null;
 
   return (
     <div className="grid min-h-0 gap-4 lg:grid-cols-[minmax(0,1fr)_19rem]" data-testid="municipalities-workspace">
@@ -245,6 +261,7 @@ export function MunicipalitiesWorkspace() {
                 <dt className="text-muted-foreground">{t("population")}</dt><dd className="font-semibold tabular-nums">{populationFormatter.format(selectedPopulation)}</dd>
                 <dt className="text-muted-foreground">{t("populationChangePreviousYear")}</dt><dd className="font-medium tabular-nums">{populationChangePreviousYear === null ? "—" : formatPopulationChange(populationChangePreviousYear, populationFormatter)}</dd>
                 <dt className="text-muted-foreground">{t("populationChangeSinceFirstYear", { year: populationSeries.firstYear })}</dt><dd className="font-medium tabular-nums">{populationChangeSinceFirstYear === null ? "—" : formatPopulationChange(populationChangeSinceFirstYear, populationFormatter)}</dd>
+                <dt className="text-muted-foreground">{t("populationAverageAnnualChange", { year: populationSeries.firstYear })}</dt><dd className="font-medium tabular-nums">{averageAnnualPopulationChange === null ? "—" : percentageFormatter.format(averageAnnualPopulationChange)}</dd>
                 <dt className="text-muted-foreground">{t("state")}</dt><dd className="font-medium">{selected.state}</dd>
                 <dt className="text-muted-foreground">{t("municipalityCode")}</dt><dd className="font-mono font-medium">{selected.municipalityCode}</dd>
               </dl>

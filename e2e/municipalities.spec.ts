@@ -52,19 +52,20 @@ test("municipality map works with local geometry when basemap tiles are unavaila
   await expect(page.getByTestId("municipality-details").getByRole("heading", { name: "Graz" })).toBeVisible();
   await expect(page.getByText("60101", { exact: true })).toBeVisible();
   await expect(page.getByTestId("municipality-details").getByText("305.314", { exact: true })).toBeVisible();
+  await expect(page.getByTestId("municipality-details").getByText("Ø jährliche Änderung seit 2002", { exact: true })).toBeVisible();
   const metricChart = page.getByTestId("municipality-metric-chart");
   await expect(metricChart).toBeVisible();
   await expect(metricChart.getByRole("img", { name: "Einwohnerentwicklung in Graz" })).toBeVisible();
   await metricChart.getByRole("button", { name: "Diagramm minimieren" }).click();
   await expect(metricChart.getByRole("button", { name: "Diagramm einblenden" })).toBeVisible();
   await metricChart.getByRole("button", { name: "Diagramm einblenden" }).click();
-  await metricChart.getByTestId("municipality-metric-chart-point-2002").hover();
-  await expect(metricChart.getByTestId("municipality-metric-chart-tooltip")).toHaveText("2002: 232.930 Personen");
   await populationYear.focus();
   await populationYear.press("Home");
   await expect(page).toHaveURL(/populationYear=2002/);
   await expect(page.getByTestId("municipality-details").getByText("232.930", { exact: true })).toBeVisible();
   await expect(page.getByTestId("population-legend").getByText("Stand 1. Jänner 2002")).toBeVisible();
+  await metricChart.getByTestId("municipality-metric-chart-point-2015").hover();
+  await expect(metricChart.getByTestId("municipality-metric-chart-tooltip")).toHaveText("2015: 274.207 Personen");
 
   await page.reload();
   await expect(page).toHaveURL(/municipality=60101/);

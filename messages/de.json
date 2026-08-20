@@ -62,6 +62,7 @@
     "nextPopulationYear": "Nächstes Jahr",
     "populationChangePreviousYear": "Veränderung zum Vorjahr",
     "populationChangeSinceFirstYear": "Veränderung seit {year}",
+    "populationAverageAnnualChange": "Ø jährliche Änderung seit {year}",
     "populationChartLabel": "Einwohnerentwicklung in {municipality}",
     "minimizeMetricChart": "Diagramm minimieren",
     "expandMetricChart": "Diagramm einblenden",
