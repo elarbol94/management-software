@@ -31,6 +31,7 @@ export function MunicipalityMetricChart({
   points,
   selectedYear,
   valueFormatter,
+  unitLabel,
   chartLabel,
   minimizeLabel,
   expandLabel,
@@ -40,11 +41,13 @@ export function MunicipalityMetricChart({
   points: MetricPoint[];
   selectedYear: number;
   valueFormatter: Intl.NumberFormat;
+  unitLabel: string;
   chartLabel: string;
   minimizeLabel: string;
   expandLabel: string;
 }) {
   const [minimized, setMinimized] = useState(false);
+  const [hoveredYear, setHoveredYear] = useState<number | null>(null);
   const chart = useMemo(() => {
     const domain = chartDomain(points.map(({ value }) => value));
     const plotWidth = CHART_WIDTH - PLOT_LEFT - PLOT_RIGHT;
@@ -63,6 +66,7 @@ export function MunicipalityMetricChart({
   }, [points, selectedYear]);
 
   const ticks = [chart.domain.maximum, (chart.domain.minimum + chart.domain.maximum) / 2, chart.domain.minimum];
+  const active = chart.points.find((point) => point.year === hoveredYear) ?? chart.selected;
 
   return (
     <section
@@ -96,14 +100,32 @@ export function MunicipalityMetricChart({
             ))}
             <path d={chart.path} fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" className="text-teal-700 dark:text-teal-300" />
             {chart.points.map((point) => (
-              <circle key={point.year} cx={point.x} cy={point.y} r={point.year === chart.selected.year ? 3.8 : 1.9} className={point.year === chart.selected.year ? "fill-background stroke-teal-700 dark:stroke-teal-300" : "fill-teal-700 dark:fill-teal-300"} strokeWidth="2" />
+              <g key={point.year}>
+                <circle
+                  cx={point.x}
+                  cy={point.y}
+                  r={point.year === active.year ? 3.8 : 1.9}
+                  className={point.year === active.year ? "fill-background stroke-teal-700 dark:stroke-teal-300" : "fill-teal-700 dark:fill-teal-300"}
+                  strokeWidth="2"
+                />
+                <circle
+                  data-testid={"municipality-metric-chart-point-" + point.year}
+                  cx={point.x}
+                  cy={point.y}
+                  r="10"
+                  fill="currentColor"
+                  fillOpacity="0"
+                  onPointerEnter={() => setHoveredYear(point.year)}
+                  onPointerLeave={() => setHoveredYear(null)}
+                />
+              </g>
             ))}
-            <line x1={chart.selected.x} x2={chart.selected.x} y1={PLOT_TOP} y2={CHART_HEIGHT - PLOT_BOTTOM} className="stroke-teal-700/45 dark:stroke-teal-300/45" strokeDasharray="3 3" />
+            <line x1={active.x} x2={active.x} y1={PLOT_TOP} y2={CHART_HEIGHT - PLOT_BOTTOM} className="stroke-teal-700/45 dark:stroke-teal-300/45" strokeDasharray="3 3" />
             <text x={PLOT_LEFT} y={CHART_HEIGHT - 9} className="fill-muted-foreground text-[10px]">{points[0].year}</text>
             <text x={CHART_WIDTH - PLOT_RIGHT} y={CHART_HEIGHT - 9} textAnchor="end" className="fill-muted-foreground text-[10px]">{points.at(-1)!.year}</text>
-            <text x={chart.selected.x} y={PLOT_TOP + 10} textAnchor="middle" className="fill-foreground text-[10px] font-semibold">{chart.selected.year}</text>
+            <text x={active.x} y={PLOT_TOP + 10} textAnchor="middle" className="fill-foreground text-[10px] font-semibold">{active.year}</text>
           </svg>
-          <p className="px-1 text-[10px] text-muted-foreground">{chart.selected.year}: <span className="font-semibold text-foreground tabular-nums">{valueFormatter.format(chart.selected.value)}</span></p>
+          <p className="px-1 text-[10px] text-muted-foreground" role="tooltip" data-testid="municipality-metric-chart-tooltip">{active.year}: <span className="font-semibold text-foreground tabular-nums">{valueFormatter.format(active.value)}</span> {unitLabel}</p>
         </div>
       )}
     </section>

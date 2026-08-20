@@ -58,6 +58,9 @@ test("municipality map works with local geometry when basemap tiles are unavaila
   await metricChart.getByRole("button", { name: "Diagramm minimieren" }).click();
   await expect(metricChart.getByRole("button", { name: "Diagramm einblenden" })).toBeVisible();
   await metricChart.getByRole("button", { name: "Diagramm einblenden" }).click();
+  await metricChart.getByTestId("municipality-metric-chart-point-2002").hover();
+  await expect(metricChart.getByTestId("municipality-metric-chart-tooltip")).toHaveText("2002: 232.930 Personen");
+  await populationYear.focus();
   await populationYear.press("Home");
   await expect(page).toHaveURL(/populationYear=2002/);
   await expect(page.getByTestId("municipality-details").getByText("232.930", { exact: true })).toBeVisible();

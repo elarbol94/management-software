@@ -224,6 +224,7 @@ export function MunicipalitiesWorkspace() {
           populationLabel={t("population")}
           populationReferenceLabel={t("populationReference", { year: selectedPopulationYear })}
           populationYearLabel={t("populationYear")}
+          populationUnitLabel={t("populationUnit")}
           previousPopulationYearLabel={t("previousPopulationYear")}
           nextPopulationYearLabel={t("nextPopulationYear")}
           selectedMetricHistory={selectedMetricHistory}

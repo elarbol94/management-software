@@ -55,6 +55,7 @@
     "state": "Bundesland",
     "municipalityCode": "Gemeindecode",
     "population": "Einwohnerzahl",
+    "populationUnit": "Personen",
     "populationReference": "Stand 1. Jänner {year}",
     "populationYear": "Jahr",
     "previousPopulationYear": "Vorheriges Jahr",

@@ -55,6 +55,7 @@
     "state": "State",
     "municipalityCode": "Municipality code",
     "population": "Population",
+    "populationUnit": "persons",
     "populationReference": "As of 1 January {year}",
     "populationYear": "Year",
     "previousPopulationYear": "Previous year",

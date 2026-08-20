@@ -67,6 +67,7 @@ export function MunicipalityMap({
   populationLabel,
   populationReferenceLabel,
   populationYearLabel,
+  populationUnitLabel,
   previousPopulationYearLabel,
   nextPopulationYearLabel,
   selectedMetricHistory,
@@ -91,6 +92,7 @@ export function MunicipalityMap({
   populationLabel: string;
   populationReferenceLabel: string;
   populationYearLabel: string;
+  populationUnitLabel: string;
   previousPopulationYearLabel: string;
   nextPopulationYearLabel: string;
   selectedMetricHistory: Array<{ year: number; value: number }> | null;
@@ -291,6 +293,7 @@ export function MunicipalityMap({
           points={selectedMetricHistory}
           selectedYear={populationYear}
           valueFormatter={populationFormatter}
+          unitLabel={populationUnitLabel}
           chartLabel={metricChartLabel}
           minimizeLabel={minimizeMetricChartLabel}
           expandLabel={expandMetricChartLabel}
