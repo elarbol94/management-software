@@ -39,7 +39,7 @@
   "municipalities": {
     "eyebrow": "Places & regions",
     "title": "Municipalities",
-    "description": "Every Austrian municipality on an interactive map – the spatial foundation for future municipal data.",
+    "description": "Every Austrian municipality on an interactive map – colored by population.",
     "mapRegionLabel": "Interactive municipality map",
     "mapLabel": "Map of Austria with municipality boundaries",
     "searchLabel": "Search municipalities",
@@ -54,9 +54,12 @@
     "selectionDescription": "Move over an area to see its name. Click the map or use search to keep a municipality selected.",
     "state": "State",
     "municipalityCode": "Municipality code",
+    "population": "Population",
+    "populationReference": "As of 1 January 2025",
     "clearSelection": "Clear selection",
     "dataBasis": "Data basis",
     "dataBasisDescription": "{count, number} official municipalities as of 1 January 2026. Vienna is represented as one municipality.",
+    "populationDataBasis": "Population as of 1 January 2025:",
     "geometryAttribution": "Municipality geometry: © Statistics Austria, CC BY 4.0. Basemap: © basemap.at.",
     "loadErrorTitle": "Municipality map could not be loaded",
     "loadErrorDescription": "The local map data is currently unavailable. Please reload the page."

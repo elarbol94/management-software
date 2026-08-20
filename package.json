@@ -20,6 +20,7 @@
     "db:seed": "tsx src/db/seed.ts",
     "db:studio": "drizzle-kit studio",
     "data:municipalities": "tsx scripts/update-municipalities.ts",
+    "data:municipality-population": "tsx scripts/update-municipality-population.ts",
     "e2e": "playwright test",
     "perf:budget": "node scripts/check-performance-budget.mjs"
   },

@@ -2,9 +2,9 @@
 
 import dynamic from "next/dynamic";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import { useEffect, useMemo, useState } from "react";
-import { Database, MapPinned, Search, X } from "lucide-react";
+import { Database, MapPinned, Search, Users, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -13,6 +13,10 @@ import {
   type MunicipalityIndex,
   type MunicipalityIndexItem,
 } from "../data";
+import {
+  validateMunicipalityPopulation,
+  type MunicipalityPopulationSnapshot,
+} from "../population";
 
 const MunicipalityMap = dynamic(
   () => import("./municipality-map").then((module) => module.MunicipalityMap),
@@ -22,12 +26,21 @@ const MunicipalityMap = dynamic(
   },
 );
 
+async function fetchJson<T>(url: string, signal: AbortSignal) {
+  const response = await fetch(url, { signal });
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  return response.json() as Promise<T>;
+}
+
 export function MunicipalitiesWorkspace() {
   const t = useTranslations("municipalities");
+  const locale = useLocale();
+  const populationFormatter = useMemo(() => new Intl.NumberFormat(locale), [locale]);
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const [index, setIndex] = useState<MunicipalityIndex | null>(null);
+  const [population, setPopulation] = useState<MunicipalityPopulationSnapshot | null>(null);
   const [loadError, setLoadError] = useState(false);
   const [query, setQuery] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
@@ -44,12 +57,19 @@ export function MunicipalitiesWorkspace() {
 
   useEffect(() => {
     const controller = new AbortController();
-    fetch("/data/municipalities-at-2026.index.json", { signal: controller.signal })
-      .then((response) => {
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        return response.json() as Promise<MunicipalityIndex>;
+    Promise.all([
+      fetchJson<MunicipalityIndex>("/data/municipalities-at-2026.index.json", controller.signal),
+      fetchJson<MunicipalityPopulationSnapshot>("/data/municipality-population-2025.json", controller.signal),
+    ])
+      .then(([indexData, populationData]) => {
+        const validatedIndex = validateMunicipalityIndex(indexData);
+        const validatedPopulation = validateMunicipalityPopulation(
+          populationData,
+          validatedIndex.municipalities.map(({ municipalityCode }) => municipalityCode),
+        );
+        setIndex(validatedIndex);
+        setPopulation(validatedPopulation);
       })
-      .then((data) => setIndex(validateMunicipalityIndex(data)))
       .catch((error: unknown) => {
         if (!(error instanceof DOMException && error.name === "AbortError")) setLoadError(true);
       });
@@ -99,7 +119,7 @@ export function MunicipalitiesWorkspace() {
       </div>
     );
   }
-  if (!index) return <Skeleton className="h-[calc(100dvh-12rem)] min-h-[34rem] w-full rounded-2xl" />;
+  if (!index || !population) return <Skeleton className="h-[calc(100dvh-12rem)] min-h-[34rem] w-full rounded-2xl" />;
 
   return (
     <div className="grid min-h-0 gap-4 lg:grid-cols-[minmax(0,1fr)_19rem]" data-testid="municipalities-workspace">
@@ -146,6 +166,7 @@ export function MunicipalitiesWorkspace() {
         <MunicipalityMap
           austriaBounds={index.bounds}
           selected={selected}
+          populationValues={population.values}
           onSelect={selectByCode}
           onReset={() => updateSelection(null)}
           mapLabel={t("mapLabel")}
@@ -153,6 +174,8 @@ export function MunicipalitiesWorkspace() {
           zoomOutLabel={t("zoomOut")}
           resetLabel={t("allAustria")}
           municipalityCodeLabel={t("municipalityCode")}
+          populationLabel={t("population")}
+          populationReferenceLabel={t("populationReference")}
         />
       </section>
 
@@ -164,9 +187,11 @@ export function MunicipalitiesWorkspace() {
               <p className="text-xs font-semibold tracking-[0.14em] text-teal-700 uppercase dark:text-teal-300">{t("selectedMunicipality")}</p>
               <h2 className="mt-1 text-2xl font-semibold tracking-tight">{selected.name}</h2>
               <dl className="mt-5 grid grid-cols-[auto_1fr] gap-x-3 gap-y-2 text-sm">
+                <dt className="text-muted-foreground">{t("population")}</dt><dd className="font-semibold tabular-nums">{populationFormatter.format(population.values[selected.municipalityCode])}</dd>
                 <dt className="text-muted-foreground">{t("state")}</dt><dd className="font-medium">{selected.state}</dd>
                 <dt className="text-muted-foreground">{t("municipalityCode")}</dt><dd className="font-mono font-medium">{selected.municipalityCode}</dd>
               </dl>
+              <p className="mt-3 flex items-center gap-1.5 text-xs text-muted-foreground"><Users className="size-3.5" />{t("populationReference")}</p>
               <Button variant="outline" className="mt-5 w-full" onClick={() => updateSelection(null)}><X className="size-4" />{t("clearSelection")}</Button>
             </>
           ) : (
@@ -180,6 +205,11 @@ export function MunicipalitiesWorkspace() {
         <div className="rounded-2xl border bg-muted/30 p-4 text-xs leading-5 text-muted-foreground">
           <div className="mb-2 flex items-center gap-2 font-semibold text-foreground"><Database className="size-4" />{t("dataBasis")}</div>
           <p>{t("dataBasisDescription", { count: index.count })}</p>
+          <p className="mt-2">
+            {t("populationDataBasis")} {" "}
+            <a className="underline underline-offset-2 hover:text-foreground" href={population.source.url} target="_blank" rel="noreferrer">{population.source.title}</a>
+            {` (${population.source.license}).`}
+          </p>
           <p className="mt-2">{t("geometryAttribution")}</p>
         </div>
       </aside>

@@ -1,10 +1,12 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useLocale } from "next-intl";
 import * as maplibregl from "maplibre-gl";
 import type { MapLayerMouseEvent, MapSourceDataEvent, StyleSpecification } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import type { MunicipalityBounds, MunicipalityIndexItem, MunicipalityProperties } from "../data";
+import { POPULATION_CLASSES } from "../population";
 
 const SOURCE_ID = "austrian-municipalities";
 const FILL_LAYER_ID = "municipality-fills";
@@ -37,9 +39,19 @@ function featureProperties(event: MapLayerMouseEvent): MunicipalityProperties | 
   return properties as MunicipalityProperties;
 }
 
+function populationClassLabel(
+  populationClass: (typeof POPULATION_CLASSES)[number],
+  formatter: Intl.NumberFormat,
+) {
+  if (populationClass.maximum === null) return `≥ ${formatter.format(populationClass.minimum)}`;
+  if (populationClass.minimum === 0) return `< ${formatter.format(populationClass.maximum + 1)}`;
+  return `${formatter.format(populationClass.minimum)}–${formatter.format(populationClass.maximum)}`;
+}
+
 export function MunicipalityMap({
   austriaBounds,
   selected,
+  populationValues,
   onSelect,
   onReset,
   mapLabel,
@@ -47,9 +59,12 @@ export function MunicipalityMap({
   zoomOutLabel,
   resetLabel,
   municipalityCodeLabel,
+  populationLabel,
+  populationReferenceLabel,
 }: {
   austriaBounds: MunicipalityBounds;
   selected: MunicipalityIndexItem | null;
+  populationValues: Record<string, number>;
   onSelect: (municipalityCode: string) => void;
   onReset: () => void;
   mapLabel: string;
@@ -57,7 +72,11 @@ export function MunicipalityMap({
   zoomOutLabel: string;
   resetLabel: string;
   municipalityCodeLabel: string;
+  populationLabel: string;
+  populationReferenceLabel: string;
 }) {
+  const locale = useLocale();
+  const populationFormatter = useMemo(() => new Intl.NumberFormat(locale), [locale]);
   const containerRef = useRef<HTMLDivElement>(null);
   const [ready, setReady] = useState(false);
   const mapRef = useRef<maplibregl.Map | null>(null);
@@ -110,13 +129,26 @@ export function MunicipalityMap({
         promoteId: "municipalityCode",
         attribution: "© Statistik Austria, CC BY 4.0",
       });
+      for (const [municipalityCode, population] of Object.entries(populationValues)) {
+        map.setFeatureState({ source: SOURCE_ID, id: municipalityCode }, { population });
+      }
       map.addLayer({
         id: FILL_LAYER_ID,
         type: "fill",
         source: SOURCE_ID,
         paint: {
-          "fill-color": ["case", ["boolean", ["feature-state", "selected"], false], "#0f766e", ["boolean", ["feature-state", "hover"], false], "#14b8a6", "#68a9a1"],
-          "fill-opacity": ["case", ["boolean", ["feature-state", "selected"], false], 0.62, ["boolean", ["feature-state", "hover"], false], 0.5, 0.3],
+          "fill-color": [
+            "step",
+            ["coalesce", ["feature-state", "population"], -1],
+            "#d7ddda",
+            0, "#e2f2ee",
+            1_000, "#b9ddd6",
+            2_500, "#7fc2b7",
+            5_000, "#42a394",
+            10_000, "#177b70",
+            50_000, "#0a4d47",
+          ],
+          "fill-opacity": ["case", ["boolean", ["feature-state", "selected"], false], 0.9, ["boolean", ["feature-state", "hover"], false], 0.82, 0.7],
           "fill-outline-color": "#f8faf9",
         },
       });
@@ -125,8 +157,8 @@ export function MunicipalityMap({
         type: "line",
         source: SOURCE_ID,
         paint: {
-          "line-color": ["case", ["boolean", ["feature-state", "selected"], false], "#083f3a", "#ffffff"],
-          "line-width": ["case", ["boolean", ["feature-state", "selected"], false], 2.4, 0.65],
+          "line-color": ["case", ["boolean", ["feature-state", "selected"], false], "#082f2c", ["boolean", ["feature-state", "hover"], false], "#0f766e", "#ffffff"],
+          "line-width": ["case", ["boolean", ["feature-state", "selected"], false], 2.4, ["boolean", ["feature-state", "hover"], false], 1.4, 0.65],
           "line-opacity": 0.95,
         },
       });
@@ -153,9 +185,11 @@ export function MunicipalityMap({
       const content = document.createElement("div");
       const title = document.createElement("strong");
       title.textContent = properties.name;
+      const populationDetail = document.createElement("span");
+      populationDetail.textContent = `${populationLabel}: ${populationFormatter.format(populationValues[properties.municipalityCode])}`;
       const detail = document.createElement("span");
       detail.textContent = `${properties.state} · ${municipalityCodeLabel} ${properties.municipalityCode}`;
-      content.append(title, detail);
+      content.append(title, populationDetail, detail);
       popup.setLngLat(event.lngLat).setDOMContent(content).addTo(map);
     });
 
@@ -180,7 +214,7 @@ export function MunicipalityMap({
       popupRef.current = null;
       mapRef.current = null;
     };
-  }, [austriaBounds, municipalityCodeLabel]);
+  }, [austriaBounds, municipalityCodeLabel, populationFormatter, populationLabel, populationValues]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -197,11 +231,7 @@ export function MunicipalityMap({
   }, [austriaBounds, selected]);
 
   return (
-    <div
-      className="relative h-full min-h-0 overflow-hidden rounded-2xl bg-[#e8ece9]"
-      data-testid="municipality-map"
-      data-map-ready={ready}
-    >
+    <div className="relative h-full min-h-0 overflow-hidden rounded-2xl bg-[#e8ece9]" data-testid="municipality-map" data-map-ready={ready}>
       <div ref={containerRef} className="h-full w-full" aria-label={mapLabel} />
       <div className="absolute top-3 right-3 z-10 flex flex-col overflow-hidden rounded-lg border bg-background/95 shadow-sm backdrop-blur">
         <button type="button" className="grid size-9 place-items-center text-lg hover:bg-accent" aria-label={zoomInLabel} onClick={() => mapRef.current?.zoomIn()}>+</button>
@@ -217,6 +247,18 @@ export function MunicipalityMap({
         >
           {resetLabel}
         </button>
+      </div>
+      <div className="absolute bottom-3 left-3 z-10 w-44 max-w-[calc(100%-1.5rem)] rounded-xl border bg-background/95 p-3 shadow-sm backdrop-blur" data-testid="population-legend">
+        <p className="text-xs font-semibold">{populationLabel}</p>
+        <p className="mt-0.5 text-[10px] text-muted-foreground">{populationReferenceLabel}</p>
+        <ul className="mt-2 space-y-1" aria-label={populationLabel}>
+          {POPULATION_CLASSES.map((populationClass) => (
+            <li key={populationClass.minimum} className="flex items-center gap-2 text-[10px] tabular-nums">
+              <span className="size-3 shrink-0 rounded-[3px] border border-black/10" style={{ backgroundColor: populationClass.color }} />
+              <span>{populationClassLabel(populationClass, populationFormatter)}</span>
+            </li>
+          ))}
+        </ul>
       </div>
     </div>
   );
