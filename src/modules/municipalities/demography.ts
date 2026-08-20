@@ -13,7 +13,17 @@ export const AGE_GROUPS = [
   { id: "80-plus", minimum: 80, maximum: null },
 ] as const;
 
+export const DEMOGRAPHIC_INDICATORS = [
+  { id: "youth-share", unit: "share" },
+  { id: "senior-share", unit: "share" },
+  { id: "old-age-dependency", unit: "per-100" },
+  { id: "aging-index", unit: "per-100" },
+] as const;
+
 export type AgeGroupId = (typeof AGE_GROUPS)[number]["id"];
+export type DemographicIndicatorId = (typeof DEMOGRAPHIC_INDICATORS)[number]["id"];
+export type DemographicIndicatorUnit = (typeof DEMOGRAPHIC_INDICATORS)[number]["unit"];
+export type AgeViewId = AgeGroupId | DemographicIndicatorId;
 export type SexFilter = "all" | "female" | "male";
 export type AgeMeasure = "share" | "persons";
 export type MapMetric = "population" | "age";
@@ -32,6 +42,18 @@ export type MunicipalityDemographySeries = {
   scales: Record<AgeMeasure, Record<SexFilter, DemographyScale>>;
   years: Record<string, { referenceDate: string; values: Record<string, MunicipalitySexAgeCounts> }>;
 };
+
+export function isAgeGroupId(value: string): value is AgeGroupId {
+  return AGE_GROUPS.some(({ id }) => id === value);
+}
+
+export function isDemographicIndicatorId(value: string): value is DemographicIndicatorId {
+  return DEMOGRAPHIC_INDICATORS.some(({ id }) => id === value);
+}
+
+export function demographicIndicatorUnit(id: DemographicIndicatorId): DemographicIndicatorUnit {
+  return DEMOGRAPHIC_INDICATORS.find((indicator) => indicator.id === id)!.unit;
+}
 
 export function ageGroupIndex(id: AgeGroupId) {
   return AGE_GROUPS.findIndex((group) => group.id === id);
@@ -69,21 +91,37 @@ export function demographyMetricValue(counts: MunicipalitySexAgeCounts, sex: Sex
   return population > 0 ? persons / population : null;
 }
 
+export function demographicIndicatorValue(counts: MunicipalitySexAgeCounts, indicator: DemographicIndicatorId) {
+  const values = counts.m.map((value, index) => value + counts.f[index]);
+  const youth = values[0] + values[1];
+  const workingAge = values[2] + values[3] + values[4];
+  const seniors = values[5] + values[6];
+  const population = youth + workingAge + seniors;
+  if (indicator === "youth-share") return population > 0 ? youth / population : null;
+  if (indicator === "senior-share") return population > 0 ? seniors / population : null;
+  if (indicator === "old-age-dependency") return workingAge > 0 ? (seniors / workingAge) * 100 : null;
+  return youth > 0 ? (seniors / youth) * 100 : null;
+}
+
+export function percentileDomain(values: number[]): [number, number] {
+  if (!values.length) return [0, 1];
+  const sorted = values.toSorted((a, b) => a - b);
+  const percentile = (fraction: number) => {
+    const position = (sorted.length - 1) * fraction;
+    const lower = Math.floor(position);
+    const remainder = position - lower;
+    return sorted[lower] + (sorted[lower + 1] === undefined ? 0 : remainder * (sorted[lower + 1] - sorted[lower]));
+  };
+  return [percentile(0.05), percentile(0.95)];
+}
+
 function validTuple(value: unknown): value is AgeCounts {
   return Array.isArray(value) && value.length === 7 && value.every((item) => Number.isSafeInteger(item) && item >= 0);
 }
 
-export function validateMunicipalityDemographySeries(
-  series: MunicipalityDemographySeries,
-  populationSeries: MunicipalityPopulationSeries,
-  municipalityCodes: Iterable<string>,
-) {
-  if (series.schemaVersion !== MUNICIPALITY_DEMOGRAPHY_SCHEMA_VERSION || series.firstYear !== 2002 || series.latestYear !== 2025) {
-    throw new Error("Unerwartete Version oder Zeitraum der Demografiedaten.");
-  }
-  if (series.count !== EXPECTED_MUNICIPALITY_COUNT || series.unit !== "persons" || series.groups.join("|") !== AGE_GROUPS.map(({ id }) => id).join("|")) {
-    throw new Error("Unerwartete Demografiedaten.");
-  }
+export function validateMunicipalityDemographySeries(series: MunicipalityDemographySeries, populationSeries: MunicipalityPopulationSeries, municipalityCodes: Iterable<string>) {
+  if (series.schemaVersion !== MUNICIPALITY_DEMOGRAPHY_SCHEMA_VERSION || series.firstYear !== 2002 || series.latestYear !== 2025) throw new Error("Unerwartete Version oder Zeitraum der Demografiedaten.");
+  if (series.count !== EXPECTED_MUNICIPALITY_COUNT || series.unit !== "persons" || series.groups.join("|") !== AGE_GROUPS.map(({ id }) => id).join("|")) throw new Error("Unerwartete Demografiedaten.");
   const codes = Array.from(municipalityCodes);
   if (codes.length !== EXPECTED_MUNICIPALITY_COUNT || Object.keys(series.years).length !== 24) throw new Error("Unvollständige Demografiezeitreihe.");
   for (const year of municipalityPopulationYears()) {
@@ -93,9 +131,7 @@ export function validateMunicipalityDemographySeries(
     for (const code of codes) {
       const counts = snapshot.values[code];
       if (!counts || !validTuple(counts.m) || !validTuple(counts.f)) throw new Error(`Ungültige Demografiedaten für ${code}/${year}.`);
-      if (demographyPopulation(counts, "all") !== populationSeries.years[String(year)].values[code]) {
-        throw new Error(`Demografiesumme stimmt für ${code}/${year} nicht mit der Einwohnerzahl überein.`);
-      }
+      if (demographyPopulation(counts, "all") !== populationSeries.years[String(year)].values[code]) throw new Error(`Demografiesumme stimmt für ${code}/${year} nicht mit der Einwohnerzahl überein.`);
     }
   }
   return series;

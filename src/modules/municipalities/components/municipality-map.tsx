@@ -5,7 +5,7 @@ import { useLocale } from "next-intl";
 import * as maplibregl from "maplibre-gl";
 import type { ExpressionSpecification, MapLayerMouseEvent, MapSourceDataEvent, StyleSpecification } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
-import type { AgeGroupId, AgeMeasure, MapMetric, SexFilter } from "../demography";
+import type { AgeGroupId, AgeMeasure, AgeViewId, DemographicIndicatorId, MapMetric, SexFilter } from "../demography";
 import type { MunicipalityBounds, MunicipalityIndexItem, MunicipalityProperties } from "../data";
 import { POPULATION_CLASSES } from "../population";
 import { MunicipalityMetricChart } from "./municipality-metric-chart";
@@ -14,10 +14,14 @@ const SOURCE_ID = "austrian-municipalities";
 const FILL_LAYER_ID = "municipality-fills";
 maplibregl.setWorkerUrl("/vendor/maplibre-gl/maplibre-gl-worker.mjs");
 
-const BASE_STYLE: StyleSpecification = { version: 8, sources: { "basemap-at": { type: "raster", tiles: ["https://mapsneu.wien.gv.at/basemap/bmapgrau/normal/google3857/{z}/{y}/{x}.png"], tileSize: 256, maxzoom: 19, attribution: "© basemap.at" } }, layers: [
-  { id: "map-background", type: "background", paint: { "background-color": "#e8ece9" } },
-  { id: "basemap-at", type: "raster", source: "basemap-at", paint: { "raster-opacity": 0.72, "raster-saturation": -0.7 } },
-] };
+const BASE_STYLE: StyleSpecification = {
+  version: 8,
+  sources: { "basemap-at": { type: "raster", tiles: ["https://mapsneu.wien.gv.at/basemap/bmapgrau/normal/google3857/{z}/{y}/{x}.png"], tileSize: 256, maxzoom: 19, attribution: "© basemap.at" } },
+  layers: [
+    { id: "map-background", type: "background", paint: { "background-color": "#e8ece9" } },
+    { id: "basemap-at", type: "raster", source: "basemap-at", paint: { "raster-opacity": 0.72, "raster-saturation": -0.7 } },
+  ],
+};
 
 const POPULATION_COLOR: ExpressionSpecification = ["step", ["coalesce", ["feature-state", "metric"], -1], "#d7ddda", 0, "#e2f2ee", 1_000, "#b9ddd6", 2_500, "#7fc2b7", 5_000, "#42a394", 10_000, "#177b70", 50_000, "#0a4d47"];
 const AGE_COLORS = ["#e2f2ee", "#b9ddd6", "#7fc2b7", "#42a394", "#177b70", "#0a4d47"];
@@ -40,27 +44,26 @@ function ageColorExpression(domain: [number, number]): ExpressionSpecification {
 
 type Labels = {
   map: string; zoomIn: string; zoomOut: string; reset: string; municipalityCode: string; population: string; reference: string; year: string;
-  previousYear: string; nextYear: string; metric: string; populationMetric: string; ageMetric: string; ageGroup: string;
-  ageGroups: Record<AgeGroupId, string>; measures: Record<AgeMeasure, string>; sexes: Record<SexFilter, string>; persons: string; share: string;
+  previousYear: string; nextYear: string; metric: string; populationMetric: string; ageMetric: string; ageView: string; ageGroupsHeading: string; indicatorsHeading: string;
+  ageGroups: Record<AgeGroupId, string>; indicators: Record<DemographicIndicatorId, string>; measures: Record<AgeMeasure, string>; sexes: Record<SexFilter, string>;
   minimizeChart: string; expandChart: string; loadingAge: string; ageError: string;
 };
 
-export function MunicipalityMap({ austriaBounds, selected, metric, metricValues, tooltipValues, scaleDomain, year, firstYear, latestYear, ageGroup, ageMeasure, sex, ageLoading, ageError, onYearChange, onMetricChange, onAgeGroupChange, onAgeMeasureChange, onSexChange, onSelect, onReset, labels, selectedMetricHistory, metricChartLabel, metricLabel, chartValueFormatter, chartUnitLabel }: {
-  austriaBounds: MunicipalityBounds; selected: MunicipalityIndexItem | null; metric: MapMetric; metricValues: Record<string, number | null>; tooltipValues: Record<string, { persons: number; share: number | null }> | null; scaleDomain: [number, number] | null;
-  year: number; firstYear: number; latestYear: number; ageGroup: AgeGroupId; ageMeasure: AgeMeasure; sex: SexFilter; ageLoading: boolean; ageError: boolean;
-  onYearChange: (year: number) => void; onMetricChange: (metric: MapMetric) => void; onAgeGroupChange: (group: AgeGroupId) => void; onAgeMeasureChange: (measure: AgeMeasure) => void; onSexChange: (sex: SexFilter) => void;
+export function MunicipalityMap({ austriaBounds, selected, metric, metricValues, tooltipValues, scaleDomain, year, firstYear, latestYear, ageView, ageMeasure, sex, showAgeFilters, indicatorDefinition, ageLoading, ageError, onYearChange, onMetricChange, onAgeViewChange, onAgeMeasureChange, onSexChange, onSelect, onReset, labels, selectedMetricHistory, metricChartLabel, metricLabel, chartValueFormatter, chartUnitLabel }: {
+  austriaBounds: MunicipalityBounds; selected: MunicipalityIndexItem | null; metric: MapMetric; metricValues: Record<string, number | null>; tooltipValues: Record<string, string> | null; scaleDomain: [number, number] | null;
+  year: number; firstYear: number; latestYear: number; ageView: AgeViewId; ageMeasure: AgeMeasure; sex: SexFilter; showAgeFilters: boolean; indicatorDefinition: string | null; ageLoading: boolean; ageError: boolean;
+  onYearChange: (year: number) => void; onMetricChange: (metric: MapMetric) => void; onAgeViewChange: (view: AgeViewId) => void; onAgeMeasureChange: (measure: AgeMeasure) => void; onSexChange: (sex: SexFilter) => void;
   onSelect: (code: string) => void; onReset: () => void; labels: Labels; selectedMetricHistory: Array<{ year: number; value: number }> | null; metricChartLabel: string; metricLabel: string; chartValueFormatter: Intl.NumberFormat; chartUnitLabel: string;
 }) {
   const locale = useLocale();
   const personsFormatter = useMemo(() => new Intl.NumberFormat(locale), [locale]);
-  const shareFormatter = useMemo(() => new Intl.NumberFormat(locale, { style: "percent", minimumFractionDigits: 1, maximumFractionDigits: 1 }), [locale]);
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const [ready, setReady] = useState(false);
   const hoveredIdRef = useRef<string | number | null>(null);
   const selectedIdRef = useRef<string | number | null>(null);
-  const liveRef = useRef({ selected, onSelect, metric, metricValues, tooltipValues, labels, personsFormatter, shareFormatter, ageGroup, sex });
-  useEffect(() => { liveRef.current = { selected, onSelect, metric, metricValues, tooltipValues, labels, personsFormatter, shareFormatter, ageGroup, sex }; });
+  const liveRef = useRef({ selected, onSelect, metric, metricValues, tooltipValues, labels });
+  useEffect(() => { liveRef.current = { selected, onSelect, metric, metricValues, tooltipValues, labels }; });
 
   useEffect(() => {
     const map = mapRef.current;
@@ -88,15 +91,14 @@ export function MunicipalityMap({ austriaBounds, selected, metric, metricValues,
       if (hoveredIdRef.current !== null && hoveredIdRef.current !== featureId) map.setFeatureState({ source: SOURCE_ID, id: hoveredIdRef.current }, { hover: false });
       hoveredIdRef.current = featureId; map.setFeatureState({ source: SOURCE_ID, id: featureId }, { hover: true }); map.getCanvas().style.cursor = "pointer";
       const live = liveRef.current; const content = document.createElement("div"); const title = document.createElement("strong"); title.textContent = properties.name; const value = document.createElement("span");
-      if (live.metric === "age") { const detail = live.tooltipValues?.[properties.municipalityCode]; value.textContent = `${live.labels.ageGroups[live.ageGroup]} · ${detail ? live.personsFormatter.format(detail.persons) : "—"} ${live.labels.persons} · ${detail?.share === null || detail?.share === undefined ? "—" : live.shareFormatter.format(detail.share)}${live.sex === "female" ? ` (${live.labels.sexes.female})` : live.sex === "male" ? ` (${live.labels.sexes.male})` : ""}`; }
-      else value.textContent = `${live.labels.population}: ${live.personsFormatter.format(live.metricValues[properties.municipalityCode] ?? 0)}`;
+      value.textContent = live.metric === "age" ? live.tooltipValues?.[properties.municipalityCode] ?? "—" : `${live.labels.population}: ${personsFormatter.format(live.metricValues[properties.municipalityCode] ?? 0)}`;
       const location = document.createElement("span"); location.textContent = `${properties.state} · ${live.labels.municipalityCode} ${properties.municipalityCode}`; content.append(title, value, location); popup.setLngLat(event.lngLat).setDOMContent(content).addTo(map);
     });
     map.on("mouseleave", FILL_LAYER_ID, () => { if (hoveredIdRef.current !== null) map.setFeatureState({ source: SOURCE_ID, id: hoveredIdRef.current }, { hover: false }); hoveredIdRef.current = null; map.getCanvas().style.cursor = ""; popup.remove(); });
     map.on("click", FILL_LAYER_ID, (event: MapLayerMouseEvent) => { const properties = featureProperties(event); if (properties) liveRef.current.onSelect(properties.municipalityCode); });
     const observer = new ResizeObserver(() => map.resize()); observer.observe(containerRef.current);
     return () => { observer.disconnect(); popup.remove(); map.remove(); mapRef.current = null; };
-  }, [austriaBounds]);
+  }, [austriaBounds, personsFormatter]);
 
   useEffect(() => { const map = mapRef.current; if (!map?.getSource(SOURCE_ID)) return; if (selectedIdRef.current !== null) map.setFeatureState({ source: SOURCE_ID, id: selectedIdRef.current }, { selected: false }); if (selected) { selectedIdRef.current = selected.municipalityCode; map.setFeatureState({ source: SOURCE_ID, id: selected.municipalityCode }, { selected: true }); } else selectedIdRef.current = null; }, [selected]);
 
@@ -107,9 +109,13 @@ export function MunicipalityMap({ austriaBounds, selected, metric, metricValues,
     {selected && selectedMetricHistory && <MunicipalityMetricChart metricLabel={metricLabel} municipalityName={selected.name} points={selectedMetricHistory} selectedYear={year} valueFormatter={chartValueFormatter} unitLabel={chartUnitLabel} chartLabel={metricChartLabel} minimizeLabel={labels.minimizeChart} expandLabel={labels.expandChart} />}
     <div className="absolute top-16 left-3 z-10 w-[min(20rem,calc(100%-1.5rem))] rounded-xl border bg-background/95 p-3 shadow-sm backdrop-blur" data-testid="metric-control">
       <div className="grid grid-cols-[5.5rem_1fr] items-center gap-2"><label htmlFor="municipality-metric" className="text-xs font-semibold">{labels.metric}</label><select id="municipality-metric" value={metric} className="h-8 min-w-0 rounded-md border bg-background px-2 text-xs" onChange={(event) => onMetricChange(event.target.value as MapMetric)}><option value="population">{labels.populationMetric}</option><option value="age">{labels.ageMetric}</option></select></div>
-      {metric === "age" && <div className="mt-2 space-y-2 border-t pt-2"><div className="grid grid-cols-[5.5rem_1fr] items-center gap-2"><label htmlFor="municipality-age-group" className="text-[10px] font-semibold">{labels.ageGroup}</label><select id="municipality-age-group" value={ageGroup} className="h-8 min-w-0 rounded-md border bg-background px-2 text-[10px]" onChange={(event) => onAgeGroupChange(event.target.value as AgeGroupId)}>{Object.entries(labels.ageGroups).map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select></div><div className="flex flex-wrap gap-1"><div className="flex rounded-lg border bg-background p-0.5">{(["share", "persons"] as const).map((item) => <button key={item} type="button" className={controlButton} aria-pressed={ageMeasure === item} onClick={() => onAgeMeasureChange(item)}>{labels.measures[item]}</button>)}</div><div className="flex rounded-lg border bg-background p-0.5">{(["all", "female", "male"] as const).map((item) => <button key={item} type="button" className={controlButton} aria-pressed={sex === item} onClick={() => onSexChange(item)}>{labels.sexes[item]}</button>)}</div></div>{ageLoading && <p className="text-[10px] text-muted-foreground">{labels.loadingAge}</p>}{ageError && <p className="text-[10px] text-destructive" role="alert">{labels.ageError}</p>}</div>}
+      {metric === "age" && <div className="mt-2 space-y-2 border-t pt-2">
+        <div className="grid grid-cols-[5.5rem_1fr] items-center gap-2"><label htmlFor="municipality-age-view" className="text-[10px] font-semibold">{labels.ageView}</label><select id="municipality-age-view" value={ageView} className="h-8 min-w-0 rounded-md border bg-background px-2 text-[10px]" onChange={(event) => onAgeViewChange(event.target.value as AgeViewId)}><optgroup label={labels.ageGroupsHeading}>{Object.entries(labels.ageGroups).map(([id, label]) => <option key={id} value={id}>{label}</option>)}</optgroup><optgroup label={labels.indicatorsHeading}>{Object.entries(labels.indicators).map(([id, label]) => <option key={id} value={id}>{label}</option>)}</optgroup></select></div>
+        {showAgeFilters ? <div className="flex flex-wrap gap-1"><div className="flex rounded-lg border bg-background p-0.5">{(["share", "persons"] as const).map((item) => <button key={item} type="button" className={controlButton} aria-pressed={ageMeasure === item} onClick={() => onAgeMeasureChange(item)}>{labels.measures[item]}</button>)}</div><div className="flex rounded-lg border bg-background p-0.5">{(["all", "female", "male"] as const).map((item) => <button key={item} type="button" className={controlButton} aria-pressed={sex === item} onClick={() => onSexChange(item)}>{labels.sexes[item]}</button>)}</div></div> : <p className="text-[10px] leading-4 text-muted-foreground" data-testid="indicator-definition">{indicatorDefinition}</p>}
+        {ageLoading && <p className="text-[10px] text-muted-foreground">{labels.loadingAge}</p>}{ageError && <p className="text-[10px] text-destructive" role="alert">{labels.ageError}</p>}
+      </div>}
       <div className="mt-2 flex items-baseline justify-between gap-3 border-t pt-2"><label htmlFor="municipality-population-year" className="text-xs font-semibold">{labels.year}</label><output htmlFor="municipality-population-year" className="text-sm font-semibold tabular-nums">{year}</output></div><div className="mt-2 flex items-center gap-2"><button type="button" className="grid size-7 shrink-0 place-items-center rounded-md border" aria-label={labels.previousYear} disabled={year === firstYear} onClick={() => onYearChange(year - 1)}>‹</button><input id="municipality-population-year" type="range" min={firstYear} max={latestYear} value={year} aria-label={labels.year} className="h-2 min-w-0 flex-1 accent-teal-700" onChange={(event) => onYearChange(Number(event.target.value))}/><button type="button" className="grid size-7 shrink-0 place-items-center rounded-md border" aria-label={labels.nextYear} disabled={year === latestYear} onClick={() => onYearChange(year + 1)}>›</button></div>
     </div>
-    <div className="absolute bottom-3 left-3 z-10 w-44 max-w-[calc(100%-1.5rem)] rounded-xl border bg-background/95 p-3 shadow-sm backdrop-blur" data-testid="population-legend"><p className="text-xs font-semibold">{metricLabel}</p><p className="mt-0.5 text-[10px] text-muted-foreground">{labels.reference}</p>{metric === "population" ? <ul className="mt-2 space-y-1" aria-label={metricLabel}>{POPULATION_CLASSES.map((item) => <li key={item.minimum} className="flex items-center gap-2 text-[10px] tabular-nums"><span className="size-3 rounded-[3px] border border-black/10" style={{ backgroundColor: item.color }}/><span>{populationClassLabel(item, personsFormatter)}</span></li>)}</ul> : scaleDomain && <><div className="mt-2 h-3 rounded-sm border border-black/10" style={{ background: `linear-gradient(to right, ${AGE_COLORS.join(",")})` }}/><div className="mt-1 flex justify-between text-[9px] tabular-nums"><span>{chartValueFormatter.format(scaleDomain[0])}</span><span>{chartValueFormatter.format(scaleDomain[1])}</span></div></>}</div>
+    <div className="absolute bottom-3 left-3 z-10 w-44 max-w-[calc(100%-1.5rem)] rounded-xl border bg-background/95 p-3 shadow-sm backdrop-blur" data-testid="population-legend"><p className="text-xs font-semibold">{metricLabel}</p><p className="mt-0.5 text-[10px] text-muted-foreground">{labels.reference}</p>{metric === "population" ? <ul className="mt-2 space-y-1" aria-label={metricLabel}>{POPULATION_CLASSES.map((item) => <li key={item.minimum} className="flex items-center gap-2 text-[10px] tabular-nums"><span className="size-3 rounded-[3px] border border-black/10" style={{ backgroundColor: item.color }}/><span>{populationClassLabel(item, personsFormatter)}</span></li>)}</ul> : scaleDomain && <><div className="mt-2 h-3 rounded-sm border border-black/10" style={{ background: `linear-gradient(to right, ${AGE_COLORS.join(",")})` }}/><div className="mt-1 flex justify-between gap-2 text-[9px] tabular-nums"><span>{chartValueFormatter.format(scaleDomain[0])}</span><span>{chartValueFormatter.format(scaleDomain[1])}</span></div>{chartUnitLabel && <p className="mt-1 text-[9px] text-muted-foreground">{chartUnitLabel}</p>}</>}</div>
   </div>;
 }

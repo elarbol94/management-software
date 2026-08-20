@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import type { MunicipalityIndex } from "./data";
 import {
   ageGroupIndexForSourceCode,
+  demographicIndicatorValue,
   demographyPopulation,
   validateMunicipalityDemographySeries,
   type MunicipalityDemographySeries,
@@ -29,6 +30,14 @@ describe("municipality demography", () => {
     const counts = series.years["2013"].values["20622"];
     expect(counts.m.map((value, index) => value + counts.f[index])).toEqual([40, 81, 128, 195, 231, 87, 34]);
     expect(demographyPopulation(counts, "all")).toBe(796);
+  });
+
+  it("derives the four indicators from the same representative values", () => {
+    const counts = series.years["2013"].values["20622"];
+    expect(demographicIndicatorValue(counts, "youth-share")).toBeCloseTo(121 / 796);
+    expect(demographicIndicatorValue(counts, "senior-share")).toBeCloseTo(121 / 796);
+    expect(demographicIndicatorValue(counts, "old-age-dependency")).toBeCloseTo((121 / 554) * 100);
+    expect(demographicIndicatorValue(counts, "aging-index")).toBe(100);
   });
 
   it("maps single ages and the 100+ special class", () => {
