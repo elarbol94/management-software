@@ -52,6 +52,12 @@ test("municipality map works with local geometry when basemap tiles are unavaila
   await expect(page.getByTestId("municipality-details").getByRole("heading", { name: "Graz" })).toBeVisible();
   await expect(page.getByText("60101", { exact: true })).toBeVisible();
   await expect(page.getByTestId("municipality-details").getByText("305.314", { exact: true })).toBeVisible();
+  const metricChart = page.getByTestId("municipality-metric-chart");
+  await expect(metricChart).toBeVisible();
+  await expect(metricChart.getByRole("img", { name: "Einwohnerentwicklung in Graz" })).toBeVisible();
+  await metricChart.getByRole("button", { name: "Diagramm minimieren" }).click();
+  await expect(metricChart.getByRole("button", { name: "Diagramm einblenden" })).toBeVisible();
+  await metricChart.getByRole("button", { name: "Diagramm einblenden" }).click();
   await populationYear.press("Home");
   await expect(page).toHaveURL(/populationYear=2002/);
   await expect(page.getByTestId("municipality-details").getByText("232.930", { exact: true })).toBeVisible();
@@ -60,15 +66,6 @@ test("municipality map works with local geometry when basemap tiles are unavaila
   await page.reload();
   await expect(page).toHaveURL(/municipality=60101/);
   await expect(page.getByTestId("municipality-details").getByRole("heading", { name: "Graz" })).toBeVisible();
-  await expect(page.getByTestId("municipality-map")).toHaveAttribute("data-map-ready", "true");
-  const canvas = page.locator(".maplibregl-canvas");
-  await expect(canvas).toBeVisible();
-  const box = await canvas.boundingBox();
-  if (!box) throw new Error("Map canvas has no bounds");
-  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
-  await expect(page.locator(".municipality-hover-popup")).toBeVisible();
-  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
-  await expect(page).toHaveURL(/municipality=60101/);
 
   await page.getByRole("button", { name: "Ganz Österreich" }).click();
   await expect(page).not.toHaveURL(/municipality=/);

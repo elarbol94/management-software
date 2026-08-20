@@ -14,6 +14,7 @@ import {
   type MunicipalityIndexItem,
 } from "../data";
 import {
+  municipalityPopulationYears,
   validateMunicipalityPopulationSeries,
   type MunicipalityPopulationSeries,
 } from "../population";
@@ -66,6 +67,15 @@ export function MunicipalitiesWorkspace() {
     ? null
     : populationSeries?.years[String(selectedPopulationYear - 1)] ?? null;
   const firstPopulation = populationSeries?.years[String(populationSeries.firstYear)] ?? null;
+  const selectedMetricHistory = useMemo(
+    () => selected && populationSeries
+      ? municipalityPopulationYears().map((year) => ({
+        year,
+        value: populationSeries.years[String(year)].values[selected.municipalityCode],
+      }))
+      : null,
+    [populationSeries, selected],
+  );
   const results = useMemo(
     () => index ? searchMunicipalities(index.municipalities, query) : [],
     [index, query],
@@ -216,6 +226,10 @@ export function MunicipalitiesWorkspace() {
           populationYearLabel={t("populationYear")}
           previousPopulationYearLabel={t("previousPopulationYear")}
           nextPopulationYearLabel={t("nextPopulationYear")}
+          selectedMetricHistory={selectedMetricHistory}
+          metricChartLabel={selected ? t("populationChartLabel", { municipality: selected.name }) : ""}
+          minimizeMetricChartLabel={t("minimizeMetricChart")}
+          expandMetricChartLabel={t("expandMetricChart")}
         />
       </section>
 

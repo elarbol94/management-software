@@ -7,6 +7,7 @@ import type { MapLayerMouseEvent, MapSourceDataEvent, StyleSpecification } from 
 import "maplibre-gl/dist/maplibre-gl.css";
 import type { MunicipalityBounds, MunicipalityIndexItem, MunicipalityProperties } from "../data";
 import { POPULATION_CLASSES } from "../population";
+import { MunicipalityMetricChart } from "./municipality-metric-chart";
 
 const SOURCE_ID = "austrian-municipalities";
 const FILL_LAYER_ID = "municipality-fills";
@@ -68,6 +69,10 @@ export function MunicipalityMap({
   populationYearLabel,
   previousPopulationYearLabel,
   nextPopulationYearLabel,
+  selectedMetricHistory,
+  metricChartLabel,
+  minimizeMetricChartLabel,
+  expandMetricChartLabel,
 }: {
   austriaBounds: MunicipalityBounds;
   selected: MunicipalityIndexItem | null;
@@ -88,6 +93,10 @@ export function MunicipalityMap({
   populationYearLabel: string;
   previousPopulationYearLabel: string;
   nextPopulationYearLabel: string;
+  selectedMetricHistory: Array<{ year: number; value: number }> | null;
+  metricChartLabel: string;
+  minimizeMetricChartLabel: string;
+  expandMetricChartLabel: string;
 }) {
   const locale = useLocale();
   const populationFormatter = useMemo(() => new Intl.NumberFormat(locale), [locale]);
@@ -179,7 +188,7 @@ export function MunicipalityMap({
             10_000, "#177b70",
             50_000, "#0a4d47",
           ],
-          "fill-opacity": ["case", ["boolean", ["feature-state", "selected"], false], 0.9, ["boolean", ["feature-state", "hover"], false], 0.82, 0.7],
+          "fill-opacity": ["case", ["boolean", ["feature-state", "hover"], false], 0.82, 0.7],
           "fill-outline-color": "#f8faf9",
         },
       });
@@ -188,17 +197,15 @@ export function MunicipalityMap({
         type: "line",
         source: SOURCE_ID,
         paint: {
-          "line-color": ["case", ["boolean", ["feature-state", "selected"], false], "#082f2c", ["boolean", ["feature-state", "hover"], false], "#0f766e", "#ffffff"],
-          "line-width": ["case", ["boolean", ["feature-state", "selected"], false], 2.4, ["boolean", ["feature-state", "hover"], false], 1.4, 0.65],
+          "line-color": ["case", ["boolean", ["feature-state", "selected"], false], "#000000", ["boolean", ["feature-state", "hover"], false], "#0f766e", "#ffffff"],
+          "line-width": ["case", ["boolean", ["feature-state", "selected"], false], 3.5, ["boolean", ["feature-state", "hover"], false], 1.4, 0.65],
           "line-opacity": 0.95,
         },
       });
-
       const current = selectedRef.current;
       if (current) {
         selectedIdRef.current = current.municipalityCode;
         map.setFeatureState({ source: SOURCE_ID, id: current.municipalityCode }, { selected: true });
-        map.fitBounds(asMapBounds(current.bounds), { padding: 64, maxZoom: 11, duration: 0 });
       }
     });
 
@@ -254,12 +261,10 @@ export function MunicipalityMap({
     if (selected) {
       selectedIdRef.current = selected.municipalityCode;
       map.setFeatureState({ source: SOURCE_ID, id: selected.municipalityCode }, { selected: true });
-      map.fitBounds(asMapBounds(selected.bounds), { padding: 64, maxZoom: 11, duration: 500 });
     } else {
       selectedIdRef.current = null;
-      map.fitBounds(asMapBounds(austriaBounds), { padding: 38, duration: 500 });
     }
-  }, [austriaBounds, selected]);
+  }, [selected]);
 
   return (
     <div className="relative h-full min-h-0 overflow-hidden rounded-2xl bg-[#e8ece9]" data-testid="municipality-map" data-map-ready={ready}>
@@ -279,6 +284,18 @@ export function MunicipalityMap({
           {resetLabel}
         </button>
       </div>
+      {selected && selectedMetricHistory && (
+        <MunicipalityMetricChart
+          metricLabel={populationLabel}
+          municipalityName={selected.name}
+          points={selectedMetricHistory}
+          selectedYear={populationYear}
+          valueFormatter={populationFormatter}
+          chartLabel={metricChartLabel}
+          minimizeLabel={minimizeMetricChartLabel}
+          expandLabel={expandMetricChartLabel}
+        />
+      )}
       <div className="absolute top-16 left-3 z-10 w-[min(20rem,calc(100%-1.5rem))] rounded-xl border bg-background/95 p-3 shadow-sm backdrop-blur" data-testid="population-year-control">
         <div className="flex items-baseline justify-between gap-3">
           <label htmlFor="municipality-population-year" className="text-xs font-semibold">{populationYearLabel}</label>
