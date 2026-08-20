@@ -21,6 +21,7 @@
     "db:studio": "drizzle-kit studio",
     "data:municipalities": "tsx scripts/update-municipalities.ts",
     "data:municipality-population": "tsx scripts/update-municipality-population.ts",
+    "data:municipality-demography": "tsx scripts/update-municipality-demography.ts",
     "e2e": "playwright test",
     "perf:budget": "node scripts/check-performance-budget.mjs"
   },

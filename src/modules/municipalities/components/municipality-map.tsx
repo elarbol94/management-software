@@ -3,8 +3,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocale } from "next-intl";
 import * as maplibregl from "maplibre-gl";
-import type { MapLayerMouseEvent, MapSourceDataEvent, StyleSpecification } from "maplibre-gl";
+import type { ExpressionSpecification, MapLayerMouseEvent, MapSourceDataEvent, StyleSpecification } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
+import type { AgeGroupId, AgeMeasure, MapMetric, SexFilter } from "../demography";
 import type { MunicipalityBounds, MunicipalityIndexItem, MunicipalityProperties } from "../data";
 import { POPULATION_CLASSES } from "../population";
 import { MunicipalityMetricChart } from "./municipality-metric-chart";
@@ -13,325 +14,102 @@ const SOURCE_ID = "austrian-municipalities";
 const FILL_LAYER_ID = "municipality-fills";
 maplibregl.setWorkerUrl("/vendor/maplibre-gl/maplibre-gl-worker.mjs");
 
-const BASE_STYLE: StyleSpecification = {
-  version: 8,
-  sources: {
-    "basemap-at": {
-      type: "raster",
-      tiles: ["https://mapsneu.wien.gv.at/basemap/bmapgrau/normal/google3857/{z}/{y}/{x}.png"],
-      tileSize: 256,
-      maxzoom: 19,
-      attribution: "© basemap.at",
-    },
-  },
-  layers: [
-    { id: "map-background", type: "background", paint: { "background-color": "#e8ece9" } },
-    { id: "basemap-at", type: "raster", source: "basemap-at", paint: { "raster-opacity": 0.72, "raster-saturation": -0.7 } },
-  ],
-};
+const BASE_STYLE: StyleSpecification = { version: 8, sources: { "basemap-at": { type: "raster", tiles: ["https://mapsneu.wien.gv.at/basemap/bmapgrau/normal/google3857/{z}/{y}/{x}.png"], tileSize: 256, maxzoom: 19, attribution: "© basemap.at" } }, layers: [
+  { id: "map-background", type: "background", paint: { "background-color": "#e8ece9" } },
+  { id: "basemap-at", type: "raster", source: "basemap-at", paint: { "raster-opacity": 0.72, "raster-saturation": -0.7 } },
+] };
 
-function asMapBounds(bounds: MunicipalityBounds): [[number, number], [number, number]] {
-  return [[bounds[0], bounds[1]], [bounds[2], bounds[3]]];
-}
+const POPULATION_COLOR: ExpressionSpecification = ["step", ["coalesce", ["feature-state", "metric"], -1], "#d7ddda", 0, "#e2f2ee", 1_000, "#b9ddd6", 2_500, "#7fc2b7", 5_000, "#42a394", 10_000, "#177b70", 50_000, "#0a4d47"];
+const AGE_COLORS = ["#e2f2ee", "#b9ddd6", "#7fc2b7", "#42a394", "#177b70", "#0a4d47"];
 
+function asMapBounds(bounds: MunicipalityBounds): [[number, number], [number, number]] { return [[bounds[0], bounds[1]], [bounds[2], bounds[3]]]; }
 function featureProperties(event: MapLayerMouseEvent): MunicipalityProperties | null {
   const properties = event.features?.[0]?.properties;
-  if (!properties || typeof properties.municipalityCode !== "string" || typeof properties.name !== "string" || typeof properties.state !== "string") return null;
-  return properties as MunicipalityProperties;
+  return properties && typeof properties.municipalityCode === "string" && typeof properties.name === "string" && typeof properties.state === "string" ? properties as MunicipalityProperties : null;
+}
+function populationClassLabel(item: (typeof POPULATION_CLASSES)[number], formatter: Intl.NumberFormat) {
+  if (item.maximum === null) return `≥ ${formatter.format(item.minimum)}`;
+  if (item.minimum === 0) return `< ${formatter.format(item.maximum + 1)}`;
+  return `${formatter.format(item.minimum)}–${formatter.format(item.maximum)}`;
+}
+function ageColorExpression(domain: [number, number]): ExpressionSpecification {
+  const [minimum, maximum] = domain;
+  const value: ExpressionSpecification = ["max", minimum, ["min", maximum, ["coalesce", ["feature-state", "metric"], minimum]]];
+  return ["case", ["==", ["coalesce", ["feature-state", "metric"], -1], -1], "#d7ddda", ["interpolate", ["linear"], value, minimum, AGE_COLORS[0], minimum + (maximum - minimum) * 0.2, AGE_COLORS[1], minimum + (maximum - minimum) * 0.4, AGE_COLORS[2], minimum + (maximum - minimum) * 0.6, AGE_COLORS[3], minimum + (maximum - minimum) * 0.8, AGE_COLORS[4], maximum, AGE_COLORS[5]]];
 }
 
-function populationClassLabel(
-  populationClass: (typeof POPULATION_CLASSES)[number],
-  formatter: Intl.NumberFormat,
-) {
-  if (populationClass.maximum === null) return `≥ ${formatter.format(populationClass.minimum)}`;
-  if (populationClass.minimum === 0) return `< ${formatter.format(populationClass.maximum + 1)}`;
-  return `${formatter.format(populationClass.minimum)}–${formatter.format(populationClass.maximum)}`;
-}
+type Labels = {
+  map: string; zoomIn: string; zoomOut: string; reset: string; municipalityCode: string; population: string; reference: string; year: string;
+  previousYear: string; nextYear: string; metric: string; populationMetric: string; ageMetric: string; ageGroup: string;
+  ageGroups: Record<AgeGroupId, string>; measures: Record<AgeMeasure, string>; sexes: Record<SexFilter, string>; persons: string; share: string;
+  minimizeChart: string; expandChart: string; loadingAge: string; ageError: string;
+};
 
-export function MunicipalityMap({
-  austriaBounds,
-  selected,
-  populationValues,
-  populationYear,
-  firstPopulationYear,
-  latestPopulationYear,
-  onPopulationYearChange,
-  onSelect,
-  onReset,
-  mapLabel,
-  zoomInLabel,
-  zoomOutLabel,
-  resetLabel,
-  municipalityCodeLabel,
-  populationLabel,
-  populationReferenceLabel,
-  populationYearLabel,
-  populationUnitLabel,
-  previousPopulationYearLabel,
-  nextPopulationYearLabel,
-  selectedMetricHistory,
-  metricChartLabel,
-  minimizeMetricChartLabel,
-  expandMetricChartLabel,
-}: {
-  austriaBounds: MunicipalityBounds;
-  selected: MunicipalityIndexItem | null;
-  populationValues: Record<string, number>;
-  populationYear: number;
-  firstPopulationYear: number;
-  latestPopulationYear: number;
-  onPopulationYearChange: (year: number) => void;
-  onSelect: (municipalityCode: string) => void;
-  onReset: () => void;
-  mapLabel: string;
-  zoomInLabel: string;
-  zoomOutLabel: string;
-  resetLabel: string;
-  municipalityCodeLabel: string;
-  populationLabel: string;
-  populationReferenceLabel: string;
-  populationYearLabel: string;
-  populationUnitLabel: string;
-  previousPopulationYearLabel: string;
-  nextPopulationYearLabel: string;
-  selectedMetricHistory: Array<{ year: number; value: number }> | null;
-  metricChartLabel: string;
-  minimizeMetricChartLabel: string;
-  expandMetricChartLabel: string;
+export function MunicipalityMap({ austriaBounds, selected, metric, metricValues, tooltipValues, scaleDomain, year, firstYear, latestYear, ageGroup, ageMeasure, sex, ageLoading, ageError, onYearChange, onMetricChange, onAgeGroupChange, onAgeMeasureChange, onSexChange, onSelect, onReset, labels, selectedMetricHistory, metricChartLabel, metricLabel, chartValueFormatter, chartUnitLabel }: {
+  austriaBounds: MunicipalityBounds; selected: MunicipalityIndexItem | null; metric: MapMetric; metricValues: Record<string, number | null>; tooltipValues: Record<string, { persons: number; share: number | null }> | null; scaleDomain: [number, number] | null;
+  year: number; firstYear: number; latestYear: number; ageGroup: AgeGroupId; ageMeasure: AgeMeasure; sex: SexFilter; ageLoading: boolean; ageError: boolean;
+  onYearChange: (year: number) => void; onMetricChange: (metric: MapMetric) => void; onAgeGroupChange: (group: AgeGroupId) => void; onAgeMeasureChange: (measure: AgeMeasure) => void; onSexChange: (sex: SexFilter) => void;
+  onSelect: (code: string) => void; onReset: () => void; labels: Labels; selectedMetricHistory: Array<{ year: number; value: number }> | null; metricChartLabel: string; metricLabel: string; chartValueFormatter: Intl.NumberFormat; chartUnitLabel: string;
 }) {
   const locale = useLocale();
-  const populationFormatter = useMemo(() => new Intl.NumberFormat(locale), [locale]);
+  const personsFormatter = useMemo(() => new Intl.NumberFormat(locale), [locale]);
+  const shareFormatter = useMemo(() => new Intl.NumberFormat(locale, { style: "percent", minimumFractionDigits: 1, maximumFractionDigits: 1 }), [locale]);
   const containerRef = useRef<HTMLDivElement>(null);
-  const [ready, setReady] = useState(false);
   const mapRef = useRef<maplibregl.Map | null>(null);
-  const popupRef = useRef<maplibregl.Popup | null>(null);
+  const [ready, setReady] = useState(false);
   const hoveredIdRef = useRef<string | number | null>(null);
   const selectedIdRef = useRef<string | number | null>(null);
-  const selectedRef = useRef(selected);
-  const onSelectRef = useRef(onSelect);
-  const populationValuesRef = useRef(populationValues);
-  const populationLabelRef = useRef(populationLabel);
-  const populationFormatterRef = useRef(populationFormatter);
+  const liveRef = useRef({ selected, onSelect, metric, metricValues, tooltipValues, labels, personsFormatter, shareFormatter, ageGroup, sex });
+  useEffect(() => { liveRef.current = { selected, onSelect, metric, metricValues, tooltipValues, labels, personsFormatter, shareFormatter, ageGroup, sex }; });
 
   useEffect(() => {
-    selectedRef.current = selected;
-  }, [selected]);
-
-  useEffect(() => {
-    onSelectRef.current = onSelect;
-  }, [onSelect]);
-
-  useEffect(() => {
-    populationValuesRef.current = populationValues;
     const map = mapRef.current;
     if (!map?.getSource(SOURCE_ID)) return;
-    for (const [municipalityCode, population] of Object.entries(populationValues)) {
-      map.setFeatureState({ source: SOURCE_ID, id: municipalityCode }, { population });
-    }
-  }, [populationValues]);
-
-  useEffect(() => {
-    populationLabelRef.current = populationLabel;
-    populationFormatterRef.current = populationFormatter;
-  }, [populationFormatter, populationLabel]);
+    for (const [code, value] of Object.entries(metricValues)) map.setFeatureState({ source: SOURCE_ID, id: code }, { metric: value ?? -1 });
+    if (map.getLayer(FILL_LAYER_ID)) map.setPaintProperty(FILL_LAYER_ID, "fill-color", metric === "age" && scaleDomain ? ageColorExpression(scaleDomain) : POPULATION_COLOR);
+  }, [metric, metricValues, ready, scaleDomain]);
 
   useEffect(() => {
     if (!containerRef.current) return;
-    const map = new maplibregl.Map({
-      container: containerRef.current,
-      style: BASE_STYLE,
-      bounds: asMapBounds(austriaBounds),
-      fitBoundsOptions: { padding: 38 },
-      maxBounds: [[8.2, 45.4], [18.4, 50.1]],
-      minZoom: 5,
-      maxZoom: 14,
-      attributionControl: { compact: true },
-      cooperativeGestures: true,
-    });
+    const map = new maplibregl.Map({ container: containerRef.current, style: BASE_STYLE, bounds: asMapBounds(austriaBounds), fitBoundsOptions: { padding: 38 }, maxBounds: [[8.2, 45.4], [18.4, 50.1]], minZoom: 5, maxZoom: 14, attributionControl: { compact: true }, cooperativeGestures: true });
     mapRef.current = map;
-
     const popup = new maplibregl.Popup({ closeButton: false, closeOnClick: false, offset: 12, className: "municipality-hover-popup" });
-    popupRef.current = popup;
-
     map.on("load", () => {
-      const markReady = (event: MapSourceDataEvent) => {
-        if (event.sourceId !== SOURCE_ID) return;
-        map.once("render", () => {
-          if (map.querySourceFeatures(SOURCE_ID).length > 0) {
-            setReady(true);
-            map.off("sourcedata", markReady);
-          }
-        });
-      };
+      const markReady = (event: MapSourceDataEvent) => { if (event.sourceId === SOURCE_ID) map.once("render", () => { if (map.querySourceFeatures(SOURCE_ID).length > 0) { setReady(true); map.off("sourcedata", markReady); } }); };
       map.on("sourcedata", markReady);
-      map.addSource(SOURCE_ID, {
-        type: "geojson",
-        data: "/data/municipalities-at-2026.geojson",
-        promoteId: "municipalityCode",
-        attribution: "© Statistik Austria, CC BY 4.0",
-      });
-      for (const [municipalityCode, population] of Object.entries(populationValuesRef.current)) {
-        map.setFeatureState({ source: SOURCE_ID, id: municipalityCode }, { population });
-      }
-      map.addLayer({
-        id: FILL_LAYER_ID,
-        type: "fill",
-        source: SOURCE_ID,
-        paint: {
-          "fill-color": [
-            "step",
-            ["coalesce", ["feature-state", "population"], -1],
-            "#d7ddda",
-            0, "#e2f2ee",
-            1_000, "#b9ddd6",
-            2_500, "#7fc2b7",
-            5_000, "#42a394",
-            10_000, "#177b70",
-            50_000, "#0a4d47",
-          ],
-          "fill-opacity": ["case", ["boolean", ["feature-state", "hover"], false], 0.82, 0.7],
-          "fill-outline-color": "#f8faf9",
-        },
-      });
-      map.addLayer({
-        id: "municipality-lines",
-        type: "line",
-        source: SOURCE_ID,
-        paint: {
-          "line-color": ["case", ["boolean", ["feature-state", "selected"], false], "#000000", ["boolean", ["feature-state", "hover"], false], "#0f766e", "#ffffff"],
-          "line-width": ["case", ["boolean", ["feature-state", "selected"], false], 3.5, ["boolean", ["feature-state", "hover"], false], 1.4, 0.65],
-          "line-opacity": 0.95,
-        },
-      });
-      const current = selectedRef.current;
-      if (current) {
-        selectedIdRef.current = current.municipalityCode;
-        map.setFeatureState({ source: SOURCE_ID, id: current.municipalityCode }, { selected: true });
-      }
+      map.addSource(SOURCE_ID, { type: "geojson", data: "/data/municipalities-at-2026.geojson", promoteId: "municipalityCode", attribution: "© Statistik Austria, CC BY 4.0" });
+      for (const [code, value] of Object.entries(liveRef.current.metricValues)) map.setFeatureState({ source: SOURCE_ID, id: code }, { metric: value ?? -1 });
+      map.addLayer({ id: FILL_LAYER_ID, type: "fill", source: SOURCE_ID, paint: { "fill-color": POPULATION_COLOR, "fill-opacity": ["case", ["boolean", ["feature-state", "hover"], false], 0.82, 0.7], "fill-outline-color": "#f8faf9" } });
+      map.addLayer({ id: "municipality-lines", type: "line", source: SOURCE_ID, paint: { "line-color": ["case", ["boolean", ["feature-state", "selected"], false], "#000000", ["boolean", ["feature-state", "hover"], false], "#0f766e", "#ffffff"], "line-width": ["case", ["boolean", ["feature-state", "selected"], false], 3.5, ["boolean", ["feature-state", "hover"], false], 1.4, 0.65], "line-opacity": 0.95 } });
+      if (liveRef.current.selected) { selectedIdRef.current = liveRef.current.selected.municipalityCode; map.setFeatureState({ source: SOURCE_ID, id: selectedIdRef.current }, { selected: true }); }
     });
-
     map.on("mousemove", FILL_LAYER_ID, (event: MapLayerMouseEvent) => {
-      const properties = featureProperties(event);
-      const featureId = event.features?.[0]?.id;
-      if (!properties || featureId === undefined) return;
-      if (hoveredIdRef.current !== null && hoveredIdRef.current !== featureId) {
-        map.setFeatureState({ source: SOURCE_ID, id: hoveredIdRef.current }, { hover: false });
-      }
-      hoveredIdRef.current = featureId;
-      map.setFeatureState({ source: SOURCE_ID, id: featureId }, { hover: true });
-      map.getCanvas().style.cursor = "pointer";
-
-      const content = document.createElement("div");
-      const title = document.createElement("strong");
-      title.textContent = properties.name;
-      const populationDetail = document.createElement("span");
-      populationDetail.textContent = `${populationLabelRef.current}: ${populationFormatterRef.current.format(populationValuesRef.current[properties.municipalityCode])}`;
-      const detail = document.createElement("span");
-      detail.textContent = `${properties.state} · ${municipalityCodeLabel} ${properties.municipalityCode}`;
-      content.append(title, populationDetail, detail);
-      popup.setLngLat(event.lngLat).setDOMContent(content).addTo(map);
+      const properties = featureProperties(event); const featureId = event.features?.[0]?.id; if (!properties || featureId === undefined) return;
+      if (hoveredIdRef.current !== null && hoveredIdRef.current !== featureId) map.setFeatureState({ source: SOURCE_ID, id: hoveredIdRef.current }, { hover: false });
+      hoveredIdRef.current = featureId; map.setFeatureState({ source: SOURCE_ID, id: featureId }, { hover: true }); map.getCanvas().style.cursor = "pointer";
+      const live = liveRef.current; const content = document.createElement("div"); const title = document.createElement("strong"); title.textContent = properties.name; const value = document.createElement("span");
+      if (live.metric === "age") { const detail = live.tooltipValues?.[properties.municipalityCode]; value.textContent = `${live.labels.ageGroups[live.ageGroup]} · ${detail ? live.personsFormatter.format(detail.persons) : "—"} ${live.labels.persons} · ${detail?.share === null || detail?.share === undefined ? "—" : live.shareFormatter.format(detail.share)}${live.sex === "female" ? ` (${live.labels.sexes.female})` : live.sex === "male" ? ` (${live.labels.sexes.male})` : ""}`; }
+      else value.textContent = `${live.labels.population}: ${live.personsFormatter.format(live.metricValues[properties.municipalityCode] ?? 0)}`;
+      const location = document.createElement("span"); location.textContent = `${properties.state} · ${live.labels.municipalityCode} ${properties.municipalityCode}`; content.append(title, value, location); popup.setLngLat(event.lngLat).setDOMContent(content).addTo(map);
     });
+    map.on("mouseleave", FILL_LAYER_ID, () => { if (hoveredIdRef.current !== null) map.setFeatureState({ source: SOURCE_ID, id: hoveredIdRef.current }, { hover: false }); hoveredIdRef.current = null; map.getCanvas().style.cursor = ""; popup.remove(); });
+    map.on("click", FILL_LAYER_ID, (event: MapLayerMouseEvent) => { const properties = featureProperties(event); if (properties) liveRef.current.onSelect(properties.municipalityCode); });
+    const observer = new ResizeObserver(() => map.resize()); observer.observe(containerRef.current);
+    return () => { observer.disconnect(); popup.remove(); map.remove(); mapRef.current = null; };
+  }, [austriaBounds]);
 
-    map.on("mouseleave", FILL_LAYER_ID, () => {
-      if (hoveredIdRef.current !== null) map.setFeatureState({ source: SOURCE_ID, id: hoveredIdRef.current }, { hover: false });
-      hoveredIdRef.current = null;
-      map.getCanvas().style.cursor = "";
-      popup.remove();
-    });
+  useEffect(() => { const map = mapRef.current; if (!map?.getSource(SOURCE_ID)) return; if (selectedIdRef.current !== null) map.setFeatureState({ source: SOURCE_ID, id: selectedIdRef.current }, { selected: false }); if (selected) { selectedIdRef.current = selected.municipalityCode; map.setFeatureState({ source: SOURCE_ID, id: selected.municipalityCode }, { selected: true }); } else selectedIdRef.current = null; }, [selected]);
 
-    map.on("click", FILL_LAYER_ID, (event: MapLayerMouseEvent) => {
-      const properties = featureProperties(event);
-      if (properties) onSelectRef.current(properties.municipalityCode);
-    });
-
-    const observer = new ResizeObserver(() => map.resize());
-    observer.observe(containerRef.current);
-    return () => {
-      observer.disconnect();
-      popup.remove();
-      map.remove();
-      popupRef.current = null;
-      mapRef.current = null;
-    };
-  }, [austriaBounds, municipalityCodeLabel]);
-
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map?.getSource(SOURCE_ID)) return;
-    if (selectedIdRef.current !== null) map.setFeatureState({ source: SOURCE_ID, id: selectedIdRef.current }, { selected: false });
-    if (selected) {
-      selectedIdRef.current = selected.municipalityCode;
-      map.setFeatureState({ source: SOURCE_ID, id: selected.municipalityCode }, { selected: true });
-    } else {
-      selectedIdRef.current = null;
-    }
-  }, [selected]);
-
-  return (
-    <div className="relative h-full min-h-0 overflow-hidden rounded-2xl bg-[#e8ece9]" data-testid="municipality-map" data-map-ready={ready}>
-      <div ref={containerRef} className="h-full w-full" aria-label={mapLabel} />
-      <div className="absolute top-3 right-3 z-10 flex flex-col overflow-hidden rounded-lg border bg-background/95 shadow-sm backdrop-blur">
-        <button type="button" className="grid size-9 place-items-center text-lg hover:bg-accent" aria-label={zoomInLabel} onClick={() => mapRef.current?.zoomIn()}>+</button>
-        <button type="button" className="grid size-9 place-items-center border-t text-lg hover:bg-accent" aria-label={zoomOutLabel} onClick={() => mapRef.current?.zoomOut()}>−</button>
-        <button
-          type="button"
-          className="border-t px-2 py-2 text-[10px] font-semibold whitespace-nowrap hover:bg-accent"
-          aria-label={resetLabel}
-          onClick={() => {
-            mapRef.current?.fitBounds(asMapBounds(austriaBounds), { padding: 38, duration: 500 });
-            onReset();
-          }}
-        >
-          {resetLabel}
-        </button>
-      </div>
-      {selected && selectedMetricHistory && (
-        <MunicipalityMetricChart
-          metricLabel={populationLabel}
-          municipalityName={selected.name}
-          points={selectedMetricHistory}
-          selectedYear={populationYear}
-          valueFormatter={populationFormatter}
-          unitLabel={populationUnitLabel}
-          chartLabel={metricChartLabel}
-          minimizeLabel={minimizeMetricChartLabel}
-          expandLabel={expandMetricChartLabel}
-        />
-      )}
-      <div className="absolute top-16 left-3 z-10 w-[min(20rem,calc(100%-1.5rem))] rounded-xl border bg-background/95 p-3 shadow-sm backdrop-blur" data-testid="population-year-control">
-        <div className="flex items-baseline justify-between gap-3">
-          <label htmlFor="municipality-population-year" className="text-xs font-semibold">{populationYearLabel}</label>
-          <output htmlFor="municipality-population-year" className="text-sm font-semibold tabular-nums">{populationYear}</output>
-        </div>
-        <div className="mt-2 flex items-center gap-2">
-          <button type="button" className="grid size-7 shrink-0 place-items-center rounded-md border text-base hover:bg-accent disabled:cursor-not-allowed disabled:opacity-40" aria-label={previousPopulationYearLabel} disabled={populationYear === firstPopulationYear} onClick={() => onPopulationYearChange(populationYear - 1)}>‹</button>
-          <input
-            id="municipality-population-year"
-            type="range"
-            min={firstPopulationYear}
-            max={latestPopulationYear}
-            step="1"
-            value={populationYear}
-            aria-label={populationYearLabel}
-            className="h-2 min-w-0 flex-1 accent-teal-700"
-            onChange={(event) => onPopulationYearChange(Number(event.target.value))}
-          />
-          <button type="button" className="grid size-7 shrink-0 place-items-center rounded-md border text-base hover:bg-accent disabled:cursor-not-allowed disabled:opacity-40" aria-label={nextPopulationYearLabel} disabled={populationYear === latestPopulationYear} onClick={() => onPopulationYearChange(populationYear + 1)}>›</button>
-        </div>
-      </div>
-      <div className="absolute bottom-3 left-3 z-10 w-44 max-w-[calc(100%-1.5rem)] rounded-xl border bg-background/95 p-3 shadow-sm backdrop-blur" data-testid="population-legend">
-        <p className="text-xs font-semibold">{populationLabel}</p>
-        <p className="mt-0.5 text-[10px] text-muted-foreground">{populationReferenceLabel}</p>
-        <ul className="mt-2 space-y-1" aria-label={populationLabel}>
-          {POPULATION_CLASSES.map((populationClass) => (
-            <li key={populationClass.minimum} className="flex items-center gap-2 text-[10px] tabular-nums">
-              <span className="size-3 shrink-0 rounded-[3px] border border-black/10" style={{ backgroundColor: populationClass.color }} />
-              <span>{populationClassLabel(populationClass, populationFormatter)}</span>
-            </li>
-          ))}
-        </ul>
-      </div>
+  const controlButton = "rounded-md px-2 py-1 text-[10px] font-medium aria-pressed:bg-teal-700 aria-pressed:text-white hover:bg-accent";
+  return <div className="relative h-full min-h-0 overflow-hidden rounded-2xl bg-[#e8ece9]" data-testid="municipality-map" data-map-ready={ready}>
+    <div ref={containerRef} className="h-full w-full" aria-label={labels.map} />
+    <div className="absolute top-3 right-3 z-10 flex flex-col overflow-hidden rounded-lg border bg-background/95 shadow-sm backdrop-blur"><button type="button" className="grid size-9 place-items-center text-lg hover:bg-accent" aria-label={labels.zoomIn} onClick={() => mapRef.current?.zoomIn()}>+</button><button type="button" className="grid size-9 place-items-center border-t text-lg hover:bg-accent" aria-label={labels.zoomOut} onClick={() => mapRef.current?.zoomOut()}>−</button><button type="button" className="border-t px-2 py-2 text-[10px] font-semibold whitespace-nowrap hover:bg-accent" aria-label={labels.reset} onClick={() => { mapRef.current?.fitBounds(asMapBounds(austriaBounds), { padding: 38, duration: 500 }); onReset(); }}>{labels.reset}</button></div>
+    {selected && selectedMetricHistory && <MunicipalityMetricChart metricLabel={metricLabel} municipalityName={selected.name} points={selectedMetricHistory} selectedYear={year} valueFormatter={chartValueFormatter} unitLabel={chartUnitLabel} chartLabel={metricChartLabel} minimizeLabel={labels.minimizeChart} expandLabel={labels.expandChart} />}
+    <div className="absolute top-16 left-3 z-10 w-[min(20rem,calc(100%-1.5rem))] rounded-xl border bg-background/95 p-3 shadow-sm backdrop-blur" data-testid="metric-control">
+      <div className="grid grid-cols-[5.5rem_1fr] items-center gap-2"><label htmlFor="municipality-metric" className="text-xs font-semibold">{labels.metric}</label><select id="municipality-metric" value={metric} className="h-8 min-w-0 rounded-md border bg-background px-2 text-xs" onChange={(event) => onMetricChange(event.target.value as MapMetric)}><option value="population">{labels.populationMetric}</option><option value="age">{labels.ageMetric}</option></select></div>
+      {metric === "age" && <div className="mt-2 space-y-2 border-t pt-2"><div className="grid grid-cols-[5.5rem_1fr] items-center gap-2"><label htmlFor="municipality-age-group" className="text-[10px] font-semibold">{labels.ageGroup}</label><select id="municipality-age-group" value={ageGroup} className="h-8 min-w-0 rounded-md border bg-background px-2 text-[10px]" onChange={(event) => onAgeGroupChange(event.target.value as AgeGroupId)}>{Object.entries(labels.ageGroups).map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select></div><div className="flex flex-wrap gap-1"><div className="flex rounded-lg border bg-background p-0.5">{(["share", "persons"] as const).map((item) => <button key={item} type="button" className={controlButton} aria-pressed={ageMeasure === item} onClick={() => onAgeMeasureChange(item)}>{labels.measures[item]}</button>)}</div><div className="flex rounded-lg border bg-background p-0.5">{(["all", "female", "male"] as const).map((item) => <button key={item} type="button" className={controlButton} aria-pressed={sex === item} onClick={() => onSexChange(item)}>{labels.sexes[item]}</button>)}</div></div>{ageLoading && <p className="text-[10px] text-muted-foreground">{labels.loadingAge}</p>}{ageError && <p className="text-[10px] text-destructive" role="alert">{labels.ageError}</p>}</div>}
+      <div className="mt-2 flex items-baseline justify-between gap-3 border-t pt-2"><label htmlFor="municipality-population-year" className="text-xs font-semibold">{labels.year}</label><output htmlFor="municipality-population-year" className="text-sm font-semibold tabular-nums">{year}</output></div><div className="mt-2 flex items-center gap-2"><button type="button" className="grid size-7 shrink-0 place-items-center rounded-md border" aria-label={labels.previousYear} disabled={year === firstYear} onClick={() => onYearChange(year - 1)}>‹</button><input id="municipality-population-year" type="range" min={firstYear} max={latestYear} value={year} aria-label={labels.year} className="h-2 min-w-0 flex-1 accent-teal-700" onChange={(event) => onYearChange(Number(event.target.value))}/><button type="button" className="grid size-7 shrink-0 place-items-center rounded-md border" aria-label={labels.nextYear} disabled={year === latestYear} onClick={() => onYearChange(year + 1)}>›</button></div>
     </div>
-  );
+    <div className="absolute bottom-3 left-3 z-10 w-44 max-w-[calc(100%-1.5rem)] rounded-xl border bg-background/95 p-3 shadow-sm backdrop-blur" data-testid="population-legend"><p className="text-xs font-semibold">{metricLabel}</p><p className="mt-0.5 text-[10px] text-muted-foreground">{labels.reference}</p>{metric === "population" ? <ul className="mt-2 space-y-1" aria-label={metricLabel}>{POPULATION_CLASSES.map((item) => <li key={item.minimum} className="flex items-center gap-2 text-[10px] tabular-nums"><span className="size-3 rounded-[3px] border border-black/10" style={{ backgroundColor: item.color }}/><span>{populationClassLabel(item, personsFormatter)}</span></li>)}</ul> : scaleDomain && <><div className="mt-2 h-3 rounded-sm border border-black/10" style={{ background: `linear-gradient(to right, ${AGE_COLORS.join(",")})` }}/><div className="mt-1 flex justify-between text-[9px] tabular-nums"><span>{chartValueFormatter.format(scaleDomain[0])}</span><span>{chartValueFormatter.format(scaleDomain[1])}</span></div></>}</div>
+  </div>;
 }

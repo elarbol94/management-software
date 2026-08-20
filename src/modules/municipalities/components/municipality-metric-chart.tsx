@@ -95,7 +95,7 @@ export function MunicipalityMetricChart({
             {ticks.map((tick) => (
               <g key={tick}>
                 <line x1={PLOT_LEFT} x2={CHART_WIDTH - PLOT_RIGHT} y1={chart.y(tick)} y2={chart.y(tick)} stroke="currentColor" strokeOpacity="0.16" strokeDasharray="3 4" />
-                <text x={PLOT_LEFT - 6} y={chart.y(tick) + 3.5} textAnchor="end" className="fill-muted-foreground text-[10px]">{valueFormatter.format(Math.round(tick))}</text>
+                <text x={PLOT_LEFT - 6} y={chart.y(tick) + 3.5} textAnchor="end" className="fill-muted-foreground text-[10px]">{valueFormatter.format(tick)}</text>
               </g>
             ))}
             <path d={chart.path} fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" className="text-teal-700 dark:text-teal-300" />
@@ -120,7 +120,7 @@ export function MunicipalityMetricChart({
                 />
               </g>
             ))}
-            <line x1={active.x} x2={active.x} y1={PLOT_TOP} y2={CHART_HEIGHT - PLOT_BOTTOM} className="stroke-teal-700/45 dark:stroke-teal-300/45" strokeDasharray="3 3" />
+            <line x1={active.x} x2={active.x} y1={PLOT_TOP} y2={CHART_HEIGHT - PLOT_BOTTOM} className="pointer-events-none stroke-teal-700/45 dark:stroke-teal-300/45" strokeDasharray="3 3" />
             <text x={PLOT_LEFT} y={CHART_HEIGHT - 9} className="fill-muted-foreground text-[10px]">{points[0].year}</text>
             <text x={CHART_WIDTH - PLOT_RIGHT} y={CHART_HEIGHT - 9} textAnchor="end" className="fill-muted-foreground text-[10px]">{points.at(-1)!.year}</text>
             <text x={active.x} y={PLOT_TOP + 10} textAnchor="middle" className="fill-foreground text-[10px] font-semibold">{active.year}</text>
