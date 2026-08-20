@@ -1001,3 +1001,28 @@
     }
   }
 }
+
+.municipality-hover-popup .maplibregl-popup-content {
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+  background: color-mix(in oklab, var(--background) 94%, transparent);
+  box-shadow: 0 10px 24px rgb(15 23 42 / 14%);
+  color: var(--foreground);
+  padding: 0.65rem 0.75rem;
+  backdrop-filter: blur(8px);
+}
+
+.municipality-hover-popup .maplibregl-popup-content strong,
+.municipality-hover-popup .maplibregl-popup-content span {
+  display: block;
+}
+
+.municipality-hover-popup .maplibregl-popup-content span {
+  margin-top: 0.15rem;
+  color: var(--muted-foreground);
+  font-size: 0.7rem;
+}
+
+.municipality-hover-popup .maplibregl-popup-tip {
+  border-top-color: var(--background);
+}
