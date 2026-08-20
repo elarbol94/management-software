@@ -1,36 +1,51 @@
 import { readFile, writeFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 import type { MunicipalityIndex } from "../src/modules/municipalities/data";
 import { validateMunicipalityIndex } from "../src/modules/municipalities/data";
 import {
+  MUNICIPALITY_POPULATION_LATEST_YEAR,
   MUNICIPALITY_POPULATION_REFERENCE_DATE,
   MUNICIPALITY_POPULATION_SCHEMA_VERSION,
+  MUNICIPALITY_POPULATION_SERIES_SCHEMA_VERSION,
+  municipalityPopulationReferenceDate,
+  municipalityPopulationYears,
   validateMunicipalityPopulation,
+  validateMunicipalityPopulationSeries,
+  type MunicipalityPopulationSeries,
   type MunicipalityPopulationSnapshot,
 } from "../src/modules/municipalities/population";
 
-const SOURCE_URL = "https://data.statistik.gv.at/data/OGD_bevstandjbab2002_BevStand_2025.csv";
+const SOURCE_URL_TEMPLATE = "https://data.statistik.gv.at/data/OGD_bevstandjbab2002_BevStand_{year}.csv";
 const indexPath = resolve("public/data/municipalities-at-2026.index.json");
-const outputPath = resolve("public/data/municipality-population-2025.json");
+const seriesOutputPath = resolve("public/data/municipality-population-2002-2025.json");
+const latestOutputPath = resolve("public/data/municipality-population-2025.json");
 
-function sourcePathFromArguments(arguments_: string[]) {
-  const sourceIndex = arguments_.indexOf("--source");
+function sourceDirectoryFromArguments(arguments_: string[]) {
+  const sourceIndex = arguments_.indexOf("--source-dir");
   if (sourceIndex === -1) return null;
   const path = arguments_[sourceIndex + 1];
-  if (!path) throw new Error("Nach --source fehlt der Pfad zur CSV-Datei.");
+  if (!path) throw new Error("Nach --source-dir fehlt der Pfad zum CSV-Verzeichnis.");
   return resolve(path);
 }
 
-async function loadSource(path: string | null) {
-  if (path) return readFile(path, "utf8");
-  const response = await fetch(SOURCE_URL, {
+function sourceUrl(year: number) {
+  return SOURCE_URL_TEMPLATE.replace("{year}", String(year));
+}
+
+function sourceFilename(year: number) {
+  return `OGD_bevstandjbab2002_BevStand_${year}.csv`;
+}
+
+async function loadSource(year: number, sourceDirectory: string | null) {
+  if (sourceDirectory) return readFile(join(sourceDirectory, sourceFilename(year)), "utf8");
+  const response = await fetch(sourceUrl(year), {
     headers: { "user-agent": "management-platform municipality population importer" },
   });
-  if (!response.ok) throw new Error(`Statistik Austria antwortete mit HTTP ${response.status}.`);
+  if (!response.ok) throw new Error(`Statistik Austria antwortete für ${year} mit HTTP ${response.status}.`);
   return response.text();
 }
 
-function aggregatePopulation(csv: string) {
+function aggregatePopulation(csv: string, year: number) {
   const lines = csv.trim().split(/\r?\n/);
   const header = lines.shift()?.split(";");
   if (!header) throw new Error("Die Bevölkerungs-CSV ist leer.");
@@ -45,7 +60,7 @@ function aggregatePopulation(csv: string) {
   for (const [lineIndex, line] of lines.entries()) {
     if (!line) continue;
     const columns = line.split(";");
-    if (columns[yearIndex] !== "A10-2025") throw new Error(`Unerwartetes Jahr in CSV-Zeile ${lineIndex + 2}.`);
+    if (columns[yearIndex] !== `A10-${year}`) throw new Error(`Unerwartetes Jahr in CSV-Zeile ${lineIndex + 2}.`);
     const sourceCode = columns[municipalityIndex]?.replace("GRGEMAKT-", "") ?? "";
     if (!/^\d{5}$/.test(sourceCode)) throw new Error(`Ungültiger Gemeindecode in CSV-Zeile ${lineIndex + 2}.`);
     const municipalityCode = sourceCode.startsWith("9") ? "90001" : sourceCode;
@@ -57,32 +72,56 @@ function aggregatePopulation(csv: string) {
 }
 
 async function main() {
-  const sourcePath = sourcePathFromArguments(process.argv.slice(2));
+  const sourceDirectory = sourceDirectoryFromArguments(process.argv.slice(2));
   const index = validateMunicipalityIndex(JSON.parse(await readFile(indexPath, "utf8")) as MunicipalityIndex);
-  const aggregated = aggregatePopulation(await loadSource(sourcePath));
-  const municipalityCodes = index.municipalities.map(({ municipalityCode }) => municipalityCode);
+  const municipalityCodes = index.municipalities.map(({ municipalityCode }) => municipalityCode).sort();
   const expectedCodes = new Set(municipalityCodes);
-  for (const code of aggregated.keys()) {
-    if (!expectedCodes.has(code)) throw new Error(`Die Quelle enthält den unbekannten Gemeindecode ${code}.`);
+  const years: MunicipalityPopulationSeries["years"] = {};
+
+  for (const year of municipalityPopulationYears()) {
+    const aggregated = aggregatePopulation(await loadSource(year, sourceDirectory), year);
+    for (const code of aggregated.keys()) {
+      if (!expectedCodes.has(code)) throw new Error(`Die Quelle für ${year} enthält den unbekannten Gemeindecode ${code}.`);
+    }
+    const values = Object.fromEntries(municipalityCodes.map((code) => [code, aggregated.get(code)])) as Record<string, number>;
+    years[String(year)] = {
+      referenceDate: municipalityPopulationReferenceDate(year),
+      nationalTotal: Object.values(values).reduce((sum, population) => sum + (population ?? 0), 0),
+      values,
+    };
   }
-  const values = Object.fromEntries(municipalityCodes.sort().map((code) => [code, aggregated.get(code)])) as Record<string, number>;
-  const nationalTotal = Object.values(values).reduce((sum, population) => sum + (population ?? 0), 0);
-  const snapshot: MunicipalityPopulationSnapshot = validateMunicipalityPopulation({
-    schemaVersion: MUNICIPALITY_POPULATION_SCHEMA_VERSION,
-    referenceDate: MUNICIPALITY_POPULATION_REFERENCE_DATE,
+
+  const series: MunicipalityPopulationSeries = validateMunicipalityPopulationSeries({
+    schemaVersion: MUNICIPALITY_POPULATION_SERIES_SCHEMA_VERSION,
+    firstYear: 2002,
+    latestYear: MUNICIPALITY_POPULATION_LATEST_YEAR,
     count: municipalityCodes.length,
-    nationalTotal,
     unit: "persons",
     source: {
       title: "Bevölkerungsstand zu Jahresbeginn ab 2002",
-      url: SOURCE_URL,
+      urlTemplate: SOURCE_URL_TEMPLATE,
       license: "CC BY 4.0",
     },
-    values,
+    years,
+  }, municipalityCodes);
+  const latestYear = series.years[String(MUNICIPALITY_POPULATION_LATEST_YEAR)];
+  const latestSnapshot: MunicipalityPopulationSnapshot = validateMunicipalityPopulation({
+    schemaVersion: MUNICIPALITY_POPULATION_SCHEMA_VERSION,
+    referenceDate: MUNICIPALITY_POPULATION_REFERENCE_DATE,
+    count: municipalityCodes.length,
+    nationalTotal: latestYear.nationalTotal,
+    unit: "persons",
+    source: {
+      title: series.source.title,
+      url: sourceUrl(MUNICIPALITY_POPULATION_LATEST_YEAR),
+      license: series.source.license,
+    },
+    values: latestYear.values,
   }, municipalityCodes);
 
-  await writeFile(outputPath, `${JSON.stringify(snapshot)}\n`);
-  process.stdout.write(`Einwohnerdaten ${snapshot.referenceDate}: ${snapshot.count} Gemeinden, ${snapshot.nationalTotal} Personen erzeugt.\n`);
+  await writeFile(seriesOutputPath, `${JSON.stringify(series)}\n`);
+  await writeFile(latestOutputPath, `${JSON.stringify(latestSnapshot)}\n`);
+  process.stdout.write(`Einwohnerzeitreihe ${series.firstYear}–${series.latestYear}: ${series.count} Gemeinden je Jahr erzeugt.\n`);
 }
 
 void main().catch((error: unknown) => {

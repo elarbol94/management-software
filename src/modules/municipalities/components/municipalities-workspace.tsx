@@ -14,8 +14,8 @@ import {
   type MunicipalityIndexItem,
 } from "../data";
 import {
-  validateMunicipalityPopulation,
-  type MunicipalityPopulationSnapshot,
+  validateMunicipalityPopulationSeries,
+  type MunicipalityPopulationSeries,
 } from "../population";
 
 const MunicipalityMap = dynamic(
@@ -32,6 +32,10 @@ async function fetchJson<T>(url: string, signal: AbortSignal) {
   return response.json() as Promise<T>;
 }
 
+function formatPopulationChange(value: number, formatter: Intl.NumberFormat) {
+  return `${value > 0 ? "+" : ""}${formatter.format(value)}`;
+}
+
 export function MunicipalitiesWorkspace() {
   const t = useTranslations("municipalities");
   const locale = useLocale();
@@ -40,7 +44,7 @@ export function MunicipalitiesWorkspace() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const [index, setIndex] = useState<MunicipalityIndex | null>(null);
-  const [population, setPopulation] = useState<MunicipalityPopulationSnapshot | null>(null);
+  const [populationSeries, setPopulationSeries] = useState<MunicipalityPopulationSeries | null>(null);
   const [loadError, setLoadError] = useState(false);
   const [query, setQuery] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
@@ -50,6 +54,18 @@ export function MunicipalitiesWorkspace() {
     () => index?.municipalities.find((item) => item.municipalityCode === selectedCode) ?? null,
     [index, selectedCode],
   );
+  const selectedPopulationYear = useMemo(() => {
+    const populationYear = Number(searchParams.get("populationYear"));
+    if (populationSeries && Number.isInteger(populationYear) && populationYear >= populationSeries.firstYear && populationYear <= populationSeries.latestYear) {
+      return populationYear;
+    }
+    return populationSeries?.latestYear ?? null;
+  }, [populationSeries, searchParams]);
+  const activePopulation = selectedPopulationYear === null ? null : populationSeries?.years[String(selectedPopulationYear)] ?? null;
+  const previousPopulation = selectedPopulationYear === null || selectedPopulationYear <= (populationSeries?.firstYear ?? 0)
+    ? null
+    : populationSeries?.years[String(selectedPopulationYear - 1)] ?? null;
+  const firstPopulation = populationSeries?.years[String(populationSeries.firstYear)] ?? null;
   const results = useMemo(
     () => index ? searchMunicipalities(index.municipalities, query) : [],
     [index, query],
@@ -59,16 +75,16 @@ export function MunicipalitiesWorkspace() {
     const controller = new AbortController();
     Promise.all([
       fetchJson<MunicipalityIndex>("/data/municipalities-at-2026.index.json", controller.signal),
-      fetchJson<MunicipalityPopulationSnapshot>("/data/municipality-population-2025.json", controller.signal),
+      fetchJson<MunicipalityPopulationSeries>("/data/municipality-population-2002-2025.json", controller.signal),
     ])
       .then(([indexData, populationData]) => {
         const validatedIndex = validateMunicipalityIndex(indexData);
-        const validatedPopulation = validateMunicipalityPopulation(
+        const validatedPopulationSeries = validateMunicipalityPopulationSeries(
           populationData,
           validatedIndex.municipalities.map(({ municipalityCode }) => municipalityCode),
         );
         setIndex(validatedIndex);
-        setPopulation(validatedPopulation);
+        setPopulationSeries(validatedPopulationSeries);
       })
       .catch((error: unknown) => {
         if (!(error instanceof DOMException && error.name === "AbortError")) setLoadError(true);
@@ -76,14 +92,25 @@ export function MunicipalitiesWorkspace() {
     return () => controller.abort();
   }, []);
 
+  function replaceSearchParams(next: URLSearchParams) {
+    const queryString = next.toString();
+    router.replace(queryString ? `${pathname}?${queryString}` : pathname, { scroll: false });
+  }
+
   function updateSelection(municipality: MunicipalityIndexItem | null) {
     const next = new URLSearchParams(searchParams.toString());
     if (municipality) next.set("municipality", municipality.municipalityCode);
     else next.delete("municipality");
-    const queryString = next.toString();
-    router.replace(queryString ? `${pathname}?${queryString}` : pathname, { scroll: false });
+    replaceSearchParams(next);
     setSearchOpen(false);
     setQuery(municipality?.name ?? "");
+  }
+
+  function updatePopulationYear(year: number) {
+    if (!populationSeries || year < populationSeries.firstYear || year > populationSeries.latestYear) return;
+    const next = new URLSearchParams(searchParams.toString());
+    next.set("populationYear", String(year));
+    replaceSearchParams(next);
   }
 
   function selectByCode(code: string) {
@@ -119,7 +146,13 @@ export function MunicipalitiesWorkspace() {
       </div>
     );
   }
-  if (!index || !population) return <Skeleton className="h-[calc(100dvh-12rem)] min-h-[34rem] w-full rounded-2xl" />;
+  if (!index || !populationSeries || !activePopulation || selectedPopulationYear === null) {
+    return <Skeleton className="h-[calc(100dvh-12rem)] min-h-[34rem] w-full rounded-2xl" />;
+  }
+
+  const selectedPopulation = selected ? activePopulation.values[selected.municipalityCode] : 0;
+  const populationChangePreviousYear = selected && previousPopulation ? selectedPopulation - previousPopulation.values[selected.municipalityCode] : null;
+  const populationChangeSinceFirstYear = selected && firstPopulation ? selectedPopulation - firstPopulation.values[selected.municipalityCode] : null;
 
   return (
     <div className="grid min-h-0 gap-4 lg:grid-cols-[minmax(0,1fr)_19rem]" data-testid="municipalities-workspace">
@@ -166,7 +199,11 @@ export function MunicipalitiesWorkspace() {
         <MunicipalityMap
           austriaBounds={index.bounds}
           selected={selected}
-          populationValues={population.values}
+          populationValues={activePopulation.values}
+          populationYear={selectedPopulationYear}
+          firstPopulationYear={populationSeries.firstYear}
+          latestPopulationYear={populationSeries.latestYear}
+          onPopulationYearChange={updatePopulationYear}
           onSelect={selectByCode}
           onReset={() => updateSelection(null)}
           mapLabel={t("mapLabel")}
@@ -175,7 +212,10 @@ export function MunicipalitiesWorkspace() {
           resetLabel={t("allAustria")}
           municipalityCodeLabel={t("municipalityCode")}
           populationLabel={t("population")}
-          populationReferenceLabel={t("populationReference")}
+          populationReferenceLabel={t("populationReference", { year: selectedPopulationYear })}
+          populationYearLabel={t("populationYear")}
+          previousPopulationYearLabel={t("previousPopulationYear")}
+          nextPopulationYearLabel={t("nextPopulationYear")}
         />
       </section>
 
@@ -187,11 +227,13 @@ export function MunicipalitiesWorkspace() {
               <p className="text-xs font-semibold tracking-[0.14em] text-teal-700 uppercase dark:text-teal-300">{t("selectedMunicipality")}</p>
               <h2 className="mt-1 text-2xl font-semibold tracking-tight">{selected.name}</h2>
               <dl className="mt-5 grid grid-cols-[auto_1fr] gap-x-3 gap-y-2 text-sm">
-                <dt className="text-muted-foreground">{t("population")}</dt><dd className="font-semibold tabular-nums">{populationFormatter.format(population.values[selected.municipalityCode])}</dd>
+                <dt className="text-muted-foreground">{t("population")}</dt><dd className="font-semibold tabular-nums">{populationFormatter.format(selectedPopulation)}</dd>
+                <dt className="text-muted-foreground">{t("populationChangePreviousYear")}</dt><dd className="font-medium tabular-nums">{populationChangePreviousYear === null ? "—" : formatPopulationChange(populationChangePreviousYear, populationFormatter)}</dd>
+                <dt className="text-muted-foreground">{t("populationChangeSinceFirstYear", { year: populationSeries.firstYear })}</dt><dd className="font-medium tabular-nums">{populationChangeSinceFirstYear === null ? "—" : formatPopulationChange(populationChangeSinceFirstYear, populationFormatter)}</dd>
                 <dt className="text-muted-foreground">{t("state")}</dt><dd className="font-medium">{selected.state}</dd>
                 <dt className="text-muted-foreground">{t("municipalityCode")}</dt><dd className="font-mono font-medium">{selected.municipalityCode}</dd>
               </dl>
-              <p className="mt-3 flex items-center gap-1.5 text-xs text-muted-foreground"><Users className="size-3.5" />{t("populationReference")}</p>
+              <p className="mt-3 flex items-center gap-1.5 text-xs text-muted-foreground"><Users className="size-3.5" />{t("populationReference", { year: selectedPopulationYear })}</p>
               <Button variant="outline" className="mt-5 w-full" onClick={() => updateSelection(null)}><X className="size-4" />{t("clearSelection")}</Button>
             </>
           ) : (
@@ -206,9 +248,9 @@ export function MunicipalitiesWorkspace() {
           <div className="mb-2 flex items-center gap-2 font-semibold text-foreground"><Database className="size-4" />{t("dataBasis")}</div>
           <p>{t("dataBasisDescription", { count: index.count })}</p>
           <p className="mt-2">
-            {t("populationDataBasis")} {" "}
-            <a className="underline underline-offset-2 hover:text-foreground" href={population.source.url} target="_blank" rel="noreferrer">{population.source.title}</a>
-            {` (${population.source.license}).`}
+            {t("populationDataBasis", { firstYear: populationSeries.firstYear, latestYear: populationSeries.latestYear })}{" "}
+            <a className="underline underline-offset-2 hover:text-foreground" href={populationSeries.source.urlTemplate.replace("{year}", String(populationSeries.latestYear))} target="_blank" rel="noreferrer">{populationSeries.source.title}</a>
+            {` (${populationSeries.source.license}).`}
           </p>
           <p className="mt-2">{t("geometryAttribution")}</p>
         </div>

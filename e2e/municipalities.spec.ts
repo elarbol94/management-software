@@ -42,6 +42,8 @@ test("municipality map works with local geometry when basemap tiles are unavaila
   await expect(page.getByTestId("municipality-map")).toBeVisible();
   await expect(page.getByText("2.092 amtliche Gemeinden")).toBeVisible();
   await expect(page.getByTestId("population-legend").getByText("Einwohnerzahl")).toBeVisible();
+  const populationYear = page.getByRole("slider", { name: "Jahr" });
+  await expect(populationYear).toHaveValue("2025");
 
   const search = page.getByRole("combobox", { name: "Gemeinde suchen" });
   await search.fill("Graz");
@@ -50,6 +52,10 @@ test("municipality map works with local geometry when basemap tiles are unavaila
   await expect(page.getByTestId("municipality-details").getByRole("heading", { name: "Graz" })).toBeVisible();
   await expect(page.getByText("60101", { exact: true })).toBeVisible();
   await expect(page.getByTestId("municipality-details").getByText("305.314", { exact: true })).toBeVisible();
+  await populationYear.press("Home");
+  await expect(page).toHaveURL(/populationYear=2002/);
+  await expect(page.getByTestId("municipality-details").getByText("232.930", { exact: true })).toBeVisible();
+  await expect(page.getByTestId("population-legend").getByText("Stand 1. Jänner 2002")).toBeVisible();
 
   await page.reload();
   await expect(page).toHaveURL(/municipality=60101/);

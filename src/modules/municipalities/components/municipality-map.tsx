@@ -52,6 +52,10 @@ export function MunicipalityMap({
   austriaBounds,
   selected,
   populationValues,
+  populationYear,
+  firstPopulationYear,
+  latestPopulationYear,
+  onPopulationYearChange,
   onSelect,
   onReset,
   mapLabel,
@@ -61,10 +65,17 @@ export function MunicipalityMap({
   municipalityCodeLabel,
   populationLabel,
   populationReferenceLabel,
+  populationYearLabel,
+  previousPopulationYearLabel,
+  nextPopulationYearLabel,
 }: {
   austriaBounds: MunicipalityBounds;
   selected: MunicipalityIndexItem | null;
   populationValues: Record<string, number>;
+  populationYear: number;
+  firstPopulationYear: number;
+  latestPopulationYear: number;
+  onPopulationYearChange: (year: number) => void;
   onSelect: (municipalityCode: string) => void;
   onReset: () => void;
   mapLabel: string;
@@ -74,6 +85,9 @@ export function MunicipalityMap({
   municipalityCodeLabel: string;
   populationLabel: string;
   populationReferenceLabel: string;
+  populationYearLabel: string;
+  previousPopulationYearLabel: string;
+  nextPopulationYearLabel: string;
 }) {
   const locale = useLocale();
   const populationFormatter = useMemo(() => new Intl.NumberFormat(locale), [locale]);
@@ -85,6 +99,9 @@ export function MunicipalityMap({
   const selectedIdRef = useRef<string | number | null>(null);
   const selectedRef = useRef(selected);
   const onSelectRef = useRef(onSelect);
+  const populationValuesRef = useRef(populationValues);
+  const populationLabelRef = useRef(populationLabel);
+  const populationFormatterRef = useRef(populationFormatter);
 
   useEffect(() => {
     selectedRef.current = selected;
@@ -93,6 +110,20 @@ export function MunicipalityMap({
   useEffect(() => {
     onSelectRef.current = onSelect;
   }, [onSelect]);
+
+  useEffect(() => {
+    populationValuesRef.current = populationValues;
+    const map = mapRef.current;
+    if (!map?.getSource(SOURCE_ID)) return;
+    for (const [municipalityCode, population] of Object.entries(populationValues)) {
+      map.setFeatureState({ source: SOURCE_ID, id: municipalityCode }, { population });
+    }
+  }, [populationValues]);
+
+  useEffect(() => {
+    populationLabelRef.current = populationLabel;
+    populationFormatterRef.current = populationFormatter;
+  }, [populationFormatter, populationLabel]);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -129,7 +160,7 @@ export function MunicipalityMap({
         promoteId: "municipalityCode",
         attribution: "© Statistik Austria, CC BY 4.0",
       });
-      for (const [municipalityCode, population] of Object.entries(populationValues)) {
+      for (const [municipalityCode, population] of Object.entries(populationValuesRef.current)) {
         map.setFeatureState({ source: SOURCE_ID, id: municipalityCode }, { population });
       }
       map.addLayer({
@@ -186,7 +217,7 @@ export function MunicipalityMap({
       const title = document.createElement("strong");
       title.textContent = properties.name;
       const populationDetail = document.createElement("span");
-      populationDetail.textContent = `${populationLabel}: ${populationFormatter.format(populationValues[properties.municipalityCode])}`;
+      populationDetail.textContent = `${populationLabelRef.current}: ${populationFormatterRef.current.format(populationValuesRef.current[properties.municipalityCode])}`;
       const detail = document.createElement("span");
       detail.textContent = `${properties.state} · ${municipalityCodeLabel} ${properties.municipalityCode}`;
       content.append(title, populationDetail, detail);
@@ -214,7 +245,7 @@ export function MunicipalityMap({
       popupRef.current = null;
       mapRef.current = null;
     };
-  }, [austriaBounds, municipalityCodeLabel, populationFormatter, populationLabel, populationValues]);
+  }, [austriaBounds, municipalityCodeLabel]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -247,6 +278,27 @@ export function MunicipalityMap({
         >
           {resetLabel}
         </button>
+      </div>
+      <div className="absolute top-16 left-3 z-10 w-[min(20rem,calc(100%-1.5rem))] rounded-xl border bg-background/95 p-3 shadow-sm backdrop-blur" data-testid="population-year-control">
+        <div className="flex items-baseline justify-between gap-3">
+          <label htmlFor="municipality-population-year" className="text-xs font-semibold">{populationYearLabel}</label>
+          <output htmlFor="municipality-population-year" className="text-sm font-semibold tabular-nums">{populationYear}</output>
+        </div>
+        <div className="mt-2 flex items-center gap-2">
+          <button type="button" className="grid size-7 shrink-0 place-items-center rounded-md border text-base hover:bg-accent disabled:cursor-not-allowed disabled:opacity-40" aria-label={previousPopulationYearLabel} disabled={populationYear === firstPopulationYear} onClick={() => onPopulationYearChange(populationYear - 1)}>‹</button>
+          <input
+            id="municipality-population-year"
+            type="range"
+            min={firstPopulationYear}
+            max={latestPopulationYear}
+            step="1"
+            value={populationYear}
+            aria-label={populationYearLabel}
+            className="h-2 min-w-0 flex-1 accent-teal-700"
+            onChange={(event) => onPopulationYearChange(Number(event.target.value))}
+          />
+          <button type="button" className="grid size-7 shrink-0 place-items-center rounded-md border text-base hover:bg-accent disabled:cursor-not-allowed disabled:opacity-40" aria-label={nextPopulationYearLabel} disabled={populationYear === latestPopulationYear} onClick={() => onPopulationYearChange(populationYear + 1)}>›</button>
+        </div>
       </div>
       <div className="absolute bottom-3 left-3 z-10 w-44 max-w-[calc(100%-1.5rem)] rounded-xl border bg-background/95 p-3 shadow-sm backdrop-blur" data-testid="population-legend">
         <p className="text-xs font-semibold">{populationLabel}</p>
