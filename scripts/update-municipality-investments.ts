@@ -8,14 +8,19 @@ import {
   MUNICIPALITY_INVESTMENTS_FIRST_YEAR,
   MUNICIPALITY_INVESTMENTS_LATEST_YEAR,
   MUNICIPALITY_INVESTMENTS_SCHEMA_VERSION,
+  isAssetCompatibleWithInvestmentType,
+  isInvestmentAssetMvagCode,
   isInvestmentTaskAreaId,
   isInvestmentTypeId,
   municipalityInvestmentTotal,
   normalizeInvestmentDescription,
   validateMunicipalityInvestmentData,
+  type InvestmentAssetMatchMethod,
+  type InvestmentAssetMvagCode,
   type InvestmentDetailLevel,
   type InvestmentTaskAreaId,
   type InvestmentTypeId,
+  type MunicipalityInvestmentAsset,
   type MunicipalityInvestmentData,
   type MunicipalityInvestmentIndex,
   type MunicipalityInvestmentIndexEntry,
@@ -29,7 +34,7 @@ import {
   type InvestmentHtmlLocale,
 } from "../src/modules/municipalities/investment-html";
 
-const FILE_PATTERN = /^(\d{5})_(201\d|202[0-4])_ra_fhh_(statistik_at|gemeinde)\.csv$/;
+const FILE_PATTERN = /^(\d{5})_(201\d|202[0-4])_ra_(fhh|vhh)_(statistik_at|gemeinde)\.csv$/;
 const REQUIRED_COLUMNS = [
   "Jahr", "Voranschlag/Rechnungsabschluss", "Datenquelle", "Gemeindekennziffer", "Haushalt",
   "Ansatz-Uab", "Ansatz-Ugl", "Konto-Grp", "Konto-Ugl", "Vorhabencode", "Mvag",
@@ -38,6 +43,7 @@ const REQUIRED_COLUMNS = [
 
 type SourceKind = "statistik_at" | "gemeinde";
 type SourcePair = { statistics?: string; municipality?: string };
+type SourceSet = { fhh: SourcePair; vhh: SourcePair };
 type ParsedInvestmentCsv = {
   directInvestmentCents: number;
   investiveInflowsCents: number;
@@ -152,6 +158,9 @@ export function parseMunicipalityInvestmentCsv(
       investmentType: mvag as InvestmentTypeId,
       normalizedDescription: normalizeInvestmentDescription(`${approachText} ${accountText}`),
       detailLevel,
+      assetIds: [],
+      assetMatchStatus: "unmatched" as const,
+      assetMatchMethod: null,
     };
     const identity = positionIdentity(position);
     const existing = grouped.get(identity);
@@ -176,6 +185,269 @@ export function parseMunicipalityInvestmentCsv(
   };
 }
 
+
+const REQUIRED_ASSET_COLUMNS = [
+  "Jahr", "Voranschlag/Rechnungsabschluss", "Datenquelle", "Gemeindekennziffer", "Haushalt",
+  "Ansatz-Uab", "Ansatz-Ugl", "Konto-Grp", "Konto-Ugl", "Vorhabencode", "Id-Vhh", "Mvag",
+  "Ansatz-Text", "Konto-Text", "Endstand-Vj", "Zugang", "Abgang", "Aenderung", "Endstand-Rj",
+] as const;
+
+type AssetClassTotal = { openingBalanceCents: number; closingBalanceCents: number };
+type ParsedAssetCsv = {
+  assets: MunicipalityInvestmentAsset[];
+  classTotals: Map<InvestmentAssetMvagCode, AssetClassTotal>;
+};
+
+function parseOptionalEuroCents(value: string) {
+  return value.trim() ? parseEuroCents(value) : 0;
+}
+
+function assetIdentity(asset: Omit<MunicipalityInvestmentAsset, "id" | "openingBalanceCents" | "additionsCents"
+  | "disposalsCents" | "changesCents" | "closingBalanceCents">) {
+  return [asset.year, asset.sourceAssetId, asset.mvagCode, asset.approachCode, asset.approachText,
+    asset.accountCode, asset.accountText, asset.projectCode, asset.sourceFile].join("\u001f");
+}
+
+export function parseMunicipalityAssetCsv(
+  source: string,
+  expectedCode: string,
+  expectedYear: number,
+  sourceKind: SourceKind,
+  sourceFile = "asset-source.csv",
+): ParsedAssetCsv {
+  const rows = parseSemicolonCsv(source);
+  const header = rows.shift();
+  if (!header) throw new Error("Leere Vermögensdatei.");
+  const columns = new Map(header.map((name, index) => [name, index]));
+  for (const name of REQUIRED_ASSET_COLUMNS) if (!columns.has(name)) throw new Error(`Fehlende VHH-Spalte: ${name}`);
+  const valueAt = (row: string[], name: (typeof REQUIRED_ASSET_COLUMNS)[number]) => row[columns.get(name)!] ?? "";
+  const expectedSource = sourceKind === "gemeinde" ? "Gemeinde" : "Statistik Austria";
+  const grouped = new Map<string, {
+    asset: Omit<MunicipalityInvestmentAsset, "id" | "openingBalanceCents" | "additionsCents"
+      | "disposalsCents" | "changesCents" | "closingBalanceCents">;
+    openingBalanceCents: number;
+    additionsCents: number;
+    disposalsCents: number;
+    changesCents: number;
+    closingBalanceCents: number;
+  }>();
+  const classTotals = new Map<InvestmentAssetMvagCode, AssetClassTotal>();
+  for (const row of rows) {
+    if (
+      valueAt(row, "Jahr") !== String(expectedYear)
+      || valueAt(row, "Gemeindekennziffer") !== expectedCode
+      || valueAt(row, "Voranschlag/Rechnungsabschluss") !== "Rechnungsabschluss"
+      || valueAt(row, "Datenquelle").replaceAll('"', "") !== expectedSource
+      || valueAt(row, "Haushalt") !== "Vermögenshaushalt"
+    ) throw new Error(`Unerwartete VHH-Metadaten in ${expectedCode}/${expectedYear}/${sourceKind}.`);
+    const mvagCode = valueAt(row, "Mvag").trim();
+    if (!isInvestmentAssetMvagCode(mvagCode)) continue;
+    const openingBalanceCents = parseOptionalEuroCents(valueAt(row, "Endstand-Vj"));
+    const additionsCents = parseOptionalEuroCents(valueAt(row, "Zugang"));
+    const disposalsCents = parseOptionalEuroCents(valueAt(row, "Abgang"));
+    const changesCents = parseOptionalEuroCents(valueAt(row, "Aenderung"));
+    const closingBalanceCents = parseOptionalEuroCents(valueAt(row, "Endstand-Rj"));
+    const previous = classTotals.get(mvagCode) ?? { openingBalanceCents: 0, closingBalanceCents: 0 };
+    classTotals.set(mvagCode, {
+      openingBalanceCents: previous.openingBalanceCents + openingBalanceCents,
+      closingBalanceCents: previous.closingBalanceCents + closingBalanceCents,
+    });
+    if (sourceKind !== "gemeinde" || additionsCents === 0) continue;
+    const approachText = valueAt(row, "Ansatz-Text").trim();
+    const accountText = valueAt(row, "Konto-Text").trim();
+    if (/\b[A-Z]{2}\d{2}(?:[\s-]?[A-Z0-9]){11,30}\b/i.test(`${approachText} ${accountText}`)) {
+      throw new Error(`IBAN in freigegebener VHH-Klasse ${mvagCode}.`);
+    }
+    const approachUab = valueAt(row, "Ansatz-Uab").padStart(3, "0");
+    const approachUgl = valueAt(row, "Ansatz-Ugl").padStart(3, "0");
+    const sourceAssetId = valueAt(row, "Id-Vhh").trim() || "ohne-anlagen-id";
+    const asset = {
+      sourceAssetId,
+      year: expectedYear,
+      mvagCode,
+      approachCode: `${approachUab}.${approachUgl}`,
+      approachText,
+      accountCode: `${valueAt(row, "Konto-Grp").padStart(3, "0")}.${valueAt(row, "Konto-Ugl").padStart(3, "0")}`,
+      accountText,
+      projectCode: valueAt(row, "Vorhabencode").trim() || "0000000",
+      normalizedDescription: normalizeInvestmentDescription(`${approachText} ${accountText}`),
+      sourceFile,
+    };
+    const identity = assetIdentity(asset);
+    const existing = grouped.get(identity);
+    grouped.set(identity, {
+      asset,
+      openingBalanceCents: (existing?.openingBalanceCents ?? 0) + openingBalanceCents,
+      additionsCents: (existing?.additionsCents ?? 0) + additionsCents,
+      disposalsCents: (existing?.disposalsCents ?? 0) + disposalsCents,
+      changesCents: (existing?.changesCents ?? 0) + changesCents,
+      closingBalanceCents: (existing?.closingBalanceCents ?? 0) + closingBalanceCents,
+    });
+  }
+  const assets = [...grouped.entries()].map(([identity, values]) => ({
+    id: createHash("sha256").update(`${expectedCode}\u001fasset\u001f${identity}`).digest("hex").slice(0, 20),
+    ...values.asset,
+    openingBalanceCents: values.openingBalanceCents,
+    additionsCents: values.additionsCents,
+    disposalsCents: values.disposalsCents,
+    changesCents: values.changesCents,
+    closingBalanceCents: values.closingBalanceCents,
+  })).sort((left, right) => left.mvagCode.localeCompare(right.mvagCode)
+    || left.approachCode.localeCompare(right.approachCode)
+    || left.sourceAssetId.localeCompare(right.sourceAssetId));
+  return { assets, classTotals };
+}
+
+export function reconcileMunicipalityAssetSources(
+  statistics: ParsedAssetCsv,
+  municipality: ParsedAssetCsv | null,
+) {
+  if (municipality) {
+    const codes = new Set([...statistics.classTotals.keys(), ...municipality.classTotals.keys()]);
+    const matched = [...codes].every((code) => {
+      const statisticsTotal = statistics.classTotals.get(code) ?? { openingBalanceCents: 0, closingBalanceCents: 0 };
+      const municipalityTotal = municipality.classTotals.get(code) ?? { openingBalanceCents: 0, closingBalanceCents: 0 };
+      return statisticsTotal.openingBalanceCents === municipalityTotal.openingBalanceCents
+        && statisticsTotal.closingBalanceCents === municipalityTotal.closingBalanceCents;
+    });
+    if (matched) return { assets: municipality.assets, reconciliation: "matched" as const };
+    return { assets: [], reconciliation: "mismatch-fallback" as const };
+  }
+  return { assets: [], reconciliation: "statistics-only" as const };
+}
+
+function meaningfulTokens(value: string) {
+  return new Set(value.split(" ").filter((token) => token.length >= 4 && !/^\d+$/.test(token)));
+}
+
+function descriptionsRelated(position: MunicipalityInvestmentPosition, asset: MunicipalityInvestmentAsset) {
+  if (position.projectCode !== "0000000" && position.projectCode === asset.projectCode) return true;
+  const left = meaningfulTokens(position.normalizedDescription);
+  const right = meaningfulTokens(asset.normalizedDescription);
+  const shared = [...left].filter((token) => right.has(token));
+  return shared.length >= 2 || shared.some((token) => token.length >= 8);
+}
+
+function uniqueCombination<T>(
+  values: T[],
+  targetCents: number,
+  amountCents: (value: T) => number,
+  minimum = 2,
+  maximum = 4,
+) {
+  // A very broad candidate set cannot be resolved confidently and makes an
+  // exhaustive subset search disproportionately expensive. Leave it ambiguous
+  // instead of guessing or blocking the complete municipal import.
+  if (values.length > 32) return { match: null as T[] | null, ambiguous: true };
+
+  let match: T[] | null = null;
+  let ambiguous = false;
+  function visit(start: number, chosen: T[], sumCents: number) {
+    if (ambiguous) return;
+    if (chosen.length >= minimum && sumCents === targetCents) {
+      if (match) {
+        ambiguous = true;
+        return;
+      }
+      match = [...chosen];
+    }
+    if (chosen.length === maximum) return;
+    for (let index = start; index < values.length; index += 1) {
+      chosen.push(values[index]);
+      visit(index + 1, chosen, sumCents + amountCents(values[index]));
+      chosen.pop();
+      if (ambiguous) return;
+    }
+  }
+  visit(0, [], 0);
+  return { match: ambiguous ? null : match, ambiguous };
+}
+
+export function matchInvestmentAssets(
+  positions: MunicipalityInvestmentPosition[],
+  assets: MunicipalityInvestmentAsset[],
+) {
+  const result = positions.map((position) => ({
+    ...position,
+    assetIds: [] as string[],
+    assetMatchStatus: "unmatched" as "unmatched" | "matched" | "ambiguous",
+    assetMatchMethod: null as InvestmentAssetMatchMethod | null,
+  }));
+  const usedPositions = new Set<string>();
+  const usedAssets = new Set<string>();
+
+  function link(positionGroup: MunicipalityInvestmentPosition[], assetGroup: MunicipalityInvestmentAsset[], method: InvestmentAssetMatchMethod) {
+    const positionTotal = positionGroup.reduce((sum, position) => sum + position.amountCents, 0);
+    const assetTotal = assetGroup.reduce((sum, asset) => sum + asset.additionsCents, 0);
+    if (positionTotal !== assetTotal) throw new Error("Nicht centgenauer Vermögensabgleich.");
+    for (const position of positionGroup) {
+      const target = result.find((entry) => entry.id === position.id)!;
+      target.assetIds = assetGroup.map((asset) => asset.id);
+      target.assetMatchStatus = "matched";
+      target.assetMatchMethod = method;
+      usedPositions.add(position.id);
+    }
+    for (const asset of assetGroup) usedAssets.add(asset.id);
+  }
+
+  const oneToOneMethods: InvestmentAssetMatchMethod[] = ["project-code", "exact-description"];
+  for (const method of oneToOneMethods) {
+    for (const position of result.filter((entry) => !usedPositions.has(entry.id))) {
+      const candidates = assets.filter((asset) => !usedAssets.has(asset.id)
+        && asset.year === position.year
+        && asset.additionsCents === position.amountCents
+        && (method !== "project-code" || isAssetCompatibleWithInvestmentType(asset.mvagCode, position.investmentType))
+        && (method === "project-code"
+          ? position.projectCode !== "0000000" && position.projectCode === asset.projectCode
+          : descriptionsRelated(position, asset)));
+      if (candidates.length === 1) link([position], candidates, method);
+      else if (candidates.length > 1) position.assetMatchStatus = "ambiguous";
+    }
+  }
+
+  for (const position of result.filter((entry) => !usedPositions.has(entry.id))) {
+    const candidates = assets.filter((asset) => !usedAssets.has(asset.id)
+      && asset.year === position.year
+      && descriptionsRelated(position, asset));
+    const matchingGroup = uniqueCombination(
+      candidates,
+      position.amountCents,
+      (asset) => asset.additionsCents,
+    );
+    if (matchingGroup.match) link([position], matchingGroup.match, "group-sum");
+    else if (matchingGroup.ambiguous) position.assetMatchStatus = "ambiguous";
+  }
+
+  for (const asset of assets.filter((entry) => !usedAssets.has(entry.id))) {
+    const candidates = result.filter((position) => !usedPositions.has(position.id)
+      && position.year === asset.year
+      && descriptionsRelated(position, asset));
+    const matchingGroup = uniqueCombination(
+      candidates,
+      asset.additionsCents,
+      (position) => position.amountCents,
+    );
+    if (matchingGroup.match) link(matchingGroup.match, [asset], "group-sum");
+    else if (matchingGroup.ambiguous) {
+      for (const position of candidates) position.assetMatchStatus = "ambiguous";
+    }
+  }
+
+  for (const position of result.filter((entry) => !usedPositions.has(entry.id))) {
+    const candidates = assets.filter((asset) => !usedAssets.has(asset.id)
+      && asset.year === position.year
+      && asset.additionsCents === position.amountCents
+      && isAssetCompatibleWithInvestmentType(asset.mvagCode, position.investmentType));
+    const reciprocal = candidates.filter((asset) => result.filter((other) => !usedPositions.has(other.id)
+      && other.year === asset.year
+      && other.amountCents === asset.additionsCents
+      && isAssetCompatibleWithInvestmentType(asset.mvagCode, other.investmentType)).length === 1);
+    if (reciprocal.length === 1) link([position], reciprocal, "exact-amount");
+    else if (candidates.length > 1) position.assetMatchStatus = "ambiguous";
+  }
+  return result;
+}
+
 function optionValue(arguments_: string[], option: string) {
   const index = arguments_.indexOf(option);
   return index >= 0 ? arguments_[index + 1] : undefined;
@@ -197,19 +469,20 @@ function parseArguments(arguments_: string[]) {
 }
 
 function sourceFileMap(entries: Dirent<string>[]) {
-  const files = new Map<string, SourcePair>();
+  const files = new Map<string, SourceSet>();
   for (const entry of entries) {
     if (!entry.isFile()) continue;
     const match = FILE_PATTERN.exec(entry.name);
     if (!match) continue;
-    const [, code, year, kind] = match;
+    const [, code, year, household, kind] = match;
     const key = `${code}/${year}`;
-    const pair = files.get(key) ?? {};
+    const set = files.get(key) ?? { fhh: {}, vhh: {} };
+    const pair = household === "fhh" ? set.fhh : set.vhh;
     const path = resolve(entry.parentPath, entry.name);
     const property = kind === "gemeinde" ? "municipality" : "statistics";
-    if (pair[property]) throw new Error(`Doppelte ${kind}-Datei für ${key}: ${pair[property]} und ${path}`);
+    if (pair[property]) throw new Error(`Doppelte ${household}/${kind}-Datei für ${key}: ${pair[property]} und ${path}`);
     pair[property] = path;
-    files.set(key, pair);
+    files.set(key, set);
   }
   return files;
 }
@@ -226,7 +499,7 @@ async function main() {
     mkdir(resolve(options.output, "data"), { recursive: true }),
     mkdir(options.appOutput, { recursive: true }),
   ]);
-  const groupedByCode = new Map<string, Array<{ year: number; pair: SourcePair }>>();
+  const groupedByCode = new Map<string, Array<{ year: number; sources: SourceSet }>>();
   const ignoredSourcePairs: Array<{
     code: string;
     year: number;
@@ -234,9 +507,9 @@ async function main() {
     statisticsFile: string | null;
     municipalityFile: string | null;
   }> = [];
-  for (const [key, pair] of files) {
+  for (const [key, sources] of files) {
     const [code, year] = key.split("/");
-    const reason = !pair.statistics ? "missing-statistics-file"
+    const reason = !sources.fhh.statistics ? "missing-statistics-file"
       : !municipalitiesByCode.has(code) ? "municipality-code-not-in-current-index"
         : null;
     if (reason) {
@@ -244,27 +517,32 @@ async function main() {
         code,
         year: Number(year),
         reason,
-        statisticsFile: pair.statistics ? basename(pair.statistics) : null,
-        municipalityFile: pair.municipality ? basename(pair.municipality) : null,
+        statisticsFile: sources.fhh.statistics ? basename(sources.fhh.statistics) : null,
+        municipalityFile: sources.fhh.municipality ? basename(sources.fhh.municipality) : null,
       });
       continue;
     }
-    groupedByCode.set(code, [...(groupedByCode.get(code) ?? []), { year: Number(year), pair }]);
+    groupedByCode.set(code, [...(groupedByCode.get(code) ?? []), { year: Number(year), sources }]);
   }
   const generatedAt = new Date().toISOString();
   const entries: MunicipalityInvestmentIndexEntry[] = [];
   const unavailableEntries: MunicipalityInvestmentUnavailableEntry[] = [];
   const warnings: Array<{ code: string; year: number; reason: string }> = [];
+  const assetWarnings: Array<{ code: string; year: number; reason: string }> = [];
   const allYears = Array.from(
     { length: MUNICIPALITY_INVESTMENTS_LATEST_YEAR - MUNICIPALITY_INVESTMENTS_FIRST_YEAR + 1 },
     (_, index_) => MUNICIPALITY_INVESTMENTS_FIRST_YEAR + index_,
   );
   let processedYears = 0;
+  let matchedAssetPositions = 0;
+  let ambiguousAssetPositions = 0;
   for (const [code, sourceYears] of [...groupedByCode.entries()].sort(([left], [right]) => left.localeCompare(right))) {
     const municipality = municipalitiesByCode.get(code)!;
     const years: MunicipalityInvestmentData["years"] = [];
     const positions: MunicipalityInvestmentPosition[] = [];
-    for (const { year, pair } of sourceYears.sort((left, right) => left.year - right.year)) {
+    const assets: MunicipalityInvestmentAsset[] = [];
+    for (const { year, sources } of sourceYears.sort((left, right) => left.year - right.year)) {
+      const pair = sources.fhh;
       const statistics = parseMunicipalityInvestmentCsv(await readFile(pair.statistics!, "utf8"), code, year, "statistik_at");
       let { selected, detailLevel, reconciliation } = reconcileMunicipalityInvestmentSources(statistics, null);
       if (pair.municipality) {
@@ -279,7 +557,34 @@ async function main() {
           warnings.push({ code, year, reason: error instanceof Error ? error.message : String(error) });
         }
       }
-      positions.push(...selected.positions);
+      let selectedAssets: MunicipalityInvestmentAsset[] = [];
+      let assetReconciliation: MunicipalityInvestmentData["years"][number]["assetReconciliation"] = "unavailable";
+      if (sources.vhh.statistics) {
+        try {
+          const assetStatistics = parseMunicipalityAssetCsv(
+            await readFile(sources.vhh.statistics, "utf8"), code, year, "statistik_at", basename(sources.vhh.statistics),
+          );
+          let assetMunicipality: ParsedAssetCsv | null = null;
+          if (sources.vhh.municipality) {
+            assetMunicipality = parseMunicipalityAssetCsv(
+              await readFile(sources.vhh.municipality, "utf8"), code, year, "gemeinde", basename(sources.vhh.municipality),
+            );
+          }
+          ({ assets: selectedAssets, reconciliation: assetReconciliation } =
+            reconcileMunicipalityAssetSources(assetStatistics, assetMunicipality));
+          if (assetReconciliation === "mismatch-fallback") {
+            assetWarnings.push({ code, year, reason: "VHH-Endstände stimmen nicht centgenau überein" });
+          }
+        } catch (error) {
+          assetReconciliation = "mismatch-fallback";
+          assetWarnings.push({ code, year, reason: error instanceof Error ? error.message : String(error) });
+        }
+      }
+      const matchedPositions = selectedAssets.length ? matchInvestmentAssets(selected.positions, selectedAssets) : selected.positions;
+      matchedAssetPositions += matchedPositions.filter(({ assetMatchStatus }) => assetMatchStatus === "matched").length;
+      ambiguousAssetPositions += matchedPositions.filter(({ assetMatchStatus }) => assetMatchStatus === "ambiguous").length;
+      positions.push(...matchedPositions);
+      assets.push(...selectedAssets);
       years.push({
         year,
         directInvestmentCents: statistics.directInvestmentCents,
@@ -291,6 +596,10 @@ async function main() {
         statisticsFile: basename(pair.statistics!),
         municipalityFile: pair.municipality ? basename(pair.municipality) : null,
         reconciliation,
+        assetDetailLevel: assetReconciliation === "matched" ? "municipality" : "unavailable",
+        assetStatisticsFile: sources.vhh.statistics ? basename(sources.vhh.statistics) : null,
+        assetMunicipalityFile: sources.vhh.municipality ? basename(sources.vhh.municipality) : null,
+        assetReconciliation,
       });
       processedYears += 1;
       if (processedYears % 1_000 === 0) process.stdout.write(`${processedYears} Gemeindejahre verarbeitet\n`);
@@ -324,6 +633,7 @@ async function main() {
       },
       years,
       positions,
+      assets,
     });
     const htmlFile = municipalityInvestmentHtmlFilename(code, municipality.name);
     const serialized = `${JSON.stringify(data)}\n`;
@@ -343,6 +653,7 @@ async function main() {
       directInvestmentCents: municipalityInvestmentTotal(data),
       latestYearInvestmentCents: municipalityInvestmentTotal(data, latestAvailableYear),
       positionCount: positions.length,
+      yearTotals: years.map(({ year, directInvestmentCents, positionCount }) => ({ year, directInvestmentCents, positionCount })),
       htmlFile,
       dataFile: `${code}.json`,
     });
@@ -389,9 +700,12 @@ async function main() {
         .map(({ code, name, availableYears, missingYears }) => ({ code, name, availableYears, missingYears })),
       unavailableMunicipalities: unavailableEntries,
       warnings,
+      assetWarnings,
+      matchedAssetPositions,
+      ambiguousAssetPositions,
     }, null, 2)}\n`),
   ]);
-  process.stdout.write(`Fertig: ${entries.length} Gemeindeseiten, ${processedYears} Gemeindejahre, ${warnings.length} Statistik-Fallbacks.\n`);
+  process.stdout.write(`Fertig: ${entries.length} Gemeindeseiten, ${processedYears} Gemeindejahre, ${warnings.length} Statistik-Fallbacks, ${assetWarnings.length} VHH-Warnungen.\n`);
 }
 
 if (process.env.NODE_ENV !== "test") void main().catch((error: unknown) => {
