@@ -2,6 +2,15 @@
 
 FROM node:22-bookworm-slim AS deps
 WORKDIR /app
+# Native dependencies such as better-sqlite3 fall back to a source build when
+# their prebuilt binary cannot be downloaded. Keep the compiler toolchain in
+# this disposable stage so transient GitHub failures do not break deployment.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+      python3 \
+      make \
+      g++ \
+    && rm -rf /var/lib/apt/lists/*
 # The npm bundled with this image (10.x) mishandles optional-dependency
 # platform filtering (EBADPLATFORM on unrelated CPU/OS variants like
 # @esbuild/aix-ppc64) — upgrade before installing to avoid that bug.
