@@ -238,6 +238,7 @@ export function MunicipalityMap({
   ageMeasure,
   sex,
   movementView,
+  movementDefinition,
   showAgeFilters,
   indicatorDefinition,
   ageLoading,
@@ -273,6 +274,7 @@ export function MunicipalityMap({
   ageMeasure: AgeMeasure;
   sex: SexFilter;
   movementView: MovementMetricId;
+  movementDefinition: string | null;
   showAgeFilters: boolean;
   indicatorDefinition: string | null;
   ageLoading: boolean;
@@ -694,6 +696,14 @@ export function MunicipalityMap({
                 ))}
               </select>
             </div>
+            {movementDefinition && (
+              <p
+                className="text-[10px] leading-4 text-muted-foreground"
+                data-testid="movement-definition"
+              >
+                {movementDefinition}
+              </p>
+            )}
             {movementLoading && (
               <p className="text-[10px] text-muted-foreground">
                 {labels.loadingMovement}

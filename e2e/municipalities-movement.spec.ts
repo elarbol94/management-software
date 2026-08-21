@@ -40,6 +40,9 @@ test("population movement is compact, shareable and charted", async ({
   await page.getByLabel("Kennzahl").selectOption("movement");
   await expect(page).toHaveURL(/metric=movement/);
   await expect(page.getByLabel("Komponente")).toHaveValue("population-change");
+  await expect(page.getByTestId("movement-definition")).toContainText(
+    "Folgejahres minus jene am Jahresanfang",
+  );
 
   const year = page.getByRole("slider", { name: "Jahr" });
   await year.fill("2013");
@@ -53,6 +56,9 @@ test("population movement is compact, shareable and charted", async ({
   ).toBeVisible();
 
   await page.getByLabel("Komponente").selectOption("birth-balance-rate");
+  await expect(page.getByTestId("movement-definition")).toContainText(
+    "Lebendgeborene minus Gestorbene",
+  );
   await expect(page).toHaveURL(/movementMetric=birth-balance-rate/);
   await expect(
     details.getByText("2,5 je 1.000 Einwohner", { exact: true }),

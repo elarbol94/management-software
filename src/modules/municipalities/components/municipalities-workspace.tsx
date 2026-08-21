@@ -205,6 +205,11 @@ export function MunicipalitiesWorkspace() {
     departures: t("movementDepartures"),
     "migration-balance-rate": t("movementMigrationBalanceRate"),
   };
+  const movementDefinitions: Partial<Record<MovementMetricId, string>> = {
+    "population-change": t("movementPopulationChangeDefinition"),
+    "birth-balance-rate": t("movementBirthBalanceRateDefinition"),
+    "migration-balance-rate": t("movementMigrationBalanceRateDefinition"),
+  };
   const results = useMemo(
     () => (index ? searchMunicipalities(index.municipalities, query) : []),
     [index, query],
@@ -723,6 +728,7 @@ export function MunicipalitiesWorkspace() {
           ageMeasure={ageMeasure}
           sex={sex}
           movementView={movementView}
+          movementDefinition={movementDefinitions[movementView] ?? null}
           showAgeFilters={!indicator}
           indicatorDefinition={
             indicator ? indicatorDefinitions[indicator] : null
