@@ -127,6 +127,7 @@
     "costMeasurePerCapitaDefinition": "Auszahlungen im Aufgabenbereich geteilt durch die Bevölkerung desselben Jahres.",
     "costMeasureRealPerCapitaDefinition": "Euro je Einwohner, mit dem österreichischen Verbraucherpreisindex auf Preise von 2024 umgerechnet.",
     "costMeasurePeerDeviationDefinition": "Abweichung vom Median derselben Einwohner-Größenklasse im Bundesland. Bei weniger als fünf Vergleichsgemeinden wird dieselbe Größenklasse österreichweit verwendet. Die Nulllinie entspricht dem Median.",
+    "peerComparisonGroup": "Hervorgehoben: {count} vergleichbare Gemeinden · {scope} · Größenklasse {range} Einwohner",
     "costPerInhabitantUnit": "je Einwohner",
     "costShare": "Anteil an Gesamtauszahlungen",
     "costPerCapita": "Nominal je Einwohner",

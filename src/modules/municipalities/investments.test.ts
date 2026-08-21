@@ -162,6 +162,7 @@ describe("municipality investment HTML", () => {
     const html = renderMunicipalityInvestmentHtml(fixtureData(), "de");
     expect(html).toContain('id="investment-data"');
     expect(html).toContain('id="type-breakdown"');
+    expect(html).toContain('class="dashboard-layout"');
     expect(html).toContain('id="detail-dialog"');
     expect(html).toContain("location.hash");
     expect(html).toContain("<noscript>");

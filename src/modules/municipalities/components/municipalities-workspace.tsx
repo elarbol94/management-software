@@ -95,6 +95,16 @@ async function fetchJson<T>(url: string, signal: AbortSignal) {
 const formatSigned = (value: number, formatter: Intl.NumberFormat) =>
   `${value > 0 ? "+" : ""}${formatter.format(value)}`;
 
+function populationBandRange(population: number, formatter: Intl.NumberFormat) {
+  const limits = [1_000, 2_500, 5_000, 10_000, 20_000, 50_000];
+  const band = municipalityPopulationBand(population);
+  const minimum = band === 1 ? 0 : limits[band - 2];
+  const maximum = limits[band - 1] ?? null;
+  if (maximum === null) return "≥ " + formatter.format(minimum);
+  if (minimum === 0) return "< " + formatter.format(maximum);
+  return formatter.format(minimum) + "–" + formatter.format(maximum - 1);
+}
+
 export function MunicipalitiesWorkspace() {
   const t = useTranslations("municipalities");
   const locale = useLocale();
@@ -650,6 +660,30 @@ export function MunicipalitiesWorkspace() {
     }
     return medians.get(code) ?? null;
   };
+  const selectedPeerGroup = (() => {
+    if (metric !== "costs" || costMeasure !== "peer-deviation" || !selected || !activeCosts) return null;
+    const selectedPopulation = populationSeries.years[String(year)].values[selected.municipalityCode];
+    if (!selectedPopulation) return null;
+    const band = municipalityPopulationBand(selectedPopulation);
+    const peers = index.municipalities.flatMap((municipality) => {
+      const population = populationSeries.years[String(year)].values[municipality.municipalityCode];
+      const costs = activeCosts.values[municipality.municipalityCode];
+      if (!population || !costs || municipalityPopulationBand(population) !== band) return [];
+      return municipalityCostPerCapita(costs, costCategory, population) === null ? [] : [municipality];
+    });
+    const regionalPeers = peers.filter((municipality) => municipality.state === selected.state);
+    const comparison = regionalPeers.length >= 5 ? regionalPeers : peers;
+    if (!comparison.length) return null;
+    return {
+      municipalityCodes: comparison.map((municipality) => municipality.municipalityCode),
+      label: t("peerComparisonGroup", {
+        count: comparison.length,
+        scope: regionalPeers.length >= 5 ? selected.state : t("allAustria"),
+        range: populationBandRange(selectedPopulation, personsFormatter),
+      }),
+    };
+  })();
+
   const costValueFor = (code: string, targetYear: number) => {
     const value = costSeries?.years[String(targetYear)]?.values[code];
     if (!value) return null;
@@ -1071,6 +1105,8 @@ export function MunicipalitiesWorkspace() {
           movementView={movementView}
           costCategory={costCategory}
           costMeasure={costMeasure}
+          peerMunicipalityCodes={selectedPeerGroup?.municipalityCodes ?? null}
+          peerGroupLabel={selectedPeerGroup?.label ?? null}
           movementDefinition={movementDefinitions[movementView] ?? null}
           showAgeFilters={!indicator}
           indicatorDefinition={

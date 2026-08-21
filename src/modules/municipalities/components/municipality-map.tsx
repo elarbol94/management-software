@@ -268,6 +268,8 @@ export function MunicipalityMap({
   movementView,
   costCategory,
   costMeasure,
+  peerMunicipalityCodes,
+  peerGroupLabel,
   movementDefinition,
   showAgeFilters,
   indicatorDefinition,
@@ -317,6 +319,8 @@ export function MunicipalityMap({
   movementView: MovementMetricId;
   costCategory: CostCategoryId;
   costMeasure: CostMeasureId;
+  peerMunicipalityCodes: string[] | null;
+  peerGroupLabel: string | null;
   movementDefinition: string | null;
   showAgeFilters: boolean;
   indicatorDefinition: string | null;
@@ -357,6 +361,7 @@ export function MunicipalityMap({
   const [ready, setReady] = useState(false);
   const hoveredIdRef = useRef<string | number | null>(null);
   const selectedIdRef = useRef<string | number | null>(null);
+  const peerIdsRef = useRef<Set<string>>(new Set());
   const liveRef = useRef({
     selected,
     onSelect,
@@ -400,6 +405,27 @@ export function MunicipalityMap({
       map.setPaintProperty(FILL_LAYER_ID, "fill-color", color);
     }
   }, [costMeasure, metric, metricValues, movementPalette, ready, scaleDomain, usePopulationClasses]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map?.getSource(SOURCE_ID)) return;
+    const nextPeerIds = new Set(peerMunicipalityCodes ?? []);
+    for (const code of peerIdsRef.current) {
+      if (!nextPeerIds.has(code)) map.setFeatureState({ source: SOURCE_ID, id: code }, { peer: false });
+    }
+    for (const code of nextPeerIds) map.setFeatureState({ source: SOURCE_ID, id: code }, { peer: true });
+    peerIdsRef.current = nextPeerIds;
+    const highlightPeers = nextPeerIds.size > 0;
+    map.setPaintProperty(FILL_LAYER_ID, "fill-opacity", highlightPeers
+      ? ["case", ["boolean", ["feature-state", "selected"], false], 0.9, ["boolean", ["feature-state", "peer"], false], 0.82, ["boolean", ["feature-state", "hover"], false], 0.56, 0.24]
+      : ["case", ["boolean", ["feature-state", "hover"], false], 0.82, 0.7]);
+    map.setPaintProperty("municipality-lines", "line-color", highlightPeers
+      ? ["case", ["boolean", ["feature-state", "selected"], false], "#000000", ["boolean", ["feature-state", "peer"], false], "#0f766e", ["boolean", ["feature-state", "hover"], false], "#0f766e", "#ffffff"]
+      : ["case", ["boolean", ["feature-state", "selected"], false], "#000000", ["boolean", ["feature-state", "hover"], false], "#0f766e", "#ffffff"]);
+    map.setPaintProperty("municipality-lines", "line-width", highlightPeers
+      ? ["case", ["boolean", ["feature-state", "selected"], false], 3.5, ["boolean", ["feature-state", "peer"], false], 2.2, ["boolean", ["feature-state", "hover"], false], 1.4, 0.45]
+      : ["case", ["boolean", ["feature-state", "selected"], false], 3.5, ["boolean", ["feature-state", "hover"], false], 1.4, 0.65]);
+  }, [peerMunicipalityCodes, ready]);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -839,6 +865,11 @@ export function MunicipalityMap({
             <p className="text-[10px] leading-4 text-muted-foreground" data-testid="cost-definition">
               {labels.costDefinition}
             </p>
+            {peerGroupLabel && (
+              <p className="rounded-md border border-teal-200 bg-teal-50 px-2 py-1.5 text-[10px] leading-4 text-teal-900 dark:border-teal-900 dark:bg-teal-950/30 dark:text-teal-100" data-testid="peer-comparison-group">
+                {peerGroupLabel}
+              </p>
+            )}
             {costsError && <p className="text-[10px] text-destructive" role="alert">{labels.costsError}</p>}
           </div>
         )}

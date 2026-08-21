@@ -127,6 +127,7 @@
     "costMeasurePerCapitaDefinition": "Task-area outflows divided by the population in the same year.",
     "costMeasureRealPerCapitaDefinition": "Euros per inhabitant converted to 2024 prices using Austria's consumer price index.",
     "costMeasurePeerDeviationDefinition": "Difference from the median of the same population-size band in the state. If fewer than five peers exist, the same size band across Austria is used. The zero line represents the median.",
+    "peerComparisonGroup": "Highlighted: {count} comparable municipalities · {scope} · population band {range}",
     "costPerInhabitantUnit": "per inhabitant",
     "costShare": "Share of total outflows",
     "costPerCapita": "Nominal per inhabitant",

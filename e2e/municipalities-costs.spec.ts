@@ -72,6 +72,7 @@ test("cost overview is shareable, sourced, gap-safe and charted", async ({ page 
   await display.selectOption("peer-deviation");
   await expect(page).toHaveURL(/costMeasure=peer-deviation/);
   await expect(page.getByTestId("cost-definition")).toContainText("weniger als fünf Vergleichsgemeinden");
+  await expect(page.getByTestId("peer-comparison-group")).toContainText("vergleichbare Gemeinden");
   await expect(chart.getByTestId("municipality-metric-chart-zero-line")).toBeAttached();
   await expect(chart.getByTestId("municipality-metric-chart-zero-line")).toHaveAttribute("stroke", "currentColor");
   await display.selectOption("share");

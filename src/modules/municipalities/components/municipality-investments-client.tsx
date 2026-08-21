@@ -185,10 +185,12 @@ export function MunicipalityInvestmentsClient({
       </div>
     </Card>
 
-    <BreakdownCard title={t("trend")} rows={byYear} selected={year} onSelect={(id) => setYear(year === id ? "all" : id)} currency={currency} percent={percent} empty={t("noResults")} />
-    <div className="grid gap-4 xl:grid-cols-2">
-      <BreakdownCard title={t("breakdown")} rows={byTask} selected={taskArea} onSelect={(id) => setTaskArea(taskArea === id ? "all" : id)} currency={currency} percent={percent} empty={t("noResults")} />
-      <BreakdownCard title={t("typeBreakdown")} rows={byType} selected={investmentType} onSelect={(id) => setInvestmentType(investmentType === id ? "all" : id)} currency={currency} percent={percent} empty={t("noResults")} />
+    <div className="grid gap-4 lg:grid-cols-[minmax(19rem,0.7fr)_minmax(0,1.3fr)] lg:items-start">
+      <BreakdownCard title={t("trend")} rows={byYear} selected={year} onSelect={(id) => setYear(year === id ? "all" : id)} currency={currency} percent={percent} empty={t("noResults")} />
+      <div className="grid gap-4">
+        <BreakdownCard title={t("breakdown")} rows={byTask} selected={taskArea} onSelect={(id) => setTaskArea(taskArea === id ? "all" : id)} currency={currency} percent={percent} empty={t("noResults")} />
+        <BreakdownCard title={t("typeBreakdown")} rows={byType} selected={investmentType} onSelect={(id) => setInvestmentType(investmentType === id ? "all" : id)} currency={currency} percent={percent} empty={t("noResults")} />
+      </div>
     </div>
 
     <Card><CardHeader><CardTitle>{t("details")}</CardTitle><CardDescription>{t("resultCount", { count: filtered.length })}</CardDescription></CardHeader><CardContent>
