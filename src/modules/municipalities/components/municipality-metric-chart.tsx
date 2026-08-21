@@ -17,14 +17,18 @@ const PLOT_RIGHT = 14;
 const PLOT_TOP = 14;
 const PLOT_BOTTOM = 30;
 
-function chartDomain(values: number[]) {
+export function chartDomain(values: number[]) {
   const minimum = Math.min(...values);
   const maximum = Math.max(...values);
   const difference = maximum - minimum;
   const padding = difference === 0
-    ? Math.max(Math.abs(maximum) * 0.04, 1)
-    : Math.max(difference * 0.12, 1);
+    ? Math.max(Math.abs(maximum) * 0.04, 1e-6)
+    : difference * 0.12;
   return { minimum: minimum - padding, maximum: maximum + padding };
+}
+
+export function domainCrossesZero(domain: { minimum: number; maximum: number }) {
+  return domain.minimum < 0 && domain.maximum > 0;
 }
 
 export function MunicipalityMetricChart({
@@ -87,6 +91,7 @@ export function MunicipalityMetricChart({
 
   const ticks = chart ? [chart.domain.maximum, (chart.domain.minimum + chart.domain.maximum) / 2, chart.domain.minimum] : [];
   const active = chart ? (chart.points.find((point) => point.year === hoveredYear) ?? chart.selected) : null;
+  const zeroLineVisible = chart ? domainCrossesZero(chart.domain) : false;
 
   return (
     <section
@@ -134,6 +139,7 @@ export function MunicipalityMetricChart({
                 <text x={PLOT_LEFT - 6} y={chart.y(tick) + 3.5} textAnchor="end" className="fill-muted-foreground text-[10px]">{valueFormatter.format(tick)}</text>
               </g>
             ))}
+            {zeroLineVisible && <line data-testid="municipality-metric-chart-zero-line" x1={PLOT_LEFT} x2={CHART_WIDTH - PLOT_RIGHT} y1={chart.y(0)} y2={chart.y(0)} className="stroke-foreground/55" strokeWidth="1.2" />}
             {chart.paths.map((path) => <path key={path} d={path} fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" className="text-teal-700 dark:text-teal-300" />)}
             {chart.points.map((point) => (
               <g key={point.year}>
