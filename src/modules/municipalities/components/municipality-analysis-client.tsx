@@ -110,7 +110,9 @@ const nodeTypes = { dataset: AnalysisNodeCard, operator: AnalysisNodeCard };
 
 function datasetTitle(dataset: MunicipalityDatasetRef, t: ReturnType<typeof useTranslations>) {
   if (dataset.kind === "cost-share") {
-    return `${t("metricCosts")} · ${t(`costCategory${dataset.category}` as "costCategory0")}`;
+    const measure = dataset.measure ?? "share";
+    const measureKey = measure === "share" ? "costMeasureShare" : measure === "per-capita" ? "costMeasurePerCapita" : measure === "real-per-capita" ? "costMeasureRealPerCapita" : "costMeasurePeerDeviation";
+    return `${t("metricCosts")} · ${t(`costCategory${dataset.category}` as "costCategory0")} · ${t(measureKey)}`;
   }
   if (dataset.kind === "population") {
     return t(dataset.view === "count" ? "populationCount" : dataset.view === "density" ? "populationDensity" : dataset.view === "foreign-share" ? "populationForeignShare" : "populationForeignPersons");

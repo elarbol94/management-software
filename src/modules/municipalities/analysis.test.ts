@@ -167,4 +167,26 @@ describe("municipality cost analysis dataset", () => {
     );
     expect(moertschach.points.every(({ value }) => value === null)).toBe(true);
   });
+
+  it("resolves per-capita, real-price and peer-deviation cost series", () => {
+    const data: MunicipalityAnalysisData = {
+      index: JSON.parse(readFileSync(resolve("public/data/municipalities-at-2026.index.json"), "utf8")) as MunicipalityIndex,
+      population: JSON.parse(readFileSync(resolve("public/data/municipality-population-2002-2025.json"), "utf8")) as MunicipalityPopulationSeries,
+      costs: JSON.parse(readFileSync(resolve("public/data/municipality-cost-shares-2010-2024.json"), "utf8")) as MunicipalityCostSeries,
+      structure: null, demography: null, movement: null,
+    };
+    const base = { kind: "cost-share" as const, municipalityCode: "60101", municipalityName: "Graz", category: "8" as const };
+    const nominal = resolveMunicipalityDataset({ ...base, measure: "per-capita" }, data);
+    const real = resolveMunicipalityDataset({ ...base, measure: "real-per-capita" }, data);
+    const peer = resolveMunicipalityDataset({ ...base, measure: "peer-deviation" }, data);
+
+    expect(nominal.unit).toBe("currency-per-person");
+    expect(real.unit).toBe("currency-per-person");
+    expect(peer.unit).toBe("share");
+    expect(nominal.points[0].value).toEqual(expect.any(Number));
+    expect(real.points[0].value).toEqual(expect.any(Number));
+    expect(peer.points[0].value).toEqual(expect.any(Number));
+    expect(real.points[0].value as number).toBeGreaterThan(nominal.points[0].value as number);
+    expect(real.points.at(-1)?.value).toBeCloseTo(nominal.points.at(-1)?.value as number);
+  });
 });

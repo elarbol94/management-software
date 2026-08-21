@@ -1,10 +1,11 @@
 "use client";
 
 import dynamic from "next/dynamic";
+import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useLocale, useTranslations } from "next-intl";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Database, MapPinned, Search, Users, X } from "lucide-react";
+import { Database, Landmark, MapPinned, Search, Users, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { MunicipalityDatasetRef } from "../analysis";
@@ -13,10 +14,16 @@ import {
   MUNICIPALITY_COSTS_FIRST_YEAR,
   MUNICIPALITY_COSTS_LATEST_YEAR,
   isCostCategoryId,
+  isCostMeasureId,
   municipalityCostCategoryCents,
+  median,
+  municipalityCostPerCapita,
+  municipalityCostRealPerCapita,
+  municipalityPopulationBand,
   municipalityCostShare,
   validateMunicipalityCostSeries,
   type CostCategoryId,
+  type CostMeasureId,
   type MunicipalityCostSeries,
 } from "../costs";
 import {
@@ -25,6 +32,7 @@ import {
   type MunicipalityIndex,
   type MunicipalityIndexItem,
 } from "../data";
+import type { MunicipalityInvestmentIndex } from "../investments";
 import {
   DEMOGRAPHIC_INDICATORS,
   demographicIndicatorUnit,
@@ -147,6 +155,7 @@ export function MunicipalitiesWorkspace() {
   const [structureSeries, setStructureSeries] =
     useState<MunicipalityStructureSeries | null>(null);
   const [costSeries, setCostSeries] = useState<MunicipalityCostSeries | null>(null);
+  const [investmentMunicipalityCodes, setInvestmentMunicipalityCodes] = useState<Set<string> | null>(null);
   const [loadError, setLoadError] = useState(false);
   const [demographyError, setDemographyError] = useState(false);
   const [movementError, setMovementError] = useState(false);
@@ -192,6 +201,9 @@ export function MunicipalitiesWorkspace() {
     : "population-change";
   const costCategoryParameter = searchParams.get("costCategory") ?? "0";
   const costCategory: CostCategoryId = isCostCategoryId(costCategoryParameter) ? costCategoryParameter : "0";
+  const costMeasureParameter = searchParams.get("costMeasure") ?? "share";
+  const costMeasure: CostMeasureId = isCostMeasureId(costMeasureParameter)
+    ? costMeasureParameter : "share";
   const selectedCode = searchParams.get("municipality") ?? "";
   const selected = useMemo(
     () =>
@@ -289,6 +301,18 @@ export function MunicipalitiesWorkspace() {
   const costCategoryLabels: Record<CostCategoryId, string> = Object.fromEntries(
     COST_CATEGORIES.map(({ id }) => [id, t(`costCategory${id}` as "costCategory0")]),
   ) as Record<CostCategoryId, string>;
+  const costMeasureLabels: Record<CostMeasureId, string> = {
+    share: t("costMeasureShare"),
+    "per-capita": t("costMeasurePerCapita"),
+    "real-per-capita": t("costMeasureRealPerCapita"),
+    "peer-deviation": t("costMeasurePeerDeviation"),
+  };
+  const costMeasureDefinitions: Record<CostMeasureId, string> = {
+    share: t("costMeasureShareDefinition"),
+    "per-capita": t("costMeasurePerCapitaDefinition"),
+    "real-per-capita": t("costMeasureRealPerCapitaDefinition"),
+    "peer-deviation": t("costMeasurePeerDeviationDefinition"),
+  };
   const results = useMemo(
     () => (index ? searchMunicipalities(index.municipalities, query) : []),
     [index, query],
@@ -347,6 +371,18 @@ export function MunicipalitiesWorkspace() {
         if (!(error instanceof DOMException && error.name === "AbortError"))
           setLoadError(true);
       });
+    return () => controller.abort();
+  }, []);
+  useEffect(() => {
+    const controller = new AbortController();
+    fetchJson<MunicipalityInvestmentIndex>(
+      "/data/municipality-investments/index.json",
+      controller.signal,
+    )
+      .then((data) => setInvestmentMunicipalityCodes(
+        new Set(data.municipalities.map(({ code }) => code)),
+      ))
+      .catch(() => undefined);
     return () => controller.abort();
   }, []);
   useEffect(() => {
@@ -581,9 +617,51 @@ export function MunicipalitiesWorkspace() {
       movementView,
     );
   };
+  const peerMedianCache = new Map<number, Map<string, number | null>>();
+  const peerMedianFor = (code: string, targetYear: number) => {
+    let medians = peerMedianCache.get(targetYear);
+    if (!medians) {
+      const groups = new Map<string, number[]>();
+      const costs = costSeries?.years[String(targetYear)]?.values ?? {};
+      const populations = populationSeries.years[String(targetYear)].values;
+      for (const municipality of index.municipalities) {
+        const population = populations[municipality.municipalityCode];
+        const tuple = costs[municipality.municipalityCode];
+        if (!tuple || !population) continue;
+        const value = municipalityCostPerCapita(tuple, costCategory, population);
+        if (value === null) continue;
+        const band = municipalityPopulationBand(population);
+        for (const key of [municipality.state + "|" + band, "*|" + band]) {
+          const group = groups.get(key);
+          if (group) group.push(value);
+          else groups.set(key, [value]);
+        }
+      }
+      medians = new Map();
+      for (const municipality of index.municipalities) {
+        const population = populations[municipality.municipalityCode];
+        const band = municipalityPopulationBand(population);
+        const regional = groups.get(municipality.state + "|" + band);
+        const comparison = regional && regional.length >= 5
+          ? regional : groups.get("*|" + band) ?? [];
+        medians.set(municipality.municipalityCode, median(comparison));
+      }
+      peerMedianCache.set(targetYear, medians);
+    }
+    return medians.get(code) ?? null;
+  };
   const costValueFor = (code: string, targetYear: number) => {
     const value = costSeries?.years[String(targetYear)]?.values[code];
-    return value ? municipalityCostShare(value, costCategory) : null;
+    if (!value) return null;
+    if (costMeasure === "share") return municipalityCostShare(value, costCategory);
+    const population = populationSeries.years[String(targetYear)].values[code];
+    if (costMeasure === "real-per-capita") {
+      return municipalityCostRealPerCapita(value, costCategory, population, targetYear);
+    }
+    const perCapita = municipalityCostPerCapita(value, costCategory, population);
+    if (costMeasure === "per-capita") return perCapita;
+    const peerMedian = peerMedianFor(code, targetYear);
+    return perCapita !== null && peerMedian && peerMedian > 0 ? perCapita / peerMedian - 1 : null;
   };
   const metricValues: Record<string, number | null> =
     metric === "population"
@@ -688,9 +766,10 @@ export function MunicipalitiesWorkspace() {
         : metric === "costs" && activeCosts
           ? Object.fromEntries(
               index.municipalities.map(({ municipalityCode }) => {
-                const costs = activeCosts.values[municipalityCode];
-                if (!costs) return [municipalityCode, `${costCategoryLabels[costCategory]} · ${t("costNoData")}`];
-                return [municipalityCode, `${costCategoryLabels[costCategory]} · ${shareFormatter.format(municipalityCostShare(costs, costCategory)!)} · ${currencyFormatter.format(municipalityCostCategoryCents(costs, costCategory) / 100)} ${t("costOfTotal", { total: currencyFormatter.format(costs[0] / 100) })}`];
+                const value = metricValues[municipalityCode];
+                if (value === null) return [municipalityCode, `${costCategoryLabels[costCategory]} · ${t("costNoData")}`];
+                const formatter = costMeasure === "share" || costMeasure === "peer-deviation" ? shareFormatter : currencyFormatter;
+                return [municipalityCode, `${costCategoryLabels[costCategory]} · ${costMeasureLabels[costMeasure]} · ${formatter.format(value)}`];
               }),
             )
           : null;
@@ -724,6 +803,10 @@ export function MunicipalitiesWorkspace() {
     : null;
   const selectedCosts = selected && activeCosts ? (activeCosts.values[selected.municipalityCode] ?? null) : null;
   const selectedCostCents = selectedCosts ? municipalityCostCategoryCents(selectedCosts, costCategory) : null;
+  const selectedCostPerCapita = selectedCosts
+    ? municipalityCostPerCapita(selectedCosts, costCategory, selectedPopulation)
+    : null;
+  const selectedPeerMedian = metric === "costs" && selected ? peerMedianFor(selected.municipalityCode, year) : null;
   const previousYear = year > availableFirstYear! ? year - 1 : null;
   const activeValue = selected
     ? (metricValues[selected.municipalityCode] ?? null)
@@ -761,7 +844,9 @@ export function MunicipalitiesWorkspace() {
       : null;
   const chartFormatter =
     metric === "costs"
-      ? shareFormatter
+      ? costMeasure === "share" || costMeasure === "peer-deviation"
+        ? shareFormatter
+        : currencyFormatter
       : metric === "movement"
       ? movementFormatter
       : metric === "population"
@@ -773,7 +858,9 @@ export function MunicipalitiesWorkspace() {
           : shareFormatter;
   const chartUnit =
     metric === "costs"
-      ? ""
+      ? costMeasure === "per-capita" || costMeasure === "real-per-capita"
+        ? t("costPerInhabitantUnit")
+        : ""
       : metric === "movement"
       ? movementUnitLabel
       : metric === "population"
@@ -787,7 +874,7 @@ export function MunicipalitiesWorkspace() {
             : "";
   const metricLabel =
     metric === "costs"
-      ? costCategoryLabels[costCategory]
+      ? costCategoryLabels[costCategory] + " · " + costMeasureLabels[costMeasure]
       : metric === "population"
       ? populationViewLabels[populationView]
       : metric === "movement"
@@ -810,7 +897,7 @@ export function MunicipalitiesWorkspace() {
   const analysisDataset: MunicipalityDatasetRef | null = !selected
     ? null
     : metric === "costs"
-      ? { kind: "cost-share", municipalityCode: selected.municipalityCode, municipalityName: selected.name, category: costCategory }
+      ? { kind: "cost-share", municipalityCode: selected.municipalityCode, municipalityName: selected.name, category: costCategory, measure: costMeasure }
       : metric === "population"
       ? { kind: "population", municipalityCode: selected.municipalityCode, municipalityName: selected.name, view: populationView }
       : metric === "movement"
@@ -820,7 +907,12 @@ export function MunicipalitiesWorkspace() {
           : { kind: "age-group", municipalityCode: selected.municipalityCode, municipalityName: selected.name, ageGroup, measure: ageMeasure, sex };
   const scaleDomain =
     metric === "costs"
-      ? (costSeries?.scales[costCategory] ?? null)
+      ? (() => {
+          const domain = percentileDomain(Object.values(metricValues).filter((value): value is number => value !== null));
+          if (costMeasure !== "peer-deviation") return domain;
+          const maximum = Math.max(Math.abs(domain[0]), Math.abs(domain[1]));
+          return [-maximum, maximum] as [number, number];
+        })()
       : metric === "population"
       ? populationView === "count"
         ? null
@@ -839,7 +931,10 @@ export function MunicipalitiesWorkspace() {
     comparison: number | null,
   ) => {
     if (current === null || comparison === null) return "—";
-    if (metric === "costs") return signedDecimalFormatter.format((current - comparison) * 100) + " " + t("percentagePoints");
+    if (metric === "costs")
+      return costMeasure === "share" || costMeasure === "peer-deviation"
+        ? signedDecimalFormatter.format((current - comparison) * 100) + " " + t("percentagePoints")
+        : formatSigned(current - comparison, currencyFormatter) + " " + t("costPerInhabitantUnit");
     if (metric === "population") {
       if (populationUnit === "share") return signedDecimalFormatter.format((current - comparison) * 100) + " " + t("percentagePoints");
       if (populationUnit === "per-square-kilometer") return signedDecimalFormatter.format(current - comparison) + " " + t("populationDensityUnit");
@@ -975,6 +1070,7 @@ export function MunicipalitiesWorkspace() {
           sex={sex}
           movementView={movementView}
           costCategory={costCategory}
+          costMeasure={costMeasure}
           movementDefinition={movementDefinitions[movementView] ?? null}
           showAgeFilters={!indicator}
           indicatorDefinition={
@@ -1002,6 +1098,7 @@ export function MunicipalitiesWorkspace() {
             setParameter("movementMetric", value)
           }
           onCostCategoryChange={(value) => setParameter("costCategory", value === "0" ? null : value)}
+          onCostMeasureChange={(value) => setParameter("costMeasure", value === "share" ? null : value)}
           onSelect={selectByCode}
           onReset={() => updateSelection(null)}
           labels={{
@@ -1042,6 +1139,9 @@ export function MunicipalitiesWorkspace() {
             movements: movementLabels,
             costView: t("costView"),
             costCategories: costCategoryLabels,
+            costMeasure: t("costMeasure"),
+            costMeasures: costMeasureLabels,
+            costDefinition: costMeasureDefinitions[costMeasure],
             sexes: {
               all: t("sexAll"),
               female: t("sexFemale"),
@@ -1177,9 +1277,9 @@ export function MunicipalitiesWorkspace() {
                   </>
                 ) : metric === "costs" ? (
                   <>
-                    <dt className="text-muted-foreground">{costCategoryLabels[costCategory]}</dt>
+                    <dt className="text-muted-foreground">{costMeasureLabels[costMeasure]}</dt>
                     <dd className="font-semibold tabular-nums">
-                      {activeValue === null ? "—" : shareFormatter.format(activeValue)}
+                      {activeValue === null ? "—" : chartFormatter.format(activeValue)} {chartUnit}
                     </dd>
                     <dt className="text-muted-foreground">{t("costCategoryAmount")}</dt>
                     <dd className="font-medium tabular-nums">
@@ -1188,6 +1288,22 @@ export function MunicipalitiesWorkspace() {
                     <dt className="text-muted-foreground">{t("costTotalOutflows")}</dt>
                     <dd className="font-medium tabular-nums">
                       {selectedCosts === null ? "—" : currencyFormatter.format(selectedCosts[0] / 100)}
+                    </dd>
+                    {costMeasure !== "share" && (
+                      <>
+                        <dt className="text-muted-foreground">{t("costShare")}</dt>
+                        <dd className="font-medium tabular-nums">
+                          {selectedCosts === null ? "—" : shareFormatter.format(municipalityCostShare(selectedCosts, costCategory)!)}
+                        </dd>
+                      </>
+                    )}
+                    <dt className="text-muted-foreground">{t("costPerCapita")}</dt>
+                    <dd className="font-medium tabular-nums">
+                      {selectedCostPerCapita === null ? "—" : currencyFormatter.format(selectedCostPerCapita)}
+                    </dd>
+                    <dt className="text-muted-foreground">{t("costPeerMedian")}</dt>
+                    <dd className="font-medium tabular-nums">
+                      {selectedPeerMedian === null ? "—" : currencyFormatter.format(selectedPeerMedian)}
                     </dd>
                     <dt className="text-muted-foreground">{t("costChangePreviousYear")}</dt>
                     <dd className="font-medium tabular-nums">{formatMetricChange(activeValue, previousValue)}</dd>
@@ -1274,9 +1390,19 @@ export function MunicipalitiesWorkspace() {
                     ? t("structureReference", { year })
                     : t("populationReference", { year })}
               </p>
+              {investmentMunicipalityCodes?.has(selected.municipalityCode) && (
+                <Button
+                  variant="outline"
+                  className="mt-5 w-full"
+                  render={<Link href={`/municipalities/${selected.municipalityCode}/investments`} />}
+                >
+                  <Landmark className="size-4" />
+                  {t("investmentDetails")}
+                </Button>
+              )}
               <Button
                 variant="outline"
-                className="mt-5 w-full"
+                className={investmentMunicipalityCodes?.has(selected.municipalityCode) ? "mt-2 w-full" : "mt-5 w-full"}
                 onClick={() => updateSelection(null)}
               >
                 <X className="size-4" />
@@ -1362,12 +1488,23 @@ export function MunicipalitiesWorkspace() {
             </p>
           )}
           {costSeries && (
-            <p className="mt-2">
-              {t("costDataBasis", { firstYear: costSeries.firstYear, latestYear: costSeries.latestYear })}{" "}
-              <a className="underline underline-offset-2 hover:text-foreground" href={costSeries.source.url} target="_blank" rel="noreferrer">
-                {costSeries.source.title}
-              </a>.
-            </p>
+            <>
+              <p className="mt-2">
+                {t("costDataBasis", { firstYear: costSeries.firstYear, latestYear: costSeries.latestYear })}{" "}
+                <a className="underline underline-offset-2 hover:text-foreground" href={costSeries.source.url} target="_blank" rel="noreferrer">
+                  {costSeries.source.title}
+                </a>.
+              </p>
+              {costMeasure === "real-per-capita" && (
+                <p className="mt-2">
+                  {t("costInflationDataBasis")}{" "}
+                  <a className="underline underline-offset-2 hover:text-foreground" href="https://www.statistik.at/statistiken/volkswirtschaft-und-oeffentliche-finanzen/preise-und-preisindizes/verbraucherpreisindex-vpi/hvpi" target="_blank" rel="noreferrer">
+                    Statistik Austria
+                  </a>.
+                </p>
+              )}
+              {metric === "costs" && <p className="mt-2">{t("costUnavailableNet")}</p>}
+            </>
           )}
           <p className="mt-2">{t("geometryAttribution")}</p>
         </div>

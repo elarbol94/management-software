@@ -11,7 +11,7 @@ import type {
 } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import type { MunicipalityDatasetRef } from "../analysis";
-import type { CostCategoryId } from "../costs";
+import type { CostCategoryId, CostMeasureId } from "../costs";
 import type {
   AgeGroupId,
   AgeMeasure,
@@ -231,6 +231,9 @@ type Labels = {
   movements: Record<MovementMetricId, string>;
   costView: string;
   costCategories: Record<CostCategoryId, string>;
+  costMeasure: string;
+  costMeasures: Record<CostMeasureId, string>;
+  costDefinition: string;
   minimizeChart: string;
   expandChart: string;
   addToAnalysis: string;
@@ -264,6 +267,7 @@ export function MunicipalityMap({
   sex,
   movementView,
   costCategory,
+  costMeasure,
   movementDefinition,
   showAgeFilters,
   indicatorDefinition,
@@ -283,6 +287,7 @@ export function MunicipalityMap({
   onSexChange,
   onMovementViewChange,
   onCostCategoryChange,
+  onCostMeasureChange,
   onSelect,
   onReset,
   labels,
@@ -311,6 +316,7 @@ export function MunicipalityMap({
   sex: SexFilter;
   movementView: MovementMetricId;
   costCategory: CostCategoryId;
+  costMeasure: CostMeasureId;
   movementDefinition: string | null;
   showAgeFilters: boolean;
   indicatorDefinition: string | null;
@@ -330,6 +336,7 @@ export function MunicipalityMap({
   onSexChange: (sex: SexFilter) => void;
   onMovementViewChange: (view: MovementMetricId) => void;
   onCostCategoryChange: (category: CostCategoryId) => void;
+  onCostMeasureChange: (measure: CostMeasureId) => void;
   onSelect: (code: string) => void;
   onReset: () => void;
   labels: Labels;
@@ -386,11 +393,13 @@ export function MunicipalityMap({
               ? divergingColorExpression(scaleDomain)
               : sequentialColorExpression(scaleDomain, MOVEMENT_COLORS)
             : metric === "costs"
-              ? sequentialColorExpression(scaleDomain, COST_COLORS)
+              ? costMeasure === "peer-deviation"
+                ? divergingColorExpression(scaleDomain)
+                : sequentialColorExpression(scaleDomain, COST_COLORS)
               : sequentialColorExpression(scaleDomain, AGE_COLORS);
       map.setPaintProperty(FILL_LAYER_ID, "fill-color", color);
     }
-  }, [metric, metricValues, movementPalette, ready, scaleDomain, usePopulationClasses]);
+  }, [costMeasure, metric, metricValues, movementPalette, ready, scaleDomain, usePopulationClasses]);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -799,6 +808,19 @@ export function MunicipalityMap({
         {metric === "costs" && (
           <div className="mt-2 space-y-2 border-t pt-2">
             <div className="grid grid-cols-[5.5rem_1fr] items-center gap-2">
+              <label htmlFor="municipality-cost-measure" className="text-[10px] font-semibold">
+                {labels.costMeasure}
+              </label>
+              <select
+                id="municipality-cost-measure"
+                value={costMeasure}
+                className="h-8 min-w-0 rounded-md border bg-background px-2 text-[10px]"
+                onChange={(event) => onCostMeasureChange(event.target.value as CostMeasureId)}
+              >
+                {Object.entries(labels.costMeasures).map(([id, label]) => <option key={id} value={id}>{label}</option>)}
+              </select>
+            </div>
+            <div className="grid grid-cols-[5.5rem_1fr] items-center gap-2">
               <label htmlFor="municipality-cost-view" className="text-[10px] font-semibold">
                 {labels.costView}
               </label>
@@ -814,6 +836,9 @@ export function MunicipalityMap({
               </select>
             </div>
             {costsLoading && <p className="text-[10px] text-muted-foreground">{labels.loadingCosts}</p>}
+            <p className="text-[10px] leading-4 text-muted-foreground" data-testid="cost-definition">
+              {labels.costDefinition}
+            </p>
             {costsError && <p className="text-[10px] text-destructive" role="alert">{labels.costsError}</p>}
           </div>
         )}
@@ -891,7 +916,7 @@ export function MunicipalityMap({
               <div
                 className="mt-2 h-3 rounded-sm border border-black/10"
                 style={{
-                  background: `linear-gradient(to right, ${(metric === "movement" ? (movementPalette === "diverging" ? DIVERGING_COLORS : MOVEMENT_COLORS) : metric === "costs" ? COST_COLORS : AGE_COLORS).join(",")})`,
+                  background: `linear-gradient(to right, ${(metric === "movement" ? (movementPalette === "diverging" ? DIVERGING_COLORS : MOVEMENT_COLORS) : metric === "costs" ? (costMeasure === "peer-deviation" ? DIVERGING_COLORS : COST_COLORS) : AGE_COLORS).join(",")})`,
                 }}
               />
               <div className="mt-1 flex justify-between gap-2 text-[9px] tabular-nums">

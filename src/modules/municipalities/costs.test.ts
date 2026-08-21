@@ -5,6 +5,10 @@ import { aggregateMunicipalityCostCsv, parseEuroCents, parseSemicolonCsv } from 
 import type { MunicipalityIndex } from "./data";
 import {
   municipalityCostCategoryCents,
+  median,
+  municipalityCostPerCapita,
+  municipalityCostRealPerCapita,
+  municipalityPopulationBand,
   municipalityCostShare,
   validateMunicipalityCostSeries,
   type MunicipalityCostSeries,
@@ -35,6 +39,19 @@ describe("municipality cost importer", () => {
     expect(municipalityCostCategoryCents(costs, "0")).toBe(15_000);
     expect(municipalityCostCategoryCents(costs, "8")).toBe(19_000);
     expect(municipalityCostShare(costs, "0")).toBeCloseTo(15 / 34);
+  });
+
+  it("calculates nominal and 2024-price per-capita costs", () => {
+    const costs = aggregateMunicipalityCostCsv([header, row("3221", "0", "1.000,00")].join("\n"), "20501", 2024);
+    expect(municipalityCostPerCapita(costs, "0", 200)).toBe(5);
+    expect(municipalityCostRealPerCapita(costs, "0", 200, 2024)).toBe(5);
+    expect(municipalityCostRealPerCapita(costs, "0", 200, 2010)).toBeCloseTo(7.4136, 3);
+  });
+
+  it("forms stable population bands and medians for peer comparisons", () => {
+    expect(municipalityPopulationBand(999)).toBe(1);
+    expect(municipalityPopulationBand(1_000)).toBe(2);
+    expect(median([30, 10, 20, 40])).toBe(25);
   });
 
   it("rejects unexpected metadata and invalid totals", () => {

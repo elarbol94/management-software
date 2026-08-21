@@ -41,6 +41,9 @@ yarn-error.log*
 # local database and uploads
 /data
 
+# generated municipality investment data (deployed separately, never committed)
+/public/data/municipality-investments/
+
 # playwright
 /test-results
 /playwright-report

@@ -8,6 +8,16 @@ export const COST_CATEGORIES = [
 ] as const;
 
 export type CostCategoryId = (typeof COST_CATEGORIES)[number]["id"];
+export const COST_MEASURES = ["share", "per-capita", "real-per-capita", "peer-deviation"] as const;
+export type CostMeasureId = (typeof COST_MEASURES)[number];
+
+// Statistik Austria, verketteter Verbraucherpreisindex (Jahresdurchschnitt).
+// 2024 is the price basis used by the real-per-capita view.
+export const AUSTRIAN_CPI_ANNUAL: Record<number, number> = {
+  2010: 454.5, 2011: 469.3, 2012: 481.0, 2013: 490.6, 2014: 498.5,
+  2015: 503.0, 2016: 507.5, 2017: 518.1, 2018: 528.4, 2019: 536.5,
+  2020: 544.3, 2021: 559.4, 2022: 607.2, 2023: 654.6, 2024: 673.9,
+};
 export type MunicipalityCostTuple = [
   totalCents: number,
   category0Cents: number,
@@ -41,6 +51,10 @@ export function isCostCategoryId(value: string): value is CostCategoryId {
   return COST_CATEGORIES.some(({ id }) => id === value);
 }
 
+export function isCostMeasureId(value: string): value is CostMeasureId {
+  return COST_MEASURES.some((measure) => measure === value);
+}
+
 export function municipalityCostYears() {
   return Array.from(
     { length: MUNICIPALITY_COSTS_LATEST_YEAR - MUNICIPALITY_COSTS_FIRST_YEAR + 1 },
@@ -54,6 +68,37 @@ export function municipalityCostCategoryCents(value: MunicipalityCostTuple, cate
 
 export function municipalityCostShare(value: MunicipalityCostTuple, category: CostCategoryId) {
   return value[0] > 0 ? municipalityCostCategoryCents(value, category) / value[0] : null;
+}
+
+export function municipalityCostPerCapita(
+  value: MunicipalityCostTuple,
+  category: CostCategoryId,
+  population: number,
+) {
+  return population > 0 ? municipalityCostCategoryCents(value, category) / 100 / population : null;
+}
+
+export function municipalityCostRealPerCapita(
+  value: MunicipalityCostTuple,
+  category: CostCategoryId,
+  population: number,
+  year: number,
+) {
+  const nominal = municipalityCostPerCapita(value, category, population);
+  const index = AUSTRIAN_CPI_ANNUAL[year];
+  return nominal === null || !index ? null : nominal * AUSTRIAN_CPI_ANNUAL[2024] / index;
+}
+
+export function municipalityPopulationBand(population: number) {
+  const limits = [1_000, 2_500, 5_000, 10_000, 20_000, 50_000];
+  return limits.findIndex((limit) => population < limit) + 1 || limits.length + 1;
+}
+
+export function median(values: number[]) {
+  if (!values.length) return null;
+  const sorted = values.toSorted((left, right) => left - right);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
 }
 
 function isValidCostTuple(value: unknown): value is MunicipalityCostTuple {

@@ -139,7 +139,7 @@ export function MunicipalityMetricChart({
                 <text x={PLOT_LEFT - 6} y={chart.y(tick) + 3.5} textAnchor="end" className="fill-muted-foreground text-[10px]">{valueFormatter.format(tick)}</text>
               </g>
             ))}
-            {zeroLineVisible && <line data-testid="municipality-metric-chart-zero-line" x1={PLOT_LEFT} x2={CHART_WIDTH - PLOT_RIGHT} y1={chart.y(0)} y2={chart.y(0)} className="stroke-foreground/55" strokeWidth="1.2" />}
+            {zeroLineVisible && <line data-testid="municipality-metric-chart-zero-line" x1={PLOT_LEFT} x2={CHART_WIDTH - PLOT_RIGHT} y1={chart.y(0)} y2={chart.y(0)} stroke="currentColor" strokeOpacity="0.55" strokeWidth="1.2" />}
             {chart.paths.map((path) => <path key={path} d={path} fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" className="text-teal-700 dark:text-teal-300" />)}
             {chart.points.map((point) => (
               <g key={point.year}>

@@ -58,10 +58,29 @@ test("cost overview is shareable, sourced, gap-safe and charted", async ({ page 
   await chart.getByTestId("municipality-metric-chart-point-2024").hover();
   await expect(chart.getByTestId("municipality-metric-chart-tooltip")).toHaveText("2024: 10,1 %");
 
+  const display = page.getByLabel("Darstellung");
+  await expect(display).toHaveValue("share");
+  await display.selectOption("per-capita");
+  await expect(page).toHaveURL(/costMeasure=per-capita/);
+  await expect(page.getByTestId("cost-definition")).toContainText("Bevölkerung desselben Jahres");
+  await expect(details.getByText("Nominal je Einwohner", { exact: true }).locator("xpath=following-sibling::dd[1]")).not.toHaveText("—");
+
+  await display.selectOption("real-per-capita");
+  await expect(page.getByTestId("cost-definition")).toContainText("Preise von 2024");
+  await expect(details).toContainText("verketteten Verbraucherpreisindex");
+
+  await display.selectOption("peer-deviation");
+  await expect(page).toHaveURL(/costMeasure=peer-deviation/);
+  await expect(page.getByTestId("cost-definition")).toContainText("weniger als fünf Vergleichsgemeinden");
+  await expect(chart.getByTestId("municipality-metric-chart-zero-line")).toBeAttached();
+  await expect(chart.getByTestId("municipality-metric-chart-zero-line")).toHaveAttribute("stroke", "currentColor");
+  await display.selectOption("share");
+  await expect(page).not.toHaveURL(/costMeasure=/);
   await page.reload();
   await expect(page.getByLabel("Kennzahl")).toHaveValue("costs");
   await expect(page.getByLabel("Aufgabenbereich")).toHaveValue("8");
   await expect(year).toHaveValue("2010");
+  await expect(display).toHaveValue("share");
 
   await year.fill("2024");
   await page.getByRole("combobox", { name: "Gemeinde suchen" }).fill("Oggau am Neusiedler See");

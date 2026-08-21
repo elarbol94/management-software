@@ -1,6 +1,10 @@
 import { z } from "zod";
 import {
   municipalityCostShare,
+  median,
+  municipalityCostPerCapita,
+  municipalityCostRealPerCapita,
+  municipalityPopulationBand,
   type CostCategoryId,
   type MunicipalityCostSeries,
 } from "./costs";
@@ -53,6 +57,7 @@ export const municipalityDatasetRefSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("cost-share"), municipalityCode: z.string().regex(/^\d{5}$/), municipalityName: z.string().trim().min(1).max(160),
     category: z.enum(["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"]),
+    measure: z.enum(["share", "per-capita", "real-per-capita", "peer-deviation"]).optional(),
   }),
 ]);
 export type MunicipalityDatasetRef = z.infer<typeof municipalityDatasetRefSchema>;
@@ -219,7 +224,9 @@ export function datasetUnit(dataset: MunicipalityDatasetRef) {
   if (dataset.kind === "age-group") return dataset.measure;
   if (dataset.kind === "age-indicator") return demographicIndicatorUnit(dataset.indicator);
   if (dataset.kind === "movement") return movementMetricUnit(dataset.metric);
-  return "share";
+  const measure = dataset.measure ?? "share";
+  return measure === "per-capita" || measure === "real-per-capita"
+    ? "currency-per-person" : "share";
 }
 
 export function resolveMunicipalityDataset(dataset: MunicipalityDatasetRef, data: MunicipalityAnalysisData): AnalysisSeries {
@@ -249,7 +256,30 @@ export function resolveMunicipalityDataset(dataset: MunicipalityDatasetRef, data
       if (counts) value = movementMetricValue(counts, population, dataset.metric);
     } else {
       const costs = data.costs?.years[String(year)]?.values[dataset.municipalityCode];
-      if (costs) value = municipalityCostShare(costs, dataset.category as CostCategoryId);
+      const measure = dataset.measure ?? "share";
+      if (costs && measure === "share") value = municipalityCostShare(costs, dataset.category as CostCategoryId);
+      else if (costs && measure === "per-capita") {
+        value = municipalityCostPerCapita(costs, dataset.category as CostCategoryId, population);
+      } else if (costs && measure === "real-per-capita") {
+        value = municipalityCostRealPerCapita(costs, dataset.category as CostCategoryId, population, year);
+      } else if (costs) {
+        const selected = data.index.municipalities.find(({ municipalityCode }) => municipalityCode === dataset.municipalityCode);
+        const selectedPerCapita = municipalityCostPerCapita(costs, dataset.category as CostCategoryId, population);
+        if (selected && selectedPerCapita !== null) {
+          const band = municipalityPopulationBand(population);
+          const peers = data.index.municipalities.flatMap((municipality) => {
+            const peerPopulation = data.population.years[String(year)].values[municipality.municipalityCode];
+            const peerCosts = data.costs?.years[String(year)]?.values[municipality.municipalityCode];
+            if (municipalityPopulationBand(peerPopulation) !== band || !peerCosts) return [];
+            const peerValue = municipalityCostPerCapita(peerCosts, dataset.category as CostCategoryId, peerPopulation);
+            return peerValue === null ? [] : [{ state: municipality.state, value: peerValue }];
+          });
+          const regionalPeers = peers.filter(({ state }) => state === selected.state);
+          const comparison = regionalPeers.length >= 5 ? regionalPeers : peers;
+          const peerMedian = median(comparison.map(({ value: peerValue }) => peerValue));
+          value = peerMedian && peerMedian > 0 ? selectedPerCapita / peerMedian - 1 : null;
+        }
+      }
     }
     points.push({ year, value });
   }
