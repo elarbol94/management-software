@@ -5,13 +5,20 @@ test.describe.configure({ timeout: 120_000 });
 async function login(page: Page) {
   const signup = await page.request.post("/api/auth/sign-up/email", { data: { name: "E2E Admin", username: "admin", displayUsername: "admin", email: "admin@example.com", password: "super-secret-1" } });
   if (!signup.ok() && signup.status() !== 422 && signup.status() !== 403) throw new Error(`Signup failed ${signup.status()}: ${await signup.text()}`);
-  if (signup.ok()) { await page.goto("/"); return; }
-  await page.goto("/login"); await page.locator("#username").fill("admin"); await page.locator("#password").fill("super-secret-1"); await page.getByRole("button", { name: "Anmelden" }).click();
+  if (signup.ok()) {
+    await page.goto("/");
+  } else {
+    await page.goto("/login");
+    await page.locator("#username").fill("admin");
+    await page.locator("#password").fill("super-secret-1");
+    await page.getByRole("button", { name: "Anmelden" }).click();
+  }
+  await expect(page.getByText("Willkommen, E2E Admin!")).toBeVisible({ timeout: 30_000 });
 }
 
 test("age structure state, details and chart are shareable and interactive", async ({ page }) => {
   await page.route("https://mapsneu.wien.gv.at/**", (route) => route.abort());
-  await login(page); await page.goto("/municipalities"); await page.setViewportSize({ width: 1280, height: 900 });
+  await login(page); await page.goto("/municipalities/overview"); await page.setViewportSize({ width: 1280, height: 900 });
   await page.getByRole("combobox", { name: "Gemeinde suchen" }).fill("Mörtschach");
   await page.getByRole("option").filter({ hasText: "20622" }).click();
   await page.getByLabel("Kennzahl").selectOption("age");

@@ -19,6 +19,7 @@ services:
       # Optional AI-assisted calendar import; deterministic parsing remains the fallback.
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_CALENDAR_MODEL: ${OPENAI_CALENDAR_MODEL:-gpt-5.6-luna}
+      OPENAI_MINUTES_MODEL: ${OPENAI_MINUTES_MODEL:-gpt-5.6-luna}
     volumes:
       - app_data:/data
     restart: unless-stopped

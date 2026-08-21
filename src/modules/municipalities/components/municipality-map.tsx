@@ -10,6 +10,8 @@ import type {
   StyleSpecification,
 } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
+import type { MunicipalityDatasetRef } from "../analysis";
+import type { CostCategoryId } from "../costs";
 import type {
   AgeGroupId,
   AgeMeasure,
@@ -92,6 +94,14 @@ const MOVEMENT_COLORS = [
   "#8b5cf6",
   "#6d28d9",
   "#4c1d95",
+];
+const COST_COLORS = [
+  "#fffbeb",
+  "#fef3c7",
+  "#fde68a",
+  "#fbbf24",
+  "#d97706",
+  "#92400e",
 ];
 const DIVERGING_COLORS = [
   "#b2182b",
@@ -207,6 +217,7 @@ type Labels = {
   populationMetric: string;
   ageMetric: string;
   movementMetric: string;
+  costsMetric: string;
   populationView: string;
   populationViews: Record<PopulationViewId, string>;
   ageView: string;
@@ -218,12 +229,18 @@ type Labels = {
   measures: Record<AgeMeasure, string>;
   sexes: Record<SexFilter, string>;
   movements: Record<MovementMetricId, string>;
+  costView: string;
+  costCategories: Record<CostCategoryId, string>;
   minimizeChart: string;
   expandChart: string;
+  addToAnalysis: string;
+  dragToAnalysis: string;
   loadingAge: string;
   ageError: string;
   loadingMovement: string;
   movementError: string;
+  loadingCosts: string;
+  costsError: string;
   loadingStructure: string;
   structureError: string;
 };
@@ -246,6 +263,7 @@ export function MunicipalityMap({
   ageMeasure,
   sex,
   movementView,
+  costCategory,
   movementDefinition,
   showAgeFilters,
   indicatorDefinition,
@@ -253,6 +271,8 @@ export function MunicipalityMap({
   ageError,
   movementLoading,
   movementError,
+  costsLoading,
+  costsError,
   structureLoading,
   structureError,
   onYearChange,
@@ -262,6 +282,7 @@ export function MunicipalityMap({
   onAgeMeasureChange,
   onSexChange,
   onMovementViewChange,
+  onCostCategoryChange,
   onSelect,
   onReset,
   labels,
@@ -270,6 +291,7 @@ export function MunicipalityMap({
   metricLabel,
   chartValueFormatter,
   chartUnitLabel,
+  analysisDataset,
 }: {
   austriaBounds: MunicipalityBounds;
   selected: MunicipalityIndexItem | null;
@@ -288,6 +310,7 @@ export function MunicipalityMap({
   ageMeasure: AgeMeasure;
   sex: SexFilter;
   movementView: MovementMetricId;
+  costCategory: CostCategoryId;
   movementDefinition: string | null;
   showAgeFilters: boolean;
   indicatorDefinition: string | null;
@@ -295,6 +318,8 @@ export function MunicipalityMap({
   ageError: boolean;
   movementLoading: boolean;
   movementError: boolean;
+  costsLoading: boolean;
+  costsError: boolean;
   structureLoading: boolean;
   structureError: boolean;
   onYearChange: (year: number) => void;
@@ -304,14 +329,16 @@ export function MunicipalityMap({
   onAgeMeasureChange: (measure: AgeMeasure) => void;
   onSexChange: (sex: SexFilter) => void;
   onMovementViewChange: (view: MovementMetricId) => void;
+  onCostCategoryChange: (category: CostCategoryId) => void;
   onSelect: (code: string) => void;
   onReset: () => void;
   labels: Labels;
-  selectedMetricHistory: Array<{ year: number; value: number }> | null;
+  selectedMetricHistory: Array<{ year: number; value: number | null }> | null;
   metricChartLabel: string;
   metricLabel: string;
   chartValueFormatter: Intl.NumberFormat;
   chartUnitLabel: string;
+  analysisDataset: MunicipalityDatasetRef | null;
 }) {
   const locale = useLocale();
   const personsFormatter = useMemo(
@@ -358,7 +385,9 @@ export function MunicipalityMap({
             ? movementPalette === "diverging"
               ? divergingColorExpression(scaleDomain)
               : sequentialColorExpression(scaleDomain, MOVEMENT_COLORS)
-            : sequentialColorExpression(scaleDomain, AGE_COLORS);
+            : metric === "costs"
+              ? sequentialColorExpression(scaleDomain, COST_COLORS)
+              : sequentialColorExpression(scaleDomain, AGE_COLORS);
       map.setPaintProperty(FILL_LAYER_ID, "fill-color", color);
     }
   }, [metric, metricValues, movementPalette, ready, scaleDomain, usePopulationClasses]);
@@ -570,7 +599,7 @@ export function MunicipalityMap({
           {labels.reset}
         </button>
       </div>
-      {selected && selectedMetricHistory && (
+      {selected && selectedMetricHistory && analysisDataset && (
         <MunicipalityMetricChart
           metricLabel={metricLabel}
           municipalityName={selected.name}
@@ -581,6 +610,9 @@ export function MunicipalityMap({
           chartLabel={metricChartLabel}
           minimizeLabel={labels.minimizeChart}
           expandLabel={labels.expandChart}
+          dataset={analysisDataset}
+          addToAnalysisLabel={labels.addToAnalysis}
+          dragToAnalysisLabel={labels.dragToAnalysis}
         />
       )}
       <div
@@ -605,6 +637,7 @@ export function MunicipalityMap({
             <option value="population">{labels.populationMetric}</option>
             <option value="age">{labels.ageMetric}</option>
             <option value="movement">{labels.movementMetric}</option>
+            <option value="costs">{labels.costsMetric}</option>
           </select>
         </div>
         {metric === "population" && (
@@ -763,6 +796,27 @@ export function MunicipalityMap({
             )}
           </div>
         )}
+        {metric === "costs" && (
+          <div className="mt-2 space-y-2 border-t pt-2">
+            <div className="grid grid-cols-[5.5rem_1fr] items-center gap-2">
+              <label htmlFor="municipality-cost-view" className="text-[10px] font-semibold">
+                {labels.costView}
+              </label>
+              <select
+                id="municipality-cost-view"
+                value={costCategory}
+                className="h-8 min-w-0 rounded-md border bg-background px-2 text-[10px]"
+                onChange={(event) => onCostCategoryChange(event.target.value as CostCategoryId)}
+              >
+                {Object.entries(labels.costCategories).map(([id, label]) => (
+                  <option key={id} value={id}>{id} · {label}</option>
+                ))}
+              </select>
+            </div>
+            {costsLoading && <p className="text-[10px] text-muted-foreground">{labels.loadingCosts}</p>}
+            {costsError && <p className="text-[10px] text-destructive" role="alert">{labels.costsError}</p>}
+          </div>
+        )}
         <div className="mt-2 flex items-baseline justify-between gap-3 border-t pt-2">
           <label
             htmlFor="municipality-population-year"
@@ -837,7 +891,7 @@ export function MunicipalityMap({
               <div
                 className="mt-2 h-3 rounded-sm border border-black/10"
                 style={{
-                  background: `linear-gradient(to right, ${(metric === "movement" ? (movementPalette === "diverging" ? DIVERGING_COLORS : MOVEMENT_COLORS) : AGE_COLORS).join(",")})`,
+                  background: `linear-gradient(to right, ${(metric === "movement" ? (movementPalette === "diverging" ? DIVERGING_COLORS : MOVEMENT_COLORS) : metric === "costs" ? COST_COLORS : AGE_COLORS).join(",")})`,
                 }}
               />
               <div className="mt-1 flex justify-between gap-2 text-[9px] tabular-nums">

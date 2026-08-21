@@ -2,6 +2,8 @@ node_modules
 .next
 .git
 .claude
+.playwright-cli
+*.orig
 data
 e2e
 *.md

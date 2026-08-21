@@ -16,7 +16,7 @@ RUN apt-get update \
 # @esbuild/aix-ppc64) — upgrade before installing to avoid that bug.
 RUN npm install -g npm@11
 COPY package.json package-lock.json ./
-RUN npm ci
+RUN --mount=type=cache,target=/root/.npm npm ci
 
 FROM node:22-bookworm-slim AS build
 WORKDIR /app
@@ -26,7 +26,7 @@ ENV NEXT_TELEMETRY_DISABLED=1
 ENV BETTER_AUTH_SECRET=build-only-secret-not-for-runtime
 # Build-time DB path so the build never touches a real database.
 ENV DATABASE_PATH=/tmp/build.db
-RUN npm run build
+RUN --mount=type=cache,target=/app/.next/cache npm run build
 
 FROM node:22-bookworm-slim AS runtime
 WORKDIR /app

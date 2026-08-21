@@ -307,6 +307,7 @@ function AppNavigation({
             )}
           </button>
           <DndContext
+            id="app-sidebar-navigation"
             sensors={sensors}
             collisionDetection={closestCenter}
             onDragStart={() => {

@@ -34,7 +34,7 @@ test("municipality map works with local geometry when basemap tiles are unavaila
     .getByTestId("app-navigation-sheet")
     .getByRole("button", { name: "Gemeinden", exact: true });
   await expect(municipalityNavigation).toBeVisible();
-  await page.goto("/municipalities");
+  await page.goto("/municipalities/overview");
   await page.setViewportSize({ width: 1280, height: 900 });
 
   await expect(page.getByRole("heading", { name: "Gemeinden", exact: true })).toBeVisible();
@@ -79,7 +79,7 @@ test("municipality map works with local geometry when basemap tiles are unavaila
 test("population structure views are compact, sourced and shareable", async ({ page }) => {
   await page.route("https://mapsneu.wien.gv.at/**", (route) => route.abort());
   await login(page);
-  await page.goto("/municipalities");
+  await page.goto("/municipalities/overview");
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.getByRole("combobox", { name: "Gemeinde suchen" }).fill("Mörtschach");
   await page.getByRole("option").filter({ hasText: "20622" }).click();
@@ -109,7 +109,7 @@ test("municipality workspace stays within the mobile viewport", async ({ page })
   await page.route("https://mapsneu.wien.gv.at/**", (route) => route.abort());
   await login(page);
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto("/municipalities");
+  await page.goto("/municipalities/overview");
   await expect(page.getByTestId("municipality-map")).toBeVisible();
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await page.getByRole("combobox", { name: "Gemeinde suchen" }).fill("Wien");

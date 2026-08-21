@@ -30,7 +30,7 @@ test("population movement is compact, shareable and charted", async ({
 }) => {
   await page.route("https://mapsneu.wien.gv.at/**", (route) => route.abort());
   await login(page);
-  await page.goto("/municipalities");
+  await page.goto("/municipalities/overview");
   await page.setViewportSize({ width: 1280, height: 900 });
 
   await page

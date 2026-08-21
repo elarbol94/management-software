@@ -9,3 +9,4 @@ export * from "@/modules/personnel/schema";
 export * from "@/modules/wiki/schema";
 export * from "@/modules/wiki/pdf-schema";
 export * from "@/modules/context/schema";
+export * from "@/modules/municipalities/schema";
