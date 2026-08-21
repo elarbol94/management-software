@@ -185,7 +185,7 @@ export function MunicipalityInvestmentsClient({
       </div>
     </Card>
 
-    <div className="grid gap-4 lg:grid-cols-[minmax(19rem,0.7fr)_minmax(0,1.3fr)] lg:items-start">
+    <div className="grid gap-4 xl:grid-cols-[minmax(19rem,0.7fr)_minmax(0,1.3fr)] xl:items-start">
       <BreakdownCard title={t("trend")} rows={byYear} selected={year} onSelect={(id) => setYear(year === id ? "all" : id)} currency={currency} percent={percent} empty={t("noResults")} />
       <div className="grid gap-4">
         <BreakdownCard title={t("breakdown")} rows={byTask} selected={taskArea} onSelect={(id) => setTaskArea(taskArea === id ? "all" : id)} currency={currency} percent={percent} empty={t("noResults")} />
@@ -239,10 +239,9 @@ function BreakdownCard({ title, rows, selected, onSelect, currency, percent, emp
   return <Card><CardHeader><CardTitle>{title}</CardTitle></CardHeader><CardContent className="space-y-2">
     {rows.length ? rows.map((row) => {
       const active = selected === row.id;
-      const excluded = selected !== "all" && !active;
       const share = total ? Math.abs(row.value) / total : 0;
       return <button key={row.id} type="button" aria-pressed={active} title={`${row.label}: ${currency.format(row.value / 100)} · ${row.count} · ${percent.format(share)}`} onClick={() => onSelect(row.id)}
-        className={`grid w-full grid-cols-[minmax(7rem,1fr)_minmax(7rem,2fr)_auto] items-center gap-3 rounded-lg p-2 text-left text-xs transition hover:bg-muted/70 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-teal-600 ${active ? "bg-teal-50 ring-1 ring-teal-500 dark:bg-teal-950/30" : ""} ${excluded ? "opacity-45" : ""}`}>
+        className={`grid w-full grid-cols-[minmax(7rem,1fr)_minmax(7rem,2fr)_auto] items-center gap-3 rounded-lg p-2 text-left text-xs transition hover:bg-muted/70 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-teal-600 ${active ? "bg-teal-50 ring-1 ring-teal-500 dark:bg-teal-950/30" : ""}`}>
         <span className="truncate font-medium" title={row.label}>{row.label}</span>
         <span className="h-2.5 overflow-hidden rounded-full bg-muted"><span className={`block h-full rounded-full ${row.value < 0 ? "bg-red-500" : "bg-teal-600"}`} style={{ width: `${Math.max(1, Math.abs(row.value) / maximum * 100)}%` }} /></span>
         <span className="text-right"><strong className="block tabular-nums">{currency.format(row.value / 100)}</strong><span className="text-[10px] text-muted-foreground">{row.count} · {percent.format(share)}</span></span>
