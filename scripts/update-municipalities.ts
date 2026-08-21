@@ -16,6 +16,7 @@ import {
 
 type SourceProperties = { g_id?: unknown; g_name?: unknown };
 type MunicipalityGeometry = Polygon | MultiPolygon;
+type NormalizedProperties = MunicipalityProperties & { areaSquareKilometers: number };
 
 const SOURCE_URL = new URL("https://www.statistik.gv.at/gs-open/GEODATA/ows");
 SOURCE_URL.search = new URLSearchParams({
@@ -23,7 +24,7 @@ SOURCE_URL.search = new URLSearchParams({
   version: "1.1.0",
   request: "GetFeature",
   typeName: "GEODATA:STATISTIK_AUSTRIA_GEM_20260101",
-  srsName: "EPSG:4326",
+  srsName: "EPSG:31287",
   outputFormat: "application/json",
 }).toString();
 const outputDirectory = resolve("public/data");
@@ -74,13 +75,15 @@ async function main() {
     const result = spawnSync(resolve("node_modules/.bin/mapshaper"), [
       normalizedPath,
       "-clean",
-      "-dissolve", "municipalityCode", "copy-fields=name,state",
+      "-each", "areaSquareKilometers=this.area/1000000",
+      "-dissolve", "municipalityCode", "copy-fields=name,state", "sum-fields=areaSquareKilometers",
+      "-proj", "init=EPSG:31287", "crs=wgs84",
       "-simplify", "weighted", "10%", "keep-shapes",
       "-o", "format=geojson", "precision=0.00001", simplifiedPath,
     ], { encoding: "utf8" });
     if (result.status !== 0) throw new Error(result.stderr || result.stdout || "mapshaper ist fehlgeschlagen.");
 
-    const simplified = JSON.parse(await readFile(simplifiedPath, "utf8")) as FeatureCollection<MunicipalityGeometry, MunicipalityProperties>;
+    const simplified = JSON.parse(await readFile(simplifiedPath, "utf8")) as FeatureCollection<MunicipalityGeometry, NormalizedProperties>;
     simplified.features.sort((left, right) => left.properties.municipalityCode.localeCompare(right.properties.municipalityCode));
     for (const feature of simplified.features) feature.id = feature.properties.municipalityCode;
     validateFeatures(simplified.features, EXPECTED_MUNICIPALITY_COUNT);

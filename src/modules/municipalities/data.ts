@@ -13,7 +13,10 @@ const STATE_BY_CODE_PREFIX = {
 
 export type MunicipalityState = (typeof STATE_BY_CODE_PREFIX)[keyof typeof STATE_BY_CODE_PREFIX];
 export type MunicipalityProperties = { municipalityCode: string; name: string; state: MunicipalityState };
-export type MunicipalityIndexItem = MunicipalityProperties & { bounds: MunicipalityBounds };
+export type MunicipalityIndexItem = MunicipalityProperties & {
+  bounds: MunicipalityBounds;
+  areaSquareKilometers: number;
+};
 export type MunicipalityIndex = {
   datasetDate: typeof MUNICIPALITY_DATASET_DATE;
   count: number;
@@ -86,6 +89,7 @@ export function validateMunicipalityIndex(index: MunicipalityIndex) {
     if (!municipality.name.trim()) throw new Error(`Gemeinde ${municipality.municipalityCode} hat keinen Namen.`);
     if (municipality.state !== municipalityStateFromCode(municipality.municipalityCode)) throw new Error(`Bundesland stimmt für ${municipality.municipalityCode} nicht.`);
     if (!municipality.bounds.every(Number.isFinite)) throw new Error(`Ungültiger Kartenausschnitt für ${municipality.municipalityCode}.`);
+    if (!Number.isFinite(municipality.areaSquareKilometers) || municipality.areaSquareKilometers <= 0) throw new Error(`Ungültige Fläche für ${municipality.municipalityCode}.`);
   }
   return index;
 }

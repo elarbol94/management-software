@@ -5,6 +5,7 @@ import { validateMunicipalityIndex } from "../src/modules/municipalities/data";
 import {
   AGE_GROUPS,
   MUNICIPALITY_DEMOGRAPHY_SCHEMA_VERSION,
+  ageForSourceCode,
   ageGroupIndexForSourceCode,
   demographyMetricValue,
   validateMunicipalityDemographySeries,
@@ -54,11 +55,15 @@ export function aggregateDemography(csv: string, year: number) {
     const municipalityCode = sourceCode.startsWith("9") ? "90001" : sourceCode;
     const sexCode = columns[indices.sex];
     if (sexCode !== "C11-1" && sexCode !== "C11-2") throw new Error(`Unbekannter Geschlechtscode in CSV-Zeile ${lineIndex + 2}.`);
-    const groupIndex = ageGroupIndexForSourceCode(columns[indices.age] ?? "");
+    const ageCode = columns[indices.age] ?? "";
+    const age = ageForSourceCode(ageCode);
+    const groupIndex = ageGroupIndexForSourceCode(ageCode);
     const count = Number(columns[indices.value]);
     if (!Number.isSafeInteger(count) || count < 0) throw new Error(`Ungültiger Wert in CSV-Zeile ${lineIndex + 2}.`);
-    const counts = values.get(municipalityCode) ?? { m: emptyCounts(), f: emptyCounts() };
-    counts[sexCode === "C11-1" ? "m" : "f"][groupIndex] += count;
+    const counts = values.get(municipalityCode) ?? { m: emptyCounts(), f: emptyCounts(), a: [0, 0] };
+    const sexKey = sexCode === "C11-1" ? "m" : "f";
+    counts[sexKey][groupIndex] += count;
+    counts.a[sexKey === "m" ? 0 : 1] += age * count;
     values.set(municipalityCode, counts);
   }
   return values;

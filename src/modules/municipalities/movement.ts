@@ -1,22 +1,32 @@
 import { EXPECTED_MUNICIPALITY_COUNT } from "./data";
 import { municipalityPopulationYears, type MunicipalityPopulationSeries } from "./population";
 
-export const MUNICIPALITY_MOVEMENT_SCHEMA_VERSION = 1;
+export const MUNICIPALITY_MOVEMENT_SCHEMA_VERSION = 2;
 
 export const MOVEMENT_METRICS = [
   { id: "population-change", unit: "persons", palette: "diverging" },
   { id: "births", unit: "persons", palette: "sequential" },
   { id: "deaths", unit: "persons", palette: "sequential" },
+  { id: "birth-rate", unit: "per-1000", palette: "sequential" },
+  { id: "death-rate", unit: "per-1000", palette: "sequential" },
   { id: "birth-balance-rate", unit: "per-1000", palette: "diverging" },
   { id: "arrivals", unit: "persons", palette: "sequential" },
   { id: "departures", unit: "persons", palette: "sequential" },
   { id: "migration-balance-rate", unit: "per-1000", palette: "diverging" },
+  { id: "international-migration-balance", unit: "persons", palette: "diverging" },
+  { id: "international-migration-balance-rate", unit: "per-1000", palette: "diverging" },
+  { id: "internal-migration-balance", unit: "persons", palette: "diverging" },
+  { id: "internal-migration-balance-rate", unit: "per-1000", palette: "diverging" },
+  { id: "statistical-correction", unit: "persons", palette: "diverging" },
 ] as const;
 
 export type MovementMetricId = (typeof MOVEMENT_METRICS)[number]["id"];
 export type MovementUnit = (typeof MOVEMENT_METRICS)[number]["unit"];
 export type MovementPalette = (typeof MOVEMENT_METRICS)[number]["palette"];
-export type MovementCounts = [populationChange: number, births: number, deaths: number, arrivals: number, departures: number];
+export type MovementCounts = [
+  populationChange: number, births: number, deaths: number, arrivals: number, departures: number,
+  internationalArrivals: number, internationalDepartures: number, internalArrivals: number, internalDepartures: number,
+];
 
 export type MunicipalityMovementSeries = {
   schemaVersion: typeof MUNICIPALITY_MOVEMENT_SCHEMA_VERSION;
@@ -52,9 +62,16 @@ export function movementMetricValue(counts: MovementCounts, population: number, 
   if (metric === "deaths") return counts[2];
   if (metric === "arrivals") return counts[3];
   if (metric === "departures") return counts[4];
+  if (metric === "international-migration-balance") return counts[5] - counts[6];
+  if (metric === "internal-migration-balance") return counts[7] - counts[8];
+  if (metric === "statistical-correction") return movementStatisticalCorrection(counts);
   if (population <= 0) return null;
-  const balance = metric === "birth-balance-rate" ? counts[1] - counts[2] : counts[3] - counts[4];
-  return (balance / population) * 1_000;
+  if (metric === "birth-rate") return (counts[1] / population) * 1_000;
+  if (metric === "death-rate") return (counts[2] / population) * 1_000;
+  if (metric === "birth-balance-rate") return ((counts[1] - counts[2]) / population) * 1_000;
+  if (metric === "migration-balance-rate") return ((counts[3] - counts[4]) / population) * 1_000;
+  if (metric === "international-migration-balance-rate") return ((counts[5] - counts[6]) / population) * 1_000;
+  return ((counts[7] - counts[8]) / population) * 1_000;
 }
 
 export function movementStatisticalCorrection(counts: MovementCounts) {
@@ -63,7 +80,7 @@ export function movementStatisticalCorrection(counts: MovementCounts) {
 
 function validCounts(value: unknown): value is MovementCounts {
   return Array.isArray(value)
-    && value.length === 5
+    && value.length === 9
     && value.every((item, index) => Number.isSafeInteger(item) && (index === 0 || item >= 0));
 }
 

@@ -69,9 +69,20 @@ test("population movement is compact, shareable and charted", async ({
     chart.getByTestId("municipality-metric-chart-tooltip"),
   ).toHaveText("2013: 2,5 je 1.000 Einwohner");
 
+  await page.getByLabel("Komponente").selectOption("international-migration-balance");
+  await expect(page.getByTestId("movement-definition")).toContainText("Zuzüge aus dem Ausland");
+  await expect(details.getByText("4 Personen", { exact: true })).toBeVisible();
+
+  await page.getByLabel("Komponente").selectOption("internal-migration-balance-rate");
+  await expect(details.getByText("-5,0 je 1.000 Einwohner", { exact: true })).toBeVisible();
+
+  await page.getByLabel("Komponente").selectOption("statistical-correction");
+  await expect(page.getByTestId("movement-definition")).toContainText("Registeränderung");
+  await expect(details.getByText("0 Personen", { exact: true })).toBeVisible();
+
   await page.reload();
   await expect(page.getByLabel("Kennzahl")).toHaveValue("movement");
-  await expect(page.getByLabel("Komponente")).toHaveValue("birth-balance-rate");
+  await expect(page.getByLabel("Komponente")).toHaveValue("statistical-correction");
   await page.setViewportSize({ width: 390, height: 844 });
   await expect
     .poll(() =>

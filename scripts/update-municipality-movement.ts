@@ -28,6 +28,10 @@ const SOURCE_COMPONENTS = [
   "gestorbene",
   "zuzug_gesamt",
   "wegzug_gesamt",
+  "zuzug_ausland",
+  "wegzug_ausland",
+  "zuzug_binnen",
+  "wegzug_binnen",
 ] as const;
 type SourceComponent = (typeof SOURCE_COMPONENTS)[number];
 type WfsFeature = {

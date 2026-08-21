@@ -76,6 +76,35 @@ test("municipality map works with local geometry when basemap tiles are unavaila
   await expect(page.getByRole("heading", { name: "Gemeinde auswählen" })).toBeVisible();
 });
 
+test("population structure views are compact, sourced and shareable", async ({ page }) => {
+  await page.route("https://mapsneu.wien.gv.at/**", (route) => route.abort());
+  await login(page);
+  await page.goto("/municipalities");
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.getByRole("combobox", { name: "Gemeinde suchen" }).fill("Mörtschach");
+  await page.getByRole("option").filter({ hasText: "20622" }).click();
+
+  const view = page.getByLabel("Ansicht");
+  await view.selectOption("density");
+  await expect(page.getByTestId("population-definition")).toContainText("geteilt durch die Gemeindefläche");
+  await expect(page.getByTestId("municipality-details").getByText("Gemeindefläche", { exact: true })).toBeVisible();
+
+  await view.selectOption("foreign-share");
+  await expect(page).toHaveURL(/populationView=foreign-share/);
+  await expect(page.getByRole("slider", { name: "Jahr" })).toHaveValue("2024");
+  await expect(page.getByTestId("population-definition")).toContainText("ohne österreichische Staatsangehörigkeit");
+  await expect(page.getByTestId("municipality-details").getByText("4,4 %", { exact: true })).toBeVisible();
+  const chart = page.getByTestId("municipality-metric-chart");
+  await chart.getByTestId("municipality-metric-chart-point-2024").hover();
+  await expect(chart.getByTestId("municipality-metric-chart-tooltip")).toHaveText("2024: 4,4 %");
+
+  await view.selectOption("foreign-persons");
+  await expect(page.getByTestId("population-definition")).toContainText("näherungsweise berechnet");
+  await expect(page.getByTestId("municipality-details").getByText("36 Personen", { exact: true })).toBeVisible();
+  await page.reload();
+  await expect(page.getByLabel("Ansicht")).toHaveValue("foreign-persons");
+});
+
 test("municipality workspace stays within the mobile viewport", async ({ page }) => {
   await page.route("https://mapsneu.wien.gv.at/**", (route) => route.abort());
   await login(page);

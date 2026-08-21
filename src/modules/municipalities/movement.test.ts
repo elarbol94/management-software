@@ -7,6 +7,7 @@ import {
   movementMetricValue,
   movementStatisticalCorrection,
   validateMunicipalityMovementSeries,
+  type MovementCounts,
   type MunicipalityMovementSeries,
 } from "./movement";
 import type { MunicipalityPopulationSeries } from "./population";
@@ -24,13 +25,19 @@ describe("municipality population movement", () => {
   });
 
   it("matches the representative Mörtschach 2013 values", () => {
-    expect(series.years["2013"].values["20622"]).toEqual([2, 8, 6, 23, 23]);
+    expect(series.years["2013"].values["20622"]).toEqual([2, 8, 6, 23, 23, 6, 2, 17, 21]);
   });
 
   it("derives balances per 1,000 and the statistical correction", () => {
-    const counts: [number, number, number, number, number] = [12, 20, 14, 80, 75];
+    const counts: MovementCounts = [12, 20, 14, 80, 75, 30, 20, 50, 55];
+    expect(movementMetricValue(counts, 1_000, "birth-rate")).toBe(20);
+    expect(movementMetricValue(counts, 1_000, "death-rate")).toBe(14);
     expect(movementMetricValue(counts, 1_000, "birth-balance-rate")).toBe(6);
     expect(movementMetricValue(counts, 1_000, "migration-balance-rate")).toBe(5);
+    expect(movementMetricValue(counts, 1_000, "international-migration-balance")).toBe(10);
+    expect(movementMetricValue(counts, 1_000, "international-migration-balance-rate")).toBe(10);
+    expect(movementMetricValue(counts, 1_000, "internal-migration-balance")).toBe(-5);
+    expect(movementMetricValue(counts, 1_000, "internal-migration-balance-rate")).toBe(-5);
     expect(movementStatisticalCorrection(counts)).toBe(1);
   });
 

@@ -48,6 +48,16 @@ import {
   validateMunicipalityPopulationSeries,
   type MunicipalityPopulationSeries,
 } from "../population";
+import {
+  MUNICIPALITY_STRUCTURE_FIRST_YEAR,
+  MUNICIPALITY_STRUCTURE_LATEST_YEAR,
+  isPopulationViewId,
+  populationViewUnit,
+  populationViewValue,
+  validateMunicipalityStructureSeries,
+  type MunicipalityStructureSeries,
+  type PopulationViewId,
+} from "../structure";
 
 const MunicipalityMap = dynamic(
   () => import("./municipality-map").then((module) => module.MunicipalityMap),
@@ -119,9 +129,12 @@ export function MunicipalitiesWorkspace() {
     useState<MunicipalityDemographySeries | null>(null);
   const [movementSeries, setMovementSeries] =
     useState<MunicipalityMovementSeries | null>(null);
+  const [structureSeries, setStructureSeries] =
+    useState<MunicipalityStructureSeries | null>(null);
   const [loadError, setLoadError] = useState(false);
   const [demographyError, setDemographyError] = useState(false);
   const [movementError, setMovementError] = useState(false);
+  const [structureError, setStructureError] = useState(false);
   const paramsRef = useRef(searchParams.toString());
   useEffect(() => {
     paramsRef.current = searchParams.toString();
@@ -130,6 +143,10 @@ export function MunicipalitiesWorkspace() {
   const [searchOpen, setSearchOpen] = useState(false);
   const [activeResult, setActiveResult] = useState(0);
 
+  const populationViewParameter = searchParams.get("populationView") ?? "count";
+  const populationView: PopulationViewId = isPopulationViewId(populationViewParameter)
+    ? populationViewParameter
+    : "count";
   const metricParameter = searchParams.get("metric");
   const metric: MapMetric =
     metricParameter === "age" || metricParameter === "movement"
@@ -164,15 +181,16 @@ export function MunicipalitiesWorkspace() {
       ) ?? null,
     [index, selectedCode],
   );
+  const usesCitizenship = populationView === "foreign-share" || populationView === "foreign-persons";
+  const availableFirstYear = usesCitizenship ? MUNICIPALITY_STRUCTURE_FIRST_YEAR : populationSeries?.firstYear;
+  const availableLatestYear = usesCitizenship ? MUNICIPALITY_STRUCTURE_LATEST_YEAR : populationSeries?.latestYear;
   const year = useMemo(() => {
     const value = Number(searchParams.get("populationYear"));
-    return populationSeries &&
-      Number.isInteger(value) &&
-      value >= populationSeries.firstYear &&
-      value <= populationSeries.latestYear
+    return populationSeries && availableFirstYear !== undefined && availableLatestYear !== undefined &&
+      Number.isInteger(value) && value >= availableFirstYear && value <= availableLatestYear
       ? value
-      : (populationSeries?.latestYear ?? null);
-  }, [populationSeries, searchParams]);
+      : (availableLatestYear ?? null);
+  }, [availableFirstYear, availableLatestYear, populationSeries, searchParams]);
   const activePopulation =
     year === null ? null : (populationSeries?.years[String(year)] ?? null);
   const ageGroupLabels: Record<AgeGroupId, string> = {
@@ -184,31 +202,66 @@ export function MunicipalitiesWorkspace() {
     "65-79": t("ageGroup65-79"),
     "80-plus": t("ageGroup80-plus"),
   };
+  const populationViewLabels: Record<PopulationViewId, string> = {
+    count: t("populationCount"),
+    density: t("populationDensity"),
+    "foreign-share": t("populationForeignShare"),
+    "foreign-persons": t("populationForeignPersons"),
+  };
+  const populationViewDefinitions: Partial<Record<PopulationViewId, string>> = {
+    density: t("populationDensityDefinition"),
+    "foreign-share": t("populationForeignShareDefinition"),
+    "foreign-persons": t("populationForeignPersonsDefinition"),
+  };
   const indicatorLabels: Record<DemographicIndicatorId, string> = {
     "youth-share": t("indicatorYouthShare"),
     "senior-share": t("indicatorSeniorShare"),
     "old-age-dependency": t("indicatorOldAgeDependency"),
+    "child-dependency": t("indicatorChildDependency"),
+    "total-dependency": t("indicatorTotalDependency"),
     "aging-index": t("indicatorAgingIndex"),
+    "average-age": t("indicatorAverageAge"),
+    "women-share": t("indicatorWomenShare"),
+    "women-per-100-men": t("indicatorWomenPer100Men"),
   };
   const indicatorDefinitions: Record<DemographicIndicatorId, string> = {
     "youth-share": t("indicatorYouthShareDefinition"),
     "senior-share": t("indicatorSeniorShareDefinition"),
     "old-age-dependency": t("indicatorOldAgeDependencyDefinition"),
+    "child-dependency": t("indicatorChildDependencyDefinition"),
+    "total-dependency": t("indicatorTotalDependencyDefinition"),
     "aging-index": t("indicatorAgingIndexDefinition"),
+    "average-age": t("indicatorAverageAgeDefinition"),
+    "women-share": t("indicatorWomenShareDefinition"),
+    "women-per-100-men": t("indicatorWomenPer100MenDefinition"),
   };
   const movementLabels: Record<MovementMetricId, string> = {
     "population-change": t("movementPopulationChange"),
     births: t("movementBirths"),
     deaths: t("movementDeaths"),
+    "birth-rate": t("movementBirthRate"),
+    "death-rate": t("movementDeathRate"),
     "birth-balance-rate": t("movementBirthBalanceRate"),
     arrivals: t("movementArrivals"),
     departures: t("movementDepartures"),
     "migration-balance-rate": t("movementMigrationBalanceRate"),
+    "international-migration-balance": t("movementInternationalBalance"),
+    "international-migration-balance-rate": t("movementInternationalBalanceRate"),
+    "internal-migration-balance": t("movementInternalBalance"),
+    "internal-migration-balance-rate": t("movementInternalBalanceRate"),
+    "statistical-correction": t("movementStatisticalCorrection"),
   };
   const movementDefinitions: Partial<Record<MovementMetricId, string>> = {
     "population-change": t("movementPopulationChangeDefinition"),
+    "birth-rate": t("movementBirthRateDefinition"),
+    "death-rate": t("movementDeathRateDefinition"),
     "birth-balance-rate": t("movementBirthBalanceRateDefinition"),
     "migration-balance-rate": t("movementMigrationBalanceRateDefinition"),
+    "international-migration-balance": t("movementInternationalBalanceDefinition"),
+    "international-migration-balance-rate": t("movementInternationalBalanceRateDefinition"),
+    "internal-migration-balance": t("movementInternalBalanceDefinition"),
+    "internal-migration-balance-rate": t("movementInternalBalanceRateDefinition"),
+    "statistical-correction": t("movementStatisticalCorrectionDefinition"),
   };
   const results = useMemo(
     () => (index ? searchMunicipalities(index.municipalities, query) : []),
@@ -229,6 +282,16 @@ export function MunicipalitiesWorkspace() {
       ]),
     ) as Record<DemographicIndicatorId, [number, number]>;
   }, [demographySeries]);
+  const densityScale = useMemo(() => {
+    if (!index || !populationSeries) return null;
+    return percentileDomain(
+      Object.values(populationSeries.years).flatMap(({ values }) =>
+        index.municipalities.map((municipality) =>
+          values[municipality.municipalityCode] / municipality.areaSquareKilometers,
+        ),
+      ),
+    );
+  }, [index, populationSeries]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -323,6 +386,28 @@ export function MunicipalitiesWorkspace() {
     return () => controller.abort();
   }, [index, metric, movementError, movementSeries, populationSeries]);
 
+  useEffect(() => {
+    if (!usesCitizenship || structureSeries || structureError || !index || !populationSeries) return;
+    const controller = new AbortController();
+    fetchJson<MunicipalityStructureSeries>(
+      "/data/municipality-structure-2022-2024.json",
+      controller.signal,
+    )
+      .then((data) =>
+        setStructureSeries(
+          validateMunicipalityStructureSeries(
+            data,
+            populationSeries,
+            index.municipalities.map(({ municipalityCode }) => municipalityCode),
+          ),
+        ),
+      )
+      .catch((error: unknown) => {
+        if (!(error instanceof DOMException && error.name === "AbortError")) setStructureError(true);
+      });
+    return () => controller.abort();
+  }, [index, populationSeries, structureError, structureSeries, usesCitizenship]);
+
   function replace(next: URLSearchParams) {
     const value = next.toString();
     paramsRef.current = value;
@@ -334,6 +419,15 @@ export function MunicipalitiesWorkspace() {
     const next = new URLSearchParams(paramsRef.current);
     if (value === null) next.delete(name);
     else next.set(name, value);
+    replace(next);
+  }
+  function updatePopulationView(view: PopulationViewId) {
+    const next = new URLSearchParams(paramsRef.current);
+    if (view === "count") next.delete("populationView");
+    else next.set("populationView", view);
+    if ((view === "foreign-share" || view === "foreign-persons") && (year === null || year < MUNICIPALITY_STRUCTURE_FIRST_YEAR || year > MUNICIPALITY_STRUCTURE_LATEST_YEAR)) {
+      next.set("populationYear", String(MUNICIPALITY_STRUCTURE_LATEST_YEAR));
+    }
     replace(next);
   }
   function updateAgeView(view: AgeViewId) {
@@ -405,6 +499,22 @@ export function MunicipalitiesWorkspace() {
       : demographyMetricValue(counts, sex, ageGroup, ageMeasure);
   const activeDemography = demographySeries?.years[String(year)] ?? null;
   const activeMovement = movementSeries?.years[String(year)] ?? null;
+  const populationUnit = populationViewUnit(populationView);
+  const populationViewFormatter =
+    populationUnit === "persons" ? personsFormatter : populationUnit === "share" ? shareFormatter : ratioFormatter;
+  const populationUnitLabel =
+    populationUnit === "persons" ? t("populationUnit") : populationUnit === "share" ? "" : t("populationDensityUnit");
+  const populationValueFor = (code: string, targetYear: number) => {
+    const municipality = index.municipalities.find((item) => item.municipalityCode === code);
+    if (!municipality) return null;
+    const citizenship = structureSeries?.years[String(targetYear)]?.values[code] ?? null;
+    return populationViewValue(
+      populationView,
+      populationSeries.years[String(targetYear)].values[code],
+      municipality,
+      citizenship,
+    );
+  };
   const movementUnit = movementMetricUnit(movementView);
   const movementFormatter =
     movementUnit === "persons" ? personsFormatter : ratioFormatter;
@@ -420,7 +530,12 @@ export function MunicipalitiesWorkspace() {
   };
   const metricValues: Record<string, number | null> =
     metric === "population"
-      ? activePopulation.values
+      ? Object.fromEntries(
+          index.municipalities.map(({ municipalityCode }) => [
+            municipalityCode,
+            populationValueFor(municipalityCode, year),
+          ]),
+        )
       : metric === "age"
         ? Object.fromEntries(
             index.municipalities.map(({ municipalityCode }) => [
@@ -439,8 +554,21 @@ export function MunicipalitiesWorkspace() {
   const indicatorUnit = indicator ? demographicIndicatorUnit(indicator) : null;
   const indicatorFormatter =
     indicatorUnit === "share" ? shareFormatter : ratioFormatter;
+  const indicatorUnitLabel =
+    indicatorUnit === "per-100" ? t("per100Persons") : indicatorUnit === "years" ? t("yearsUnit") : "";
   const tooltipValues =
-    metric === "age" && activeDemography
+    metric === "population" && populationView !== "count"
+      ? Object.fromEntries(
+          index.municipalities.map(({ municipalityCode }) => {
+            const value = metricValues[municipalityCode];
+            return [
+              municipalityCode,
+              populationViewLabels[populationView] + " · "
+                + (value === null ? "—" : populationViewFormatter.format(value) + (populationUnitLabel ? " " + populationUnitLabel : "")),
+            ];
+          }),
+        )
+      : metric === "age" && activeDemography
       ? Object.fromEntries(
           index.municipalities.map(({ municipalityCode }) => {
             const counts = activeDemography.values[municipalityCode];
@@ -453,7 +581,7 @@ export function MunicipalitiesWorkspace() {
                   " · " +
                   (value === null ? "—" : indicatorFormatter.format(value)) +
                   " " +
-                  (indicatorUnit === "share" ? "" : t("per100Persons"))
+                  (indicatorUnitLabel)
                 ).trim(),
               ];
             }
@@ -495,7 +623,9 @@ export function MunicipalitiesWorkspace() {
           )
         : null;
   const selectedPopulation = selected
-    ? activePopulation.values[selected.municipalityCode]
+    ? usesCitizenship
+      ? (structureSeries?.years[String(year)]?.values[selected.municipalityCode]?.[0] ?? activePopulation.values[selected.municipalityCode])
+      : activePopulation.values[selected.municipalityCode]
     : 0;
   const selectedAgeCounts =
     selected && activeDemography
@@ -520,16 +650,14 @@ export function MunicipalitiesWorkspace() {
   const statisticalCorrection = selectedMovementCounts
     ? movementStatisticalCorrection(selectedMovementCounts)
     : null;
-  const previousYear = year > populationSeries.firstYear ? year - 1 : null;
+  const previousYear = year > availableFirstYear! ? year - 1 : null;
   const activeValue = selected
     ? (metricValues[selected.municipalityCode] ?? null)
     : null;
   const metricValueForYear = (targetYear: number) =>
     selected
       ? metric === "population"
-        ? populationSeries.years[String(targetYear)].values[
-            selected.municipalityCode
-          ]
+        ? populationValueFor(selected.municipalityCode, targetYear)
         : metric === "age"
           ? demographySeries
             ? valueForCounts(
@@ -542,14 +670,14 @@ export function MunicipalitiesWorkspace() {
       : null;
   const previousValue =
     previousYear === null ? null : metricValueForYear(previousYear);
-  const firstValue = metricValueForYear(populationSeries.firstYear);
+  const firstValue = metricValueForYear(availableFirstYear!);
   const historyAvailable =
-    metric === "population" ||
+    (metric === "population" && (!usesCitizenship || structureSeries)) ||
     (metric === "age" && demographySeries) ||
     (metric === "movement" && movementSeries);
   const history =
     selected && historyAvailable
-      ? municipalityPopulationYears().map((historyYear) => ({
+      ? municipalityPopulationYears().filter((historyYear) => historyYear >= availableFirstYear! && historyYear <= availableLatestYear!).map((historyYear) => ({
           year: historyYear,
           value: metricValueForYear(historyYear) ?? 0,
         }))
@@ -557,22 +685,28 @@ export function MunicipalitiesWorkspace() {
   const chartFormatter =
     metric === "movement"
       ? movementFormatter
-      : metric === "population" || (!indicator && ageMeasure === "persons")
-        ? personsFormatter
-        : indicator && indicatorUnit === "per-100"
+      : metric === "population"
+        ? populationViewFormatter
+        : !indicator && ageMeasure === "persons"
+          ? personsFormatter
+        : indicator && (indicatorUnit === "per-100" || indicatorUnit === "years")
           ? ratioFormatter
           : shareFormatter;
   const chartUnit =
     metric === "movement"
       ? movementUnitLabel
-      : metric === "population" || (!indicator && ageMeasure === "persons")
-        ? t("populationUnit")
+      : metric === "population"
+        ? populationUnitLabel
+        : !indicator && ageMeasure === "persons"
+          ? t("populationUnit")
         : indicatorUnit === "per-100"
           ? t("per100Persons")
-          : "";
+          : indicatorUnit === "years"
+            ? t("yearsUnit")
+            : "";
   const metricLabel =
     metric === "population"
-      ? t("population")
+      ? populationViewLabels[populationView]
       : metric === "movement"
         ? movementLabels[movementView]
         : indicator
@@ -591,7 +725,13 @@ export function MunicipalitiesWorkspace() {
                   : "sexAll",
             );
   const scaleDomain =
-    metric === "movement"
+    metric === "population"
+      ? populationView === "count"
+        ? null
+        : populationView === "density"
+          ? densityScale
+          : structureSeries?.scales[populationView] ?? null
+      : metric === "movement"
       ? (movementSeries?.scales[movementView] ?? null)
       : metric !== "age" || !demographySeries
         ? null
@@ -603,12 +743,18 @@ export function MunicipalitiesWorkspace() {
     comparison: number | null,
   ) => {
     if (current === null || comparison === null) return "—";
+    if (metric === "population") {
+      if (populationUnit === "share") return signedDecimalFormatter.format((current - comparison) * 100) + " " + t("percentagePoints");
+      if (populationUnit === "per-square-kilometer") return signedDecimalFormatter.format(current - comparison) + " " + t("populationDensityUnit");
+      return formatSigned(current - comparison, personsFormatter);
+    }
     if (metric === "movement")
       return movementUnit === "persons"
         ? formatSigned(current - comparison, personsFormatter)
         : signedDecimalFormatter.format(current - comparison) +
             " " +
             t("per1000Inhabitants");
+    if (indicatorUnit === "years") return signedDecimalFormatter.format(current - comparison) + " " + t("yearsUnit");
     if (indicatorUnit === "per-100")
       return (
         signedDecimalFormatter.format(current - comparison) + " " + t("points")
@@ -622,7 +768,7 @@ export function MunicipalitiesWorkspace() {
     return formatSigned(current - comparison, personsFormatter);
   };
   const averageAnnualPopulationChange =
-    metric === "population" &&
+    metric === "population" && populationView === "count" &&
     firstValue &&
     activeValue &&
     year > populationSeries.firstYear
@@ -715,6 +861,9 @@ export function MunicipalitiesWorkspace() {
           austriaBounds={index.bounds}
           selected={selected}
           metric={metric}
+          populationView={populationView}
+          populationDefinition={populationViewDefinitions[populationView] ?? null}
+          usePopulationClasses={metric === "population" && populationView === "count"}
           metricValues={metricValues}
           tooltipValues={tooltipValues}
           scaleDomain={scaleDomain}
@@ -722,8 +871,8 @@ export function MunicipalitiesWorkspace() {
             metric === "movement" ? movementMetricPalette(movementView) : null
           }
           year={year}
-          firstYear={populationSeries.firstYear}
-          latestYear={populationSeries.latestYear}
+          firstYear={availableFirstYear!}
+          latestYear={availableLatestYear!}
           ageView={ageView}
           ageMeasure={ageMeasure}
           sex={sex}
@@ -739,12 +888,15 @@ export function MunicipalitiesWorkspace() {
             metric === "movement" && !movementSeries && !movementError
           }
           movementError={movementError}
+          structureLoading={usesCitizenship && !structureSeries && !structureError}
+          structureError={structureError}
           onYearChange={(value) =>
             setParameter("populationYear", String(value))
           }
           onMetricChange={(value) =>
             setParameter("metric", value === "population" ? null : value)
           }
+          onPopulationViewChange={updatePopulationView}
           onAgeViewChange={updateAgeView}
           onAgeMeasureChange={(value) => setParameter("ageMeasure", value)}
           onSexChange={(value) => setParameter("sex", value)}
@@ -763,7 +915,9 @@ export function MunicipalitiesWorkspace() {
             reference:
               metric === "movement"
                 ? t("movementReference", { year })
-                : t("populationReference", { year }),
+                : usesCitizenship
+                  ? t("structureReference", { year })
+                  : t("populationReference", { year }),
             year: t("populationYear"),
             previousYear: t("previousPopulationYear"),
             nextYear: t("nextPopulationYear"),
@@ -771,6 +925,8 @@ export function MunicipalitiesWorkspace() {
             populationMetric: t("metricPopulation"),
             ageMetric: t("metricAge"),
             movementMetric: t("metricMovement"),
+            populationView: t("populationView"),
+            populationViews: populationViewLabels,
             ageView: t("ageView"),
             movementView: t("movementView"),
             ageGroupsHeading: t("ageGroupsHeading"),
@@ -793,12 +949,16 @@ export function MunicipalitiesWorkspace() {
             ageError: t("ageLayerError"),
             loadingMovement: t("movementLayerLoading"),
             movementError: t("movementLayerError"),
+            loadingStructure: t("structureLayerLoading"),
+            structureError: t("structureLayerError"),
           }}
           selectedMetricHistory={history}
           metricChartLabel={
             selected
               ? metric === "population"
-                ? t("populationChartLabel", { municipality: selected.name })
+                ? populationView === "count"
+                  ? t("populationChartLabel", { municipality: selected.name })
+                  : t("populationViewChartLabel", { municipality: selected.name, metric: metricLabel })
                 : metric === "movement"
                   ? t("movementChartLabel", {
                       municipality: selected.name,
@@ -839,42 +999,36 @@ export function MunicipalitiesWorkspace() {
                 </dd>
                 {metric === "population" ? (
                   <>
+                    {populationView !== "count" && (
+                      <>
+                        <dt className="text-muted-foreground">{populationViewLabels[populationView]}</dt>
+                        <dd className="font-semibold tabular-nums">
+                          {activeValue === null ? "—" : populationViewFormatter.format(activeValue) + (populationUnitLabel ? " " + populationUnitLabel : "")}
+                        </dd>
+                      </>
+                    )}
+                    {populationView === "density" && (
+                      <>
+                        <dt className="text-muted-foreground">{t("municipalityArea")}</dt>
+                        <dd className="font-medium tabular-nums">{ratioFormatter.format(selected.areaSquareKilometers)} {t("areaUnit")}</dd>
+                      </>
+                    )}
+                    <dt className="text-muted-foreground">{t("populationChangePreviousYear")}</dt>
+                    <dd className="font-medium tabular-nums">{formatMetricChange(activeValue, previousValue)}</dd>
                     <dt className="text-muted-foreground">
-                      {t("populationChangePreviousYear")}
+                      {t("populationChangeSinceFirstYear", { year: availableFirstYear! })}
                     </dt>
-                    <dd className="font-medium tabular-nums">
-                      {activeValue === null || previousValue === null
-                        ? "—"
-                        : formatSigned(
-                            activeValue - previousValue,
-                            personsFormatter,
-                          )}
-                    </dd>
-                    <dt className="text-muted-foreground">
-                      {t("populationChangeSinceFirstYear", {
-                        year: populationSeries.firstYear,
-                      })}
-                    </dt>
-                    <dd className="font-medium tabular-nums">
-                      {activeValue === null || firstValue === null
-                        ? "—"
-                        : formatSigned(
-                            activeValue - firstValue,
-                            personsFormatter,
-                          )}
-                    </dd>
-                    <dt className="text-muted-foreground">
-                      {t("populationAverageAnnualChange", {
-                        year: populationSeries.firstYear,
-                      })}
-                    </dt>
-                    <dd className="font-medium tabular-nums">
-                      {averageAnnualPopulationChange === null
-                        ? "—"
-                        : signedShareFormatter.format(
-                            averageAnnualPopulationChange,
-                          )}
-                    </dd>
+                    <dd className="font-medium tabular-nums">{formatMetricChange(activeValue, firstValue)}</dd>
+                    {populationView === "count" && (
+                      <>
+                        <dt className="text-muted-foreground">
+                          {t("populationAverageAnnualChange", { year: populationSeries.firstYear })}
+                        </dt>
+                        <dd className="font-medium tabular-nums">
+                          {averageAnnualPopulationChange === null ? "—" : signedShareFormatter.format(averageAnnualPopulationChange)}
+                        </dd>
+                      </>
+                    )}
                   </>
                 ) : metric === "movement" ? (
                   <>
@@ -918,7 +1072,7 @@ export function MunicipalitiesWorkspace() {
                     <dd className="font-semibold tabular-nums">
                       {activeValue === null
                         ? "—"
-                        : `${indicatorFormatter.format(activeValue)}${indicatorUnit === "per-100" ? ` ${t("per100Persons")}` : ""}`}
+                        : indicatorFormatter.format(activeValue) + (indicatorUnitLabel ? " " + indicatorUnitLabel : "")}
                     </dd>
                     <dt className="text-muted-foreground">
                       {t("ageChangePreviousYear")}
@@ -986,7 +1140,9 @@ export function MunicipalitiesWorkspace() {
                 <Users className="size-3.5" />
                 {metric === "movement"
                   ? t("movementReference", { year })
-                  : t("populationReference", { year })}
+                  : usesCitizenship
+                    ? t("structureReference", { year })
+                    : t("populationReference", { year })}
               </p>
               <Button
                 variant="outline"
@@ -1039,6 +1195,23 @@ export function MunicipalitiesWorkspace() {
                 firstYear: demographySeries.firstYear,
                 latestYear: demographySeries.latestYear,
               })}
+            </p>
+          )}
+          {structureSeries && (
+            <p className="mt-2">
+              {t("structureDataBasis", {
+                firstYear: structureSeries.firstYear,
+                latestYear: structureSeries.latestYear,
+              })}{" "}
+              <a
+                className="underline underline-offset-2 hover:text-foreground"
+                href={structureSeries.source.url}
+                target="_blank"
+                rel="noreferrer"
+              >
+                {structureSeries.source.title}
+              </a>
+              {" (" + structureSeries.source.license + ")."}
             </p>
           )}
           {movementSeries && (

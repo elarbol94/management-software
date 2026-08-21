@@ -24,6 +24,7 @@ import type {
   MunicipalityProperties,
 } from "../data";
 import type { MovementMetricId, MovementPalette } from "../movement";
+import type { PopulationViewId } from "../structure";
 import { POPULATION_CLASSES } from "../population";
 import { MunicipalityMetricChart } from "./municipality-metric-chart";
 
@@ -206,6 +207,8 @@ type Labels = {
   populationMetric: string;
   ageMetric: string;
   movementMetric: string;
+  populationView: string;
+  populationViews: Record<PopulationViewId, string>;
   ageView: string;
   movementView: string;
   ageGroupsHeading: string;
@@ -221,12 +224,17 @@ type Labels = {
   ageError: string;
   loadingMovement: string;
   movementError: string;
+  loadingStructure: string;
+  structureError: string;
 };
 
 export function MunicipalityMap({
   austriaBounds,
   selected,
   metric,
+  populationView,
+  populationDefinition,
+  usePopulationClasses,
   metricValues,
   tooltipValues,
   scaleDomain,
@@ -245,8 +253,11 @@ export function MunicipalityMap({
   ageError,
   movementLoading,
   movementError,
+  structureLoading,
+  structureError,
   onYearChange,
   onMetricChange,
+  onPopulationViewChange,
   onAgeViewChange,
   onAgeMeasureChange,
   onSexChange,
@@ -263,6 +274,9 @@ export function MunicipalityMap({
   austriaBounds: MunicipalityBounds;
   selected: MunicipalityIndexItem | null;
   metric: MapMetric;
+  populationView: PopulationViewId;
+  populationDefinition: string | null;
+  usePopulationClasses: boolean;
   metricValues: Record<string, number | null>;
   tooltipValues: Record<string, string> | null;
   scaleDomain: [number, number] | null;
@@ -281,8 +295,11 @@ export function MunicipalityMap({
   ageError: boolean;
   movementLoading: boolean;
   movementError: boolean;
+  structureLoading: boolean;
+  structureError: boolean;
   onYearChange: (year: number) => void;
   onMetricChange: (metric: MapMetric) => void;
+  onPopulationViewChange: (view: PopulationViewId) => void;
   onAgeViewChange: (view: AgeViewId) => void;
   onAgeMeasureChange: (measure: AgeMeasure) => void;
   onSexChange: (sex: SexFilter) => void;
@@ -335,16 +352,16 @@ export function MunicipalityMap({
       );
     if (map.getLayer(FILL_LAYER_ID)) {
       const color =
-        metric === "age" && scaleDomain
-          ? sequentialColorExpression(scaleDomain, AGE_COLORS)
-          : metric === "movement" && scaleDomain
+        usePopulationClasses || !scaleDomain
+          ? POPULATION_COLOR
+          : metric === "movement"
             ? movementPalette === "diverging"
               ? divergingColorExpression(scaleDomain)
               : sequentialColorExpression(scaleDomain, MOVEMENT_COLORS)
-            : POPULATION_COLOR;
+            : sequentialColorExpression(scaleDomain, AGE_COLORS);
       map.setPaintProperty(FILL_LAYER_ID, "fill-color", color);
     }
-  }, [metric, metricValues, movementPalette, ready, scaleDomain]);
+  }, [metric, metricValues, movementPalette, ready, scaleDomain, usePopulationClasses]);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -459,8 +476,8 @@ export function MunicipalityMap({
       title.textContent = properties.name;
       const value = document.createElement("span");
       value.textContent =
-        live.metric !== "population"
-          ? (live.tooltipValues?.[properties.municipalityCode] ?? "—")
+        live.tooltipValues
+          ? (live.tooltipValues[properties.municipalityCode] ?? "—")
           : `${live.labels.population}: ${personsFormatter.format(live.metricValues[properties.municipalityCode] ?? 0)}`;
       const location = document.createElement("span");
       location.textContent = `${properties.state} · ${live.labels.municipalityCode} ${properties.municipalityCode}`;
@@ -590,6 +607,36 @@ export function MunicipalityMap({
             <option value="movement">{labels.movementMetric}</option>
           </select>
         </div>
+        {metric === "population" && (
+          <div className="mt-2 space-y-2 border-t pt-2">
+            <div className="grid grid-cols-[5.5rem_1fr] items-center gap-2">
+              <label htmlFor="municipality-population-view" className="text-[10px] font-semibold">
+                {labels.populationView}
+              </label>
+              <select
+                id="municipality-population-view"
+                value={populationView}
+                className="h-8 min-w-0 rounded-md border bg-background px-2 text-[10px]"
+                onChange={(event) => onPopulationViewChange(event.target.value as PopulationViewId)}
+              >
+                {Object.entries(labels.populationViews).map(([id, label]) => (
+                  <option key={id} value={id}>{label}</option>
+                ))}
+              </select>
+            </div>
+            {populationDefinition && (
+              <p className="text-[10px] leading-4 text-muted-foreground" data-testid="population-definition">
+                {populationDefinition}
+              </p>
+            )}
+            {structureLoading && (
+              <p className="text-[10px] text-muted-foreground">{labels.loadingStructure}</p>
+            )}
+            {structureError && (
+              <p className="text-[10px] text-destructive" role="alert">{labels.structureError}</p>
+            )}
+          </div>
+        )}
         {metric === "age" && (
           <div className="mt-2 space-y-2 border-t pt-2">
             <div className="grid grid-cols-[5.5rem_1fr] items-center gap-2">
@@ -769,7 +816,7 @@ export function MunicipalityMap({
         <p className="mt-0.5 text-[10px] text-muted-foreground">
           {labels.reference}
         </p>
-        {metric === "population" ? (
+        {usePopulationClasses ? (
           <ul className="mt-2 space-y-1" aria-label={metricLabel}>
             {POPULATION_CLASSES.map((item) => (
               <li

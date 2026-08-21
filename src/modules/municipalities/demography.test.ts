@@ -32,12 +32,17 @@ describe("municipality demography", () => {
     expect(demographyPopulation(counts, "all")).toBe(796);
   });
 
-  it("derives the four indicators from the same representative values", () => {
+  it("derives all demographic indicators from the same representative values", () => {
     const counts = series.years["2013"].values["20622"];
     expect(demographicIndicatorValue(counts, "youth-share")).toBeCloseTo(121 / 796);
     expect(demographicIndicatorValue(counts, "senior-share")).toBeCloseTo(121 / 796);
     expect(demographicIndicatorValue(counts, "old-age-dependency")).toBeCloseTo((121 / 554) * 100);
+    expect(demographicIndicatorValue(counts, "child-dependency")).toBeCloseTo((121 / 554) * 100);
+    expect(demographicIndicatorValue(counts, "total-dependency")).toBeCloseTo((242 / 554) * 100);
     expect(demographicIndicatorValue(counts, "aging-index")).toBe(100);
+    expect(demographicIndicatorValue(counts, "average-age")).toBeCloseTo((counts.a[0] + counts.a[1]) / 796);
+    expect(demographicIndicatorValue(counts, "women-share")).toBeCloseTo(397 / 796);
+    expect(demographicIndicatorValue(counts, "women-per-100-men")).toBeCloseTo((397 / 399) * 100);
   });
 
   it("maps single ages and the 100+ special class", () => {
@@ -52,6 +57,7 @@ describe("municipality demography", () => {
     const aggregate = aggregateDemography(`${header}\nA10-2025;C11-1;GRGEMAKT-90101;GALTEJ112-1;2\nA10-2025;C11-2;GRGEMAKT-90201;GALTEJ112-1;3`, 2025);
     expect(aggregate.get("90001")?.m[0]).toBe(2);
     expect(aggregate.get("90001")?.f[0]).toBe(3);
+    expect(aggregate.get("90001")?.a).toEqual([0, 0]);
     expect(() => aggregateDemography(`${header}\nA10-2025;C11-9;GRGEMAKT-10101;GALTEJ112-1;1`, 2025)).toThrow("Geschlechtscode");
   });
 });

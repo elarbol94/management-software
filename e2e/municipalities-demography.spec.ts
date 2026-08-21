@@ -42,7 +42,7 @@ test("age structure state, details and chart are shareable and interactive", asy
   await page.reload();
   await expect(page.getByLabel("Ansicht")).toHaveValue("65-79");
   await expect(page.getByRole("button", { name: "Frauen", exact: true })).toHaveAttribute("aria-pressed", "true");
-  await expect(details.getByText("55 Personen", { exact: true })).toBeVisible();
+  await expect(details.getByText("55 Personen", { exact: true })).toBeVisible({ timeout: 15_000 });
 
   await page.getByLabel("Ansicht").selectOption("old-age-dependency");
   await expect(page).toHaveURL(/ageIndicator=old-age-dependency/);
@@ -53,6 +53,15 @@ test("age structure state, details and chart are shareable and interactive", asy
   await expect(chart.getByTestId("municipality-metric-chart-tooltip")).toHaveText("2013: 21,8 je 100 Personen");
   await page.reload();
   await expect(page.getByLabel("Ansicht")).toHaveValue("old-age-dependency");
+
+  await page.getByLabel("Ansicht").selectOption("average-age");
+  await expect(page.getByTestId("indicator-definition")).toContainText("Arithmetisches Mittel");
+  await expect(details.getByText("39,7 Jahre", { exact: true })).toBeVisible();
+  await chart.getByTestId("municipality-metric-chart-point-2013").hover();
+  await expect(chart.getByTestId("municipality-metric-chart-tooltip")).toHaveText("2013: 39,7 Jahre");
+
+  await page.getByLabel("Ansicht").selectOption("women-share");
+  await expect(details.getByText("49,9 %", { exact: true })).toBeVisible();
 
   await page.setViewportSize({ width: 390, height: 844 });
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
