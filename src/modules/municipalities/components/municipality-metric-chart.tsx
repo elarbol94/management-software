@@ -31,6 +31,24 @@ export function domainCrossesZero(domain: { minimum: number; maximum: number }) 
   return domain.minimum < 0 && domain.maximum > 0;
 }
 
+const TICK_FACTORS = [1, 2, 2.5, 5, 10];
+
+// Gridlines sit on round values inside the padded domain instead of on the padded
+// bounds themselves, which would otherwise be labelled like "314.000,08 Personen".
+export function chartTicks(domain: { minimum: number; maximum: number }, count = 4) {
+  const span = domain.maximum - domain.minimum;
+  if (!(span > 0)) return [domain.maximum];
+  const rough = span / count;
+  const magnitude = 10 ** Math.floor(Math.log10(rough));
+  const step = (TICK_FACTORS.find((factor) => factor * magnitude >= rough) ?? 10) * magnitude;
+  const first = Math.ceil(domain.minimum / step);
+  const last = Math.floor(domain.maximum / step);
+  if (last < first) return [(domain.minimum + domain.maximum) / 2];
+  const ticks: number[] = [];
+  for (let index = last; index >= first; index -= 1) ticks.push(index * step);
+  return ticks;
+}
+
 export function MunicipalityMetricChart({
   metricLabel,
   municipalityName,
@@ -92,7 +110,7 @@ export function MunicipalityMetricChart({
     };
   }, [points, selectedYear]);
 
-  const ticks = chart ? [chart.domain.maximum, (chart.domain.minimum + chart.domain.maximum) / 2, chart.domain.minimum] : [];
+  const ticks = chart ? chartTicks(chart.domain) : [];
   const active = chart ? (chart.points.find((point) => point.year === hoveredYear) ?? chart.selected) : null;
   const zeroLineVisible = chart ? domainCrossesZero(chart.domain) : false;
   const previousPoint = active && chart ? (chart.points.filter((point) => point.year < active.year).at(-1) ?? null) : null;

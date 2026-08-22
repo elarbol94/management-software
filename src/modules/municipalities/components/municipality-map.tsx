@@ -246,6 +246,9 @@ type Labels = {
   costsError: string;
   loadingStructure: string;
   structureError: string;
+  zoomHintWindows: string;
+  zoomHintMac: string;
+  zoomHintMobile: string;
 };
 
 export function MunicipalityMap({
@@ -444,6 +447,11 @@ export function MunicipalityMap({
       maxZoom: 14,
       attributionControl: { compact: true },
       cooperativeGestures: true,
+      locale: {
+        "CooperativeGesturesHandler.WindowsHelpText": liveRef.current.labels.zoomHintWindows,
+        "CooperativeGesturesHandler.MacHelpText": liveRef.current.labels.zoomHintMac,
+        "CooperativeGesturesHandler.MobileHelpText": liveRef.current.labels.zoomHintMobile,
+      },
     });
     mapRef.current = map;
     const popup = new maplibregl.Popup({

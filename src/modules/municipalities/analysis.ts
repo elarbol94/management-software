@@ -229,6 +229,22 @@ export function datasetUnit(dataset: MunicipalityDatasetRef) {
     ? "currency-per-person" : "share";
 }
 
+// `AnalysisSeries.unit` stays a machine identity because operators compare it for
+// compatibility; only the rendered label is translated.
+export const ANALYSIS_UNIT_IDS = [
+  "persons", "per-square-kilometer", "share", "per-100", "per-1000", "years", "currency-per-person",
+] as const;
+
+export function analysisUnitLabel(unit: string, translate: (id: (typeof ANALYSIS_UNIT_IDS)[number]) => string) {
+  if (!unit || unit === "boolean") return "";
+  return unit
+    .split(/([·/])/)
+    .map((part) => (ANALYSIS_UNIT_IDS as readonly string[]).includes(part)
+      ? translate(part as (typeof ANALYSIS_UNIT_IDS)[number])
+      : part)
+    .join("");
+}
+
 export function resolveMunicipalityDataset(dataset: MunicipalityDatasetRef, data: MunicipalityAnalysisData): AnalysisSeries {
   const points: AnalysisPoint[] = [];
   const firstYear = dataset.kind === "cost-share" ? (data.costs?.firstYear ?? 2010) : data.population.firstYear;

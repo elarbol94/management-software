@@ -266,7 +266,22 @@
     "emptyAnalysisTitle": "Empty analysis workspace",
     "emptyAnalysisDescription": "Add a municipality dataset from Overview or drag an operator from the left onto the canvas.",
     "booleanTrue": "True",
-    "booleanFalse": "False"
+    "booleanFalse": "False",
+    "units": {
+      "persons": "persons",
+      "per-square-kilometer": "inh./km²",
+      "share": "share",
+      "per-100": "per 100",
+      "per-1000": "per 1,000",
+      "years": "years",
+      "currency-per-person": "€ per capita"
+    },
+    "mapZoomHintWindows": "Use Ctrl + scroll to zoom the map",
+    "mapZoomHintMac": "Use ⌘ + scroll to zoom the map",
+    "mapZoomHintMobile": "Use two fingers to move the map",
+    "analysisNodeRemoved": "Block removed.",
+    "analysisUndo": "Undo",
+    "analysisUpdatedAt": "Last edited: {date}"
   },
   "municipalityInvestments": {
     "back": "Back to municipality overview",
@@ -338,7 +353,19 @@
     "investmentType3414": "Technical equipment, vehicles and machinery",
     "investmentType3415": "Office, operating and business equipment",
     "investmentType3416": "Cultural assets",
-    "investmentType3417": "Equity interests"
+    "investmentType3417": "Equity interests",
+    "approachCode": "Approach code",
+    "accountText": "Account label",
+    "accountCode": "Account code",
+    "downloadCsv": "Download CSV",
+    "loadMore": "Load {count} more positions",
+    "shownCount": "Showing {shown} of {total} positions.",
+    "period": "Period",
+    "trendDescription": "All years, independent of the selected year filter.",
+    "detailedHint": "Position comes from the municipality detail of the final account.",
+    "aggregatedHint": "Position comes from the aggregated statistics file.",
+    "assetMatchedHint": "Asset details reconcile to the cent and map unambiguously.",
+    "assetAmbiguousHint": "Asset details exist but cannot be mapped unambiguously, so their amounts are not carried over."
   },
   "auth": {
     "loginTitle": "Sign in",

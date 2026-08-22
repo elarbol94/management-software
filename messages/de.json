@@ -266,7 +266,22 @@
     "emptyAnalysisTitle": "Leere Analysefläche",
     "emptyAnalysisDescription": "Füge im Überblick einen Gemeindedatensatz hinzu oder ziehe links einen Operator auf die Fläche.",
     "booleanTrue": "Wahr",
-    "booleanFalse": "Falsch"
+    "booleanFalse": "Falsch",
+    "units": {
+      "persons": "Personen",
+      "per-square-kilometer": "Einw./km²",
+      "share": "Anteil",
+      "per-100": "je 100",
+      "per-1000": "je 1.000",
+      "years": "Jahre",
+      "currency-per-person": "€ pro Kopf"
+    },
+    "mapZoomHintWindows": "Zum Zoomen Strg + Scrollen verwenden",
+    "mapZoomHintMac": "Zum Zoomen ⌘ + Scrollen verwenden",
+    "mapZoomHintMobile": "Zum Zoomen zwei Finger verwenden",
+    "analysisNodeRemoved": "Baustein entfernt.",
+    "analysisUndo": "Rückgängig",
+    "analysisUpdatedAt": "Zuletzt geändert: {date}"
   },
   "municipalityInvestments": {
     "back": "Zur Gemeindeübersicht",
@@ -338,7 +353,19 @@
     "investmentType3414": "Technische Anlagen, Fahrzeuge und Maschinen",
     "investmentType3415": "Amts-, Betriebs- und Geschäftsausstattung",
     "investmentType3416": "Kulturgüter",
-    "investmentType3417": "Beteiligungen"
+    "investmentType3417": "Beteiligungen",
+    "approachCode": "Ansatzcode",
+    "accountText": "Kontobezeichnung",
+    "accountCode": "Kontocode",
+    "downloadCsv": "CSV herunterladen",
+    "loadMore": "Weitere {count} Positionen laden",
+    "shownCount": "{shown} von {total} Positionen angezeigt.",
+    "period": "Zeitraum",
+    "trendDescription": "Alle Jahre, unabhängig vom gewählten Jahresfilter.",
+    "detailedHint": "Position stammt aus dem Gemeindedetail des Rechnungsabschlusses.",
+    "aggregatedHint": "Position stammt aus der aggregierten Statistikdatei.",
+    "assetMatchedHint": "Vermögensdetails sind centgenau und eindeutig zugeordnet.",
+    "assetAmbiguousHint": "Vermögensdetails sind vorhanden, aber nicht eindeutig zuordenbar – die Beträge werden daher nicht übernommen."
   },
   "auth": {
     "loginTitle": "Anmelden",

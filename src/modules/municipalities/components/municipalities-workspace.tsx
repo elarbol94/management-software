@@ -1207,6 +1207,9 @@ export function MunicipalitiesWorkspace() {
             structureError: t("structureLayerError"),
             addToAnalysis: t("addToAnalysis"),
             dragToAnalysis: t("dragToAnalysis"),
+            zoomHintWindows: t("mapZoomHintWindows"),
+            zoomHintMac: t("mapZoomHintMac"),
+            zoomHintMobile: t("mapZoomHintMobile"),
           }}
           selectedMetricHistory={history}
           metricChartLabel={

@@ -21,6 +21,7 @@ import {
 } from "../investments";
 
 type SortKey = "year" | "description" | "amount";
+const PAGE_SIZE = 200;
 export type InitialInvestmentFilters = {
   year?: string;
   taskArea?: string;
@@ -47,6 +48,7 @@ export function MunicipalityInvestmentsClient({
   const [sort, setSort] = useState<SortKey>("amount");
   const [direction, setDirection] = useState<-1 | 1>(-1);
   const [selectedPosition, setSelectedPosition] = useState<MunicipalityInvestmentPosition | null>(null);
+  const [page, setPage] = useState({ key: "", count: PAGE_SIZE });
   const currency = useMemo(() => new Intl.NumberFormat(locale, {
     style: "currency", currency: "EUR", maximumFractionDigits: 0,
   }), [locale]);
@@ -75,6 +77,10 @@ export function MunicipalityInvestmentsClient({
     window.history.replaceState(null, "", `${window.location.pathname}${parameters.size ? `?${parameters}` : ""}`);
   }, [defaultYear, investmentType, minimum, query, taskArea, year]);
 
+  // Changing any filter or sort collapses the table back to the first page.
+  const pageKey = [year, taskArea, investmentType, minimum, query, sort, direction].join("|");
+  const visibleCount = page.key === pageKey ? page.count : PAGE_SIZE;
+
   const normalizedQuery = normalizeInvestmentDescription(query);
   const minimumCents = (Number(minimum.replace(",", ".")) || 0) * 100;
   const matches = (position: MunicipalityInvestmentPosition, omit?: "year" | "task" | "type") => (
@@ -98,7 +104,10 @@ export function MunicipalityInvestmentsClient({
         : `${left.approachText} ${left.accountText}`.localeCompare(`${right.approachText} ${right.accountText}`, locale);
     return result * direction;
   });
-  const grouped = sorted.reduce<Array<{ id: InvestmentTaskAreaId; positions: MunicipalityInvestmentPosition[] }>>(
+  // ponytail: slice-and-grow instead of virtualisation — Graz across all years is 2.611
+  // rows, so a page cap is enough; revisit if a municipality ever needs scroll-anchoring.
+  const visible = sorted.slice(0, visibleCount);
+  const grouped = visible.reduce<Array<{ id: InvestmentTaskAreaId; positions: MunicipalityInvestmentPosition[] }>>(
     (groups, position) => {
       const group = groups.find(({ id }) => id === position.taskArea);
       if (group) group.positions.push(position);
@@ -127,8 +136,40 @@ export function MunicipalityInvestmentsClient({
     query ? { id: "query", label: `„${query}“`, clear: () => setQuery("") } : null,
   ].filter((entry): entry is NonNullable<typeof entry> => Boolean(entry));
 
+  const periodLabel = year === "all" ? `${data.availableYears[0]}–${data.availableYears.at(-1)}` : year;
+
   function resetFilters() {
     setYear("all"); setTaskArea("all"); setInvestmentType("all"); setMinimum(""); setQuery("");
+  }
+  function downloadCsv() {
+    // ponytail: separator and decimal mark follow the UI locale, which is what the
+    // reader's Excel expects; no chooser until someone actually needs a third variant.
+    const german = locale.startsWith("de");
+    const separator = german ? ";" : ",";
+    const cell = (value: string | number) => `"${String(value).replaceAll('"', '""')}"`;
+    const amount = (cents: number) => {
+      const value = (cents / 100).toFixed(2);
+      return german ? value.replace(".", ",") : value;
+    };
+    const header = [
+      t("year"), t("taskArea"), t("approachCode"), t("descriptionLabel"), t("accountText"),
+      t("accountCode"), t("investmentType"), t("projectCode"), t("sourceDetail"), t("amount"),
+    ];
+    const rows = sorted.map((position) => [
+      position.year, taskLabels[position.taskArea], position.approachCode, position.approachText,
+      position.accountText, position.accountCode, typeLabels[position.investmentType],
+      position.projectCode,
+      position.detailLevel === "municipality" ? t("detailed") : t("aggregated"),
+      amount(position.amountCents),
+    ]);
+    const csv = [header, ...rows].map((row) => row.map(cell).join(separator)).join("\r\n");
+    const url = URL.createObjectURL(new Blob([`﻿${csv}`], { type: "text/csv;charset=utf-8" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${data.municipality.code}-investments-${periodLabel}.csv`;
+    link.click();
+    // Revoking synchronously can cancel the download before the browser reads the blob.
+    setTimeout(() => URL.revokeObjectURL(url), 0);
   }
   function updateSort(next: SortKey) {
     if (sort === next) setDirection((value) => value === 1 ? -1 : 1);
@@ -150,9 +191,14 @@ export function MunicipalityInvestmentsClient({
           <Badge variant="outline">{data.availableYears[0]}–{data.availableYears.at(-1)}</Badge>
         </div>
       </div>
-      <Button render={<a href={`/api/municipalities/${data.municipality.code}/investments/export`} />}>
-        <Download className="size-4" />{t("downloadHtml")}
-      </Button>
+      <div className="flex flex-wrap gap-2">
+        <Button variant="outline" onClick={downloadCsv} disabled={!filtered.length}>
+          <Download className="size-4" />{t("downloadCsv")}
+        </Button>
+        <Button render={<a href={`/api/municipalities/${data.municipality.code}/investments/export`} />}>
+          <Download className="size-4" />{t("downloadHtml")}
+        </Button>
+      </div>
     </header>
 
     <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4" aria-label={t("summary")}>
@@ -161,7 +207,11 @@ export function MunicipalityInvestmentsClient({
         [t("positions"), integer.format(filtered.length)],
         [t("assetDetails"), integer.format(matchedPositions)],
         [t("averagePosition"), currency.format(averageCents / 100)],
-      ].map(([label, value]) => <Card key={label}><CardHeader><CardDescription>{label}</CardDescription><CardTitle className="text-2xl tabular-nums">{value}</CardTitle></CardHeader></Card>)}
+      ].map(([label, value]) => <Card key={label}><CardHeader>
+        <CardDescription>{label}</CardDescription>
+        <CardTitle className="text-2xl tabular-nums">{value}</CardTitle>
+        <p className="text-xs text-muted-foreground">{t("period")}: {periodLabel}</p>
+      </CardHeader></Card>)}
     </section>
 
     <Card>
@@ -186,7 +236,7 @@ export function MunicipalityInvestmentsClient({
     </Card>
 
     <div className="grid gap-4 xl:grid-cols-[minmax(19rem,0.7fr)_minmax(0,1.3fr)] xl:items-start">
-      <BreakdownCard title={t("trend")} rows={byYear} selected={year} onSelect={(id) => setYear(year === id ? "all" : id)} currency={currency} percent={percent} empty={t("noResults")} />
+      <BreakdownCard title={t("trend")} description={t("trendDescription")} rows={byYear} selected={year} onSelect={(id) => setYear(year === id ? "all" : id)} currency={currency} percent={percent} empty={t("noResults")} />
       <div className="grid gap-4">
         <BreakdownCard title={t("breakdown")} rows={byTask} selected={taskArea} onSelect={(id) => setTaskArea(taskArea === id ? "all" : id)} currency={currency} percent={percent} empty={t("noResults")} />
         <BreakdownCard title={t("typeBreakdown")} rows={byType} selected={investmentType} onSelect={(id) => setInvestmentType(investmentType === id ? "all" : id)} currency={currency} percent={percent} empty={t("noResults")} />
@@ -202,6 +252,12 @@ export function MunicipalityInvestmentsClient({
           <SortableHeader label={t("amount")} onClick={() => updateSort("amount")} align="right" />
         </tr></thead><tbody>{grouped.map((group) => <GroupRows key={group.id} group={group} taskLabels={taskLabels} typeLabels={typeLabels} exactCurrency={exactCurrency} t={t} onSelect={setSelectedPosition} />)}</tbody>
       </table>{!filtered.length && <p className="p-8 text-center text-sm text-muted-foreground">{t("noResults")}</p>}</div>
+      {filtered.length > visible.length && <div className="mt-4 flex flex-wrap items-center justify-center gap-3">
+        <p className="text-sm text-muted-foreground">{t("shownCount", { shown: integer.format(visible.length), total: integer.format(filtered.length) })}</p>
+        <Button variant="outline" size="sm" onClick={() => setPage({ key: pageKey, count: visibleCount + PAGE_SIZE })}>
+          {t("loadMore", { count: integer.format(Math.min(PAGE_SIZE, filtered.length - visible.length)) })}
+        </Button>
+      </div>}
     </CardContent></Card>
 
     <Card className="bg-muted/25"><CardHeader><CardTitle className="flex items-center gap-2"><Database className="size-4" />{t("methodology")}</CardTitle></CardHeader><CardContent className="space-y-2 text-sm leading-6 text-muted-foreground">
@@ -230,13 +286,13 @@ function byMagnitude(left: BreakdownRow, right: BreakdownRow) {
 function Filter({ label, children }: { label: string; children: React.ReactNode }) {
   return <label className="grid gap-1.5 text-xs font-semibold text-muted-foreground"><span>{label}</span>{children}</label>;
 }
-function BreakdownCard({ title, rows, selected, onSelect, currency, percent, empty }: {
-  title: string; rows: BreakdownRow[]; selected: string; onSelect: (id: string) => void;
+function BreakdownCard({ title, description, rows, selected, onSelect, currency, percent, empty }: {
+  title: string; description?: string; rows: BreakdownRow[]; selected: string; onSelect: (id: string) => void;
   currency: Intl.NumberFormat; percent: Intl.NumberFormat; empty: string;
 }) {
   const maximum = Math.max(1, ...rows.map(({ value }) => Math.abs(value)));
   const total = rows.reduce((sum, row) => sum + Math.abs(row.value), 0);
-  return <Card><CardHeader><CardTitle>{title}</CardTitle></CardHeader><CardContent className="space-y-2">
+  return <Card><CardHeader><CardTitle>{title}</CardTitle>{description && <CardDescription>{description}</CardDescription>}</CardHeader><CardContent className="space-y-2">
     {rows.length ? rows.map((row) => {
       const active = selected === row.id;
       const share = total ? Math.abs(row.value) / total : 0;
@@ -265,7 +321,7 @@ function GroupRows({ group, taskLabels, typeLabels, exactCurrency, t, onSelect }
       <td className="px-3 py-3"><button type="button" className="text-left hover:text-teal-700 hover:underline" onClick={() => onSelect(position)}><span className="font-medium">{position.approachText || "—"}</span>{position.accountText && <span className="mt-1 block text-xs text-muted-foreground">{position.accountText} · {position.accountCode}</span>}</button></td>
       <td className="px-3 py-3">{typeLabels[position.investmentType]}<span className="mt-1 block font-mono text-[11px] text-muted-foreground">{position.investmentType}</span></td>
       <td className="px-3 py-3 font-mono text-xs">{position.projectCode}</td>
-      <td className="px-3 py-3"><div className="flex flex-wrap gap-1"><Badge variant="outline">{position.detailLevel === "municipality" ? t("detailed") : t("aggregated")}</Badge>{position.assetMatchStatus === "matched" && <Badge className="bg-teal-700 text-white">{t("assetMatched")}</Badge>}{position.assetMatchStatus === "ambiguous" && <Badge variant="secondary">{t("assetAmbiguous")}</Badge>}</div></td>
+      <td className="px-3 py-3"><div className="flex flex-wrap gap-1"><Badge variant="outline" title={position.detailLevel === "municipality" ? t("detailedHint") : t("aggregatedHint")}>{position.detailLevel === "municipality" ? t("detailed") : t("aggregated")}</Badge>{position.assetMatchStatus === "matched" && <Badge className="bg-teal-700 text-white" title={t("assetMatchedHint")}>{t("assetMatched")}</Badge>}{position.assetMatchStatus === "ambiguous" && <Badge variant="secondary" title={t("assetAmbiguousHint")}>{t("assetAmbiguous")}</Badge>}</div></td>
       <td className="px-3 py-3 text-right font-semibold tabular-nums">{position.amountCents < 0 && <Badge className="mr-2" variant="destructive">{t("correction")}</Badge>}{exactCurrency.format(position.amountCents / 100)}</td>
     </tr>)}</>;
 }

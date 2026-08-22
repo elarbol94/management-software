@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   addDatasetToGraph,
+  analysisUnitLabel,
   applyMunicipalityAnalysisGraphOperations,
   emptyMunicipalityAnalysisGraph,
   evaluateAnalysisOperator,
@@ -188,5 +189,25 @@ describe("municipality cost analysis dataset", () => {
     expect(peer.points[0].value).toEqual(expect.any(Number));
     expect(real.points[0].value as number).toBeGreaterThan(nominal.points[0].value as number);
     expect(real.points.at(-1)?.value).toBeCloseTo(nominal.points.at(-1)?.value as number);
+  });
+});
+
+describe("analysisUnitLabel", () => {
+  const translate = (id: string) => ({
+    persons: "Personen", share: "Anteil", "per-1000": "je 1.000",
+  }[id] ?? id);
+
+  it("translates every atom of a derived unit", () => {
+    expect(analysisUnitLabel("persons/share", translate)).toBe("Personen/Anteil");
+    expect(analysisUnitLabel("persons·per-1000", translate)).toBe("Personen·je 1.000");
+  });
+
+  it("renders nothing for units without a label", () => {
+    expect(analysisUnitLabel("", translate)).toBe("");
+    expect(analysisUnitLabel("boolean", translate)).toBe("");
+  });
+
+  it("leaves unknown atoms untouched instead of failing the lookup", () => {
+    expect(analysisUnitLabel("persons/unknown-unit", translate)).toBe("Personen/unknown-unit");
   });
 });

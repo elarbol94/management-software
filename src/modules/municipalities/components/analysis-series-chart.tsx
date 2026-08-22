@@ -1,12 +1,25 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { useLocale } from "next-intl";
-import type { AnalysisSeries } from "../analysis";
+import { useLocale, useTranslations } from "next-intl";
+import { analysisUnitLabel, type AnalysisSeries } from "../analysis";
+import { chartTicks } from "./municipality-metric-chart";
+
+const PLOT_LEFT = 56;
+const PLOT_RIGHT = 8;
 
 export function AnalysisSeriesChart({ series, label, compact = false, trueLabel, falseLabel }: { series: AnalysisSeries; label: string; compact?: boolean; trueLabel: string; falseLabel: string }) {
   const locale = useLocale();
+  const t = useTranslations("municipalities");
   const [hoveredYear, setHoveredYear] = useState<number | null>(null);
+  const valueFormat = useMemo(() => new Intl.NumberFormat(locale, series.unit === "share"
+    ? { style: "percent", minimumFractionDigits: 1, maximumFractionDigits: 2 }
+    : series.unit === "currency-per-person" ? { style: "currency", currency: "EUR" }
+    : { maximumFractionDigits: 2 }), [locale, series.unit]);
+  const tickFormat = useMemo(() => new Intl.NumberFormat(locale, series.unit === "share"
+    ? { style: "percent", maximumFractionDigits: 1 }
+    : series.unit === "currency-per-person" ? { style: "currency", currency: "EUR", maximumFractionDigits: 0 }
+    : { maximumFractionDigits: 2, notation: "compact" }), [locale, series.unit]);
   const chart = useMemo(() => {
     const valid = series.points.filter((point): point is { year: number; value: number | boolean } => point.value !== null);
     if (!valid.length) return null;
@@ -17,8 +30,10 @@ export function AnalysisSeriesChart({ series, label, compact = false, trueLabel,
     let minimum = Math.min(...validNumeric.map(({ value }) => value));
     let maximum = Math.max(...validNumeric.map(({ value }) => value));
     if (minimum === maximum) { minimum -= 1; maximum += 1; }
-    const x = (year: number) => 8 + ((year - minYear) / (maxYear - minYear || 1)) * 304;
-    const y = (value: number) => 8 + ((maximum - value) / (maximum - minimum)) * (compact ? 48 : 142);
+    const plotLeft = compact ? 8 : PLOT_LEFT;
+    const plotRight = compact ? 312 : 320 - PLOT_RIGHT;
+    const x = (year: number) => plotLeft + ((year - minYear) / (maxYear - minYear || 1)) * (plotRight - plotLeft);
+    const y = (value: number) => 8 + ((maximum - value) / (maximum - minimum)) * (compact ? 48 : 130);
     const points = validNumeric.map((point) => ({ ...point, x: x(point.year), y: y(point.value) }));
     const paths: string[] = [];
     let segment: string[] = [];
@@ -29,28 +44,40 @@ export function AnalysisSeriesChart({ series, label, compact = false, trueLabel,
       } else segment.push(`${segment.length ? "L" : "M"} ${x(point.year)} ${y(point.value)}`);
     }
     if (segment.length) paths.push(segment.join(" "));
-    return { minYear, maxYear, points, paths, zeroY: minimum < 0 && maximum > 0 ? y(0) : null };
+    return {
+      minYear, maxYear, points, paths, plotLeft, plotRight, y,
+      ticks: compact || series.valueType === "boolean" ? [] : chartTicks({ minimum, maximum }, 3),
+      zeroY: minimum < 0 && maximum > 0 ? y(0) : null,
+    };
   }, [compact, series]);
   if (!chart) return <div className={compact ? "h-14" : "grid h-44 place-items-center text-sm text-muted-foreground"}>—</div>;
   const active = chart.points.find(({ year }) => year === hoveredYear) ?? chart.points.at(-1)!;
   const activePoint = series.points.find(({ year }) => year === active.year)!;
   const displayValue = typeof activePoint.value === "boolean"
     ? (activePoint.value ? trueLabel : falseLabel)
-    : new Intl.NumberFormat(locale, series.unit === "share"
-      ? { style: "percent", minimumFractionDigits: 1, maximumFractionDigits: 2 }
-      : series.unit === "currency-per-person" ? { style: "currency", currency: "EUR" }
-      : { maximumFractionDigits: 2 }).format(activePoint.value ?? 0);
+    : valueFormat.format(activePoint.value ?? 0);
+  const unitLabel = analysisUnitLabel(series.unit, (id) => t(`units.${id}`));
   return (
     <div>
       <svg viewBox={`0 0 320 ${compact ? 64 : 170}`} className={compact ? "h-14 w-full" : "h-44 w-full"} role="img" aria-label={label}>
-        {chart.zeroY !== null && <line x1="8" x2="312" y1={chart.zeroY} y2={chart.zeroY} stroke="currentColor" strokeOpacity="0.35" strokeDasharray="3 3" data-testid="analysis-chart-zero-line" />}
+        {chart.ticks.map((tick) => (
+          <g key={tick} data-testid="analysis-chart-tick">
+            <line x1={chart.plotLeft} x2={chart.plotRight} y1={chart.y(tick)} y2={chart.y(tick)} stroke="currentColor" strokeOpacity="0.16" strokeDasharray="3 4" />
+            <text x={chart.plotLeft - 6} y={chart.y(tick) + 3.5} textAnchor="end" className="fill-muted-foreground text-[10px]">{tickFormat.format(tick)}</text>
+          </g>
+        ))}
+        {chart.zeroY !== null && <line x1={chart.plotLeft} x2={chart.plotRight} y1={chart.zeroY} y2={chart.zeroY} stroke="currentColor" strokeOpacity="0.35" strokeDasharray="3 3" data-testid="analysis-chart-zero-line" />}
         {chart.paths.map((path) => <path key={path} d={path} fill="none" stroke="currentColor" strokeWidth={compact ? 3 : 2.5} strokeLinecap="round" strokeLinejoin="round" className="text-teal-700 dark:text-teal-300" />)}
         {chart.points.map((point) => (
           <circle key={point.year} cx={point.x} cy={point.y} r={compact ? 5 : 8} fill="transparent" onPointerEnter={() => setHoveredYear(point.year)} onPointerLeave={() => setHoveredYear(null)} />
         ))}
-        {!compact && <line x1={active.x} x2={active.x} y1="6" y2="154" stroke="currentColor" strokeOpacity="0.2" strokeDasharray="3 3" />}
+        {!compact && <>
+          <line x1={active.x} x2={active.x} y1="6" y2="142" stroke="currentColor" strokeOpacity="0.2" strokeDasharray="3 3" />
+          <text x={chart.plotLeft} y="160" className="fill-muted-foreground text-[10px]">{chart.minYear}</text>
+          <text x={chart.plotRight} y="160" textAnchor="end" className="fill-muted-foreground text-[10px]">{chart.maxYear}</text>
+        </>}
       </svg>
-      {!compact && <p className="text-xs text-muted-foreground" role="status">{active.year}: <span className="font-semibold text-foreground">{displayValue}</span>{series.unit && !["boolean", "share", "currency-per-person"].includes(series.unit) ? ` · ${series.unit}` : ""}</p>}
+      {!compact && <p className="text-xs text-muted-foreground" role="status">{active.year}: <span className="font-semibold text-foreground">{displayValue}</span>{unitLabel && !["share", "currency-per-person"].includes(series.unit) ? ` · ${unitLabel}` : ""}</p>}
     </div>
   );
 }

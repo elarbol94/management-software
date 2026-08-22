@@ -3,7 +3,7 @@
 import "@xyflow/react/dist/style.css";
 import { createId } from "@paralleldrive/cuid2";
 import { useRouter } from "next/navigation";
-import { useTranslations } from "next-intl";
+import { useFormatter, useTranslations } from "next-intl";
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import {
   Background,
@@ -210,9 +210,28 @@ function AnalysisEditor({ analysis, analyses }: { analysis: AnalysisRecord; anal
   const onNodesChange = useCallback((changes: NodeChange<DisplayNode>[]) => {
     for (const change of changes) {
       if (change.type === "remove") {
+        // Backspace/Delete removes a node straight into the persisted graph, so the
+        // removal has to be reversible: keep the node and its edges for the undo action.
+        const removedNode = graphRef.current.nodes.find(({ id }) => id === change.id);
+        const removedEdges = graphRef.current.edges.filter(
+          ({ source, target }) => source === change.id || target === change.id,
+        );
         commitOperations([{
           version: ANALYSIS_OPERATION_VERSION, type: "remove-node", nodeId: change.id,
         }]);
+        if (removedNode) {
+          toast(t("analysisNodeRemoved"), {
+            action: {
+              label: t("analysisUndo"),
+              onClick: () => commitOperations([
+                { version: ANALYSIS_OPERATION_VERSION, type: "add-node", node: removedNode },
+                ...removedEdges.map((edge): MunicipalityAnalysisGraphOperation => ({
+                  version: ANALYSIS_OPERATION_VERSION, type: "add-edge", edge,
+                })),
+              ]),
+            },
+          });
+        }
       } else if (change.type === "position" && change.position) {
         const current = graphRef.current.nodes.find(({ id }) => id === change.id);
         if (current?.position.x === change.position.x && current.position.y === change.position.y) continue;
@@ -229,7 +248,7 @@ function AnalysisEditor({ analysis, analyses }: { analysis: AnalysisRecord; anal
         }
       }
     }
-  }, [commitOperations]);
+  }, [commitOperations, t]);
 
   const connect = useCallback((connection: Connection) => {
     if (!connection.source || !connection.target || (connection.targetHandle !== "a" && connection.targetHandle !== "b")) return;
@@ -372,6 +391,7 @@ function AnalysisEditor({ analysis, analyses }: { analysis: AnalysisRecord; anal
 
 function AnalysisLanding({ analyses }: { analyses: MunicipalityAnalysisSummary[] }) {
   const t = useTranslations("municipalities");
+  const format = useFormatter();
   const router = useRouter();
   return (
     <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_22rem]" data-testid="municipality-analysis-landing">
@@ -379,7 +399,13 @@ function AnalysisLanding({ analyses }: { analyses: MunicipalityAnalysisSummary[]
         <h2 className="text-xl font-semibold">{t("savedAnalyses")}</h2>
         <p className="mt-1 text-sm text-muted-foreground">{t("savedAnalysesDescription")}</p>
         <div className="mt-5 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
-          {analyses.map((analysis) => <Button key={analysis.id} variant="outline" className="h-auto justify-start px-4 py-3" onClick={() => router.push(`/municipalities/analysis?analysis=${encodeURIComponent(analysis.id)}`)}><BarChart3 className="size-4" /><span className="truncate">{analysis.name}</span></Button>)}
+          {analyses.map((analysis) => <Button key={analysis.id} variant="outline" className="h-auto justify-start gap-3 px-4 py-3" onClick={() => router.push(`/municipalities/analysis?analysis=${encodeURIComponent(analysis.id)}`)}>
+            <BarChart3 className="size-4 shrink-0" />
+            <span className="min-w-0 text-left">
+              <span className="block truncate">{analysis.name}</span>
+              <span className="block truncate text-xs font-normal text-muted-foreground">{t("analysisUpdatedAt", { date: format.dateTime(analysis.updatedAt, { dateStyle: "medium", timeStyle: "short" }) })}</span>
+            </span>
+          </Button>)}
           {!analyses.length && <p className="col-span-full rounded-xl border border-dashed p-8 text-center text-sm text-muted-foreground">{t("noAnalyses")}</p>}
         </div>
       </section>
