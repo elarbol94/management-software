@@ -276,6 +276,7 @@
       "years": "years",
       "currency-per-person": "€ per capita"
     },
+    "mapNoData": "No data",
     "mapZoomHintWindows": "Use Ctrl + scroll to zoom the map",
     "mapZoomHintMac": "Use ⌘ + scroll to zoom the map",
     "mapZoomHintMobile": "Use two fingers to move the map",

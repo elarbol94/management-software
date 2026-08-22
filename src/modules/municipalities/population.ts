@@ -1,4 +1,5 @@
 import { EXPECTED_MUNICIPALITY_COUNT } from "./data";
+import { MUNICIPALITY_SEQUENTIAL_COLORS } from "./palette";
 
 export const MUNICIPALITY_POPULATION_FIRST_YEAR = 2002;
 export const MUNICIPALITY_POPULATION_LATEST_YEAR = 2025;
@@ -6,13 +7,17 @@ export const MUNICIPALITY_POPULATION_REFERENCE_DATE = "2025-01-01";
 export const MUNICIPALITY_POPULATION_SCHEMA_VERSION = 1;
 export const MUNICIPALITY_POPULATION_SERIES_SCHEMA_VERSION = 1;
 
+// Breaks follow the actual distribution rather than round decades: Austrian
+// municipalities are small (median ~1.850), so 1.000/2.500/5.000/10.000/50.000 put
+// 64 % of them into the two palest classes and gave the largest ten a class of
+// their own. These six carry roughly 20/19/26/23/12/1 % of all municipalities.
 export const POPULATION_CLASSES = [
-  { minimum: 0, maximum: 999, color: "#e2f2ee" },
-  { minimum: 1_000, maximum: 2_499, color: "#b9ddd6" },
-  { minimum: 2_500, maximum: 4_999, color: "#7fc2b7" },
-  { minimum: 5_000, maximum: 9_999, color: "#42a394" },
-  { minimum: 10_000, maximum: 49_999, color: "#177b70" },
-  { minimum: 50_000, maximum: null, color: "#0a4d47" },
+  { minimum: 0, maximum: 999, color: MUNICIPALITY_SEQUENTIAL_COLORS[0] },
+  { minimum: 1_000, maximum: 1_499, color: MUNICIPALITY_SEQUENTIAL_COLORS[1] },
+  { minimum: 1_500, maximum: 2_499, color: MUNICIPALITY_SEQUENTIAL_COLORS[2] },
+  { minimum: 2_500, maximum: 4_999, color: MUNICIPALITY_SEQUENTIAL_COLORS[3] },
+  { minimum: 5_000, maximum: 19_999, color: MUNICIPALITY_SEQUENTIAL_COLORS[4] },
+  { minimum: 20_000, maximum: null, color: MUNICIPALITY_SEQUENTIAL_COLORS[5] },
 ] as const;
 
 export type MunicipalityPopulationValues = Record<string, number>;

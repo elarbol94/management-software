@@ -276,6 +276,7 @@
       "years": "Jahre",
       "currency-per-person": "€ pro Kopf"
     },
+    "mapNoData": "Keine Daten",
     "mapZoomHintWindows": "Zum Zoomen Strg + Scrollen verwenden",
     "mapZoomHintMac": "Zum Zoomen ⌘ + Scrollen verwenden",
     "mapZoomHintMobile": "Zum Zoomen zwei Finger verwenden",

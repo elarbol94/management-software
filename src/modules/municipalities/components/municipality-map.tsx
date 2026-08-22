@@ -27,6 +27,17 @@ import type {
 } from "../data";
 import type { MovementMetricId, MovementPalette } from "../movement";
 import type { PopulationViewId } from "../structure";
+import {
+  MAP_FILL_OPACITY,
+  MAP_HOVER_FILL_OPACITY,
+  MAP_NO_DATA_COLOR,
+  MAP_NO_DATA_OPACITY,
+  MUNICIPALITY_COST_COLORS,
+  MUNICIPALITY_DIVERGING_COLORS,
+  MUNICIPALITY_DIVERGING_STOPS,
+  MUNICIPALITY_MOVEMENT_COLORS,
+  MUNICIPALITY_SEQUENTIAL_COLORS,
+} from "../palette";
 import { POPULATION_CLASSES } from "../population";
 import { MunicipalityMetricChart } from "./municipality-metric-chart";
 
@@ -65,51 +76,12 @@ const BASE_STYLE: StyleSpecification = {
 const POPULATION_COLOR: ExpressionSpecification = [
   "step",
   ["coalesce", ["feature-state", "metric"], -1],
-  "#d7ddda",
-  0,
-  "#e2f2ee",
-  1_000,
-  "#b9ddd6",
-  2_500,
-  "#7fc2b7",
-  5_000,
-  "#42a394",
-  10_000,
-  "#177b70",
-  50_000,
-  "#0a4d47",
-];
-const AGE_COLORS = [
-  "#e2f2ee",
-  "#b9ddd6",
-  "#7fc2b7",
-  "#42a394",
-  "#177b70",
-  "#0a4d47",
-];
-const MOVEMENT_COLORS = [
-  "#f3e8ff",
-  "#ddd6fe",
-  "#c4b5fd",
-  "#8b5cf6",
-  "#6d28d9",
-  "#4c1d95",
-];
-const COST_COLORS = [
-  "#fffbeb",
-  "#fef3c7",
-  "#fde68a",
-  "#fbbf24",
-  "#d97706",
-  "#92400e",
-];
-const DIVERGING_COLORS = [
-  "#b2182b",
-  "#ef8a62",
-  "#f7f7f7",
-  "#67a9cf",
-  "#2166ac",
-];
+  MAP_NO_DATA_COLOR,
+  ...POPULATION_CLASSES.flatMap(({ minimum, color }) => [minimum, color]),
+] as ExpressionSpecification;
+const AGE_COLORS = [...MUNICIPALITY_SEQUENTIAL_COLORS];
+const MOVEMENT_COLORS = [...MUNICIPALITY_MOVEMENT_COLORS];
+const COST_COLORS = [...MUNICIPALITY_COST_COLORS];
 
 function asMapBounds(
   bounds: MunicipalityBounds,
@@ -168,7 +140,24 @@ function sequentialColorExpression(
       maximum,
       colors[5],
     ],
-    "#d7ddda",
+    MAP_NO_DATA_COLOR,
+  ];
+}
+/** Ascending [value, colour] stops for a diverging scale of ±`maximum`. */
+export function divergingColorStops(maximum: number) {
+  const middle = (MUNICIPALITY_DIVERGING_COLORS.length - 1) / 2;
+  return [
+    ...MUNICIPALITY_DIVERGING_STOPS.map((fraction, index) => ({
+      value: -fraction * maximum,
+      color: MUNICIPALITY_DIVERGING_COLORS[middle - 1 - index],
+      offset: (1 - fraction) / 2,
+    })).reverse(),
+    { value: 0, color: MUNICIPALITY_DIVERGING_COLORS[middle], offset: 0.5 },
+    ...MUNICIPALITY_DIVERGING_STOPS.map((fraction, index) => ({
+      value: fraction * maximum,
+      color: MUNICIPALITY_DIVERGING_COLORS[middle + 1 + index],
+      offset: (1 + fraction) / 2,
+    })),
   ];
 }
 function divergingColorExpression(
@@ -180,6 +169,9 @@ function divergingColorExpression(
     -maximum,
     ["min", maximum, ["feature-state", "metric"]],
   ];
+  // Stops follow the observed quantiles instead of even spacing — see
+  // MUNICIPALITY_DIVERGING_STOPS for why linear spacing left most of Austria white.
+  const stops = divergingColorStops(maximum);
   return [
     "case",
     ["boolean", ["feature-state", "hasMetric"], false],
@@ -187,18 +179,9 @@ function divergingColorExpression(
       "interpolate",
       ["linear"],
       value,
-      -maximum,
-      DIVERGING_COLORS[0],
-      -maximum / 2,
-      DIVERGING_COLORS[1],
-      0,
-      DIVERGING_COLORS[2],
-      maximum / 2,
-      DIVERGING_COLORS[3],
-      maximum,
-      DIVERGING_COLORS[4],
-    ],
-    "#d7ddda",
+      ...stops.flatMap(({ value: stop, color }) => [stop, color]),
+    ] as ExpressionSpecification,
+    MAP_NO_DATA_COLOR,
   ];
 }
 
@@ -246,6 +229,7 @@ type Labels = {
   costsError: string;
   loadingStructure: string;
   structureError: string;
+  noData: string;
   zoomHintWindows: string;
   zoomHintMac: string;
   zoomHintMobile: string;
@@ -421,9 +405,12 @@ export function MunicipalityMap({
     for (const code of nextPeerIds) map.setFeatureState({ source: SOURCE_ID, id: code }, { peer: true });
     peerIdsRef.current = nextPeerIds;
     const highlightPeers = nextPeerIds.size > 0;
+    // Municipalities without a value drop to MAP_NO_DATA_OPACITY so the basemap shows
+    // through: no neutral grey separates from the pale end of a ramp by colour alone.
+    const noData: ExpressionSpecification = ["!", ["boolean", ["feature-state", "hasMetric"], false]];
     map.setPaintProperty(FILL_LAYER_ID, "fill-opacity", highlightPeers
-      ? ["case", ["boolean", ["feature-state", "selected"], false], 0.9, ["boolean", ["feature-state", "peer"], false], 0.82, ["boolean", ["feature-state", "hover"], false], 0.56, 0.24]
-      : ["case", ["boolean", ["feature-state", "hover"], false], 0.82, 0.7]);
+      ? ["case", noData, MAP_NO_DATA_OPACITY, ["boolean", ["feature-state", "selected"], false], 0.9, ["boolean", ["feature-state", "peer"], false], 0.82, ["boolean", ["feature-state", "hover"], false], 0.56, 0.24]
+      : ["case", noData, MAP_NO_DATA_OPACITY, ["boolean", ["feature-state", "hover"], false], MAP_HOVER_FILL_OPACITY, MAP_FILL_OPACITY]);
     map.setPaintProperty("municipality-lines", "line-color", highlightPeers
       ? ["case", ["boolean", ["feature-state", "selected"], false], "#000000", ["boolean", ["feature-state", "peer"], false], "#0f766e", ["boolean", ["feature-state", "hover"], false], "#0f766e", "#ffffff"]
       : ["case", ["boolean", ["feature-state", "selected"], false], "#000000", ["boolean", ["feature-state", "hover"], false], "#0f766e", "#ffffff"]);
@@ -490,9 +477,11 @@ export function MunicipalityMap({
           "fill-color": POPULATION_COLOR,
           "fill-opacity": [
             "case",
+            ["!", ["boolean", ["feature-state", "hasMetric"], false]],
+            MAP_NO_DATA_OPACITY,
             ["boolean", ["feature-state", "hover"], false],
-            0.82,
-            0.7,
+            MAP_HOVER_FILL_OPACITY,
+            MAP_FILL_OPACITY,
           ],
           "fill-outline-color": "#f8faf9",
         },
@@ -601,6 +590,16 @@ export function MunicipalityMap({
 
   const controlButton =
     "rounded-md px-2 py-1 text-[10px] font-medium aria-pressed:bg-teal-700 aria-pressed:text-white hover:bg-accent";
+  const isDiverging =
+    (metric === "movement" && movementPalette === "diverging") ||
+    (metric === "costs" && costMeasure === "peer-deviation");
+  // The bar has to carry the same non-linear stops as the map, otherwise it reports a
+  // value range the fills never use.
+  const legendGradient = isDiverging
+    ? divergingColorStops(1)
+        .map(({ color, offset }) => `${color} ${(offset * 100).toFixed(1)}%`)
+        .join(",")
+    : (metric === "movement" ? MOVEMENT_COLORS : metric === "costs" ? COST_COLORS : AGE_COLORS).join(",");
   return (
     <div
       className="relative h-full min-h-0 overflow-hidden rounded-2xl bg-[#e8ece9]"
@@ -955,14 +954,22 @@ export function MunicipalityMap({
         ) : (
           scaleDomain && (
             <>
-              <div
-                className="mt-2 h-3 rounded-sm border border-black/10"
-                style={{
-                  background: `linear-gradient(to right, ${(metric === "movement" ? (movementPalette === "diverging" ? DIVERGING_COLORS : MOVEMENT_COLORS) : metric === "costs" ? (costMeasure === "peer-deviation" ? DIVERGING_COLORS : COST_COLORS) : AGE_COLORS).join(",")})`,
-                }}
-              />
+              <div className="relative mt-2">
+                <div
+                  className="h-3 rounded-sm border border-black/10"
+                  style={{ background: `linear-gradient(to right, ${legendGradient})` }}
+                />
+                {isDiverging && (
+                  <span
+                    className="absolute -top-0.5 h-4 w-px bg-foreground/60"
+                    style={{ left: "50%" }}
+                    data-testid="legend-zero-marker"
+                  />
+                )}
+              </div>
               <div className="mt-1 flex justify-between gap-2 text-[9px] tabular-nums">
                 <span>{chartValueFormatter.format(scaleDomain[0])}</span>
+                {isDiverging && <span className="text-muted-foreground">0</span>}
                 <span>{chartValueFormatter.format(scaleDomain[1])}</span>
               </div>
               {chartUnitLabel && (
@@ -973,6 +980,13 @@ export function MunicipalityMap({
             </>
           )
         )}
+        <p className="mt-2 flex items-center gap-2 border-t pt-2 text-[10px] text-muted-foreground">
+          <span
+            className="size-3 rounded-[3px] border border-black/10"
+            style={{ backgroundColor: MAP_NO_DATA_COLOR, opacity: MAP_NO_DATA_OPACITY }}
+          />
+          {labels.noData}
+        </p>
       </div>
     </div>
   );

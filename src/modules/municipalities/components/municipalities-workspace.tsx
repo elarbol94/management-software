@@ -1061,7 +1061,9 @@ export function MunicipalitiesWorkspace() {
               <div
                 id="municipality-search-results"
                 role="listbox"
-                className="absolute top-[calc(100%+0.4rem)] max-h-72 w-full overflow-y-auto rounded-xl border bg-popover p-1 shadow-xl"
+                // Opens beside the search box from sm up: dropping straight down covered
+                // the Kennzahl/Ansicht/Jahr panel, hiding the settings being compared.
+                className="absolute top-[calc(100%+0.4rem)] left-0 max-h-72 w-full overflow-y-auto rounded-xl border bg-popover p-1 shadow-xl sm:top-0 sm:left-[calc(100%+0.5rem)]"
               >
                 {results.length ? (
                   results.map((item, position) => (
@@ -1207,6 +1209,7 @@ export function MunicipalitiesWorkspace() {
             structureError: t("structureLayerError"),
             addToAnalysis: t("addToAnalysis"),
             dragToAnalysis: t("dragToAnalysis"),
+            noData: t("mapNoData"),
             zoomHintWindows: t("mapZoomHintWindows"),
             zoomHintMac: t("mapZoomHintMac"),
             zoomHintMobile: t("mapZoomHintMobile"),
