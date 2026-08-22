@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { divergingColorStops } from "./municipality-map";
+import { divergingColorStops, metricColorExpression } from "./municipality-map";
 import { MUNICIPALITY_DIVERGING_COLORS, MUNICIPALITY_DIVERGING_STOPS } from "../palette";
 
 describe("divergingColorStops", () => {
@@ -33,5 +33,46 @@ describe("divergingColorStops", () => {
       expect(offset).toBeLessThanOrEqual(1);
     }
     expect(divergingColorStops(89).find(({ value }) => value === 0)?.offset).toBe(0.5);
+  });
+});
+
+describe("metricColorExpression", () => {
+  const base = {
+    usePopulationClasses: false,
+    scaleDomain: [-89, 89] as [number, number],
+    metric: "movement" as const,
+    movementPalette: "diverging" as const,
+    costMeasure: "share" as const,
+  };
+  // A "step" expression is the population class ramp; "case" wraps the continuous ones.
+  const kind = (expression: unknown) => (expression as unknown[])[0];
+
+  it("keeps the population ramp for the population views", () => {
+    expect(kind(metricColorExpression({ ...base, usePopulationClasses: true }))).toBe("step");
+  });
+
+  it("falls back to the population ramp only while a scale is still missing", () => {
+    expect(kind(metricColorExpression({ ...base, scaleDomain: null }))).toBe("step");
+  });
+
+  it("never paints another metric with population class breaks once its scale is known", () => {
+    for (const inputs of [
+      base,
+      { ...base, movementPalette: "sequential" as const },
+      { ...base, metric: "costs" as const, scaleDomain: [0, 1600] as [number, number] },
+      { ...base, metric: "costs" as const, costMeasure: "peer-deviation" as const },
+      { ...base, metric: "age" as const, scaleDomain: [0.12, 0.26] as [number, number] },
+    ]) {
+      expect(kind(metricColorExpression(inputs))).toBe("case");
+    }
+  });
+
+  it("uses the diverging stops only where the metric has a sign", () => {
+    const diverging = metricColorExpression(base) as unknown[];
+    const sequential = metricColorExpression({ ...base, movementPalette: "sequential" }) as unknown[];
+    const stopCount = (expression: unknown[]) => ((expression[2] as unknown[]).length - 3) / 2;
+
+    expect(stopCount(diverging)).toBe(divergingColorStops(89).length);
+    expect(stopCount(sequential)).toBe(6);
   });
 });

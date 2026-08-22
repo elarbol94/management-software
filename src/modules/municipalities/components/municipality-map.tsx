@@ -160,6 +160,36 @@ export function divergingColorStops(maximum: number) {
     })),
   ];
 }
+type ColorInputs = {
+  usePopulationClasses: boolean;
+  scaleDomain: [number, number] | null;
+  metric: MapMetric;
+  movementPalette: MovementPalette | null;
+  costMeasure: CostMeasureId;
+};
+/**
+ * The fill colour for the current metric.
+ *
+ * Shared by the layer's initial paint and every later update: creating the layer with
+ * the population ramp and fixing it in an effect left a visible window where a
+ * movement or cost map was painted with population class breaks.
+ */
+export function metricColorExpression({
+  usePopulationClasses, scaleDomain, metric, movementPalette, costMeasure,
+}: ColorInputs): ExpressionSpecification {
+  if (usePopulationClasses || !scaleDomain) return POPULATION_COLOR;
+  if (metric === "movement") {
+    return movementPalette === "diverging"
+      ? divergingColorExpression(scaleDomain)
+      : sequentialColorExpression(scaleDomain, MOVEMENT_COLORS);
+  }
+  if (metric === "costs") {
+    return costMeasure === "peer-deviation"
+      ? divergingColorExpression(scaleDomain)
+      : sequentialColorExpression(scaleDomain, COST_COLORS);
+  }
+  return sequentialColorExpression(scaleDomain, AGE_COLORS);
+}
 function divergingColorExpression(
   domain: [number, number],
 ): ExpressionSpecification {
@@ -351,6 +381,9 @@ export function MunicipalityMap({
   const hoveredIdRef = useRef<string | number | null>(null);
   const selectedIdRef = useRef<string | number | null>(null);
   const peerIdsRef = useRef<Set<string>>(new Set());
+  const colorInputs: ColorInputs = {
+    usePopulationClasses, scaleDomain, metric, movementPalette, costMeasure,
+  };
   const liveRef = useRef({
     selected,
     onSelect,
@@ -358,6 +391,7 @@ export function MunicipalityMap({
     metricValues,
     tooltipValues,
     labels,
+    colorInputs,
   });
   useEffect(() => {
     liveRef.current = {
@@ -367,6 +401,7 @@ export function MunicipalityMap({
       metricValues,
       tooltipValues,
       labels,
+      colorInputs,
     };
   });
 
@@ -379,19 +414,9 @@ export function MunicipalityMap({
         { metric: value ?? 0, hasMetric: value !== null },
       );
     if (map.getLayer(FILL_LAYER_ID)) {
-      const color =
-        usePopulationClasses || !scaleDomain
-          ? POPULATION_COLOR
-          : metric === "movement"
-            ? movementPalette === "diverging"
-              ? divergingColorExpression(scaleDomain)
-              : sequentialColorExpression(scaleDomain, MOVEMENT_COLORS)
-            : metric === "costs"
-              ? costMeasure === "peer-deviation"
-                ? divergingColorExpression(scaleDomain)
-                : sequentialColorExpression(scaleDomain, COST_COLORS)
-              : sequentialColorExpression(scaleDomain, AGE_COLORS);
-      map.setPaintProperty(FILL_LAYER_ID, "fill-color", color);
+      map.setPaintProperty(FILL_LAYER_ID, "fill-color", metricColorExpression({
+        usePopulationClasses, scaleDomain, metric, movementPalette, costMeasure,
+      }));
     }
   }, [costMeasure, metric, metricValues, movementPalette, ready, scaleDomain, usePopulationClasses]);
 
@@ -474,7 +499,7 @@ export function MunicipalityMap({
         type: "fill",
         source: SOURCE_ID,
         paint: {
-          "fill-color": POPULATION_COLOR,
+          "fill-color": metricColorExpression(liveRef.current.colorInputs),
           "fill-opacity": [
             "case",
             ["!", ["boolean", ["feature-state", "hasMetric"], false]],
