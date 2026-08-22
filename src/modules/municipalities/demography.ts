@@ -120,16 +120,53 @@ export function demographicIndicatorValue(counts: MunicipalitySexAgeCounts, indi
   return male > 0 ? (female / male) * 100 : null;
 }
 
-export function percentileDomain(values: number[]): [number, number] {
+function sortedPercentile(sorted: Float64Array, fraction: number) {
+  const position = (sorted.length - 1) * fraction;
+  const lower = Math.floor(position);
+  const remainder = position - lower;
+  const next = sorted[lower + 1];
+  return sorted[lower] + (next === undefined ? 0 : remainder * (next - sorted[lower]));
+}
+
+/**
+ * A collapsed domain divides by zero in the map's colour interpolation and produces
+ * duplicate interpolate stops, which MapLibre rejects. Widen it around its own value.
+ */
+function widenIfFlat(minimum: number, maximum: number): [number, number] {
+  if (minimum < maximum) return [minimum, maximum];
+  const padding = Math.max(Math.abs(maximum) * 0.05, 1e-6);
+  return [minimum - padding, maximum + padding];
+}
+
+/**
+ * The colour domain of one dataset: its own minimum up to its 95th percentile.
+ *
+ * The top is a clip — everything above p95 shares the darkest colour — so a handful of
+ * outliers cannot flatten the range the other municipalities are drawn in. The bottom is
+ * the true minimum, so nothing is cut off there.
+ */
+export function datasetDomain(values: ArrayLike<number>): [number, number] {
   if (!values.length) return [0, 1];
-  const sorted = values.toSorted((a, b) => a - b);
-  const percentile = (fraction: number) => {
-    const position = (sorted.length - 1) * fraction;
-    const lower = Math.floor(position);
-    const remainder = position - lower;
-    return sorted[lower] + (sorted[lower + 1] === undefined ? 0 : remainder * (sorted[lower + 1] - sorted[lower]));
-  };
-  return [percentile(0.05), percentile(0.95)];
+  const sorted = Float64Array.from(values);
+  sorted.sort();
+  return widenIfFlat(sorted[0], sortedPercentile(sorted, 0.95));
+}
+
+/**
+ * The colour domain of a dataset that has a sign, as ±p95 of the absolute values.
+ *
+ * Kept symmetric on purpose: the neutral colour has to stay on zero and equal colour
+ * strength has to mean the same magnitude on both sides. Using the true minimum here
+ * would let a single outlier stretch both arms — Gesamtveränderung reaches −902 against
+ * a p95 of 81, which would paint nearly every municipality in the neutral midpoint.
+ */
+export function symmetricDomain(values: ArrayLike<number>): [number, number] {
+  if (!values.length) return [-1, 1];
+  const magnitudes = Float64Array.from(values, Math.abs);
+  magnitudes.sort();
+  const maximum = sortedPercentile(magnitudes, 0.95);
+  const [, widened] = widenIfFlat(-maximum, maximum);
+  return [-widened, widened];
 }
 
 function validTuple(value: unknown): value is AgeCounts {

@@ -34,7 +34,6 @@ import {
 } from "../data";
 import type { MunicipalityInvestmentIndex } from "../investments";
 import {
-  DEMOGRAPHIC_INDICATORS,
   demographicIndicatorUnit,
   demographicIndicatorValue,
   demographyMetricValue,
@@ -42,7 +41,8 @@ import {
   demographyValue,
   isAgeGroupId,
   isDemographicIndicatorId,
-  percentileDomain,
+  datasetDomain,
+  symmetricDomain,
   validateMunicipalityDemographySeries,
   type AgeGroupId,
   type AgeMeasure,
@@ -50,7 +50,6 @@ import {
   type DemographicIndicatorId,
   type MapMetric,
   type MunicipalityDemographySeries,
-  type MunicipalitySexAgeCounts,
   type SexFilter,
 } from "../demography";
 import {
@@ -106,6 +105,114 @@ function populationBandRange(population: number, formatter: Intl.NumberFormat) {
   if (maximum === null) return "≥ " + formatter.format(minimum);
   if (minimum === 0) return "< " + formatter.format(maximum);
   return formatter.format(minimum) + "–" + formatter.format(maximum - 1);
+}
+
+type DatasetSelection = {
+  metric: MapMetric;
+  populationView: PopulationViewId;
+  ageView: AgeViewId;
+  ageMeasure: AgeMeasure;
+  sex: SexFilter;
+  movementView: MovementMetricId;
+  costCategory: CostCategoryId;
+  costMeasure: CostMeasureId;
+};
+type DatasetSeries = {
+  index: MunicipalityIndex;
+  population: MunicipalityPopulationSeries;
+  structure: MunicipalityStructureSeries | null;
+  demography: MunicipalityDemographySeries | null;
+  movement: MunicipalityMovementSeries | null;
+  costs: MunicipalityCostSeries | null;
+};
+
+/**
+ * One `(code, year) => value` reader for the selected dataset, plus its own peer-median
+ * cache. Both the map's per-year values and the colour domain go through it, so the
+ * domain can never be computed from a different definition than the map paints.
+ */
+function createDatasetLookup(selection: DatasetSelection, data: DatasetSeries) {
+  const { metric, populationView, ageView, ageMeasure, sex, movementView, costCategory, costMeasure } = selection;
+  const { index, population, structure, demography, movement, costs } = data;
+  const byCode = new Map(index.municipalities.map((item) => [item.municipalityCode, item]));
+  const indicator = isDemographicIndicatorId(ageView) ? ageView : null;
+  const ageGroup = indicator ? "0-5" as AgeGroupId : ageView as AgeGroupId;
+  const peerMedians = new Map<number, Map<string, number | null>>();
+
+  const peerMedianFor = (code: string, year: number) => {
+    let medians = peerMedians.get(year);
+    if (!medians) {
+      const groups = new Map<string, number[]>();
+      const yearCosts = costs?.years[String(year)]?.values ?? {};
+      const populations = population.years[String(year)]?.values ?? {};
+      for (const municipality of index.municipalities) {
+        const inhabitants = populations[municipality.municipalityCode];
+        const tuple = yearCosts[municipality.municipalityCode];
+        if (!tuple || !inhabitants) continue;
+        const value = municipalityCostPerCapita(tuple, costCategory, inhabitants);
+        if (value === null) continue;
+        const band = municipalityPopulationBand(inhabitants);
+        for (const key of [municipality.state + "|" + band, "*|" + band]) {
+          const group = groups.get(key);
+          if (group) group.push(value);
+          else groups.set(key, [value]);
+        }
+      }
+      medians = new Map();
+      for (const municipality of index.municipalities) {
+        const inhabitants = populations[municipality.municipalityCode];
+        const band = municipalityPopulationBand(inhabitants);
+        const regional = groups.get(municipality.state + "|" + band);
+        const comparison = regional && regional.length >= 5 ? regional : groups.get("*|" + band) ?? [];
+        medians.set(municipality.municipalityCode, median(comparison));
+      }
+      peerMedians.set(year, medians);
+    }
+    return medians.get(code) ?? null;
+  };
+
+  const valueFor = (code: string, year: number): number | null => {
+    const key = String(year);
+    if (metric === "population") {
+      const municipality = byCode.get(code);
+      const inhabitants = population.years[key]?.values[code];
+      if (!municipality || inhabitants === undefined) return null;
+      return populationViewValue(populationView, inhabitants, municipality, structure?.years[key]?.values[code] ?? null);
+    }
+    if (metric === "age") {
+      const counts = demography?.years[key]?.values[code];
+      if (!counts) return null;
+      return indicator
+        ? demographicIndicatorValue(counts, indicator)
+        : demographyMetricValue(counts, sex, ageGroup, ageMeasure);
+    }
+    if (metric === "movement") {
+      const counts = movement?.years[key]?.values[code];
+      const inhabitants = population.years[key]?.values[code];
+      if (!counts || inhabitants === undefined) return null;
+      return movementMetricValue(counts, inhabitants, movementView);
+    }
+    const tuple = costs?.years[key]?.values[code];
+    if (!tuple) return null;
+    if (costMeasure === "share") return municipalityCostShare(tuple, costCategory);
+    const inhabitants = population.years[key]?.values[code];
+    if (inhabitants === undefined) return null;
+    if (costMeasure === "real-per-capita") {
+      return municipalityCostRealPerCapita(tuple, costCategory, inhabitants, year);
+    }
+    const perCapita = municipalityCostPerCapita(tuple, costCategory, inhabitants);
+    if (costMeasure === "per-capita") return perCapita;
+    const peerMedian = peerMedianFor(code, year);
+    return perCapita !== null && peerMedian && peerMedian > 0 ? perCapita / peerMedian - 1 : null;
+  };
+
+  /** The years the selected dataset actually covers. */
+  const years = () => {
+    const series = metric === "age" ? demography : metric === "movement" ? movement : metric === "costs" ? costs : population;
+    return series ? Object.keys(series.years).map(Number) : [];
+  };
+
+  return { valueFor, peerMedianFor, years };
 }
 
 export function MunicipalitiesWorkspace() {
@@ -332,31 +439,41 @@ export function MunicipalitiesWorkspace() {
     () => (index ? searchMunicipalities(index.municipalities, query) : []),
     [index, query],
   );
-  const indicatorScales = useMemo(() => {
-    if (!demographySeries) return null;
-    return Object.fromEntries(
-      DEMOGRAPHIC_INDICATORS.map(({ id }) => [
-        id,
-        percentileDomain(
-          Object.values(demographySeries.years).flatMap((snapshot) =>
-            Object.values(snapshot.values)
-              .map((counts) => demographicIndicatorValue(counts, id))
-              .filter((value): value is number => value !== null),
-          ),
-        ),
-      ]),
-    ) as Record<DemographicIndicatorId, [number, number]>;
-  }, [demographySeries]);
-  const densityScale = useMemo(() => {
+  // The colour domain belongs to the dataset, not to the displayed year: it is computed
+  // once per selection over every year the dataset covers, so dragging the year slider
+  // keeps the scale — and therefore the colours — comparable.
+  const dataset = useMemo(() => {
     if (!index || !populationSeries) return null;
-    return percentileDomain(
-      Object.values(populationSeries.years).flatMap(({ values }) =>
-        index.municipalities.map((municipality) =>
-          values[municipality.municipalityCode] / municipality.areaSquareKilometers,
-        ),
-      ),
+    const lookup = createDatasetLookup(
+      { metric, populationView, ageView, ageMeasure, sex, movementView, costCategory, costMeasure },
+      {
+        index,
+        population: populationSeries,
+        structure: structureSeries,
+        demography: demographySeries,
+        movement: movementSeries,
+        costs: costSeries,
+      },
     );
-  }, [index, populationSeries]);
+    const usesPopulationClasses = metric === "population" && populationView === "count";
+    if (usesPopulationClasses) return { ...lookup, domain: null };
+    const years = lookup.years();
+    const values = new Float64Array(years.length * index.municipalities.length);
+    let count = 0;
+    for (const year of years) {
+      for (const { municipalityCode } of index.municipalities) {
+        const value = lookup.valueFor(municipalityCode, year);
+        if (value !== null && Number.isFinite(value)) values[count++] = value;
+      }
+    }
+    const collected = values.subarray(0, count);
+    const diverging = (metric === "movement" && movementMetricPalette(movementView) === "diverging")
+      || (metric === "costs" && costMeasure === "peer-deviation");
+    return { ...lookup, domain: diverging ? symmetricDomain(collected) : datasetDomain(collected) };
+  }, [
+    ageMeasure, ageView, costCategory, costMeasure, costSeries, demographySeries, index,
+    metric, movementSeries, movementView, populationSeries, populationView, sex, structureSeries,
+  ]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -603,10 +720,8 @@ export function MunicipalitiesWorkspace() {
       <Skeleton className="h-[calc(100dvh-12rem)] min-h-[34rem] w-full rounded-2xl" />
     );
 
-  const valueForCounts = (counts: MunicipalitySexAgeCounts) =>
-    indicator
-      ? demographicIndicatorValue(counts, indicator)
-      : demographyMetricValue(counts, sex, ageGroup, ageMeasure);
+  const valueFor = dataset!.valueFor;
+  const peerMedianFor = dataset!.peerMedianFor;
   const activeDemography = demographySeries?.years[String(year)] ?? null;
   const activeMovement = movementSeries?.years[String(year)] ?? null;
   const activeCosts = costSeries?.years[String(year)] ?? null;
@@ -615,63 +730,11 @@ export function MunicipalitiesWorkspace() {
     populationUnit === "persons" ? personsFormatter : populationUnit === "share" ? shareFormatter : ratioFormatter;
   const populationUnitLabel =
     populationUnit === "persons" ? t("populationUnit") : populationUnit === "share" ? "" : t("populationDensityUnit");
-  const populationValueFor = (code: string, targetYear: number) => {
-    const municipality = index.municipalities.find((item) => item.municipalityCode === code);
-    if (!municipality) return null;
-    const citizenship = structureSeries?.years[String(targetYear)]?.values[code] ?? null;
-    return populationViewValue(
-      populationView,
-      populationSeries.years[String(targetYear)].values[code],
-      municipality,
-      citizenship,
-    );
-  };
   const movementUnit = movementMetricUnit(movementView);
   const movementFormatter =
     movementUnit === "persons" ? personsFormatter : ratioFormatter;
   const movementUnitLabel =
     movementUnit === "persons" ? t("populationUnit") : t("per1000Inhabitants");
-  const movementValueFor = (code: string, targetYear: number) => {
-    if (!movementSeries) return null;
-    return movementMetricValue(
-      movementSeries.years[String(targetYear)].values[code],
-      populationSeries.years[String(targetYear)].values[code],
-      movementView,
-    );
-  };
-  const peerMedianCache = new Map<number, Map<string, number | null>>();
-  const peerMedianFor = (code: string, targetYear: number) => {
-    let medians = peerMedianCache.get(targetYear);
-    if (!medians) {
-      const groups = new Map<string, number[]>();
-      const costs = costSeries?.years[String(targetYear)]?.values ?? {};
-      const populations = populationSeries.years[String(targetYear)].values;
-      for (const municipality of index.municipalities) {
-        const population = populations[municipality.municipalityCode];
-        const tuple = costs[municipality.municipalityCode];
-        if (!tuple || !population) continue;
-        const value = municipalityCostPerCapita(tuple, costCategory, population);
-        if (value === null) continue;
-        const band = municipalityPopulationBand(population);
-        for (const key of [municipality.state + "|" + band, "*|" + band]) {
-          const group = groups.get(key);
-          if (group) group.push(value);
-          else groups.set(key, [value]);
-        }
-      }
-      medians = new Map();
-      for (const municipality of index.municipalities) {
-        const population = populations[municipality.municipalityCode];
-        const band = municipalityPopulationBand(population);
-        const regional = groups.get(municipality.state + "|" + band);
-        const comparison = regional && regional.length >= 5
-          ? regional : groups.get("*|" + band) ?? [];
-        medians.set(municipality.municipalityCode, median(comparison));
-      }
-      peerMedianCache.set(targetYear, medians);
-    }
-    return medians.get(code) ?? null;
-  };
   const selectedPeerGroup = (() => {
     if (metric !== "costs" || costMeasure !== "peer-deviation" || !selected || !activeCosts) return null;
     const selectedPopulation = populationSeries.years[String(year)].values[selected.municipalityCode];
@@ -696,49 +759,12 @@ export function MunicipalitiesWorkspace() {
     };
   })();
 
-  const costValueFor = (code: string, targetYear: number) => {
-    const value = costSeries?.years[String(targetYear)]?.values[code];
-    if (!value) return null;
-    if (costMeasure === "share") return municipalityCostShare(value, costCategory);
-    const population = populationSeries.years[String(targetYear)].values[code];
-    if (costMeasure === "real-per-capita") {
-      return municipalityCostRealPerCapita(value, costCategory, population, targetYear);
-    }
-    const perCapita = municipalityCostPerCapita(value, costCategory, population);
-    if (costMeasure === "per-capita") return perCapita;
-    const peerMedian = peerMedianFor(code, targetYear);
-    return perCapita !== null && peerMedian && peerMedian > 0 ? perCapita / peerMedian - 1 : null;
-  };
-  const metricValues: Record<string, number | null> =
-    metric === "population"
-      ? Object.fromEntries(
-          index.municipalities.map(({ municipalityCode }) => [
-            municipalityCode,
-            populationValueFor(municipalityCode, year),
-          ]),
-        )
-      : metric === "age"
-        ? Object.fromEntries(
-            index.municipalities.map(({ municipalityCode }) => [
-              municipalityCode,
-              activeDemography
-                ? valueForCounts(activeDemography.values[municipalityCode])
-                : null,
-            ]),
-          )
-        : metric === "movement"
-          ? Object.fromEntries(
-              index.municipalities.map(({ municipalityCode }) => [
-                municipalityCode,
-                activeMovement ? movementValueFor(municipalityCode, year) : null,
-              ]),
-            )
-          : Object.fromEntries(
-              index.municipalities.map(({ municipalityCode }) => [
-                municipalityCode,
-                activeCosts ? costValueFor(municipalityCode, year) : null,
-              ]),
-            );
+  const metricValues: Record<string, number | null> = Object.fromEntries(
+    index.municipalities.map(({ municipalityCode }) => [
+      municipalityCode,
+      valueFor(municipalityCode, year),
+    ]),
+  );
   const indicatorUnit = indicator ? demographicIndicatorUnit(indicator) : null;
   const indicatorFormatter =
     indicatorUnit === "share" ? shareFormatter : ratioFormatter;
@@ -796,7 +822,7 @@ export function MunicipalitiesWorkspace() {
       : metric === "movement" && activeMovement
         ? Object.fromEntries(
             index.municipalities.map(({ municipalityCode }) => {
-              const value = movementValueFor(municipalityCode, year);
+              const value = valueFor(municipalityCode, year);
               return [
                 municipalityCode,
                 movementLabels[movementView] +
@@ -858,21 +884,7 @@ export function MunicipalitiesWorkspace() {
     ? (metricValues[selected.municipalityCode] ?? null)
     : null;
   const metricValueForYear = (targetYear: number) =>
-    selected
-      ? metric === "population"
-        ? populationValueFor(selected.municipalityCode, targetYear)
-        : metric === "age"
-          ? demographySeries
-            ? valueForCounts(
-                demographySeries.years[String(targetYear)].values[
-                  selected.municipalityCode
-                ],
-              )
-            : null
-          : metric === "movement"
-            ? movementValueFor(selected.municipalityCode, targetYear)
-            : costValueFor(selected.municipalityCode, targetYear)
-      : null;
+    selected ? valueFor(selected.municipalityCode, targetYear) : null;
   const previousValue =
     previousYear === null ? null : metricValueForYear(previousYear);
   const firstValue = metricValueForYear(availableFirstYear!);
@@ -951,27 +963,7 @@ export function MunicipalitiesWorkspace() {
         : indicator
           ? { kind: "age-indicator", municipalityCode: selected.municipalityCode, municipalityName: selected.name, indicator }
           : { kind: "age-group", municipalityCode: selected.municipalityCode, municipalityName: selected.name, ageGroup, measure: ageMeasure, sex };
-  const scaleDomain =
-    metric === "costs"
-      ? (() => {
-          const domain = percentileDomain(Object.values(metricValues).filter((value): value is number => value !== null));
-          if (costMeasure !== "peer-deviation") return domain;
-          const maximum = Math.max(Math.abs(domain[0]), Math.abs(domain[1]));
-          return [-maximum, maximum] as [number, number];
-        })()
-      : metric === "population"
-      ? populationView === "count"
-        ? null
-        : populationView === "density"
-          ? densityScale
-          : structureSeries?.scales[populationView] ?? null
-      : metric === "movement"
-      ? (movementSeries?.scales[movementView] ?? null)
-      : metric !== "age" || !demographySeries
-        ? null
-        : indicator
-          ? (indicatorScales?.[indicator] ?? null)
-          : demographySeries.scales[ageMeasure][sex][ageGroup];
+  const scaleDomain = dataset!.domain;
   const formatMetricChange = (
     current: number | null,
     comparison: number | null,

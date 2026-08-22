@@ -992,10 +992,13 @@ export function MunicipalityMap({
                   />
                 )}
               </div>
+              {/* The scale ends at the 95th percentile, so anything above shares the last
+                  colour. Saying "≥" keeps the bar from claiming a range the fills exceed;
+                  a diverging scale clips at both ends and gets "≤" as well. */}
               <div className="mt-1 flex justify-between gap-2 text-[9px] tabular-nums">
-                <span>{chartValueFormatter.format(scaleDomain[0])}</span>
+                <span>{isDiverging ? "≤ " : ""}{chartValueFormatter.format(scaleDomain[0])}</span>
                 {isDiverging && <span className="text-muted-foreground">0</span>}
-                <span>{chartValueFormatter.format(scaleDomain[1])}</span>
+                <span>≥ {chartValueFormatter.format(scaleDomain[1])}</span>
               </div>
               {chartUnitLabel && (
                 <p className="mt-1 text-[9px] text-muted-foreground">

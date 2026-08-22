@@ -4,6 +4,8 @@ import { describe, expect, it } from "vitest";
 import type { MunicipalityIndex } from "./data";
 import {
   ageGroupIndexForSourceCode,
+  datasetDomain,
+  symmetricDomain,
   demographicIndicatorValue,
   demographyPopulation,
   validateMunicipalityDemographySeries,
@@ -59,5 +61,54 @@ describe("municipality demography", () => {
     expect(aggregate.get("90001")?.f[0]).toBe(3);
     expect(aggregate.get("90001")?.a).toEqual([0, 0]);
     expect(() => aggregateDemography(`${header}\nA10-2025;C11-9;GRGEMAKT-10101;GALTEJ112-1;1`, 2025)).toThrow("Geschlechtscode");
+  });
+});
+
+describe("datasetDomain", () => {
+  it("starts at the dataset's own minimum instead of clipping the lowest values away", () => {
+    const values = [5, ...Array.from({ length: 99 }, (_, index) => 100 + index)];
+
+    expect(datasetDomain(values)[0]).toBe(5);
+  });
+
+  it("ends on the 95th percentile so outliers cannot flatten the rest", () => {
+    const values = [...Array.from({ length: 99 }, (_, index) => index), 100_000];
+
+    const [, maximum] = datasetDomain(values);
+    expect(maximum).toBeLessThan(100);
+    expect(values.filter((value) => value > maximum)).toHaveLength(5);
+  });
+
+  it("never collapses, so the map's interpolation cannot divide by zero", () => {
+    for (const values of [[7, 7, 7], [0, 0], [-3]]) {
+      const [minimum, maximum] = datasetDomain(values);
+      expect(minimum).toBeLessThan(maximum);
+    }
+  });
+
+  it("falls back to a usable domain for an empty dataset", () => {
+    const [minimum, maximum] = datasetDomain([]);
+    expect(minimum).toBeLessThan(maximum);
+  });
+});
+
+describe("symmetricDomain", () => {
+  it("stays centred on zero so equal colour means equal magnitude", () => {
+    const [minimum, maximum] = symmetricDomain([-902, -36, -2, 0, 5, 81, 40]);
+
+    expect(minimum).toBe(-maximum);
+  });
+
+  it("takes the percentile of the magnitudes, not of the signed values", () => {
+    // A single deep outlier must not stretch both arms; that is what left the
+    // Bevoelkerungsentwicklung map painted almost entirely in the neutral midpoint.
+    const values = [-902, ...Array.from({ length: 99 }, (_, index) => index - 40)];
+
+    expect(symmetricDomain(values)[1]).toBeLessThan(100);
+  });
+
+  it("never collapses on an all-zero dataset", () => {
+    const [minimum, maximum] = symmetricDomain([0, 0, 0]);
+    expect(minimum).toBeLessThan(maximum);
   });
 });
