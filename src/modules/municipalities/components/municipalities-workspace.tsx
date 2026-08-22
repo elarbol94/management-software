@@ -92,6 +92,9 @@ async function fetchJson<T>(url: string, signal: AbortSignal) {
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
   return response.json() as Promise<T>;
 }
+
+type MunicipalityProfile = { district: string | null; officialWebsite: string | null; mayor: string | null; councilComposition: string | null };
+type MunicipalityProfileDataset = { profiles: Record<string, MunicipalityProfile> };
 const formatSigned = (value: number, formatter: Intl.NumberFormat) =>
   `${value > 0 ? "+" : ""}${formatter.format(value)}`;
 
@@ -166,6 +169,7 @@ export function MunicipalitiesWorkspace() {
     useState<MunicipalityStructureSeries | null>(null);
   const [costSeries, setCostSeries] = useState<MunicipalityCostSeries | null>(null);
   const [investmentMunicipalityCodes, setInvestmentMunicipalityCodes] = useState<Set<string> | null>(null);
+  const [profiles, setProfiles] = useState<MunicipalityProfileDataset | null>(null);
   const [loadError, setLoadError] = useState(false);
   const [demographyError, setDemographyError] = useState(false);
   const [movementError, setMovementError] = useState(false);
@@ -223,6 +227,7 @@ export function MunicipalitiesWorkspace() {
     [index, selectedCode],
   );
   const usesCitizenship = metric === "population" && (populationView === "foreign-share" || populationView === "foreign-persons");
+  const selectedProfile = selected ? (profiles?.profiles[selected.municipalityCode] ?? null) : null;
   const availableFirstYear = metric === "costs"
     ? MUNICIPALITY_COSTS_FIRST_YEAR
     : usesCitizenship ? MUNICIPALITY_STRUCTURE_FIRST_YEAR : populationSeries?.firstYear;
@@ -392,6 +397,13 @@ export function MunicipalitiesWorkspace() {
       .then((data) => setInvestmentMunicipalityCodes(
         new Set(data.municipalities.map(({ code }) => code)),
       ))
+      .catch(() => undefined);
+    return () => controller.abort();
+  }, []);
+  useEffect(() => {
+    const controller = new AbortController();
+    fetchJson<MunicipalityProfileDataset>("/data/municipality-profiles.json", controller.signal)
+      .then(setProfiles)
       .catch(() => undefined);
     return () => controller.abort();
   }, []);
@@ -1219,6 +1231,7 @@ export function MunicipalitiesWorkspace() {
           metricLabel={metricLabel}
           chartValueFormatter={chartFormatter}
           chartUnitLabel={chartUnit}
+          chartChangeLabels={metric === "population" && populationView === "count" ? { previousYear: t("populationChangePreviousYear"), sinceFirstYear: t("populationChangeSinceFirstYear", { year: populationSeries.firstYear }) } : undefined}
           analysisDataset={analysisDataset}
         />
       </section>
@@ -1240,181 +1253,12 @@ export function MunicipalitiesWorkspace() {
                 {selected.name}
               </h2>
               <dl className="mt-5 grid grid-cols-[auto_1fr] gap-x-3 gap-y-2 text-sm">
-                <dt className="text-muted-foreground">{t("population")}</dt>
-                <dd className="font-semibold tabular-nums">
-                  {personsFormatter.format(selectedPopulation)}
-                </dd>
-                {metric === "population" ? (
-                  <>
-                    {populationView !== "count" && (
-                      <>
-                        <dt className="text-muted-foreground">{populationViewLabels[populationView]}</dt>
-                        <dd className="font-semibold tabular-nums">
-                          {activeValue === null ? "—" : populationViewFormatter.format(activeValue) + (populationUnitLabel ? " " + populationUnitLabel : "")}
-                        </dd>
-                      </>
-                    )}
-                    {populationView === "density" && (
-                      <>
-                        <dt className="text-muted-foreground">{t("municipalityArea")}</dt>
-                        <dd className="font-medium tabular-nums">{ratioFormatter.format(selected.areaSquareKilometers)} {t("areaUnit")}</dd>
-                      </>
-                    )}
-                    <dt className="text-muted-foreground">{t("populationChangePreviousYear")}</dt>
-                    <dd className="font-medium tabular-nums">{formatMetricChange(activeValue, previousValue)}</dd>
-                    <dt className="text-muted-foreground">
-                      {t("populationChangeSinceFirstYear", { year: availableFirstYear! })}
-                    </dt>
-                    <dd className="font-medium tabular-nums">{formatMetricChange(activeValue, firstValue)}</dd>
-                    {populationView === "count" && (
-                      <>
-                        <dt className="text-muted-foreground">
-                          {t("populationAverageAnnualChange", { year: populationSeries.firstYear })}
-                        </dt>
-                        <dd className="font-medium tabular-nums">
-                          {averageAnnualPopulationChange === null ? "—" : signedShareFormatter.format(averageAnnualPopulationChange)}
-                        </dd>
-                      </>
-                    )}
-                  </>
-                ) : metric === "movement" ? (
-                  <>
-                    <dt className="text-muted-foreground">
-                      {movementLabels[movementView]}
-                    </dt>
-                    <dd className="font-semibold tabular-nums">
-                      {activeValue === null
-                        ? "—"
-                        : movementFormatter.format(activeValue) +
-                          " " +
-                          movementUnitLabel}
-                    </dd>
-                    <dt className="text-muted-foreground">
-                      {t("movementChangePreviousYear")}
-                    </dt>
-                    <dd className="font-medium tabular-nums">
-                      {formatMetricChange(activeValue, previousValue)}
-                    </dd>
-                    {movementView === "population-change" && (
-                      <>
-                        <dt className="text-muted-foreground">
-                          {t("movementStatisticalCorrection")}
-                        </dt>
-                        <dd className="font-medium tabular-nums">
-                          {statisticalCorrection === null
-                            ? "—"
-                            : formatSigned(
-                                statisticalCorrection,
-                                personsFormatter,
-                              )}
-                        </dd>
-                      </>
-                    )}
-                  </>
-                ) : metric === "costs" ? (
-                  <>
-                    <dt className="text-muted-foreground">{costMeasureLabels[costMeasure]}</dt>
-                    <dd className="font-semibold tabular-nums">
-                      {activeValue === null ? "—" : chartFormatter.format(activeValue)} {chartUnit}
-                    </dd>
-                    <dt className="text-muted-foreground">{t("costCategoryAmount")}</dt>
-                    <dd className="font-medium tabular-nums">
-                      {selectedCostCents === null ? "—" : currencyFormatter.format(selectedCostCents / 100)}
-                    </dd>
-                    <dt className="text-muted-foreground">{t("costTotalOutflows")}</dt>
-                    <dd className="font-medium tabular-nums">
-                      {selectedCosts === null ? "—" : currencyFormatter.format(selectedCosts[0] / 100)}
-                    </dd>
-                    {costMeasure !== "share" && (
-                      <>
-                        <dt className="text-muted-foreground">{t("costShare")}</dt>
-                        <dd className="font-medium tabular-nums">
-                          {selectedCosts === null ? "—" : shareFormatter.format(municipalityCostShare(selectedCosts, costCategory)!)}
-                        </dd>
-                      </>
-                    )}
-                    <dt className="text-muted-foreground">{t("costPerCapita")}</dt>
-                    <dd className="font-medium tabular-nums">
-                      {selectedCostPerCapita === null ? "—" : currencyFormatter.format(selectedCostPerCapita)}
-                    </dd>
-                    <dt className="text-muted-foreground">{t("costPeerMedian")}</dt>
-                    <dd className="font-medium tabular-nums">
-                      {selectedPeerMedian === null ? "—" : currencyFormatter.format(selectedPeerMedian)}
-                    </dd>
-                    <dt className="text-muted-foreground">{t("costChangePreviousYear")}</dt>
-                    <dd className="font-medium tabular-nums">{formatMetricChange(activeValue, previousValue)}</dd>
-                  </>
-                ) : indicator ? (
-                  <>
-                    <dt className="text-muted-foreground">
-                      {indicatorLabels[indicator]}
-                    </dt>
-                    <dd className="font-semibold tabular-nums">
-                      {activeValue === null
-                        ? "—"
-                        : indicatorFormatter.format(activeValue) + (indicatorUnitLabel ? " " + indicatorUnitLabel : "")}
-                    </dd>
-                    <dt className="text-muted-foreground">
-                      {t("ageChangePreviousYear")}
-                    </dt>
-                    <dd className="font-medium tabular-nums">
-                      {formatMetricChange(activeValue, previousValue)}
-                    </dd>
-                    <dt className="text-muted-foreground">
-                      {t("ageChangeSinceFirstYear", {
-                        year: populationSeries.firstYear,
-                      })}
-                    </dt>
-                    <dd className="font-medium tabular-nums">
-                      {formatMetricChange(activeValue, firstValue)}
-                    </dd>
-                  </>
-                ) : (
-                  <>
-                    <dt className="text-muted-foreground">
-                      {ageGroupLabels[ageGroup]}
-                    </dt>
-                    <dd className="font-semibold tabular-nums">
-                      {selectedAgePersons === null
-                        ? "—"
-                        : `${personsFormatter.format(selectedAgePersons)} ${t("populationUnit")}`}
-                    </dd>
-                    <dt className="text-muted-foreground">
-                      {sex === "female"
-                        ? t("ageShareWithinFemale")
-                        : sex === "male"
-                          ? t("ageShareWithinMale")
-                          : t("ageShare")}
-                    </dt>
-                    <dd className="font-medium tabular-nums">
-                      {selectedAgeShare === null
-                        ? "—"
-                        : shareFormatter.format(selectedAgeShare)}
-                    </dd>
-                    <dt className="text-muted-foreground">
-                      {t("ageChangePreviousYear")}
-                    </dt>
-                    <dd className="font-medium tabular-nums">
-                      {formatMetricChange(activeValue, previousValue)}
-                    </dd>
-                    <dt className="text-muted-foreground">
-                      {t("ageChangeSinceFirstYear", {
-                        year: populationSeries.firstYear,
-                      })}
-                    </dt>
-                    <dd className="font-medium tabular-nums">
-                      {formatMetricChange(activeValue, firstValue)}
-                    </dd>
-                  </>
-                )}
-                <dt className="text-muted-foreground">{t("state")}</dt>
-                <dd className="font-medium">{selected.state}</dd>
-                <dt className="text-muted-foreground">
-                  {t("municipalityCode")}
-                </dt>
-                <dd className="font-mono font-medium">
-                  {selected.municipalityCode}
-                </dd>
+                <dt className="text-muted-foreground">{t("state")}</dt><dd className="font-medium">{selected.state}</dd>
+                <dt className="text-muted-foreground">{t("district")}</dt><dd className="font-medium">{selectedProfile?.district ?? t("profileDataUnavailable")}</dd>
+                <dt className="text-muted-foreground">{t("population")}</dt><dd className="font-semibold tabular-nums">{personsFormatter.format(selectedPopulation)}</dd>
+                <dt className="text-muted-foreground">{t("mayor")}</dt><dd className="font-medium">{selectedProfile?.mayor ?? t("profileDataUnavailable")}</dd>
+                <dt className="text-muted-foreground">{t("councilComposition")}</dt><dd className="font-medium">{selectedProfile?.councilComposition ?? t("profileDataUnavailable")}</dd>
+                <dt className="text-muted-foreground">{t("officialWebsite")}</dt><dd className="min-w-0 font-medium">{selectedProfile?.officialWebsite ? <a className="break-all text-teal-700 underline underline-offset-2 hover:text-teal-800" href={selectedProfile.officialWebsite} target="_blank" rel="noreferrer">{t("openWebsite")}</a> : t("profileDataUnavailable")}</dd>
               </dl>
               <p className="mt-3 flex items-center gap-1.5 text-xs text-muted-foreground">
                 <Users className="size-3.5" />

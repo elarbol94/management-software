@@ -43,6 +43,7 @@ yarn-error.log*
 
 # generated municipality investment data (deployed separately, never committed)
 /public/data/municipality-investments/
+/public/data/municipality-profiles.json
 
 # playwright
 /test-results

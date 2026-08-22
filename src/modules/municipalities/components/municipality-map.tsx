@@ -298,6 +298,7 @@ export function MunicipalityMap({
   metricLabel,
   chartValueFormatter,
   chartUnitLabel,
+  chartChangeLabels,
   analysisDataset,
 }: {
   austriaBounds: MunicipalityBounds;
@@ -349,6 +350,7 @@ export function MunicipalityMap({
   metricLabel: string;
   chartValueFormatter: Intl.NumberFormat;
   chartUnitLabel: string;
+  chartChangeLabels?: { previousYear: string; sinceFirstYear: string };
   analysisDataset: MunicipalityDatasetRef | null;
 }) {
   const locale = useLocale();
@@ -642,6 +644,7 @@ export function MunicipalityMap({
           selectedYear={year}
           valueFormatter={chartValueFormatter}
           unitLabel={chartUnitLabel}
+          changeLabels={chartChangeLabels}
           chartLabel={metricChartLabel}
           minimizeLabel={labels.minimizeChart}
           expandLabel={labels.expandChart}
