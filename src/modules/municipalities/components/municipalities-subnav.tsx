@@ -87,6 +87,7 @@ export function MunicipalitiesSubnav() {
       <nav className="flex items-center gap-1 rounded-xl border bg-muted/35 p-1" aria-label={t("subnavLabel")}>
         <Link
           href="/municipalities/overview"
+          aria-label={t("overviewTab")}
           className={cn(
             "inline-flex h-8 items-center gap-2 rounded-lg px-3 text-sm font-medium transition-colors",
             pathname.endsWith("/overview") ? "bg-background shadow-sm" : "text-muted-foreground hover:bg-background/70 hover:text-foreground",
@@ -94,11 +95,12 @@ export function MunicipalitiesSubnav() {
           aria-current={pathname.endsWith("/overview") ? "page" : undefined}
         >
           <Map className="size-4" />
-          {t("overviewTab")}
+          <span className="hidden sm:inline">{t("overviewTab")}</span>
         </Link>
         <Link
           href={lastAnalysisId ? "/municipalities/analysis?analysis=" + encodeURIComponent(lastAnalysisId) : "/municipalities/analysis"}
           prefetch={false}
+          aria-label={t("analysisTab")}
           data-testid="municipality-analysis-drop-target"
           className={cn(
             "inline-flex h-8 items-center gap-2 rounded-lg border border-transparent px-3 text-sm font-medium transition-all",
@@ -131,7 +133,7 @@ export function MunicipalitiesSubnav() {
           }}
         >
           <BarChart3 className="size-4" />
-          {dragging ? t("dropOnAnalysis") : t("analysisTab")}
+          <span className="hidden sm:inline">{dragging ? t("dropOnAnalysis") : t("analysisTab")}</span>
         </Link>
       </nav>
 

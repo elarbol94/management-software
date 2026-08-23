@@ -67,6 +67,7 @@ export default async function CalendarPage({
       currentUser={{ id: currentUser.id, name: currentUser.name }}
       workspace={workspace}
       view={view}
+      viewWasExplicit={views.has(query.view as CalendarView)}
       date={date}
       range={{ from, to }}
       initialFilters={{

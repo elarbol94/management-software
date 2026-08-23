@@ -244,7 +244,33 @@ export function MunicipalityInvestmentsClient({
     </div>
 
     <Card><CardHeader><CardTitle>{t("details")}</CardTitle><CardDescription>{t("resultCount", { count: filtered.length })}</CardDescription></CardHeader><CardContent>
-      <div className="overflow-x-auto rounded-xl border"><table className="w-full min-w-[72rem] border-collapse text-sm">
+      <div className="grid gap-3 md:hidden">
+        {visible.map((position) => (
+          <button
+            key={position.id}
+            type="button"
+            className="rounded-xl border bg-background p-4 text-left transition hover:border-teal-500 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-teal-600"
+            onClick={() => setSelectedPosition(position)}
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-xs font-semibold text-muted-foreground">{position.year} · {taskLabels[position.taskArea]}</p>
+                <p className="mt-1 line-clamp-2 font-semibold">{position.approachText || position.accountText || "—"}</p>
+                {position.accountText ? <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{position.accountText} · {position.accountCode}</p> : null}
+              </div>
+              <strong className="shrink-0 tabular-nums">{exactCurrency.format(position.amountCents / 100)}</strong>
+            </div>
+            <div className="mt-3 flex flex-wrap gap-1.5 border-t pt-3">
+              <Badge variant="outline">{typeLabels[position.investmentType]}</Badge>
+              <Badge variant="outline">{position.detailLevel === "municipality" ? t("detailed") : t("aggregated")}</Badge>
+              {position.assetMatchStatus === "matched" ? <Badge className="bg-teal-700 text-white">{t("assetMatched")}</Badge> : null}
+              {position.amountCents < 0 ? <Badge variant="destructive">{t("correction")}</Badge> : null}
+            </div>
+          </button>
+        ))}
+        {!filtered.length ? <p className="rounded-xl border border-dashed p-8 text-center text-sm text-muted-foreground">{t("noResults")}</p> : null}
+      </div>
+      <div className="hidden overflow-x-auto rounded-xl border md:block"><table className="w-full min-w-[72rem] border-collapse text-sm">
         <thead className="bg-muted/70 text-left text-xs text-muted-foreground"><tr>
           <SortableHeader label={t("year")} onClick={() => updateSort("year")} /><th className="px-3 py-2.5">{t("taskArea")}</th>
           <SortableHeader label={t("descriptionLabel")} onClick={() => updateSort("description")} /><th className="px-3 py-2.5">{t("investmentType")}</th>

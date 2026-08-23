@@ -76,6 +76,27 @@ export function FundingProjectsClient({
               <p className="max-w-md text-sm text-muted-foreground">{t("empty.description")}</p>
             </div>
           ) : (
+            <>
+            <div className="grid gap-3 p-3 md:hidden">
+              {projects.map((project) => (
+                <Link key={project.id} href={`/accounting/funding-projects/${project.id}`} className="rounded-xl border bg-background p-4 transition hover:border-foreground/25 focus-visible:outline-2 focus-visible:outline-offset-2">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <h2 className="font-semibold">{project.name}</h2>
+                      <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{project.fundingBody} · {project.programName || project.templateName || t("customTemplate")}</p>
+                    </div>
+                    <StatusBadge status={project.status} label={t(`status.${project.status}`)} />
+                  </div>
+                  <dl className="mt-4 grid grid-cols-2 gap-3 border-t pt-3 text-xs">
+                    <div><dt className="text-muted-foreground">{t("summary.totalCost")}</dt><dd className="mt-1 font-semibold tabular-nums">{formatCents(project.totalProjectCostCents, locale)}</dd></div>
+                    <div><dt className="text-muted-foreground">{t("summary.approved")}</dt><dd className="mt-1 font-semibold tabular-nums">{formatCents(project.approvedFundingCents, locale)}</dd></div>
+                    <div><dt className="text-muted-foreground">{t("summary.requested")}</dt><dd className="mt-1 font-medium tabular-nums">{formatCents(project.requestedGrantCents, locale)}</dd></div>
+                    <div><dt className="text-muted-foreground">{t("summary.ownFunds")}</dt><dd className="mt-1 font-medium tabular-nums">{formatCents(project.requiredOwnFundsCents, locale)}</dd></div>
+                  </dl>
+                </Link>
+              ))}
+            </div>
+            <div className="hidden overflow-x-auto md:block">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -115,6 +136,8 @@ export function FundingProjectsClient({
                 ))}
               </TableBody>
             </Table>
+            </div>
+            </>
           )}
         </CardContent>
       </Card>

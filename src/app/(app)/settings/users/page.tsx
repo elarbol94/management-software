@@ -37,6 +37,26 @@ export default async function UsersSettingsPage() {
         <CreateUserDialog />
       </CardHeader>
       <CardContent>
+        <div className="grid gap-3 md:hidden">
+          {users.map((user) => (
+            <article key={user.id} className="rounded-xl border bg-background p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <h2 className="truncate font-semibold">{user.name}</h2>
+                  <p className="mt-1 truncate text-sm text-muted-foreground">{user.displayUsername ?? user.username}</p>
+                </div>
+                <div className="flex shrink-0 flex-wrap justify-end gap-1.5">
+                  <Badge variant={user.role === "admin" ? "default" : "secondary"}>
+                    {user.role === "admin" ? t("roleAdmin") : user.role === "personnel" ? t("rolePersonnel") : t("roleMember")}
+                  </Badge>
+                  {user.banned ? <Badge variant="destructive">{t("banned")}</Badge> : null}
+                </div>
+              </div>
+              <p className="mt-3 break-all border-t pt-3 text-sm text-muted-foreground">{user.email}</p>
+            </article>
+          ))}
+        </div>
+        <div className="hidden md:block">
         <Table>
           <TableHeader>
             <TableRow>
@@ -72,6 +92,7 @@ export default async function UsersSettingsPage() {
             ))}
           </TableBody>
         </Table>
+        </div>
       </CardContent>
     </Card>
   );

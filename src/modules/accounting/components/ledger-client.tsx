@@ -213,7 +213,48 @@ export function LedgerClient({
         </div>
       </section>
 
-      <section className="overflow-hidden rounded-2xl border border-[#dfe5e1] bg-white shadow-[0_1px_2px_rgba(20,47,39,0.03)]">
+      <section className="grid gap-3 md:hidden" aria-label={t("bookings")}>
+        {entries.length === 0 ? (
+          <div className="rounded-2xl border border-[#dfe5e1] bg-white p-8 text-center text-sm text-[#7a8782]">{t("noEntries")}</div>
+        ) : entries.map((entry) => {
+          const sign = entry.kind === "expense" ? -1 : 1;
+          const canEdit = canManagePersonnel || entry.categoryTemplate !== "personnel";
+          return (
+            <button
+              key={entry.id}
+              type="button"
+              disabled={!canEdit}
+              className="min-h-28 rounded-2xl border border-[#dfe5e1] bg-white p-4 text-left shadow-[0_1px_2px_rgba(20,47,39,0.03)] transition hover:border-[#b9cac2] disabled:cursor-default disabled:opacity-75"
+              onClick={() => {
+                if (!canEdit) return;
+                setDialogEntry(entry);
+                setDialogOpen(true);
+              }}
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="truncate font-semibold text-[#213c35]">{entry.description}</p>
+                  <p className="mt-1 truncate text-xs text-[#71807a]">{entry.counterparty || "—"}</p>
+                </div>
+                <p className={`shrink-0 font-semibold tabular-nums ${entry.kind === "income" ? "text-[#2f6b55]" : "text-[#273f38]"}`}>
+                  {formatCents(sign * entry.grossAmountCents, locale)}
+                </p>
+              </div>
+              <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-[#edf0ee] pt-3">
+                <span className="text-xs tabular-nums text-[#68756f]">{format.dateTime(new Date(entry.date), { day: "2-digit", month: "2-digit", year: "numeric" })}</span>
+                <Badge variant="outline" className="max-w-full border-[#dfe5e1] bg-[#fafbfa] text-[#52625c]">
+                  <span className="mr-1 inline-block size-2 shrink-0 rounded-full" style={{ backgroundColor: entry.categoryColor }} />
+                  <span className="truncate">{entry.categoryName}</span>
+                </Badge>
+                {entry.status === "draft" ? <Badge className="bg-amber-50 text-amber-800" variant="outline">{tBookings("draft")}</Badge> : null}
+                {entry.attachmentCount > 0 ? <Paperclip className="ml-auto size-4 text-[#83918b]" /> : null}
+              </div>
+            </button>
+          );
+        })}
+      </section>
+
+      <section className="hidden overflow-hidden rounded-2xl border border-[#dfe5e1] bg-white shadow-[0_1px_2px_rgba(20,47,39,0.03)] md:block">
         <Table>
           <TableHeader className="bg-[#f8faf8]">
             <TableRow className="border-[#e3e8e5] hover:bg-transparent">

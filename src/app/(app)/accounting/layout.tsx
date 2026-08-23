@@ -33,7 +33,7 @@ export default function AccountingLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <div className="-m-6 min-h-screen bg-[#f3f5f2] text-[#17342d]">
+    <div className="-m-4 min-h-screen bg-[#f3f5f2] text-[#17342d] sm:-m-6">
       <Suspense fallback={<div className="h-[105px] border-b bg-white" />}>
         <AccountingHeader />
       </Suspense>

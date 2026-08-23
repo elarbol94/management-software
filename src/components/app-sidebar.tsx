@@ -451,7 +451,7 @@ export function AppSidebar({ userName, userEmail }: { userName: string; userEmai
 
   return (
     <>
-      <header data-testid="app-mobile-header" className="flex h-14 shrink-0 items-center gap-2 border-b bg-sidebar px-3 md:hidden">
+      <header data-testid="app-mobile-header" className="sticky top-0 z-40 flex h-14 shrink-0 items-center gap-2 border-b bg-sidebar/95 px-3 backdrop-blur md:hidden">
         <Button
           type="button"
           variant="ghost"

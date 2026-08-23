@@ -110,10 +110,29 @@ test("municipality workspace stays within the mobile viewport", async ({ page })
   await login(page);
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/municipalities/overview");
-  await expect(page.getByTestId("municipality-map")).toBeVisible();
+  const map = page.getByTestId("municipality-map");
+  await expect(map).toBeVisible();
+  await expect.poll(async () => Math.round((await map.boundingBox())?.height ?? 0)).toBeGreaterThan(600);
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+
+  await page.getByRole("button", { name: "Darstellung" }).click();
+  const displaySheet = page.getByRole("dialog", { name: "Darstellung" });
+  await expect(displaySheet).toBeVisible();
+  await expect(displaySheet.getByLabel("Kennzahl")).toHaveValue("population");
+  await expect(displaySheet.getByRole("slider", { name: "Jahr" })).toHaveValue("2025");
+  await displaySheet.getByRole("button", { name: "Schließen" }).click();
+
+  await page.getByRole("button", { name: "Legende" }).click();
+  const legendSheet = page.getByRole("dialog", { name: "Legende" });
+  await expect(legendSheet.getByText("Einwohnerzahl")).toBeVisible();
+  await legendSheet.getByRole("button", { name: "Schließen" }).click();
+
   await page.getByRole("combobox", { name: "Gemeinde suchen" }).fill("Wien");
   await page.getByRole("option").filter({ hasText: "90001" }).click();
   await expect(page).toHaveURL(/municipality=90001/);
-  await expect(page.getByTestId("municipality-details").getByRole("heading", { name: "Wien" })).toBeVisible();
+  await page.getByRole("button", { name: /Wien.*Details/ }).click();
+  const detailsSheet = page.getByRole("dialog", { name: "Wien" });
+  await expect(detailsSheet.getByTestId("mobile-municipality-details")).toBeVisible();
+  await expect(detailsSheet.getByRole("definition").filter({ hasText: "2.028.289" })).toBeVisible();
+  await expect(detailsSheet.getByRole("img", { name: "Einwohnerentwicklung in Wien" })).toBeVisible();
 });

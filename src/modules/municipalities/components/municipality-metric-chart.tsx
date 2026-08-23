@@ -59,10 +59,12 @@ export function MunicipalityMetricChart({
   chartLabel,
   minimizeLabel,
   expandLabel,
+  restoreLabel,
   dataset,
   addToAnalysisLabel,
   dragToAnalysisLabel,
   changeLabels,
+  embedded = false,
 }: {
   metricLabel: string;
   municipalityName: string;
@@ -73,10 +75,12 @@ export function MunicipalityMetricChart({
   chartLabel: string;
   minimizeLabel: string;
   expandLabel: string;
+  restoreLabel: string;
   dataset: MunicipalityDatasetRef;
   addToAnalysisLabel: string;
   dragToAnalysisLabel: string;
   changeLabels?: { previousYear: string; sinceFirstYear: string };
+  embedded?: boolean;
 }) {
   const [minimized, setMinimized] = useState(false);
   const [expanded, setExpanded] = useState(false);
@@ -119,7 +123,9 @@ export function MunicipalityMetricChart({
 
   return (
     <section
-      className={`absolute right-3 bottom-3 z-10 overflow-hidden rounded-xl border bg-background/95 shadow-lg backdrop-blur ${expanded ? "fixed inset-4 z-50 w-auto max-w-none" : minimized ? "w-auto" : "w-[min(20rem,calc(100%-13rem))] min-w-44 sm:w-80"}`}
+      className={embedded
+        ? "relative w-full overflow-hidden rounded-xl border bg-background shadow-sm"
+        : `absolute right-3 bottom-3 z-10 overflow-hidden rounded-xl border bg-background/95 shadow-lg backdrop-blur ${expanded ? "fixed inset-4 z-50 w-auto max-w-none" : minimized ? "w-auto" : "w-[min(20rem,calc(100%-13rem))] min-w-44 sm:w-80"}`}
       data-testid="municipality-metric-chart"
     >
       <div
@@ -141,22 +147,22 @@ export function MunicipalityMetricChart({
             title={addToAnalysisLabel}
             onClick={() => requestMunicipalityDatasetTransfer(dataset)}
           ><BarChart3 className="size-3.5" /></button>
-          <button type="button" className="grid size-7 place-items-center rounded-md hover:bg-accent" aria-label={expanded ? minimizeLabel : expandLabel} title={expanded ? minimizeLabel : expandLabel} onClick={() => setExpanded((value) => !value)}>{expanded ? <Minimize2 className="size-3.5" /> : <Maximize2 className="size-3.5" />}</button>
-          <button
+          {!embedded && <button type="button" className="grid size-7 place-items-center rounded-md hover:bg-accent" aria-label={expanded ? minimizeLabel : expandLabel} title={expanded ? minimizeLabel : expandLabel} onClick={() => setExpanded((value) => !value)}>{expanded ? <Minimize2 className="size-3.5" /> : <Maximize2 className="size-3.5" />}</button>}
+          {!embedded && <button
             type="button"
             className="grid size-7 place-items-center rounded-md hover:bg-accent"
-            aria-label={minimized ? expandLabel : minimizeLabel}
+            aria-label={minimized ? restoreLabel : minimizeLabel}
             aria-expanded={!minimized}
             onClick={() => setMinimized((value) => !value)}
           >
             {minimized ? <Maximize2 className="size-3.5" /> : <Minimize2 className="size-3.5" />}
-          </button>
+          </button>}
         </div>
       </div>
       {!minimized && (
         <div className="relative border-t px-2 pt-1 pb-2">
           {!chart || !active ? <div className="grid h-40 place-items-center text-sm text-muted-foreground">—</div> : <>
-          <svg viewBox={`0 0 ${CHART_WIDTH} ${CHART_HEIGHT}`} className={expanded ? "h-[calc(100dvh-12rem)] max-h-[42rem] w-full" : "h-40 w-full"} role="img" aria-label={chartLabel}>
+          <svg viewBox={`0 0 ${CHART_WIDTH} ${CHART_HEIGHT}`} className={expanded && !embedded ? "h-[calc(100dvh-12rem)] max-h-[42rem] w-full" : "h-40 w-full"} role="img" aria-label={chartLabel}>
             <rect x={PLOT_LEFT} y={PLOT_TOP} width={CHART_WIDTH - PLOT_LEFT - PLOT_RIGHT} height={CHART_HEIGHT - PLOT_TOP - PLOT_BOTTOM} fill="none" stroke="currentColor" strokeOpacity="0.18" />
             {ticks.map((tick) => (
               <g key={tick}>
@@ -190,7 +196,7 @@ export function MunicipalityMetricChart({
             <line x1={active.x} x2={active.x} y1={PLOT_TOP} y2={CHART_HEIGHT - PLOT_BOTTOM} className="pointer-events-none stroke-teal-700/45 dark:stroke-teal-300/45" strokeDasharray="3 3" />
             <text x={PLOT_LEFT} y={CHART_HEIGHT - 9} className="fill-muted-foreground text-[10px]">{points[0].year}</text>
             <text x={CHART_WIDTH - PLOT_RIGHT} y={CHART_HEIGHT - 9} textAnchor="end" className="fill-muted-foreground text-[10px]">{points.at(-1)!.year}</text>
-            <text x={active.x} y={PLOT_TOP + 10} textAnchor="middle" className="fill-foreground text-[10px] font-semibold">{active.year}</text>
+            <text x={active.x} y={PLOT_TOP + 10} textAnchor="middle" className="pointer-events-none fill-foreground text-[10px] font-semibold">{active.year}</text>
           </svg>
           {hoveredYear !== null && <div className="pointer-events-none absolute z-10 w-max max-w-[13rem] rounded-md border bg-popover px-2 py-1.5 text-[10px] shadow-md" style={{ left: (Math.min(86, Math.max(14, active.x / CHART_WIDTH * 100))) + "%", top: (Math.max(6, active.y / CHART_HEIGHT * 100)) + "%", transform: "translate(-50%, -115%)" }} data-testid="municipality-metric-chart-hover-card"><p className="font-semibold">{active.year}</p><p className="tabular-nums">{valueFormatter.format(active.value)} {unitLabel}</p>{changeLabels && previousPoint && <p className="mt-1 text-muted-foreground">{changeLabels.previousYear}: {formatDelta(active.value - previousPoint.value)}</p>}{changeLabels && firstPoint && firstPoint.year !== active.year && <p className="text-muted-foreground">{changeLabels.sinceFirstYear}: {formatDelta(active.value - firstPoint.value)}</p>}</div>}
           <p className="px-1 text-[10px] text-muted-foreground" role="tooltip" data-testid="municipality-metric-chart-tooltip">{active.year}: <span className="font-semibold text-foreground tabular-nums">{valueFormatter.format(active.value)}</span> {unitLabel}</p>

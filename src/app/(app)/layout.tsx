@@ -19,7 +19,7 @@ async function AuthenticatedSidebar() {
 function SidebarFallback() {
   return (
     <>
-      <header className="flex h-14 items-center gap-3 border-b px-3 md:hidden">
+      <header className="sticky top-0 z-40 flex h-14 items-center gap-3 border-b bg-background/95 px-3 backdrop-blur md:hidden">
         <Skeleton className="size-8" />
         <Skeleton className="h-4 w-36" />
       </header>
@@ -63,7 +63,7 @@ export default async function AppLayout({
           </Suspense>
         </div>
         <main
-          className="rail-content-transition min-w-0 flex-1 overflow-x-clip p-6 duration-[220ms] ease-out motion-reduce:transition-none md:pl-[calc(1.5rem+var(--app-rail-width,3.5rem))]"
+          className="rail-content-transition min-w-0 flex-1 overflow-x-clip p-4 duration-[220ms] ease-out motion-reduce:transition-none sm:p-6 md:pl-[calc(1.5rem+var(--app-rail-width,3.5rem))]"
           data-app-main
         >
           {children}

@@ -7,7 +7,9 @@ import { useLocale, useTranslations } from "next-intl";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Database, Landmark, MapPinned, Search, Users, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { MobileBottomSheet } from "@/components/ui/mobile-bottom-sheet";
 import { Skeleton } from "@/components/ui/skeleton";
+import { MunicipalityMetricChart } from "./municipality-metric-chart";
 import type { MunicipalityDatasetRef } from "../analysis";
 import {
   COST_CATEGORIES,
@@ -289,6 +291,7 @@ export function MunicipalitiesWorkspace() {
   const [query, setQuery] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
   const [activeResult, setActiveResult] = useState(0);
+  const [detailsOpen, setDetailsOpen] = useState(false);
 
   const populationViewParameter = searchParams.get("populationView") ?? "count";
   const populationView: PopulationViewId = isPopulationViewId(populationViewParameter)
@@ -952,6 +955,17 @@ export function MunicipalitiesWorkspace() {
                   ? "sexMale"
                   : "sexAll",
             );
+  const metricChartLabel = selected
+    ? metric === "costs"
+      ? t("costChartLabel", { municipality: selected.name, category: metricLabel })
+      : metric === "population"
+        ? populationView === "count"
+          ? t("populationChartLabel", { municipality: selected.name })
+          : t("populationViewChartLabel", { municipality: selected.name, metric: metricLabel })
+        : metric === "movement"
+          ? t("movementChartLabel", { municipality: selected.name, metric: metricLabel })
+          : t("ageChartLabel", { municipality: selected.name, ageGroup: metricLabel })
+    : "";
   const analysisDataset: MunicipalityDatasetRef | null = !selected
     ? null
     : metric === "costs"
@@ -1010,11 +1024,11 @@ export function MunicipalitiesWorkspace() {
 
   return (
     <div
-      className="grid min-h-0 gap-4 lg:grid-cols-[minmax(0,1fr)_19rem]"
+      className="grid min-h-0 gap-0 lg:grid-cols-[minmax(0,1fr)_19rem] lg:gap-4"
       data-testid="municipalities-workspace"
     >
       <section
-        className="relative h-[60dvh] min-h-[28rem] lg:h-[calc(100dvh-12rem)] lg:min-h-[38rem]"
+        className="relative h-[calc(100dvh-10.5rem)] min-h-[32rem] lg:h-[calc(100dvh-12rem)] lg:min-h-[38rem]"
         aria-label={t("mapRegionLabel")}
       >
         <div className="absolute top-3 left-3 z-20 w-[min(24rem,calc(100%-5.5rem))]">
@@ -1143,6 +1157,7 @@ export function MunicipalitiesWorkspace() {
           onCostMeasureChange={(value) => setParameter("costMeasure", value === "share" ? null : value)}
           onSelect={selectByCode}
           onReset={() => updateSelection(null)}
+          onOpenDetails={() => setDetailsOpen(true)}
           labels={{
             map: t("mapLabel"),
             zoomIn: t("zoomIn"),
@@ -1191,6 +1206,7 @@ export function MunicipalitiesWorkspace() {
             },
             minimizeChart: t("minimizeMetricChart"),
             expandChart: t("expandMetricChart"),
+            restoreChart: t("restoreMetricChart"),
             loadingAge: t("ageLayerLoading"),
             ageError: t("ageLayerError"),
             loadingMovement: t("movementLayerLoading"),
@@ -1205,27 +1221,14 @@ export function MunicipalitiesWorkspace() {
             zoomHintWindows: t("mapZoomHintWindows"),
             zoomHintMac: t("mapZoomHintMac"),
             zoomHintMobile: t("mapZoomHintMobile"),
+            display: t("mobileDisplay"),
+            legend: t("mobileLegend"),
+            details: t("mobileDetails"),
+            close: t("mobileClose"),
+            selected: t("mobileSelected"),
           }}
           selectedMetricHistory={history}
-          metricChartLabel={
-            selected
-              ? metric === "costs"
-                ? t("costChartLabel", { municipality: selected.name, category: metricLabel })
-                : metric === "population"
-                ? populationView === "count"
-                  ? t("populationChartLabel", { municipality: selected.name })
-                  : t("populationViewChartLabel", { municipality: selected.name, metric: metricLabel })
-                : metric === "movement"
-                  ? t("movementChartLabel", {
-                      municipality: selected.name,
-                      metric: metricLabel,
-                    })
-                  : t("ageChartLabel", {
-                      municipality: selected.name,
-                      ageGroup: metricLabel,
-                    })
-              : ""
-          }
+          metricChartLabel={metricChartLabel}
           metricLabel={metricLabel}
           chartValueFormatter={chartFormatter}
           chartUnitLabel={chartUnit}
@@ -1234,7 +1237,7 @@ export function MunicipalitiesWorkspace() {
         />
       </section>
       <aside
-        className="flex flex-col gap-4"
+        className="hidden flex-col gap-4 lg:flex"
         aria-live="polite"
         data-testid="municipality-details"
       >
@@ -1251,9 +1254,14 @@ export function MunicipalitiesWorkspace() {
                 {selected.name}
               </h2>
               <dl className="mt-5 grid grid-cols-[auto_1fr] gap-x-3 gap-y-2 text-sm">
+                <dt className="text-muted-foreground">{t("municipalityCode")}</dt><dd className="font-mono font-medium">{selected.municipalityCode}</dd>
                 <dt className="text-muted-foreground">{t("state")}</dt><dd className="font-medium">{selected.state}</dd>
                 <dt className="text-muted-foreground">{t("district")}</dt><dd className="font-medium">{selectedProfile?.district ?? t("profileDataUnavailable")}</dd>
                 <dt className="text-muted-foreground">{t("population")}</dt><dd className="font-semibold tabular-nums">{personsFormatter.format(selectedPopulation)}</dd>
+                {metric === "population" && populationView === "density" ? <><dt className="text-muted-foreground">{t("municipalityArea")}</dt><dd className="font-medium tabular-nums">{ratioFormatter.format(selected.areaSquareKilometers)} {t("areaUnit")}</dd></> : null}
+                {activeValue !== null && !(metric === "population" && populationView === "count") ? <><dt className="text-muted-foreground">{metricLabel}</dt><dd className="font-semibold tabular-nums">{chartFormatter.format(activeValue)}{chartUnit ? ` ${chartUnit}` : ""}</dd></> : null}
+                {previousValue !== null ? <><dt className="text-muted-foreground">{metric === "population" ? t("populationChangePreviousYear") : metric === "movement" ? t("movementChangePreviousYear") : metric === "age" ? t("ageChangePreviousYear") : t("costChangePreviousYear")}</dt><dd className="font-medium tabular-nums">{formatMetricChange(activeValue, previousValue)}</dd></> : null}
+                {averageAnnualPopulationChange !== null ? <><dt className="text-muted-foreground">{t("populationAverageAnnualChange", { year: populationSeries.firstYear })}</dt><dd className="font-medium tabular-nums">{signedShareFormatter.format(averageAnnualPopulationChange)}</dd></> : null}
                 <dt className="text-muted-foreground">{t("mayor")}</dt><dd className="font-medium">{selectedProfile?.mayor ?? t("profileDataUnavailable")}</dd>
                 <dt className="text-muted-foreground">{t("councilComposition")}</dt><dd className="font-medium">{selectedProfile?.councilComposition ?? t("profileDataUnavailable")}</dd>
                 <dt className="text-muted-foreground">{t("officialWebsite")}</dt><dd className="min-w-0 font-medium">{selectedProfile?.officialWebsite ? <a className="break-all text-teal-700 underline underline-offset-2 hover:text-teal-800" href={selectedProfile.officialWebsite} target="_blank" rel="noreferrer">{t("openWebsite")}</a> : t("profileDataUnavailable")}</dd>
@@ -1387,6 +1395,105 @@ export function MunicipalitiesWorkspace() {
           <p className="mt-2">{t("geometryAttribution")}</p>
         </div>
       </aside>
+
+      <MobileBottomSheet
+        open={detailsOpen}
+        onOpenChange={setDetailsOpen}
+        title={selected ? selected.name : t("selectionTitle")}
+        description={selected ? t("selectedMunicipality") : t("selectionDescription")}
+        closeLabel={t("mobileClose")}
+      >
+        <div className="space-y-4" aria-live="polite" data-testid="mobile-municipality-details">
+          {selected ? (
+            <>
+              <div className="rounded-xl border bg-card p-4">
+                <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-3 text-sm">
+                  <dt className="text-muted-foreground">{t("municipalityCode")}</dt><dd className="font-mono font-medium">{selected.municipalityCode}</dd>
+                  <dt className="text-muted-foreground">{t("state")}</dt><dd className="font-medium">{selected.state}</dd>
+                  <dt className="text-muted-foreground">{t("district")}</dt><dd className="font-medium">{selectedProfile?.district ?? t("profileDataUnavailable")}</dd>
+                  <dt className="text-muted-foreground">{t("population")}</dt><dd className="font-semibold tabular-nums">{personsFormatter.format(selectedPopulation)}</dd>
+                  {metric === "population" && populationView === "density" ? <><dt className="text-muted-foreground">{t("municipalityArea")}</dt><dd className="font-medium tabular-nums">{ratioFormatter.format(selected.areaSquareKilometers)} {t("areaUnit")}</dd></> : null}
+                  {activeValue !== null && !(metric === "population" && populationView === "count") ? <><dt className="text-muted-foreground">{metricLabel}</dt><dd className="font-semibold tabular-nums">{chartFormatter.format(activeValue)}{chartUnit ? ` ${chartUnit}` : ""}</dd></> : null}
+                  {previousValue !== null ? <><dt className="text-muted-foreground">{metric === "population" ? t("populationChangePreviousYear") : metric === "movement" ? t("movementChangePreviousYear") : metric === "age" ? t("ageChangePreviousYear") : t("costChangePreviousYear")}</dt><dd className="font-medium tabular-nums">{formatMetricChange(activeValue, previousValue)}</dd></> : null}
+                  {averageAnnualPopulationChange !== null ? <><dt className="text-muted-foreground">{t("populationAverageAnnualChange", { year: populationSeries.firstYear })}</dt><dd className="font-medium tabular-nums">{signedShareFormatter.format(averageAnnualPopulationChange)}</dd></> : null}
+                  <dt className="text-muted-foreground">{t("mayor")}</dt><dd className="font-medium">{selectedProfile?.mayor ?? t("profileDataUnavailable")}</dd>
+                  <dt className="text-muted-foreground">{t("councilComposition")}</dt><dd className="font-medium">{selectedProfile?.councilComposition ?? t("profileDataUnavailable")}</dd>
+                  <dt className="text-muted-foreground">{t("officialWebsite")}</dt>
+                  <dd className="min-w-0 font-medium">
+                    {selectedProfile?.officialWebsite ? (
+                      <a className="break-all text-teal-700 underline underline-offset-2" href={selectedProfile.officialWebsite} target="_blank" rel="noreferrer">{t("openWebsite")}</a>
+                    ) : t("profileDataUnavailable")}
+                  </dd>
+                </dl>
+                <p className="mt-4 flex items-center gap-1.5 border-t pt-3 text-xs text-muted-foreground">
+                  <Users className="size-3.5" />
+                  {metric === "costs"
+                    ? t("costReference", { year })
+                    : metric === "movement"
+                      ? t("movementReference", { year })
+                      : usesCitizenship
+                        ? t("structureReference", { year })
+                        : t("populationReference", { year })}
+                </p>
+              </div>
+
+              {history && analysisDataset ? (
+                <MunicipalityMetricChart
+                  embedded
+                  metricLabel={metricLabel}
+                  municipalityName={selected.name}
+                  points={history}
+                  selectedYear={year}
+                  valueFormatter={chartFormatter}
+                  unitLabel={chartUnit}
+                  changeLabels={metric === "population" && populationView === "count" ? { previousYear: t("populationChangePreviousYear"), sinceFirstYear: t("populationChangeSinceFirstYear", { year: populationSeries.firstYear }) } : undefined}
+                  chartLabel={metricChartLabel}
+                  minimizeLabel={t("minimizeMetricChart")}
+                  expandLabel={t("expandMetricChart")}
+                  restoreLabel={t("restoreMetricChart")}
+                  dataset={analysisDataset}
+                  addToAnalysisLabel={t("addToAnalysis")}
+                  dragToAnalysisLabel={t("dragToAnalysis")}
+                />
+              ) : null}
+
+              {investmentMunicipalityCodes?.has(selected.municipalityCode) ? (
+                <Button className="h-11 w-full" variant="outline" render={<Link href={`/municipalities/${selected.municipalityCode}/investments`} />}>
+                  <Landmark className="size-4" />
+                  {t("investmentDetails")}
+                </Button>
+              ) : null}
+              <Button
+                className="h-11 w-full"
+                variant="outline"
+                onClick={() => {
+                  updateSelection(null);
+                  setDetailsOpen(false);
+                }}
+              >
+                <X className="size-4" />
+                {t("clearSelection")}
+              </Button>
+            </>
+          ) : (
+            <div className="rounded-xl border bg-muted/30 p-4 text-sm leading-6 text-muted-foreground">
+              {t("selectionDescription")}
+            </div>
+          )}
+          <div className="rounded-xl border bg-muted/30 p-4 text-xs leading-5 text-muted-foreground">
+            <div className="mb-2 flex items-center gap-2 font-semibold text-foreground">
+              <Database className="size-4" />
+              {t("dataBasis")}
+            </div>
+            <p>{t("dataBasisDescription", { count: index.count })}</p>
+            <p className="mt-2">
+              {t("populationDataBasis", { firstYear: populationSeries.firstYear, latestYear: populationSeries.latestYear })}{" "}
+              <a className="underline underline-offset-2" href={populationSeries.source.urlTemplate.replace("{year}", String(populationSeries.latestYear))} target="_blank" rel="noreferrer">{populationSeries.source.title}</a>
+              {` (${populationSeries.source.license}).`}
+            </p>
+          </div>
+        </div>
+      </MobileBottomSheet>
     </div>
   );
 }

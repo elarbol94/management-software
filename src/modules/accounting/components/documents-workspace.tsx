@@ -160,7 +160,40 @@ export async function DocumentsWorkspace({
             </Button>
           </div>
 
-          <div className="overflow-x-auto">
+          <div className="grid gap-3 p-3 md:hidden">
+            {invoices.length === 0 ? (
+              <div className="flex min-h-40 flex-col items-center justify-center rounded-xl border border-dashed px-5 text-center">
+                <FileText className="mb-3 size-7 text-muted-foreground/60" />
+                <p className="text-sm font-medium">{tInvoices("noInvoices")}</p>
+                <Button className="mt-4 h-11" variant="outline" nativeButton={false} render={<Link href="/accounting/invoices/new" />}>
+                  <Plus className="size-4" />
+                  {tInvoices("newInvoice")}
+                </Button>
+              </div>
+            ) : invoices.map((invoice) => (
+              <a
+                key={invoice.id}
+                href={`/accounting/invoices/${invoice.id}`}
+                className="rounded-xl border bg-background p-4 transition hover:border-foreground/25 focus-visible:outline-2 focus-visible:outline-offset-2"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="font-semibold">{invoice.invoiceNumber}</p>
+                    <p className="mt-1 truncate text-sm text-muted-foreground">{invoice.customerName}</p>
+                  </div>
+                  <p className="shrink-0 font-semibold tabular-nums">{formatCents(invoice.grossCents, locale)}</p>
+                </div>
+                <div className="mt-3 flex items-center justify-between gap-3 border-t pt-3">
+                  <span className="text-xs text-muted-foreground">
+                    {tInvoices("dueDate")}: {invoice.dueDate ? format.dateTime(new Date(invoice.dueDate), { day: "2-digit", month: "2-digit", year: "numeric" }) : "–"}
+                  </span>
+                  <InvoiceStatusBadge status={invoice.status} />
+                </div>
+              </a>
+            ))}
+          </div>
+
+          <div className="hidden overflow-x-auto md:block">
             <Table>
               <TableHeader>
                 <TableRow>

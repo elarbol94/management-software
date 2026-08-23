@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocale } from "next-intl";
+import { Info, ListFilter, MapPinned, SlidersHorizontal, X } from "lucide-react";
 import * as maplibregl from "maplibre-gl";
 import type {
   ExpressionSpecification,
@@ -39,6 +40,7 @@ import {
   MUNICIPALITY_SEQUENTIAL_COLORS,
 } from "../palette";
 import { POPULATION_CLASSES } from "../population";
+import { MobileBottomSheet } from "@/components/ui/mobile-bottom-sheet";
 import { MunicipalityMetricChart } from "./municipality-metric-chart";
 
 const SOURCE_ID = "austrian-municipalities";
@@ -249,6 +251,7 @@ type Labels = {
   costDefinition: string;
   minimizeChart: string;
   expandChart: string;
+  restoreChart: string;
   addToAnalysis: string;
   dragToAnalysis: string;
   loadingAge: string;
@@ -263,6 +266,11 @@ type Labels = {
   zoomHintWindows: string;
   zoomHintMac: string;
   zoomHintMobile: string;
+  display: string;
+  legend: string;
+  details: string;
+  close: string;
+  selected: string;
 };
 
 export function MunicipalityMap({
@@ -309,6 +317,7 @@ export function MunicipalityMap({
   onCostMeasureChange,
   onSelect,
   onReset,
+  onOpenDetails,
   labels,
   selectedMetricHistory,
   metricChartLabel,
@@ -361,6 +370,7 @@ export function MunicipalityMap({
   onCostMeasureChange: (measure: CostMeasureId) => void;
   onSelect: (code: string) => void;
   onReset: () => void;
+  onOpenDetails: () => void;
   labels: Labels;
   selectedMetricHistory: Array<{ year: number; value: number | null }> | null;
   metricChartLabel: string;
@@ -378,6 +388,7 @@ export function MunicipalityMap({
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const [ready, setReady] = useState(false);
+  const [mobilePanel, setMobilePanel] = useState<"display" | "legend" | null>(null);
   const hoveredIdRef = useRef<string | number | null>(null);
   const selectedIdRef = useRef<string | number | null>(null);
   const peerIdsRef = useRef<Set<string>>(new Set());
@@ -636,10 +647,10 @@ export function MunicipalityMap({
         className="h-full w-full"
         aria-label={labels.map}
       />
-      <div className="absolute top-3 right-3 z-10 flex flex-col overflow-hidden rounded-lg border bg-background/95 shadow-sm backdrop-blur">
+      <div className="absolute top-16 right-3 z-10 flex flex-col overflow-hidden rounded-lg border bg-background/95 shadow-sm backdrop-blur lg:top-3">
         <button
           type="button"
-          className="grid size-9 place-items-center text-lg hover:bg-accent"
+          className="grid size-11 place-items-center text-lg hover:bg-accent lg:size-9"
           aria-label={labels.zoomIn}
           onClick={() => mapRef.current?.zoomIn()}
         >
@@ -647,7 +658,7 @@ export function MunicipalityMap({
         </button>
         <button
           type="button"
-          className="grid size-9 place-items-center border-t text-lg hover:bg-accent"
+          className="grid size-11 place-items-center border-t text-lg hover:bg-accent lg:size-9"
           aria-label={labels.zoomOut}
           onClick={() => mapRef.current?.zoomOut()}
         >
@@ -655,7 +666,7 @@ export function MunicipalityMap({
         </button>
         <button
           type="button"
-          className="border-t px-2 py-2 text-[10px] font-semibold whitespace-nowrap hover:bg-accent"
+          className="min-h-11 border-t px-2 py-2 text-[10px] font-semibold whitespace-nowrap hover:bg-accent lg:min-h-0"
           aria-label={labels.reset}
           onClick={() => {
             mapRef.current?.fitBounds(asMapBounds(austriaBounds), {
@@ -669,6 +680,7 @@ export function MunicipalityMap({
         </button>
       </div>
       {selected && selectedMetricHistory && analysisDataset && (
+        <div className="hidden lg:block">
         <MunicipalityMetricChart
           metricLabel={metricLabel}
           municipalityName={selected.name}
@@ -680,13 +692,15 @@ export function MunicipalityMap({
           chartLabel={metricChartLabel}
           minimizeLabel={labels.minimizeChart}
           expandLabel={labels.expandChart}
+          restoreLabel={labels.restoreChart}
           dataset={analysisDataset}
           addToAnalysisLabel={labels.addToAnalysis}
           dragToAnalysisLabel={labels.dragToAnalysis}
         />
+        </div>
       )}
       <div
-        className="absolute top-16 left-3 z-10 w-[min(20rem,calc(100%-1.5rem))] rounded-xl border bg-background/95 p-3 shadow-sm backdrop-blur"
+        className="absolute top-16 left-3 z-10 hidden w-[min(20rem,calc(100%-1.5rem))] rounded-xl border bg-background/95 p-3 shadow-sm backdrop-blur lg:block"
         data-testid="metric-control"
       >
         <div className="grid grid-cols-[5.5rem_1fr] items-center gap-2">
@@ -954,7 +968,7 @@ export function MunicipalityMap({
         </div>
       </div>
       <div
-        className="absolute bottom-3 left-3 z-10 w-44 max-w-[calc(100%-1.5rem)] rounded-xl border bg-background/95 p-3 shadow-sm backdrop-blur"
+        className="absolute bottom-3 left-3 z-10 hidden w-44 max-w-[calc(100%-1.5rem)] rounded-xl border bg-background/95 p-3 shadow-sm backdrop-blur lg:block"
         data-testid="population-legend"
       >
         <p className="text-xs font-semibold">{metricLabel}</p>
@@ -1016,6 +1030,226 @@ export function MunicipalityMap({
           {labels.noData}
         </p>
       </div>
+
+      {selected ? (
+        <div className="absolute inset-x-3 bottom-[4.75rem] z-20 flex justify-center lg:hidden">
+          <div className="flex max-w-full items-center overflow-hidden rounded-full border bg-background/95 shadow-lg backdrop-blur">
+            <button
+              type="button"
+              className="flex min-h-11 min-w-0 items-center gap-2 px-4 text-left"
+              onClick={onOpenDetails}
+            >
+              <MapPinned className="size-4 shrink-0 text-teal-700" />
+              <span className="min-w-0 truncate text-sm font-semibold">{selected.name}</span>
+              <span className="shrink-0 text-xs text-muted-foreground">{labels.selected}</span>
+            </button>
+            <button
+              type="button"
+              className="grid size-11 shrink-0 place-items-center border-l hover:bg-accent"
+              aria-label={labels.reset}
+              onClick={onReset}
+            >
+              <X className="size-4" />
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      <nav
+        className="absolute inset-x-3 bottom-3 z-20 grid grid-cols-3 overflow-hidden rounded-xl border bg-background/95 shadow-xl backdrop-blur lg:hidden"
+        aria-label={labels.map}
+      >
+        <button
+          type="button"
+          className="flex min-h-12 items-center justify-center gap-2 px-2 text-xs font-semibold hover:bg-accent"
+          onClick={() => setMobilePanel("display")}
+        >
+          <SlidersHorizontal className="size-4" />
+          {labels.display}
+        </button>
+        <button
+          type="button"
+          className="flex min-h-12 items-center justify-center gap-2 border-x px-2 text-xs font-semibold hover:bg-accent"
+          onClick={() => setMobilePanel("legend")}
+        >
+          <ListFilter className="size-4" />
+          {labels.legend}
+        </button>
+        <button
+          type="button"
+          className="flex min-h-12 items-center justify-center gap-2 px-2 text-xs font-semibold hover:bg-accent"
+          onClick={onOpenDetails}
+        >
+          <Info className="size-4" />
+          {labels.details}
+        </button>
+      </nav>
+
+      <MobileBottomSheet
+        open={mobilePanel === "display"}
+        onOpenChange={(open) => setMobilePanel(open ? "display" : null)}
+        title={labels.display}
+        description={metricLabel}
+        closeLabel={labels.close}
+      >
+        <div className="space-y-5" data-testid="mobile-metric-control">
+          <div className="space-y-2">
+            <label htmlFor="municipality-metric-mobile" className="text-sm font-semibold">{labels.metric}</label>
+            <select
+              id="municipality-metric-mobile"
+              value={metric}
+              className="h-11 w-full rounded-md border bg-background px-3 text-sm"
+              onChange={(event) => onMetricChange(event.target.value as MapMetric)}
+            >
+              <option value="population">{labels.populationMetric}</option>
+              <option value="age">{labels.ageMetric}</option>
+              <option value="movement">{labels.movementMetric}</option>
+              <option value="costs">{labels.costsMetric}</option>
+            </select>
+          </div>
+
+          {metric === "population" ? (
+            <div className="space-y-2 border-t pt-4">
+              <label htmlFor="municipality-population-view-mobile" className="text-sm font-semibold">{labels.populationView}</label>
+              <select
+                id="municipality-population-view-mobile"
+                value={populationView}
+                className="h-11 w-full rounded-md border bg-background px-3 text-sm"
+                onChange={(event) => onPopulationViewChange(event.target.value as PopulationViewId)}
+              >
+                {Object.entries(labels.populationViews).map(([id, label]) => <option key={id} value={id}>{label}</option>)}
+              </select>
+              {populationDefinition ? <p className="text-xs leading-5 text-muted-foreground">{populationDefinition}</p> : null}
+              {structureLoading ? <p className="text-xs text-muted-foreground">{labels.loadingStructure}</p> : null}
+              {structureError ? <p className="text-xs text-destructive" role="alert">{labels.structureError}</p> : null}
+            </div>
+          ) : null}
+
+          {metric === "age" ? (
+            <div className="space-y-3 border-t pt-4">
+              <label htmlFor="municipality-age-view-mobile" className="text-sm font-semibold">{labels.ageView}</label>
+              <select
+                id="municipality-age-view-mobile"
+                value={ageView}
+                className="h-11 w-full rounded-md border bg-background px-3 text-sm"
+                onChange={(event) => onAgeViewChange(event.target.value as AgeViewId)}
+              >
+                <optgroup label={labels.ageGroupsHeading}>
+                  {Object.entries(labels.ageGroups).map(([id, label]) => <option key={id} value={id}>{label}</option>)}
+                </optgroup>
+                <optgroup label={labels.indicatorsHeading}>
+                  {Object.entries(labels.indicators).map(([id, label]) => <option key={id} value={id}>{label}</option>)}
+                </optgroup>
+              </select>
+              {showAgeFilters ? (
+                <div className="space-y-2">
+                  <div className="grid grid-cols-2 overflow-hidden rounded-lg border">
+                    {(["share", "persons"] as const).map((item) => (
+                      <button key={item} type="button" className="min-h-11 px-3 text-sm font-medium aria-pressed:bg-teal-700 aria-pressed:text-white" aria-pressed={ageMeasure === item} onClick={() => onAgeMeasureChange(item)}>{labels.measures[item]}</button>
+                    ))}
+                  </div>
+                  <div className="grid grid-cols-3 overflow-hidden rounded-lg border">
+                    {(["all", "female", "male"] as const).map((item) => (
+                      <button key={item} type="button" className="min-h-11 px-2 text-sm font-medium aria-pressed:bg-teal-700 aria-pressed:text-white" aria-pressed={sex === item} onClick={() => onSexChange(item)}>{labels.sexes[item]}</button>
+                    ))}
+                  </div>
+                </div>
+              ) : <p className="text-xs leading-5 text-muted-foreground">{indicatorDefinition}</p>}
+              {ageLoading ? <p className="text-xs text-muted-foreground">{labels.loadingAge}</p> : null}
+              {ageError ? <p className="text-xs text-destructive" role="alert">{labels.ageError}</p> : null}
+            </div>
+          ) : null}
+
+          {metric === "movement" ? (
+            <div className="space-y-2 border-t pt-4">
+              <label htmlFor="municipality-movement-view-mobile" className="text-sm font-semibold">{labels.movementView}</label>
+              <select
+                id="municipality-movement-view-mobile"
+                value={movementView}
+                className="h-11 w-full rounded-md border bg-background px-3 text-sm"
+                onChange={(event) => onMovementViewChange(event.target.value as MovementMetricId)}
+              >
+                {Object.entries(labels.movements).map(([id, label]) => <option key={id} value={id}>{label}</option>)}
+              </select>
+              {movementDefinition ? <p className="text-xs leading-5 text-muted-foreground">{movementDefinition}</p> : null}
+              {movementLoading ? <p className="text-xs text-muted-foreground">{labels.loadingMovement}</p> : null}
+              {movementError ? <p className="text-xs text-destructive" role="alert">{labels.movementError}</p> : null}
+            </div>
+          ) : null}
+
+          {metric === "costs" ? (
+            <div className="space-y-3 border-t pt-4">
+              <div className="space-y-2">
+                <label htmlFor="municipality-cost-measure-mobile" className="text-sm font-semibold">{labels.costMeasure}</label>
+                <select id="municipality-cost-measure-mobile" value={costMeasure} className="h-11 w-full rounded-md border bg-background px-3 text-sm" onChange={(event) => onCostMeasureChange(event.target.value as CostMeasureId)}>
+                  {Object.entries(labels.costMeasures).map(([id, label]) => <option key={id} value={id}>{label}</option>)}
+                </select>
+              </div>
+              <div className="space-y-2">
+                <label htmlFor="municipality-cost-view-mobile" className="text-sm font-semibold">{labels.costView}</label>
+                <select id="municipality-cost-view-mobile" value={costCategory} className="h-11 w-full rounded-md border bg-background px-3 text-sm" onChange={(event) => onCostCategoryChange(event.target.value as CostCategoryId)}>
+                  {Object.entries(labels.costCategories).map(([id, label]) => <option key={id} value={id}>{id} · {label}</option>)}
+                </select>
+              </div>
+              {costsLoading ? <p className="text-xs text-muted-foreground">{labels.loadingCosts}</p> : null}
+              <p className="text-xs leading-5 text-muted-foreground">{labels.costDefinition}</p>
+              {peerGroupLabel ? <p className="rounded-md border border-teal-200 bg-teal-50 px-3 py-2 text-xs leading-5 text-teal-900 dark:border-teal-900 dark:bg-teal-950/30 dark:text-teal-100">{peerGroupLabel}</p> : null}
+              {costsError ? <p className="text-xs text-destructive" role="alert">{labels.costsError}</p> : null}
+            </div>
+          ) : null}
+
+          <div className="space-y-3 border-t pt-4">
+            <div className="flex items-baseline justify-between gap-3">
+              <label htmlFor="municipality-population-year-mobile" className="text-sm font-semibold">{labels.year}</label>
+              <output htmlFor="municipality-population-year-mobile" className="text-lg font-semibold tabular-nums">{year}</output>
+            </div>
+            <div className="flex items-center gap-3">
+              <button type="button" className="grid size-11 shrink-0 place-items-center rounded-md border text-xl" aria-label={labels.previousYear} disabled={year === firstYear} onClick={() => onYearChange(year - 1)}>‹</button>
+              <input id="municipality-population-year-mobile" type="range" min={firstYear} max={latestYear} value={year} aria-label={labels.year} className="h-2 min-w-0 flex-1 accent-teal-700" onChange={(event) => onYearChange(Number(event.target.value))} />
+              <button type="button" className="grid size-11 shrink-0 place-items-center rounded-md border text-xl" aria-label={labels.nextYear} disabled={year === latestYear} onClick={() => onYearChange(year + 1)}>›</button>
+            </div>
+          </div>
+        </div>
+      </MobileBottomSheet>
+
+      <MobileBottomSheet
+        open={mobilePanel === "legend"}
+        onOpenChange={(open) => setMobilePanel(open ? "legend" : null)}
+        title={labels.legend}
+        description={labels.reference}
+        closeLabel={labels.close}
+      >
+        <div data-testid="mobile-population-legend">
+          <p className="text-sm font-semibold">{metricLabel}</p>
+          {usePopulationClasses ? (
+            <ul className="mt-3 grid grid-cols-2 gap-2" aria-label={metricLabel}>
+              {POPULATION_CLASSES.map((item) => (
+                <li key={item.minimum} className="flex items-center gap-2 text-xs tabular-nums">
+                  <span className="size-4 rounded-[3px] border border-black/10" style={{ backgroundColor: item.color }} />
+                  <span>{populationClassLabel(item, personsFormatter)}</span>
+                </li>
+              ))}
+            </ul>
+          ) : scaleDomain ? (
+            <>
+              <div className="relative mt-4">
+                <div className="h-5 rounded-sm border border-black/10" style={{ background: `linear-gradient(to right, ${legendGradient})` }} />
+                {isDiverging ? <span className="absolute -top-0.5 h-6 w-px bg-foreground/60" style={{ left: "50%" }} /> : null}
+              </div>
+              <div className="mt-2 flex justify-between gap-2 text-xs tabular-nums">
+                <span>{isDiverging ? "≤ " : ""}{chartValueFormatter.format(scaleDomain[0])}</span>
+                {isDiverging ? <span className="text-muted-foreground">0</span> : null}
+                <span>≥ {chartValueFormatter.format(scaleDomain[1])}</span>
+              </div>
+              {chartUnitLabel ? <p className="mt-1 text-xs text-muted-foreground">{chartUnitLabel}</p> : null}
+            </>
+          ) : null}
+          <p className="mt-4 flex items-center gap-2 border-t pt-3 text-xs text-muted-foreground">
+            <span className="size-4 rounded-[3px] border border-black/10" style={{ backgroundColor: MAP_NO_DATA_COLOR, opacity: MAP_NO_DATA_OPACITY }} />
+            {labels.noData}
+          </p>
+        </div>
+      </MobileBottomSheet>
     </div>
   );
 }

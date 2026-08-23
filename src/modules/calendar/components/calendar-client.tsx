@@ -34,6 +34,7 @@ import {
   Plus,
   Repeat2,
   Search,
+  SlidersHorizontal,
   Sparkles,
   Trash2,
   UserRound,
@@ -41,6 +42,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { MobileBottomSheet } from "@/components/ui/mobile-bottom-sheet";
 import {
   Dialog,
   DialogContent,
@@ -516,6 +518,7 @@ export function CalendarClient({
   currentUser,
   workspace,
   view,
+  viewWasExplicit,
   date,
   range,
   initialFilters,
@@ -524,6 +527,7 @@ export function CalendarClient({
   currentUser: { id: string; name: string };
   workspace: CalendarWorkspace;
   view: CalendarView;
+  viewWasExplicit: boolean;
   date: string;
   range: { from: string; to: string };
   initialFilters: FilterState;
@@ -545,6 +549,7 @@ export function CalendarClient({
   }
   const [eventOpen, setEventOpen] = useState(shouldOpenNewEvent);
   const [calendarOpen, setCalendarOpen] = useState(false);
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const [calendarDraft, setCalendarDraft] = useState<CalendarDraft>({
     name: "",
     color: "#6D5EF7",
@@ -583,6 +588,14 @@ export function CalendarClient({
       ),
     () => null,
   );
+  useEffect(() => {
+    if (viewWasExplicit || view === "agenda") return;
+    if (!window.matchMedia("(max-width: 767px)").matches) return;
+    const params = new URLSearchParams(window.location.search);
+    params.set("view", "agenda");
+    params.set("date", date);
+    router.replace(`/calendar?${params.toString()}`);
+  }, [date, router, view, viewWasExplicit]);
   const visibleSources = useMemo(
     () =>
       filters.sources.length > 0
@@ -1381,6 +1394,12 @@ export function CalendarClient({
           year: "numeric",
           timeZone: "UTC",
         }).format(parseDate(addDays(range.to, -1)))}`;
+  const activeFilterCount =
+    filters.sources.length +
+    filters.people.length +
+    filters.projects.length +
+    filters.calendars.length +
+    (filters.query ? 1 : 0);
   const importFieldLabels: Record<string, string> = {
     title: t("eventTitle"),
     location: t("location"),
@@ -1398,7 +1417,7 @@ export function CalendarClient({
     <div className="mx-auto flex w-full max-w-[112rem] flex-col gap-4">
       <header className="flex flex-col gap-3 2xl:flex-row 2xl:items-end 2xl:justify-between">
         <div>
-          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+          <p className="hidden text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground sm:block">
             {t("eyebrow")}
           </p>
           <div className="mt-1 flex flex-wrap items-baseline gap-x-4 gap-y-1">
@@ -1407,10 +1426,10 @@ export function CalendarClient({
               {periodLabel}
             </span>
           </div>
-          <p className="mt-1 text-sm text-muted-foreground">{t("description")}</p>
+          <p className="mt-1 hidden text-sm text-muted-foreground sm:block">{t("description")}</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <div className="flex items-center rounded-lg border bg-background p-0.5">
+          <div className="flex min-h-11 items-center rounded-lg border bg-background p-0.5">
             <Button
               variant="ghost"
               size="icon-sm"
@@ -1442,7 +1461,7 @@ export function CalendarClient({
               <ArrowRight />
             </Button>
           </div>
-          <div className="flex items-center rounded-lg border bg-background p-0.5">
+          <div className="hidden items-center rounded-lg border bg-background p-0.5 sm:flex">
             {(["week", "month", "agenda", "team"] as const).map((mode) => (
               <Button
                 key={mode}
@@ -1456,9 +1475,28 @@ export function CalendarClient({
               </Button>
             ))}
           </div>
-          <Button onClick={() => openNewEvent()} disabled={!defaultCalendarId}>
+          <label className="sr-only" htmlFor="calendar-mobile-view">{t("view")}</label>
+          <select
+            id="calendar-mobile-view"
+            value={view}
+            className="h-11 min-w-0 flex-1 rounded-lg border bg-background px-3 text-sm font-medium sm:hidden"
+            onChange={(event) => navigate({ view: event.target.value as CalendarView })}
+          >
+            {(["week", "month", "agenda", "team"] as const).map((mode) => <option key={mode} value={mode}>{t(mode)}</option>)}
+          </select>
+          <Button
+            variant="outline"
+            className="h-11 px-3 lg:hidden"
+            aria-label={t("filters")}
+            onClick={() => setFiltersOpen(true)}
+          >
+            <SlidersHorizontal className="size-4" />
+            <span className="hidden sm:inline">{t("filters")}</span>
+            {activeFilterCount > 0 ? <span className="rounded-full bg-foreground px-1.5 py-0.5 text-[10px] text-background">{activeFilterCount}</span> : null}
+          </Button>
+          <Button className="h-11 px-3" onClick={() => openNewEvent()} disabled={!defaultCalendarId} aria-label={t("newEvent")}>
             <Plus />
-            {t("newEvent")}
+            <span className="hidden sm:inline">{t("newEvent")}</span>
           </Button>
         </div>
       </header>
@@ -1672,7 +1710,7 @@ export function CalendarClient({
           className={cn(
             "min-w-0",
             selected
-              ? "fixed inset-x-3 bottom-3 z-40 max-h-[calc(100dvh-1.5rem)] overflow-y-auto drop-shadow-xl sm:left-auto sm:w-[22rem] 2xl:static 2xl:block 2xl:w-auto 2xl:overflow-visible 2xl:drop-shadow-none"
+              ? "hidden lg:fixed lg:right-3 lg:bottom-3 lg:z-40 lg:block lg:max-h-[calc(100dvh-1.5rem)] lg:w-[22rem] lg:overflow-y-auto lg:drop-shadow-xl 2xl:static 2xl:w-auto 2xl:overflow-visible 2xl:drop-shadow-none"
               : "hidden 2xl:block",
           )}
         >
@@ -1701,6 +1739,125 @@ export function CalendarClient({
           )}
         </aside>
       </div>
+
+      <MobileBottomSheet
+        open={filtersOpen}
+        onOpenChange={setFiltersOpen}
+        title={t("filters")}
+        description={t("filterDescription")}
+        closeLabel={t("close")}
+      >
+        <div className="space-y-5 [&_label]:min-h-11" data-testid="calendar-mobile-filters">
+          <MiniMonth
+            date={date}
+            today={clientToday}
+            locale={locale}
+            onSelect={(nextDate) => navigate({ date: nextDate })}
+          />
+          <label className="relative block border-t pt-4">
+            <Search className="absolute top-[calc(50%+0.5rem)] left-3 size-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={filters.query}
+              onChange={(event) => updateFilters({ ...filters, query: event.target.value })}
+              placeholder={t("searchPlaceholder")}
+              className="h-11 pl-9"
+            />
+          </label>
+          <FilterGroup title={t("workSources")}>
+            {SOURCE_TYPES.map((source) => (
+              <FilterToggle
+                key={source}
+                checked={visibleSources.has(source)}
+                label={source === "event" ? t("events") : source === "focus" ? t("focus") : source === "deadline" ? t("deadlines") : source === "task" ? t("tasks") : t("projects")}
+                color={sourceColors[source]}
+                onChange={() => toggleFilter("sources", source)}
+              />
+            ))}
+          </FilterGroup>
+          <FilterGroup title={t("calendars")}>
+            {workspace.calendars.map((calendar) => (
+              <div key={calendar.id} className="flex items-center gap-1">
+                <FilterToggle
+                  checked={filters.calendars.length === 0 || filters.calendars.includes(calendar.id)}
+                  label={calendar.name}
+                  color={calendar.color}
+                  onChange={() => toggleFilter("calendars", calendar.id)}
+                  detail={calendar.visibility === "private" ? t("calendarPrivate") : calendar.visibility === "busy" ? t("calendarBusyOnly") : t("calendarShared")}
+                />
+                {calendar.role === "owner" ? (
+                  <button type="button" className="grid size-11 place-items-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground" aria-label={t("editCalendar")} onClick={() => openEditCalendar(calendar)}>
+                    <MoreHorizontal className="size-4" />
+                  </button>
+                ) : null}
+              </div>
+            ))}
+            <button type="button" className="mt-1 flex min-h-11 w-full items-center gap-2 rounded-md px-2 text-sm text-muted-foreground hover:bg-muted hover:text-foreground" onClick={openNewCalendar}>
+              <Plus className="size-4" />
+              {t("addCalendar")}
+            </button>
+          </FilterGroup>
+          <FilterGroup title={t("people")}>
+            {workspace.members.map((member) => (
+              <FilterToggle
+                key={member.id}
+                checked={filters.people.includes(member.id)}
+                label={member.id === currentUser.id ? `${member.name} · ${t("me")}` : member.name}
+                color="#6D5EF7"
+                onChange={() => toggleFilter("people", member.id)}
+              />
+            ))}
+          </FilterGroup>
+          {workspace.savedViews.length ? (
+            <FilterGroup title={t("savedViews")}>
+              {workspace.savedViews.map((saved) => (
+                <button
+                  type="button"
+                  key={saved.id}
+                  className="flex min-h-11 w-full items-center justify-between rounded-md px-2 text-left text-sm hover:bg-muted"
+                  onClick={() => {
+                    const savedFilters = {
+                      sources: saved.filters.sources ?? [],
+                      people: saved.filters.people ?? [],
+                      projects: saved.filters.projects ?? [],
+                      calendars: saved.filters.calendars ?? [],
+                      query: saved.filters.query ?? "",
+                    };
+                    setFilters(savedFilters);
+                    navigate({ view: saved.view, filters: savedFilters });
+                    setFiltersOpen(false);
+                  }}
+                >
+                  <span className="truncate">{saved.name}</span>
+                  <ChevronRight className="size-4 text-muted-foreground" />
+                </button>
+              ))}
+            </FilterGroup>
+          ) : null}
+          <Button variant="outline" className="h-11 w-full" onClick={() => void saveView()}>
+            <Sparkles />
+            {t("saveView")}
+          </Button>
+        </div>
+      </MobileBottomSheet>
+
+      <MobileBottomSheet
+        open={Boolean(selected)}
+        onOpenChange={(open) => { if (!open) setSelected(null); }}
+        title={t("details")}
+        description={selected?.title}
+        closeLabel={t("close")}
+      >
+        {selected ? (
+          <Inspector
+            item={selected}
+            locale={locale}
+            timezone={workspace.preferences.timezone}
+            t={t}
+            onClose={() => setSelected(null)}
+            onEdit={() => openEditEvent(selected)}
+          />
+        ) : null}
+      </MobileBottomSheet>
 
       <Dialog
         open={eventOpen}

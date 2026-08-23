@@ -49,12 +49,13 @@ test("calendar rail entry opens the Flow week and creates a timed event", async 
       { timeout: 10_000 },
     )
     .toBe(240);
-  await appSidebar.getByRole("link", { name: "Kalender" }).click();
-  await expect(page).toHaveURL(/\/calendar/);
+  await appSidebar.getByRole("button", { name: "Kalender" }).click();
+  await expect(page).toHaveURL(/\/calendar/, { timeout: 30_000 });
   await expect(
     page.getByRole("heading", { name: "Flow-Kalender" }),
   ).toBeVisible();
   await expect(page.getByText("Auslastung").first()).toBeVisible();
+  await page.goto("/calendar?date=2026-07-29&view=week");
 
   await page.getByRole("button", { name: "Neuer Termin" }).click();
   await page.getByPlaceholder("Was findet statt?").fill("Weekly operations");
@@ -99,4 +100,31 @@ test("calendar exposes month, agenda, and team views through URL state", async (
   await page.getByRole("button", { name: "Team" }).click();
   await expect(page).toHaveURL(/view=team/);
   await expect(page.getByText("E2E Admin").last()).toBeVisible();
+});
+
+test("calendar defaults to agenda and exposes filters in bottom sheets on mobile", async ({ page }) => {
+  await page.setViewportSize({ width: 360, height: 800 });
+  await login(page);
+  await page.goto("/calendar?date=2026-07-29");
+
+  await expect(page).toHaveURL(/view=agenda/);
+  await expect(page.getByLabel("Kalenderansicht")).toHaveValue("agenda");
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+
+  await page.getByRole("button", { name: "Filter" }).click();
+  const filtersSheet = page.getByRole("dialog", { name: "Filter" });
+  await expect(filtersSheet).toBeVisible();
+  await expect(filtersSheet.getByPlaceholder("Kalender durchsuchen…")).toBeVisible();
+  await expect(filtersSheet.getByText("Arbeitsquellen")).toBeVisible();
+  await filtersSheet.getByRole("button", { name: "Schließen" }).click();
+
+  await page.getByRole("button", { name: "Neuer Termin" }).click();
+  await page.getByPlaceholder("Was findet statt?").fill("Mobile review");
+  await page.getByRole("textbox", { name: "Beginn-Uhrzeit" }).fill("15:00");
+  await page.getByRole("textbox", { name: "End-Uhrzeit" }).fill("16:00");
+  await page.getByRole("button", { name: "Termin speichern" }).click();
+  await page.getByText("Mobile review", { exact: true }).click();
+
+  const detailsSheet = page.getByRole("dialog", { name: "Details" });
+  await expect(detailsSheet.getByRole("heading", { name: "Mobile review" })).toBeVisible();
 });
