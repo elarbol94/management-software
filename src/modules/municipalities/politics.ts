@@ -31,7 +31,7 @@ export type MunicipalityElectionHistoryDataset = {
   schemaVersion: typeof MUNICIPALITY_POLITICS_SCHEMA_VERSION;
   territorialReferenceDate: "2026-01-01";
   firstYear: 2000;
-  latestElectionYear: 2025;
+  latestElectionYear: 2026;
   count: number;
   sources: PoliticsSource[];
   municipalities: Record<string, { events: MunicipalityElectionEvent[]; coverageMissingReason: MissingReason | null }>;
@@ -99,7 +99,7 @@ export function validateElectionEvent(event: MunicipalityElectionEvent) {
 }
 export function validateMunicipalityElectionHistory(dataset: MunicipalityElectionHistoryDataset, municipalityCodes: Iterable<string>) {
   const codes = Array.from(municipalityCodes);
-  if (dataset.schemaVersion !== MUNICIPALITY_POLITICS_SCHEMA_VERSION || dataset.firstYear !== 2000 || dataset.latestElectionYear !== 2025 || dataset.territorialReferenceDate !== "2026-01-01") throw new Error("Unerwartete Version der Wahlhistorie.");
+  if (dataset.schemaVersion !== MUNICIPALITY_POLITICS_SCHEMA_VERSION || dataset.firstYear !== 2000 || dataset.latestElectionYear !== 2026 || dataset.territorialReferenceDate !== "2026-01-01") throw new Error("Unerwartete Version der Wahlhistorie.");
   if (dataset.count !== EXPECTED_MUNICIPALITY_COUNT || codes.length !== EXPECTED_MUNICIPALITY_COUNT || Object.keys(dataset.municipalities).length !== EXPECTED_MUNICIPALITY_COUNT) throw new Error("Unvollständige Wahlhistorie.");
   const known = new Set(codes);
   const ids = new Set<string>();

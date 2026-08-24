@@ -17,7 +17,7 @@ import {
 
 const INDEX_PATH = resolve("public/data/municipalities-at-2026.index.json");
 const CURRENT_OUTPUT = resolve("public/data/municipality-politics-current-2026.json");
-const HISTORY_OUTPUT = resolve("public/data/municipality-election-history-2000-2025.json");
+const HISTORY_OUTPUT = resolve("public/data/municipality-election-history-2000-2026.json");
 const QUALITY_OUTPUT = resolve("public/data/municipality-politics-quality.json");
 const DEFAULT_CACHE = resolve(".cache/municipality-politics");
 const RETRIEVED_AT = "2026-08-24";
@@ -156,7 +156,7 @@ async function main() {
     delete current.missingReasons.mayorParty;
   }
   for (const history of Object.values(historyMunicipalities)) history.events.sort((a, b) => a.date.localeCompare(b.date));
-  const history: MunicipalityElectionHistoryDataset = { schemaVersion: MUNICIPALITY_POLITICS_SCHEMA_VERSION, territorialReferenceDate: "2026-01-01", firstYear: 2000, latestElectionYear: 2025, count: index.count, sources, municipalities: historyMunicipalities };
+  const history: MunicipalityElectionHistoryDataset = { schemaVersion: MUNICIPALITY_POLITICS_SCHEMA_VERSION, territorialReferenceDate: "2026-01-01", firstYear: 2000, latestElectionYear: 2026, count: index.count, sources, municipalities: historyMunicipalities };
   const current: MunicipalityCurrentPoliticsDataset = { schemaVersion: MUNICIPALITY_POLITICS_SCHEMA_VERSION, referenceDate: RETRIEVED_AT, count: index.count, sources, municipalities: currentMunicipalities };
   validateMunicipalityElectionHistory(history, index.municipalities.map(({ municipalityCode }) => municipalityCode));
   validateMunicipalityCurrentPolitics(current, index.municipalities.map(({ municipalityCode }) => municipalityCode));

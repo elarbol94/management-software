@@ -1,11 +1,14 @@
 import { createHash } from "node:crypto";
+import { execFile } from "node:child_process";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { promisify } from "node:util";
 import { unzipSync } from "fflate";
 import * as XLSX from "xlsx";
 import { canonicalPartyForList, type CanonicalPartyId, type MunicipalityElectionEvent, type PoliticsSource } from "../src/modules/municipalities/politics";
 
 const RETRIEVED_AT = "2026-08-24";
+const execFileAsync = promisify(execFile);
 type ImportedEvent = { municipalityCode: string; event: MunicipalityElectionEvent };
 type ImportedCurrent = { municipalityCode: string; mayor: { name: string; party: CanonicalPartyId | null; listName: string | null }; mayorAsOf: string; mayorSourceIds: string[] };
 export type OfficialPoliticsImport = { sources: PoliticsSource[]; events: ImportedEvent[]; current?: ImportedCurrent[] };
@@ -42,6 +45,10 @@ function partyFromOfficialAttribution(value: unknown, fallback: string): Canonic
   if (normalized.includes("KPÖ") || normalized === "4") return "kpoe";
   if (normalized.includes("MFG")) return "mfg";
   return canonicalPartyForList(fallback);
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 const NOE_CYCLES = [
@@ -262,6 +269,62 @@ async function importBurgenland2022(cache: string, targetCodes: Set<string>): Pr
   return { sources: [source(id, "Land Burgenland – Gemeinderats- und Bürgermeisterwahl 2022, CSV-Landesergebnis", url, bytes, date)], events };
 }
 
+function kaerntenField(block: string, label: string) {
+  const match = new RegExp(`^\\s*${escapeRegExp(label)}\\s+([\\d.]+)`, "m").exec(block);
+  return match ? publishedInteger(match[1]) : null;
+}
+
+export function parseKaernten2021Text(text: string, sourceId: string, targetCodes: Set<string>): ImportedEvent[] {
+  const date = "2021-02-28";
+  const events: ImportedEvent[] = [];
+  for (const match of text.matchAll(/\f\s*Gemeinde:\s*([^\n]+)\n\s*(\d{5})\s*\n([\s\S]*?)(?=\f)/g)) {
+    const code = match[2];
+    if (!targetCodes.has(code) || !/GEMEINDERATSWAHL/.test(match[3])) continue;
+    const councilBlock = match[3].split(/BÜRGERMEISTERWAHL/)[0];
+    const eligibleVoters = kaerntenField(councilBlock, "Wahlberechtigte");
+    const ballotsCast = kaerntenField(councilBlock, "abgegebene Stimmen");
+    const invalidVotes = kaerntenField(councilBlock, "ungültige Stimmen");
+    const validVotes = kaerntenField(councilBlock, "gültige Stimmen");
+    const councilSize = kaerntenField(councilBlock, "Mandate insgesamt");
+    const resultBlock = councilBlock.split(/Stimmenergebnisse/)[1] ?? "";
+    const lists = resultBlock.split(/\r?\n/).flatMap((line) => {
+      const row = /^ {0,3}(\S.*?\S|\S)\s{2,}([\d.]+)\s+(\d+,\d)\s+(-|\d+)(?:\s|$)/.exec(line);
+      if (!row) return [];
+      const votes = publishedInteger(row[2]);
+      if (line.indexOf(row[2], row[1].length) > 60) return [];
+      const mandates = row[4] === "-" ? 0 : Number(row[4]);
+      if (votes === null || !Number.isSafeInteger(mandates)) return [];
+      const name = row[1].trim();
+      return [{ name, party: canonicalPartyForList(name), votes, mandates }];
+    });
+    if ([eligibleVoters, ballotsCast, invalidVotes, validVotes, councilSize].some((value) => value === null) || !lists.length) {
+      throw new Error(`Kärnten 2021: Gemeindetabelle ${code} (${match[1].trim()}) ist unvollständig.`);
+    }
+    events.push({
+      municipalityCode: code,
+      event: {
+        id: `${code}-${date}`, date, eligibleVoters, ballotsCast, validVotes, invalidVotes, councilSize, lists,
+        mayorCandidates: [], aggregationStatus: "direct", predecessorCodes: [code], sourceIds: [sourceId],
+        missingReasons: { mayorCandidates: "not-structured-in-source" },
+      },
+    });
+  }
+  return events;
+}
+
+async function importKaernten2021(cache: string, targetCodes: Set<string>): Promise<OfficialPoliticsImport> {
+  const date = "2021-02-28";
+  const url = "https://www.ktn.gv.at/DE/repos/files/ktn.gv.at/Abteilungen/Abt1/Dateien/PDF/Statistik/Publikationen_Stat/Gemeinderatswahl_21.pdf";
+  const name = "kaernten-gr-2021.pdf";
+  const bytes = await cachedDownload(cache, name, url);
+  const { stdout } = await execFileAsync("pdftotext", ["-layout", join(cache, name), "-"], { maxBuffer: 32 * 1024 * 1024 });
+  const id = "kaernten-gr-2021";
+  const events = parseKaernten2021Text(stdout, id, targetCodes);
+  const expected = [...targetCodes].filter((code) => code.startsWith("2")).length;
+  if (events.length !== expected) throw new Error(`Kärnten 2021: Erwartet wurden ${expected} Gemeinden, gefunden wurden ${events.length}.`);
+  return { sources: [source(id, "Land Kärnten – Gemeinderats- und Bürgermeisterwahlen 2021, Endergebnisse", url, bytes, date)], events };
+}
+
 function decodeHtml(value: string) {
   return value
     .replace(/<[^>]+>/g, " ")
@@ -278,20 +341,32 @@ function publishedInteger(value: string) {
   return Number.isSafeInteger(number) ? number : null;
 }
 function tirolTotal(html: string, label: string) {
-  const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, "\\async function importVorarlberg2025");
-  const match = new RegExp(`(?:<strong>)?${escaped}(?:<\\/strong>)?<\\/td>\\s*<td class="number">([\\d.]+)`, "i").exec(html);
+  const match = new RegExp(`(?:<strong>)?${escapeRegExp(label)}(?:<\\/strong>)?<\\/td>\\s*<td class="number">([\\d.]+)`, "i").exec(html);
   return match ? publishedInteger(match[1]) : null;
 }
-function parseTirol2022Page(html: string, sourceId: string, targetCodes: Set<string>): ImportedEvent | null {
+function allocateDhondt(votes: number[], councilSize: number) {
+  const mandates = votes.map(() => 0);
+  for (let seat = 0; seat < councilSize; seat += 1) {
+    let winner = 0;
+    for (let index = 1; index < votes.length; index += 1) {
+      if (votes[index] / (mandates[index] + 1) > votes[winner] / (mandates[winner] + 1)) winner = index;
+    }
+    mandates[winner] += 1;
+  }
+  return mandates;
+}
+
+export function parseTirolPage(html: string, sourceId: string, date: string, targetCodes: Set<string>): ImportedEvent | null {
   const tableMatch = /id="werbertable_(\d{5})_GEMEINDE">([\s\S]*?)<\/table>/.exec(html);
   if (!tableMatch || !targetCodes.has(tableMatch[1])) return null;
   const code = tableMatch[1];
   const hasCouplingColumn = /<th>K<\/th>/.test(tableMatch[2]);
-  const lists = [...tableMatch[2].matchAll(/<tr class="[^"]*werber-aktuell[^"]*">([\s\S]*?)<\/tr>/g)].flatMap((row) => {
+  const hasMandateColumn = /<th>Mandate<\/th>/.test(tableMatch[2]);
+  const rawLists = [...tableMatch[2].matchAll(/<tr class="[^"]*werber-aktuell[^"]*">([\s\S]*?)<\/tr>/g)].flatMap((row) => {
     const cells = [...row[1].matchAll(/<td[^>]*>([\s\S]*?)<\/td>/g)].map((cell) => decodeHtml(cell[1]));
-    const mandates = publishedInteger(cells[hasCouplingColumn ? 3 : 2] ?? "");
-    const votes = publishedInteger(cells[hasCouplingColumn ? 4 : 3] ?? "");
-    if (!cells[1] || mandates === null || votes === null) return [];
+    const mandates = hasMandateColumn ? publishedInteger(cells[hasCouplingColumn ? 3 : 2] ?? "") : null;
+    const votes = publishedInteger(cells[hasMandateColumn ? (hasCouplingColumn ? 4 : 3) : 2] ?? "");
+    if (!cells[1] || votes === null) return [];
     return [{ name: cells[1], party: canonicalPartyForList(cells[1]), votes, mandates }];
   });
   const candidateMatch = new RegExp(`id="werbertable_${code}_GEMEINDE_BGM_INKLUDIERT">([\\s\\S]*?)<\\/table>`).exec(html);
@@ -307,6 +382,8 @@ function parseTirol2022Page(html: string, sourceId: string, targetCodes: Set<str
   const invalidVotes = tirolTotal(html, "...davon ungültige");
   const councilSizeMatch = /Zu vergebende Mandate\s*<span[^>]*>(\d+)<\/span>/.exec(html);
   const councilSize = councilSizeMatch ? Number(councilSizeMatch[1]) : null;
+  const derivedMandates = !hasMandateColumn && councilSize !== null ? allocateDhondt(rawLists.map((list) => list.votes), councilSize) : null;
+  const lists = derivedMandates ? rawLists.map((list, index) => ({ ...list, mandates: derivedMandates[index] })) : rawLists;
   if (!lists.length) return null;
   const missingReasons: MunicipalityElectionEvent["missingReasons"] = {};
   if (eligibleVoters === null) missingReasons.eligibleVoters = "not-structured-in-source";
@@ -315,7 +392,7 @@ function parseTirol2022Page(html: string, sourceId: string, targetCodes: Set<str
   if (invalidVotes === null) missingReasons.invalidVotes = "not-structured-in-source";
   if (councilSize === null) missingReasons.councilSize = "not-structured-in-source";
   if (!mayorCandidates.length) missingReasons.mayorCandidates = "not-structured-in-source";
-  return { municipalityCode: code, event: { id: `${code}-2022-02-27`, date: "2022-02-27", eligibleVoters, ballotsCast, validVotes, invalidVotes, councilSize, lists, mayorCandidates, aggregationStatus: "direct", predecessorCodes: [code], sourceIds: [sourceId], missingReasons } };
+  return { municipalityCode: code, event: { id: `${code}-${date}`, date, eligibleVoters, ballotsCast, validVotes, invalidVotes, councilSize, lists, mayorCandidates, aggregationStatus: "direct", predecessorCodes: [code], sourceIds: [sourceId], missingReasons } };
 }
 async function importTirol2022(cache: string, targetCodes: Set<string>): Promise<OfficialPoliticsImport> {
   const indexUrl = "https://wahlen.tirol.gv.at/gemeinderats_und_buergermeisterwahlen_2022/index.html";
@@ -336,10 +413,75 @@ async function importTirol2022(cache: string, targetCodes: Set<string>): Promise
   pages.sort((left, right) => left.name.localeCompare(right.name));
   const id = "tirol-gr-2022";
   const events = pages.flatMap(({ bytes }) => {
-    const event = parseTirol2022Page(new TextDecoder().decode(bytes), id, targetCodes);
+    const event = parseTirolPage(new TextDecoder().decode(bytes), id, "2022-02-27", targetCodes);
     return event ? [event] : [];
   });
   return { sources: [source(id, "Land Tirol – Gemeinderats- und Bürgermeisterwahlen 2022", indexUrl, Buffer.concat([indexBytes, ...pages.map(({ bytes }) => bytes)]), "2022-02-27")], events };
+}
+
+const TIROL_SPECIAL_ELECTIONS = [
+  { code: "70101", slug: "innsbruck-2024", date: "2024-04-14", title: "Landeshauptstadt Innsbruck 2024", url: "https://wahlen.tirol.gv.at/gemeinderats_und_buergermeisterwahl_der_landeshauptstadt_innsbruck_2024/gemeinden/innsbruck.html" },
+  { code: "70370", slug: "matrei-am-brenner-2022", date: "2022-03-20", title: "Matrei am Brenner 2022", url: "https://wahlen.tirol.gv.at/gemeinderats_und_buergermeisterwahlen_2022_matrei_am_br_/gemeinden/matrei_am_brenner.html" },
+  { code: "70822", slug: "musau-2024", date: "2024-02-25", title: "Musau 2024 (Mandate aus amtlichen Stimmen und Ratsgröße nach D’Hondt)", url: "https://wahlen.tirol.gv.at/gemeinderats_und_buergermeisterwahl_2024_gemeinde_musau/gemeinden/musau.html" },
+  { code: "70835", slug: "waengle-2022", date: "2022-01-09", title: "Wängle 2022", url: "https://wahlen.tirol.gv.at/gemeinderats_und_buergermeisterwahlen_2022_waengle/gemeinden/waengle.html" },
+] as const;
+
+async function importTirolSpecialElections(cache: string, targetCodes: Set<string>): Promise<OfficialPoliticsImport> {
+  const imported = await Promise.all(TIROL_SPECIAL_ELECTIONS.map(async (item) => {
+    const id = `tirol-gr-${item.slug}`;
+    const bytes = await cachedDownload(cache, `${id}.html`, item.url);
+    const event = parseTirolPage(new TextDecoder().decode(bytes), id, item.date, targetCodes);
+    if (!event || event.municipalityCode !== item.code) throw new Error(`Tirol: Ergebnis ${item.title} konnte nicht gelesen werden.`);
+    return {
+      source: source(id, `Land Tirol – Gemeinderats- und Bürgermeisterwahl ${item.title}`, item.url, bytes, item.date),
+      event,
+    };
+  }));
+  return {
+    sources: imported.map((item) => item.source),
+    events: imported.map((item) => item.event),
+  };
+}
+
+type PublishedCityElection = { municipalityCode: string; slug: string; date: string; title: string; url: string; eligibleVoters: number; ballotsCast: number; validVotes: number; invalidVotes: number; councilSize: number; lists: MunicipalityElectionEvent["lists"] };
+
+const PUBLISHED_CITY_ELECTIONS: PublishedCityElection[] = [
+  { municipalityCode: "30101", slug: "krems-2022", date: "2022-09-04", title: "Stadt Krems – Gemeinderatswahl 2022, Endergebnis", url: "https://www.krems.at/rathaus/wahlen/allgemeine-information", eligibleVoters: 19_904, ballotsCast: 11_415, validVotes: 11_179, invalidVotes: 236, councilSize: 40, lists: [{ name: "RESCH", party: "spoe", votes: 4_574, mandates: 17 }, { name: "ÖVP", party: "oevp", votes: 2_606, mandates: 10 }, { name: "FPÖ", party: "fpoe", votes: 1_635, mandates: 6 }, { name: "KLS", party: "local-other", votes: 793, mandates: 3 }, { name: "GRÜNE", party: "gruene", votes: 409, mandates: 1 }, { name: "NIK", party: "neos", votes: 745, mandates: 2 }, { name: "GREENK", party: "local-other", votes: 83, mandates: 0 }, { name: "MFG", party: "mfg", votes: 334, mandates: 1 }] },
+  { municipalityCode: "30201", slug: "st-poelten-2026", date: "2026-01-25", title: "Stadt St. Pölten – Gemeinderatswahl 2026, Endergebnis", url: "https://www.noe.gv.at/noe/Wahlen/endg._Ergebnis_GR-Wahl_St._Poelten_2026.pdf", eligibleVoters: 44_063, ballotsCast: 26_042, validVotes: 25_736, invalidVotes: 306, councilSize: 42, lists: [{ name: "Liste Bürgermeister Matthias Stadler – SPÖ", party: "spoe", votes: 10_967, mandates: 19 }, { name: "Team Krumböck – Volkspartei & Unabhängige", party: "oevp", votes: 5_496, mandates: 9 }, { name: "Freiheitliche Partei Österreichs", party: "fpoe", votes: 5_074, mandates: 8 }, { name: "Die Grünen St. Pölten", party: "gruene", votes: 2_483, mandates: 4 }, { name: "Kommunistische Partei Österreichs", party: "kpoe", votes: 983, mandates: 1 }, { name: "NEOS Das Neue Niederösterreich", party: "neos", votes: 700, mandates: 1 }, { name: "Liste Multikulturelle Gesellschaft", party: "local-other", votes: 33, mandates: 0 }] },
+  { municipalityCode: "30301", slug: "waidhofen-ybbs-2022", date: "2022-01-30", title: "Stadt Waidhofen an der Ybbs – Gemeinderatswahl 2022, Endergebnis", url: "https://login.waidhofen.at/media/magistratwaidhofen/1643639427-endergebnis-pdf.pdf", eligibleVoters: 9_820, ballotsCast: 7_057, validVotes: 6_954, invalidVotes: 103, councilSize: 40, lists: [{ name: "Waidhofner Volkspartei", party: "oevp", votes: 2_871, mandates: 18 }, { name: "SPÖ", party: "spoe", votes: 1_508, mandates: 9 }, { name: "FUFU", party: "local-other", votes: 782, mandates: 4 }, { name: "FPÖ", party: "fpoe", votes: 280, mandates: 1 }, { name: "UWG", party: "local-other", votes: 111, mandates: 0 }, { name: "GRÜNE", party: "gruene", votes: 213, mandates: 1 }, { name: "MFG", party: "mfg", votes: 1_189, mandates: 7 }] },
+];
+
+async function importPublishedCityElections(cache: string): Promise<OfficialPoliticsImport> {
+  const imported = await Promise.all(PUBLISHED_CITY_ELECTIONS.map(async (item) => {
+    const id = `city-gr-${item.slug}`;
+    const bytes = await cachedDownload(cache, `${id}${item.url.endsWith(".pdf") ? ".pdf" : ".html"}`, item.url);
+    const event: MunicipalityElectionEvent = {
+      id: `${item.municipalityCode}-${item.date}`, date: item.date, eligibleVoters: item.eligibleVoters, ballotsCast: item.ballotsCast,
+      validVotes: item.validVotes, invalidVotes: item.invalidVotes, councilSize: item.councilSize, lists: item.lists,
+      mayorCandidates: [], aggregationStatus: "direct", predecessorCodes: [item.municipalityCode], sourceIds: [id], missingReasons: { mayorCandidates: "not-applicable" },
+    };
+    return { source: source(id, item.title, item.url, bytes, item.date), event: { municipalityCode: item.municipalityCode, event } };
+  }));
+  return { sources: imported.map((item) => item.source), events: imported.map((item) => item.event) };
+}
+
+type GrazRawElection = { wahlAktuell: { wahlberechtigte: number; stimmen: { gesamt: number; ungueltig: number; gueltig: number } }; ergebnisse: Array<{ ptname: string; stimmen: number | null; mandate: number | null }> };
+
+async function importGraz2026(cache: string): Promise<OfficialPoliticsImport> {
+  const date = "2026-06-28";
+  const url = "https://magistratwahlenstorage.blob.core.windows.net/results/GR2026.json";
+  const bytes = await cachedDownload(cache, "graz-gr-2026.json", url);
+  const result = (JSON.parse(new TextDecoder().decode(bytes)) as Record<string, GrazRawElection>)["60101"];
+  if (!result) throw new Error("Graz 2026: Gesamtwahlergebnis 60101 fehlt.");
+  const lists = result.ergebnisse.flatMap(({ ptname, stimmen, mandate }) => stimmen === null || mandate === null ? [] : [{ name: ptname, party: canonicalPartyForList(ptname), votes: stimmen, mandates: mandate }]);
+  const id = "graz-gr-2026";
+  const totals = result.wahlAktuell;
+  const event: MunicipalityElectionEvent = {
+    id: `60101-${date}`, date, eligibleVoters: totals.wahlberechtigte, ballotsCast: totals.stimmen.gesamt, validVotes: totals.stimmen.gueltig,
+    invalidVotes: totals.stimmen.ungueltig, councilSize: lists.reduce((sum, list) => sum + list.mandates, 0), lists, mayorCandidates: [],
+    aggregationStatus: "direct", predecessorCodes: ["60101"], sourceIds: [id], missingReasons: { mayorCandidates: "not-applicable" },
+  };
+  return { sources: [source(id, "Stadt Graz – Gemeinderatswahl 2026, amtliche Rohdaten", url, bytes, date)], events: [{ municipalityCode: "60101", event }] };
 }
 
 async function importVorarlberg2025(cache: string, targetCodeByName: Map<string, string>): Promise<OfficialPoliticsImport> {
@@ -366,6 +508,6 @@ async function importVorarlberg2025(cache: string, targetCodeByName: Map<string,
 }
 
 export async function importStructuredOfficialElections(cache: string, targetCodes: Set<string>, targetCodeByName: Map<string, string>) {
-  const imports = await Promise.all([importGemeindebundMayors(cache, targetCodes), importBurgenland2022(cache, targetCodes), importNoe(cache, targetCodes), importOoe(cache, targetCodes), importStyria(cache, targetCodes), importSalzburg(cache, targetCodes), importTirol2022(cache, targetCodes), importVorarlberg2025(cache, targetCodeByName)]);
+  const imports = await Promise.all([importGemeindebundMayors(cache, targetCodes), importBurgenland2022(cache, targetCodes), importKaernten2021(cache, targetCodes), importNoe(cache, targetCodes), importPublishedCityElections(cache), importOoe(cache, targetCodes), importStyria(cache, targetCodes), importGraz2026(cache), importSalzburg(cache, targetCodes), importTirol2022(cache, targetCodes), importTirolSpecialElections(cache, targetCodes), importVorarlberg2025(cache, targetCodeByName)]);
   return { sources: imports.flatMap((item) => item.sources), events: imports.flatMap((item) => item.events), current: imports.flatMap((item) => item.current ?? []) } satisfies OfficialPoliticsImport;
 }

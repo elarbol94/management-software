@@ -575,7 +575,7 @@ export function MunicipalitiesWorkspace() {
   useEffect(() => {
     if ((metric !== "politics" && !politicsHistoryRequested) || electionHistory || politicsError || !index) return;
     const controller = new AbortController();
-    fetchJson<MunicipalityElectionHistoryDataset>("/data/municipality-election-history-2000-2025.json", controller.signal)
+    fetchJson<MunicipalityElectionHistoryDataset>("/data/municipality-election-history-2000-2026.json", controller.signal)
       .then((data) => setElectionHistory(validateMunicipalityElectionHistory(data, index.municipalities.map(({ municipalityCode }) => municipalityCode))))
       .catch((error: unknown) => { if (!(error instanceof DOMException && error.name === "AbortError")) setPoliticsError(true); });
     return () => controller.abort();

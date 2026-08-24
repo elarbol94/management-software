@@ -17,12 +17,23 @@ describe("generated municipality politics datasets", () => {
   const index = readJson<MunicipalityIndex>("public/data/municipalities-at-2026.index.json");
   const codes = validateMunicipalityIndex(index).municipalities.map(({ municipalityCode }) => municipalityCode);
   const current = readJson<MunicipalityCurrentPoliticsDataset>("public/data/municipality-politics-current-2026.json");
-  const history = readJson<MunicipalityElectionHistoryDataset>("public/data/municipality-election-history-2000-2025.json");
+  const history = readJson<MunicipalityElectionHistoryDataset>("public/data/municipality-election-history-2000-2026.json");
 
   it("contains a current, sourced mayor entry for every 2026 municipality", () => {
     expect(validateMunicipalityCurrentPolitics(current, codes)).toBe(current);
     expect(Object.values(current.municipalities).filter(({ mayor }) => mayor)).toHaveLength(2_092);
     expect(Object.values(current.municipalities).every(({ mayorSourceIds }) => mayorSourceIds.length > 0)).toBe(true);
+  });
+
+  it("contains a current, sourced council distribution for every 2026 municipality", () => {
+    const councils = Object.values(current.municipalities).flatMap(({ latestCouncil }) => latestCouncil ? [latestCouncil] : []);
+    expect(councils).toHaveLength(2_092);
+    expect(councils.every(({ sourceIds }) => sourceIds.length > 0)).toBe(true);
+    expect(current.municipalities["20101"].latestCouncil?.lists.find(({ name }) => name === "SPÖ")?.mandates).toBe(15);
+    expect(current.municipalities["30201"].latestCouncil?.date).toBe("2026-01-25");
+    expect(current.municipalities["60101"].latestCouncil?.date).toBe("2026-06-28");
+    expect(current.municipalities["70822"].latestCouncil?.lists.map(({ mandates }) => mandates)).toEqual([8, 3]);
+    expect(history.latestElectionYear).toBe(2026);
   });
 
   it("keeps every missing mayor party explicit", () => {

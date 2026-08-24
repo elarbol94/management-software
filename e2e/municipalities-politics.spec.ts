@@ -18,7 +18,7 @@ async function login(page: Page) {
   await expect(page.getByText("Willkommen, E2E Admin!")).toBeVisible({ timeout: 30_000 });
 }
 
-test("politics map, URL state, profiles and missing coverage remain usable without basemap tiles", async ({ page }) => {
+test("politics map, URL state, complete current profiles and historical gaps remain usable without basemap tiles", async ({ page }) => {
   await page.route("https://mapsneu.wien.gv.at/**", (route) => route.abort());
   await login(page);
   await page.setViewportSize({ width: 1280, height: 900 });
@@ -59,7 +59,8 @@ test("politics map, URL state, profiles and missing coverage remain usable witho
   const search = page.getByRole("combobox", { name: "Gemeinde suchen" });
   await search.fill("Klagenfurt");
   await page.getByRole("option").filter({ hasText: "20101" }).click();
-  await expect(details.getByTestId("municipality-politics-panel")).toContainText("Keine strukturierte amtliche Abdeckung verfügbar");
+  await expect(details.getByTestId("municipality-politics-panel")).toContainText("Land Kärnten");
+  await expect(details.getByTestId("municipality-politics-panel")).toContainText("SPÖ15 Mandate");
   await expect(page.getByTestId("municipality-map")).toBeVisible();
 
   await page.setViewportSize({ width: 390, height: 844 });
@@ -70,6 +71,7 @@ test("politics map, URL state, profiles and missing coverage remain usable witho
   await year.focus();
   await year.press("Home");
   await expect(page).toHaveURL(/politicsYear=2000/);
+  await expect(page.getByTestId("population-legend")).toContainText("Keine Daten");
   await display.getByRole("button", { name: "Schließen" }).click();
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 });

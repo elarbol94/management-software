@@ -2,9 +2,9 @@
   "generatedAt": "2026-08-24",
   "targetMunicipalities": 2092,
   "currentMayorCovered": 2092,
-  "currentMayorPartyCovered": 366,
-  "latestCouncilCovered": 1952,
-  "historyMunicipalitiesCovered": 1952,
+  "currentMayorPartyCovered": 368,
+  "latestCouncilCovered": 2092,
+  "historyMunicipalitiesCovered": 2092,
   "byState": {
     "Burgenland": {
       "targetMunicipalities": 171,
@@ -32,8 +32,8 @@
     },
     "Kärnten": {
       "targetMunicipalities": 132,
-      "coveredMunicipalities": 0,
-      "coverage": 0,
+      "coveredMunicipalities": 132,
+      "coverage": 1,
       "targetCycles": [
         2003,
         2009,
@@ -44,18 +44,18 @@
         "2003": 0,
         "2009": 0,
         "2015": 0,
-        "2021": 0
+        "2021": 132
       },
       "fieldCoverage": {
         "currentMayor": 132,
         "currentMayorParty": 0,
-        "latestCouncil": 0
+        "latestCouncil": 132
       }
     },
     "Niederösterreich": {
       "targetMunicipalities": 573,
-      "coveredMunicipalities": 570,
-      "coverage": 0.9947643979057592,
+      "coveredMunicipalities": 573,
+      "coverage": 1,
       "targetCycles": [
         2000,
         2005,
@@ -75,7 +75,7 @@
       "fieldCoverage": {
         "currentMayor": 573,
         "currentMayorParty": 0,
-        "latestCouncil": 570
+        "latestCouncil": 573
       }
     },
     "Oberösterreich": {
@@ -126,8 +126,8 @@
     },
     "Steiermark": {
       "targetMunicipalities": 285,
-      "coveredMunicipalities": 284,
-      "coverage": 0.9964912280701754,
+      "coveredMunicipalities": 285,
+      "coverage": 1,
       "targetCycles": [
         2000,
         2005,
@@ -147,13 +147,13 @@
       "fieldCoverage": {
         "currentMayor": 285,
         "currentMayorParty": 0,
-        "latestCouncil": 284
+        "latestCouncil": 285
       }
     },
     "Tirol": {
       "targetMunicipalities": 277,
-      "coveredMunicipalities": 273,
-      "coverage": 0.9855595667870036,
+      "coveredMunicipalities": 277,
+      "coverage": 1,
       "targetCycles": [
         2004,
         2010,
@@ -164,12 +164,12 @@
         "2004": 0,
         "2010": 0,
         "2016": 0,
-        "2022": 273
+        "2022": 275
       },
       "fieldCoverage": {
         "currentMayor": 277,
-        "currentMayorParty": 198,
-        "latestCouncil": 273
+        "currentMayorParty": 200,
+        "latestCouncil": 277
       }
     },
     "Vorarlberg": {
