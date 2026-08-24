@@ -45,6 +45,9 @@ yarn-error.log*
 /public/data/municipality-investments/
 /public/data/municipality-profiles.json
 
+# downloaded official municipality-politics source files
+/.cache/municipality-politics/
+
 # playwright
 /test-results
 /playwright-report

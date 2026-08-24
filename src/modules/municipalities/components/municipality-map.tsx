@@ -27,6 +27,7 @@ import type {
   MunicipalityProperties,
 } from "../data";
 import type { MovementMetricId, MovementPalette } from "../movement";
+import { CANONICAL_PARTIES, type CanonicalPartyId, type PoliticsView } from "../politics";
 import type { PopulationViewId } from "../structure";
 import {
   MAP_FILL_OPACITY,
@@ -84,6 +85,11 @@ const POPULATION_COLOR: ExpressionSpecification = [
 const AGE_COLORS = [...MUNICIPALITY_SEQUENTIAL_COLORS];
 const MOVEMENT_COLORS = [...MUNICIPALITY_MOVEMENT_COLORS];
 const COST_COLORS = [...MUNICIPALITY_COST_COLORS];
+export const POLITICS_PARTY_COLORS: Record<CanonicalPartyId | "tie", string> = {
+  oevp: "#202124", spoe: "#d71920", fpoe: "#2056a7", gruene: "#2f8f46",
+  neos: "#e83e8c", kpoe: "#8f1d21", mfg: "#e58a17",
+  "local-other": "#737b83", tie: "#7656a8",
+};
 
 function asMapBounds(
   bounds: MunicipalityBounds,
@@ -168,7 +174,15 @@ type ColorInputs = {
   metric: MapMetric;
   movementPalette: MovementPalette | null;
   costMeasure: CostMeasureId;
+  politicsView?: PoliticsView;
 };
+const POLITICS_LEADING_COLOR: ExpressionSpecification = [
+  "match", ["feature-state", "metric"],
+  0, POLITICS_PARTY_COLORS.oevp, 1, POLITICS_PARTY_COLORS.spoe, 2, POLITICS_PARTY_COLORS.fpoe,
+  3, POLITICS_PARTY_COLORS.gruene, 4, POLITICS_PARTY_COLORS.neos, 5, POLITICS_PARTY_COLORS.kpoe,
+  6, POLITICS_PARTY_COLORS.mfg, 7, POLITICS_PARTY_COLORS["local-other"], 8, POLITICS_PARTY_COLORS.tie,
+  MAP_NO_DATA_COLOR,
+] as ExpressionSpecification;
 /**
  * The fill colour for the current metric.
  *
@@ -177,8 +191,9 @@ type ColorInputs = {
  * movement or cost map was painted with population class breaks.
  */
 export function metricColorExpression({
-  usePopulationClasses, scaleDomain, metric, movementPalette, costMeasure,
+  usePopulationClasses, scaleDomain, metric, movementPalette, costMeasure, politicsView = "leading-list",
 }: ColorInputs): ExpressionSpecification {
+  if (metric === "politics" && politicsView === "leading-list") return POLITICS_LEADING_COLOR;
   if (usePopulationClasses || !scaleDomain) return POPULATION_COLOR;
   if (metric === "movement") {
     return movementPalette === "diverging"
@@ -233,6 +248,12 @@ type Labels = {
   ageMetric: string;
   movementMetric: string;
   costsMetric: string;
+  politicsMetric: string;
+  politicsView: string;
+  politicsViews: Record<PoliticsView, string>;
+  politicsParty: string;
+  politicsParties: Record<CanonicalPartyId, string>;
+  politicsTie: string;
   populationView: string;
   populationViews: Record<PopulationViewId, string>;
   ageView: string;
@@ -260,6 +281,8 @@ type Labels = {
   movementError: string;
   loadingCosts: string;
   costsError: string;
+  loadingPolitics: string;
+  politicsError: string;
   loadingStructure: string;
   structureError: string;
   noData: string;
@@ -293,6 +316,8 @@ export function MunicipalityMap({
   movementView,
   costCategory,
   costMeasure,
+  politicsView,
+  politicsParty,
   peerMunicipalityCodes,
   peerGroupLabel,
   movementDefinition,
@@ -304,6 +329,8 @@ export function MunicipalityMap({
   movementError,
   costsLoading,
   costsError,
+  politicsLoading,
+  politicsError,
   structureLoading,
   structureError,
   onYearChange,
@@ -315,6 +342,8 @@ export function MunicipalityMap({
   onMovementViewChange,
   onCostCategoryChange,
   onCostMeasureChange,
+  onPoliticsViewChange,
+  onPoliticsPartyChange,
   onSelect,
   onReset,
   onOpenDetails,
@@ -346,6 +375,8 @@ export function MunicipalityMap({
   movementView: MovementMetricId;
   costCategory: CostCategoryId;
   costMeasure: CostMeasureId;
+  politicsView: PoliticsView;
+  politicsParty: CanonicalPartyId;
   peerMunicipalityCodes: string[] | null;
   peerGroupLabel: string | null;
   movementDefinition: string | null;
@@ -357,6 +388,8 @@ export function MunicipalityMap({
   movementError: boolean;
   costsLoading: boolean;
   costsError: boolean;
+  politicsLoading: boolean;
+  politicsError: boolean;
   structureLoading: boolean;
   structureError: boolean;
   onYearChange: (year: number) => void;
@@ -368,6 +401,8 @@ export function MunicipalityMap({
   onMovementViewChange: (view: MovementMetricId) => void;
   onCostCategoryChange: (category: CostCategoryId) => void;
   onCostMeasureChange: (measure: CostMeasureId) => void;
+  onPoliticsViewChange: (view: PoliticsView) => void;
+  onPoliticsPartyChange: (party: CanonicalPartyId) => void;
   onSelect: (code: string) => void;
   onReset: () => void;
   onOpenDetails: () => void;
@@ -393,7 +428,7 @@ export function MunicipalityMap({
   const selectedIdRef = useRef<string | number | null>(null);
   const peerIdsRef = useRef<Set<string>>(new Set());
   const colorInputs: ColorInputs = {
-    usePopulationClasses, scaleDomain, metric, movementPalette, costMeasure,
+    usePopulationClasses, scaleDomain, metric, movementPalette, costMeasure, politicsView,
   };
   const liveRef = useRef({
     selected,
@@ -722,6 +757,7 @@ export function MunicipalityMap({
             <option value="age">{labels.ageMetric}</option>
             <option value="movement">{labels.movementMetric}</option>
             <option value="costs">{labels.costsMetric}</option>
+            <option value="politics">{labels.politicsMetric}</option>
           </select>
         </div>
         {metric === "population" && (
@@ -880,6 +916,24 @@ export function MunicipalityMap({
             )}
           </div>
         )}
+        {metric === "politics" && (
+          <div className="mt-2 space-y-2 border-t pt-2">
+            <div className="grid grid-cols-[5.5rem_1fr] items-center gap-2">
+              <label htmlFor="municipality-politics-view" className="text-[10px] font-semibold">{labels.politicsView}</label>
+              <select id="municipality-politics-view" value={politicsView} className="h-8 min-w-0 rounded-md border bg-background px-2 text-[10px]" onChange={(event) => onPoliticsViewChange(event.target.value as PoliticsView)}>
+                {Object.entries(labels.politicsViews).map(([id, label]) => <option key={id} value={id}>{label}</option>)}
+              </select>
+            </div>
+            {politicsView === "party-share" ? <div className="grid grid-cols-[5.5rem_1fr] items-center gap-2">
+              <label htmlFor="municipality-politics-party" className="text-[10px] font-semibold">{labels.politicsParty}</label>
+              <select id="municipality-politics-party" value={politicsParty} className="h-8 min-w-0 rounded-md border bg-background px-2 text-[10px]" onChange={(event) => onPoliticsPartyChange(event.target.value as CanonicalPartyId)}>
+                {Object.entries(labels.politicsParties).map(([id, label]) => <option key={id} value={id}>{label}</option>)}
+              </select>
+            </div> : null}
+            {politicsLoading ? <p className="text-[10px] text-muted-foreground">{labels.loadingPolitics}</p> : null}
+            {politicsError ? <p className="text-[10px] text-destructive" role="alert">{labels.politicsError}</p> : null}
+          </div>
+        )}
         {metric === "costs" && (
           <div className="mt-2 space-y-2 border-t pt-2">
             <div className="grid grid-cols-[5.5rem_1fr] items-center gap-2">
@@ -975,7 +1029,11 @@ export function MunicipalityMap({
         <p className="mt-0.5 text-[10px] text-muted-foreground">
           {labels.reference}
         </p>
-        {usePopulationClasses ? (
+        {metric === "politics" && politicsView === "leading-list" ? (
+          <ul className="mt-2 space-y-1" aria-label={metricLabel}>
+            {[...CANONICAL_PARTIES, "tie" as const].map((party) => <li key={party} className="flex items-center gap-2 text-[10px]"><span className="size-3 rounded-[3px] border border-black/10" style={{ backgroundColor: POLITICS_PARTY_COLORS[party] }} /><span>{party === "tie" ? labels.politicsTie : labels.politicsParties[party]}</span></li>)}
+          </ul>
+        ) : usePopulationClasses ? (
           <ul className="mt-2 space-y-1" aria-label={metricLabel}>
             {POPULATION_CLASSES.map((item) => (
               <li
@@ -1105,6 +1163,7 @@ export function MunicipalityMap({
               <option value="age">{labels.ageMetric}</option>
               <option value="movement">{labels.movementMetric}</option>
               <option value="costs">{labels.costsMetric}</option>
+            <option value="politics">{labels.politicsMetric}</option>
             </select>
           </div>
 
@@ -1177,6 +1236,21 @@ export function MunicipalityMap({
             </div>
           ) : null}
 
+          {metric === "politics" ? (
+            <div className="space-y-3 border-t pt-4">
+              <div className="space-y-2"><label htmlFor="municipality-politics-view-mobile" className="text-sm font-semibold">{labels.politicsView}</label>
+                <select id="municipality-politics-view-mobile" value={politicsView} className="h-11 w-full rounded-md border bg-background px-3 text-sm" onChange={(event) => onPoliticsViewChange(event.target.value as PoliticsView)}>
+                  {Object.entries(labels.politicsViews).map(([id, label]) => <option key={id} value={id}>{label}</option>)}
+                </select></div>
+              {politicsView === "party-share" ? <div className="space-y-2"><label htmlFor="municipality-politics-party-mobile" className="text-sm font-semibold">{labels.politicsParty}</label>
+                <select id="municipality-politics-party-mobile" value={politicsParty} className="h-11 w-full rounded-md border bg-background px-3 text-sm" onChange={(event) => onPoliticsPartyChange(event.target.value as CanonicalPartyId)}>
+                  {Object.entries(labels.politicsParties).map(([id, label]) => <option key={id} value={id}>{label}</option>)}
+                </select></div> : null}
+              {politicsLoading ? <p className="text-xs text-muted-foreground">{labels.loadingPolitics}</p> : null}
+              {politicsError ? <p className="text-xs text-destructive" role="alert">{labels.politicsError}</p> : null}
+            </div>
+          ) : null}
+
           {metric === "costs" ? (
             <div className="space-y-3 border-t pt-4">
               <div className="space-y-2">
@@ -1221,7 +1295,11 @@ export function MunicipalityMap({
       >
         <div data-testid="mobile-population-legend">
           <p className="text-sm font-semibold">{metricLabel}</p>
-          {usePopulationClasses ? (
+          {metric === "politics" && politicsView === "leading-list" ? (
+            <ul className="mt-3 grid grid-cols-2 gap-2" aria-label={metricLabel}>
+              {[...CANONICAL_PARTIES, "tie" as const].map((party) => <li key={party} className="flex items-center gap-2 text-xs"><span className="size-4 rounded-[3px] border border-black/10" style={{ backgroundColor: POLITICS_PARTY_COLORS[party] }} /><span>{party === "tie" ? labels.politicsTie : labels.politicsParties[party]}</span></li>)}
+            </ul>
+          ) : usePopulationClasses ? (
             <ul className="mt-3 grid grid-cols-2 gap-2" aria-label={metricLabel}>
               {POPULATION_CLASSES.map((item) => (
                 <li key={item.minimum} className="flex items-center gap-2 text-xs tabular-nums">

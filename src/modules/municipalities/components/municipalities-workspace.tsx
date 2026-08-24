@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { MobileBottomSheet } from "@/components/ui/mobile-bottom-sheet";
 import { Skeleton } from "@/components/ui/skeleton";
 import { MunicipalityMetricChart } from "./municipality-metric-chart";
+import { MunicipalityPoliticsPanel } from "./municipality-politics-panel";
 import type { MunicipalityDatasetRef } from "../analysis";
 import {
   COST_CATEGORIES,
@@ -17,7 +18,6 @@ import {
   MUNICIPALITY_COSTS_LATEST_YEAR,
   isCostCategoryId,
   isCostMeasureId,
-  municipalityCostCategoryCents,
   median,
   municipalityCostPerCapita,
   municipalityCostRealPerCapita,
@@ -59,11 +59,26 @@ import {
   movementMetricPalette,
   movementMetricUnit,
   movementMetricValue,
-  movementStatisticalCorrection,
   validateMunicipalityMovementSeries,
   type MovementMetricId,
   type MunicipalityMovementSeries,
 } from "../movement";
+import {
+  CANONICAL_PARTIES,
+  POLITICS_FIRST_YEAR,
+  POLITICS_LATEST_YEAR,
+  electionAsOf,
+  leadingElectionList,
+  politicsMapValue,
+  isCanonicalPartyId,
+  isPoliticsView,
+  validateMunicipalityCurrentPolitics,
+  validateMunicipalityElectionHistory,
+  type CanonicalPartyId,
+  type MunicipalityCurrentPoliticsDataset,
+  type MunicipalityElectionHistoryDataset,
+  type PoliticsView,
+} from "../politics";
 import {
   validateMunicipalityPopulationSeries,
   type MunicipalityPopulationSeries,
@@ -279,6 +294,10 @@ export function MunicipalitiesWorkspace() {
   const [costSeries, setCostSeries] = useState<MunicipalityCostSeries | null>(null);
   const [investmentMunicipalityCodes, setInvestmentMunicipalityCodes] = useState<Set<string> | null>(null);
   const [profiles, setProfiles] = useState<MunicipalityProfileDataset | null>(null);
+  const [currentPolitics, setCurrentPolitics] = useState<MunicipalityCurrentPoliticsDataset | null>(null);
+  const [electionHistory, setElectionHistory] = useState<MunicipalityElectionHistoryDataset | null>(null);
+  const [politicsError, setPoliticsError] = useState(false);
+  const [politicsHistoryRequested, setPoliticsHistoryRequested] = useState(false);
   const [loadError, setLoadError] = useState(false);
   const [demographyError, setDemographyError] = useState(false);
   const [movementError, setMovementError] = useState(false);
@@ -299,7 +318,7 @@ export function MunicipalitiesWorkspace() {
     : "count";
   const metricParameter = searchParams.get("metric");
   const metric: MapMetric =
-    metricParameter === "age" || metricParameter === "movement" || metricParameter === "costs"
+    metricParameter === "age" || metricParameter === "movement" || metricParameter === "costs" || metricParameter === "politics"
       ? metricParameter
       : "population";
   const ageGroupParameter = searchParams.get("ageGroup") ?? "0-5";
@@ -328,6 +347,10 @@ export function MunicipalitiesWorkspace() {
   const costMeasureParameter = searchParams.get("costMeasure") ?? "share";
   const costMeasure: CostMeasureId = isCostMeasureId(costMeasureParameter)
     ? costMeasureParameter : "share";
+  const politicsViewParameter = searchParams.get("politicsView") ?? "leading-list";
+  const politicsView: PoliticsView = isPoliticsView(politicsViewParameter) ? politicsViewParameter : "leading-list";
+  const politicsPartyParameter = searchParams.get("politicsParty") ?? "oevp";
+  const politicsParty: CanonicalPartyId = isCanonicalPartyId(politicsPartyParameter) ? politicsPartyParameter : "oevp";
   const selectedCode = searchParams.get("municipality") ?? "";
   const selected = useMemo(
     () =>
@@ -338,21 +361,25 @@ export function MunicipalitiesWorkspace() {
   );
   const usesCitizenship = metric === "population" && (populationView === "foreign-share" || populationView === "foreign-persons");
   const selectedProfile = selected ? (profiles?.profiles[selected.municipalityCode] ?? null) : null;
-  const availableFirstYear = metric === "costs"
+  const selectedCurrentPolitics = selected ? (currentPolitics?.municipalities[selected.municipalityCode] ?? null) : null;
+  const selectedElectionHistory = selected ? (electionHistory?.municipalities[selected.municipalityCode]?.events ?? null) : null;
+  const availableFirstYear = metric === "politics" ? POLITICS_FIRST_YEAR
+    : metric === "costs"
     ? MUNICIPALITY_COSTS_FIRST_YEAR
     : usesCitizenship ? MUNICIPALITY_STRUCTURE_FIRST_YEAR : populationSeries?.firstYear;
-  const availableLatestYear = metric === "costs"
+  const availableLatestYear = metric === "politics" ? POLITICS_LATEST_YEAR
+    : metric === "costs"
     ? MUNICIPALITY_COSTS_LATEST_YEAR
     : usesCitizenship ? MUNICIPALITY_STRUCTURE_LATEST_YEAR : populationSeries?.latestYear;
   const year = useMemo(() => {
-    const value = Number(searchParams.get("populationYear"));
+    const value = Number(searchParams.get(metric === "politics" ? "politicsYear" : "populationYear"));
     return populationSeries && availableFirstYear !== undefined && availableLatestYear !== undefined &&
       Number.isInteger(value) && value >= availableFirstYear && value <= availableLatestYear
       ? value
       : (availableLatestYear ?? null);
-  }, [availableFirstYear, availableLatestYear, populationSeries, searchParams]);
-  const activePopulation =
-    year === null ? null : (populationSeries?.years[String(year)] ?? null);
+  }, [availableFirstYear, availableLatestYear, metric, populationSeries, searchParams]);
+  const populationReferenceYear = year === null || !populationSeries ? null : Math.min(populationSeries.latestYear, Math.max(populationSeries.firstYear, year));
+  const activePopulation = populationReferenceYear === null ? null : (populationSeries?.years[String(populationReferenceYear)] ?? null);
   const ageGroupLabels: Record<AgeGroupId, string> = {
     "0-5": t("ageGroup0-5"),
     "6-14": t("ageGroup6-14"),
@@ -432,6 +459,12 @@ export function MunicipalitiesWorkspace() {
     "real-per-capita": t("costMeasureRealPerCapita"),
     "peer-deviation": t("costMeasurePeerDeviation"),
   };
+  const politicsViewLabels: Record<PoliticsView, string> = {
+    "leading-list": t("politicsViewLeadingList"),
+    "party-share": t("politicsViewPartyShare"),
+    turnout: t("politicsViewTurnout"),
+  };
+  const politicsPartyLabels = Object.fromEntries(CANONICAL_PARTIES.map((party) => [party, t(`politicsParty${party}` as "politicsPartyoevp")])) as Record<CanonicalPartyId, string>;
   const costMeasureDefinitions: Record<CostMeasureId, string> = {
     share: t("costMeasureShareDefinition"),
     "per-capita": t("costMeasurePerCapitaDefinition"),
@@ -447,6 +480,10 @@ export function MunicipalitiesWorkspace() {
   // keeps the scale — and therefore the colours — comparable.
   const dataset = useMemo(() => {
     if (!index || !populationSeries) return null;
+    if (metric === "politics") {
+      const valueFor = (code: string, targetYear: number) => politicsMapValue(electionAsOf(electionHistory?.municipalities[code]?.events ?? [], targetYear), politicsView, politicsParty);
+      return { valueFor, peerMedianFor: () => null, years: () => Array.from({ length: POLITICS_LATEST_YEAR - POLITICS_FIRST_YEAR + 1 }, (_, offset) => POLITICS_FIRST_YEAR + offset), domain: politicsView === "leading-list" ? null : [0, 1] as [number, number] };
+    }
     const lookup = createDatasetLookup(
       { metric, populationView, ageView, ageMeasure, sex, movementView, costCategory, costMeasure },
       {
@@ -475,7 +512,7 @@ export function MunicipalitiesWorkspace() {
     return { ...lookup, domain: diverging ? symmetricDomain(collected) : datasetDomain(collected) };
   }, [
     ageMeasure, ageView, costCategory, costMeasure, costSeries, demographySeries, index,
-    metric, movementSeries, movementView, populationSeries, populationView, sex, structureSeries,
+    electionHistory, metric, movementSeries, movementView, politicsParty, politicsView, populationSeries, populationView, sex, structureSeries,
   ]);
 
   useEffect(() => {
@@ -527,6 +564,22 @@ export function MunicipalitiesWorkspace() {
       .catch(() => undefined);
     return () => controller.abort();
   }, []);
+  useEffect(() => {
+    if (!selected || currentPolitics || !index) return;
+    const controller = new AbortController();
+    fetchJson<MunicipalityCurrentPoliticsDataset>("/data/municipality-politics-current-2026.json", controller.signal)
+      .then((data) => setCurrentPolitics(validateMunicipalityCurrentPolitics(data, index.municipalities.map(({ municipalityCode }) => municipalityCode))))
+      .catch((error: unknown) => { if (!(error instanceof DOMException && error.name === "AbortError")) setPoliticsError(true); });
+    return () => controller.abort();
+  }, [currentPolitics, index, selected]);
+  useEffect(() => {
+    if ((metric !== "politics" && !politicsHistoryRequested) || electionHistory || politicsError || !index) return;
+    const controller = new AbortController();
+    fetchJson<MunicipalityElectionHistoryDataset>("/data/municipality-election-history-2000-2025.json", controller.signal)
+      .then((data) => setElectionHistory(validateMunicipalityElectionHistory(data, index.municipalities.map(({ municipalityCode }) => municipalityCode))))
+      .catch((error: unknown) => { if (!(error instanceof DOMException && error.name === "AbortError")) setPoliticsError(true); });
+    return () => controller.abort();
+  }, [electionHistory, index, metric, politicsError, politicsHistoryRequested]);
   useEffect(() => {
     if (
       metric !== "age" ||
@@ -724,7 +777,6 @@ export function MunicipalitiesWorkspace() {
     );
 
   const valueFor = dataset!.valueFor;
-  const peerMedianFor = dataset!.peerMedianFor;
   const activeDemography = demographySeries?.years[String(year)] ?? null;
   const activeMovement = movementSeries?.years[String(year)] ?? null;
   const activeCosts = costSeries?.years[String(year)] ?? null;
@@ -847,41 +899,25 @@ export function MunicipalitiesWorkspace() {
                 return [municipalityCode, `${costCategoryLabels[costCategory]} · ${costMeasureLabels[costMeasure]} · ${formatter.format(value)}`];
               }),
             )
-          : null;
+          : metric === "politics"
+            ? Object.fromEntries(index.municipalities.map(({ municipalityCode }) => {
+                const event = electionAsOf(electionHistory?.municipalities[municipalityCode]?.events ?? [], year);
+                if (!event) return [municipalityCode, t("politicsOfficialCoverageMissing")];
+                const turnout = event.eligibleVoters && event.ballotsCast !== null ? shareFormatter.format(event.ballotsCast / event.eligibleVoters) : "—";
+                if (politicsView === "turnout") return [municipalityCode, `${event.date} · ${politicsViewLabels.turnout} · ${turnout}`];
+                if (politicsView === "party-share") { const value = politicsMapValue(event, politicsView, politicsParty); return [municipalityCode, `${event.date} · ${politicsPartyLabels[politicsParty]} · ${value === null ? "—" : shareFormatter.format(value)} · ${politicsViewLabels.turnout} ${turnout}`]; }
+                const leading = leadingElectionList(event);
+                if (leading.kind === "missing") return [municipalityCode, `${event.date} · —`];
+                if (leading.kind === "tie") return [municipalityCode, `${event.date} · ${t("politicsTie")} · ${politicsViewLabels.turnout} ${turnout}`];
+                const aggregation = event.aggregationStatus === "aggregated-predecessors" ? ` · ${t("politicsAggregated")}` : "";
+                return [municipalityCode, `${event.date} · ${leading.list.name} · ${event.validVotes ? shareFormatter.format(leading.list.votes / event.validVotes) : "—"} · ${politicsViewLabels.turnout} ${turnout}${aggregation}`];
+              }))
+            : null;
   const selectedPopulation = selected
     ? usesCitizenship
       ? (structureSeries?.years[String(year)]?.values[selected.municipalityCode]?.[0] ?? activePopulation.values[selected.municipalityCode])
       : activePopulation.values[selected.municipalityCode]
     : 0;
-  const selectedAgeCounts =
-    selected && activeDemography
-      ? activeDemography.values[selected.municipalityCode]
-      : null;
-  const selectedAgePersons =
-    selectedAgeCounts && !indicator
-      ? demographyValue(selectedAgeCounts, sex, ageGroup)
-      : null;
-  const selectedAgeDenominator =
-    selectedAgeCounts && !indicator
-      ? demographyPopulation(selectedAgeCounts, sex)
-      : null;
-  const selectedAgeShare =
-    selectedAgePersons !== null && selectedAgeDenominator
-      ? selectedAgePersons / selectedAgeDenominator
-      : null;
-  const selectedMovementCounts =
-    selected && activeMovement
-      ? activeMovement.values[selected.municipalityCode]
-      : null;
-  const statisticalCorrection = selectedMovementCounts
-    ? movementStatisticalCorrection(selectedMovementCounts)
-    : null;
-  const selectedCosts = selected && activeCosts ? (activeCosts.values[selected.municipalityCode] ?? null) : null;
-  const selectedCostCents = selectedCosts ? municipalityCostCategoryCents(selectedCosts, costCategory) : null;
-  const selectedCostPerCapita = selectedCosts
-    ? municipalityCostPerCapita(selectedCosts, costCategory, selectedPopulation)
-    : null;
-  const selectedPeerMedian = metric === "costs" && selected ? peerMedianFor(selected.municipalityCode, year) : null;
   const previousYear = year > availableFirstYear! ? year - 1 : null;
   const activeValue = selected
     ? (metricValues[selected.municipalityCode] ?? null)
@@ -889,7 +925,7 @@ export function MunicipalitiesWorkspace() {
   const metricValueForYear = (targetYear: number) =>
     selected ? valueFor(selected.municipalityCode, targetYear) : null;
   const previousValue =
-    previousYear === null ? null : metricValueForYear(previousYear);
+    metric === "politics" || previousYear === null ? null : metricValueForYear(previousYear);
   const firstValue = metricValueForYear(availableFirstYear!);
   const historyAvailable =
     (metric === "population" && (!usesCitizenship || structureSeries)) ||
@@ -904,7 +940,8 @@ export function MunicipalitiesWorkspace() {
         }))
       : null;
   const chartFormatter =
-    metric === "costs"
+    metric === "politics" ? shareFormatter
+    : metric === "costs"
       ? costMeasure === "share" || costMeasure === "peer-deviation"
         ? shareFormatter
         : currencyFormatter
@@ -918,7 +955,8 @@ export function MunicipalitiesWorkspace() {
           ? ratioFormatter
           : shareFormatter;
   const chartUnit =
-    metric === "costs"
+    metric === "politics" ? ""
+    : metric === "costs"
       ? costMeasure === "per-capita" || costMeasure === "real-per-capita"
         ? t("costPerInhabitantUnit")
         : ""
@@ -934,7 +972,8 @@ export function MunicipalitiesWorkspace() {
             ? t("yearsUnit")
             : "";
   const metricLabel =
-    metric === "costs"
+    metric === "politics" ? politicsView === "party-share" ? `${politicsViewLabels[politicsView]} · ${politicsPartyLabels[politicsParty]}` : politicsViewLabels[politicsView]
+    : metric === "costs"
       ? costCategoryLabels[costCategory] + " · " + costMeasureLabels[costMeasure]
       : metric === "population"
       ? populationViewLabels[populationView]
@@ -956,7 +995,8 @@ export function MunicipalitiesWorkspace() {
                   : "sexAll",
             );
   const metricChartLabel = selected
-    ? metric === "costs"
+    ? metric === "politics" ? ""
+      : metric === "costs"
       ? t("costChartLabel", { municipality: selected.name, category: metricLabel })
       : metric === "population"
         ? populationView === "count"
@@ -966,7 +1006,7 @@ export function MunicipalitiesWorkspace() {
           ? t("movementChartLabel", { municipality: selected.name, metric: metricLabel })
           : t("ageChartLabel", { municipality: selected.name, ageGroup: metricLabel })
     : "";
-  const analysisDataset: MunicipalityDatasetRef | null = !selected
+  const analysisDataset: MunicipalityDatasetRef | null = !selected || metric === "politics"
     ? null
     : metric === "costs"
       ? { kind: "cost-share", municipalityCode: selected.municipalityCode, municipalityName: selected.name, category: costCategory, measure: costMeasure }
@@ -1125,6 +1165,8 @@ export function MunicipalitiesWorkspace() {
           movementView={movementView}
           costCategory={costCategory}
           costMeasure={costMeasure}
+          politicsView={politicsView}
+          politicsParty={politicsParty}
           peerMunicipalityCodes={selectedPeerGroup?.municipalityCodes ?? null}
           peerGroupLabel={selectedPeerGroup?.label ?? null}
           movementDefinition={movementDefinitions[movementView] ?? null}
@@ -1140,10 +1182,12 @@ export function MunicipalitiesWorkspace() {
           movementError={movementError}
           costsLoading={metric === "costs" && !costSeries && !costError}
           costsError={costError}
+          politicsLoading={metric === "politics" && !electionHistory && !politicsError}
+          politicsError={politicsError}
           structureLoading={usesCitizenship && !structureSeries && !structureError}
           structureError={structureError}
           onYearChange={(value) =>
-            setParameter("populationYear", String(value))
+            setParameter(metric === "politics" ? "politicsYear" : "populationYear", String(value))
           }
           onMetricChange={updateMetric}
           onPopulationViewChange={updatePopulationView}
@@ -1155,6 +1199,8 @@ export function MunicipalitiesWorkspace() {
           }
           onCostCategoryChange={(value) => setParameter("costCategory", value === "0" ? null : value)}
           onCostMeasureChange={(value) => setParameter("costMeasure", value === "share" ? null : value)}
+          onPoliticsViewChange={(value) => setParameter("politicsView", value === "leading-list" ? null : value)}
+          onPoliticsPartyChange={(value) => setParameter("politicsParty", value === "oevp" ? null : value)}
           onSelect={selectByCode}
           onReset={() => updateSelection(null)}
           onOpenDetails={() => setDetailsOpen(true)}
@@ -1166,7 +1212,8 @@ export function MunicipalitiesWorkspace() {
             municipalityCode: t("municipalityCode"),
             population: t("population"),
             reference:
-              metric === "costs"
+              metric === "politics" ? t("politicsReference", { year })
+              : metric === "costs"
                 ? t("costReference", { year })
                 : metric === "movement"
                 ? t("movementReference", { year })
@@ -1181,6 +1228,12 @@ export function MunicipalitiesWorkspace() {
             ageMetric: t("metricAge"),
             movementMetric: t("metricMovement"),
             costsMetric: t("metricCosts"),
+            politicsMetric: t("metricPolitics"),
+            politicsView: t("politicsView"),
+            politicsViews: politicsViewLabels,
+            politicsParty: t("politicsParty"),
+            politicsParties: politicsPartyLabels,
+            politicsTie: t("politicsTie"),
             populationView: t("populationView"),
             populationViews: populationViewLabels,
             ageView: t("ageView"),
@@ -1213,6 +1266,8 @@ export function MunicipalitiesWorkspace() {
             movementError: t("movementLayerError"),
             loadingCosts: t("costLayerLoading"),
             costsError: t("costLayerError"),
+            loadingPolitics: t("politicsLayerLoading"),
+            politicsError: t("politicsLayerError"),
             loadingStructure: t("structureLayerLoading"),
             structureError: t("structureLayerError"),
             addToAnalysis: t("addToAnalysis"),
@@ -1259,16 +1314,27 @@ export function MunicipalitiesWorkspace() {
                 <dt className="text-muted-foreground">{t("district")}</dt><dd className="font-medium">{selectedProfile?.district ?? t("profileDataUnavailable")}</dd>
                 <dt className="text-muted-foreground">{t("population")}</dt><dd className="font-semibold tabular-nums">{personsFormatter.format(selectedPopulation)}</dd>
                 {metric === "population" && populationView === "density" ? <><dt className="text-muted-foreground">{t("municipalityArea")}</dt><dd className="font-medium tabular-nums">{ratioFormatter.format(selected.areaSquareKilometers)} {t("areaUnit")}</dd></> : null}
-                {activeValue !== null && !(metric === "population" && populationView === "count") ? <><dt className="text-muted-foreground">{metricLabel}</dt><dd className="font-semibold tabular-nums">{chartFormatter.format(activeValue)}{chartUnit ? ` ${chartUnit}` : ""}</dd></> : null}
+                {activeValue !== null && metric !== "politics" && !(metric === "population" && populationView === "count") ? <><dt className="text-muted-foreground">{metricLabel}</dt><dd className="font-semibold tabular-nums">{chartFormatter.format(activeValue)}{chartUnit ? ` ${chartUnit}` : ""}</dd></> : null}
                 {previousValue !== null ? <><dt className="text-muted-foreground">{metric === "population" ? t("populationChangePreviousYear") : metric === "movement" ? t("movementChangePreviousYear") : metric === "age" ? t("ageChangePreviousYear") : t("costChangePreviousYear")}</dt><dd className="font-medium tabular-nums">{formatMetricChange(activeValue, previousValue)}</dd></> : null}
                 {averageAnnualPopulationChange !== null ? <><dt className="text-muted-foreground">{t("populationAverageAnnualChange", { year: populationSeries.firstYear })}</dt><dd className="font-medium tabular-nums">{signedShareFormatter.format(averageAnnualPopulationChange)}</dd></> : null}
-                <dt className="text-muted-foreground">{t("mayor")}</dt><dd className="font-medium">{selectedProfile?.mayor ?? t("profileDataUnavailable")}</dd>
-                <dt className="text-muted-foreground">{t("councilComposition")}</dt><dd className="font-medium">{selectedProfile?.councilComposition ?? t("profileDataUnavailable")}</dd>
                 <dt className="text-muted-foreground">{t("officialWebsite")}</dt><dd className="min-w-0 font-medium">{selectedProfile?.officialWebsite ? <a className="break-all text-teal-700 underline underline-offset-2 hover:text-teal-800" href={selectedProfile.officialWebsite} target="_blank" rel="noreferrer">{t("openWebsite")}</a> : t("profileDataUnavailable")}</dd>
               </dl>
+              <div className="mt-5">
+                <MunicipalityPoliticsPanel
+                  current={selectedCurrentPolitics}
+                  currentSources={currentPolitics?.sources ?? []}
+                  history={selectedElectionHistory}
+                  historySources={electionHistory?.sources ?? []}
+                  loadingHistory={politicsHistoryRequested && !electionHistory && !politicsError}
+                  historyError={politicsError}
+                  onOpenHistory={() => setPoliticsHistoryRequested(true)}
+                />
+              </div>
               <p className="mt-3 flex items-center gap-1.5 text-xs text-muted-foreground">
                 <Users className="size-3.5" />
-                {metric === "costs"
+                {metric === "politics"
+                  ? t("politicsReference", { year })
+                  : metric === "costs"
                   ? t("costReference", { year })
                   : metric === "movement"
                   ? t("movementReference", { year })
@@ -1413,11 +1479,9 @@ export function MunicipalitiesWorkspace() {
                   <dt className="text-muted-foreground">{t("district")}</dt><dd className="font-medium">{selectedProfile?.district ?? t("profileDataUnavailable")}</dd>
                   <dt className="text-muted-foreground">{t("population")}</dt><dd className="font-semibold tabular-nums">{personsFormatter.format(selectedPopulation)}</dd>
                   {metric === "population" && populationView === "density" ? <><dt className="text-muted-foreground">{t("municipalityArea")}</dt><dd className="font-medium tabular-nums">{ratioFormatter.format(selected.areaSquareKilometers)} {t("areaUnit")}</dd></> : null}
-                  {activeValue !== null && !(metric === "population" && populationView === "count") ? <><dt className="text-muted-foreground">{metricLabel}</dt><dd className="font-semibold tabular-nums">{chartFormatter.format(activeValue)}{chartUnit ? ` ${chartUnit}` : ""}</dd></> : null}
+                  {activeValue !== null && metric !== "politics" && !(metric === "population" && populationView === "count") ? <><dt className="text-muted-foreground">{metricLabel}</dt><dd className="font-semibold tabular-nums">{chartFormatter.format(activeValue)}{chartUnit ? ` ${chartUnit}` : ""}</dd></> : null}
                   {previousValue !== null ? <><dt className="text-muted-foreground">{metric === "population" ? t("populationChangePreviousYear") : metric === "movement" ? t("movementChangePreviousYear") : metric === "age" ? t("ageChangePreviousYear") : t("costChangePreviousYear")}</dt><dd className="font-medium tabular-nums">{formatMetricChange(activeValue, previousValue)}</dd></> : null}
                   {averageAnnualPopulationChange !== null ? <><dt className="text-muted-foreground">{t("populationAverageAnnualChange", { year: populationSeries.firstYear })}</dt><dd className="font-medium tabular-nums">{signedShareFormatter.format(averageAnnualPopulationChange)}</dd></> : null}
-                  <dt className="text-muted-foreground">{t("mayor")}</dt><dd className="font-medium">{selectedProfile?.mayor ?? t("profileDataUnavailable")}</dd>
-                  <dt className="text-muted-foreground">{t("councilComposition")}</dt><dd className="font-medium">{selectedProfile?.councilComposition ?? t("profileDataUnavailable")}</dd>
                   <dt className="text-muted-foreground">{t("officialWebsite")}</dt>
                   <dd className="min-w-0 font-medium">
                     {selectedProfile?.officialWebsite ? (
@@ -1425,9 +1489,22 @@ export function MunicipalitiesWorkspace() {
                     ) : t("profileDataUnavailable")}
                   </dd>
                 </dl>
+                <div className="mt-5">
+                  <MunicipalityPoliticsPanel
+                    current={selectedCurrentPolitics}
+                    currentSources={currentPolitics?.sources ?? []}
+                    history={selectedElectionHistory}
+                    historySources={electionHistory?.sources ?? []}
+                    loadingHistory={politicsHistoryRequested && !electionHistory && !politicsError}
+                    historyError={politicsError}
+                    onOpenHistory={() => setPoliticsHistoryRequested(true)}
+                  />
+                </div>
                 <p className="mt-4 flex items-center gap-1.5 border-t pt-3 text-xs text-muted-foreground">
                   <Users className="size-3.5" />
-                  {metric === "costs"
+                  {metric === "politics"
+                    ? t("politicsReference", { year })
+                    : metric === "costs"
                     ? t("costReference", { year })
                     : metric === "movement"
                       ? t("movementReference", { year })

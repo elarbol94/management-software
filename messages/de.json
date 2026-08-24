@@ -91,6 +91,43 @@
     "metricAge": "Altersstruktur",
     "metricMovement": "Bevölkerungsentwicklung",
     "metricCosts": "Kostenübersicht",
+    "metricPolitics": "Politik",
+    "politicsView": "Politikansicht",
+    "politicsViewLeadingList": "Stärkste Liste",
+    "politicsViewPartyShare": "Stimmenanteil",
+    "politicsViewTurnout": "Wahlbeteiligung",
+    "politicsParty": "Partei",
+    "politicsPartyoevp": "ÖVP",
+    "politicsPartyspoe": "SPÖ",
+    "politicsPartyfpoe": "FPÖ",
+    "politicsPartygruene": "Grüne",
+    "politicsPartyneos": "NEOS",
+    "politicsPartykpoe": "KPÖ",
+    "politicsPartymfg": "MFG",
+    "politicsPartylocal-other": "Lokale und sonstige Listen",
+    "politicsPartyUnavailable": "Partei nicht veröffentlicht",
+    "politicsTie": "Gleichstand",
+    "politicsReference": "Jüngste Gemeinderatswahl bis 31. Dezember {year}",
+    "politicsLoading": "Politikdaten werden geladen…",
+    "politicsLoadError": "Politikdaten konnten nicht geladen werden. Die übrigen Karten bleiben verfügbar.",
+    "politicsProfileTitle": "Politik",
+    "politicsLatestCouncil": "Jüngste gewählte Sitzverteilung",
+    "politicsHistoryTitle": "Wahlchronik seit 2000",
+    "politicsElectionDate": "Wahltermin {date}",
+    "politicsAsOf": "Stand {date} ·",
+    "politicsMandates": "{count, plural, =0 {kein Mandat} one {# Mandat} other {# Mandate}}",
+    "politicsMandatesUnavailable": "Mandate nicht zusammengeführt",
+    "politicsCouncilDisclaimer": "Die gewählte Sitzverteilung bildet spätere Fraktionswechsel nicht zwingend ab.",
+    "politicsAggregated": "Stimmen auf den Gebietsstand 1. Jänner 2026 aggregiert; Mandate und Kandidaturen wurden nicht künstlich zusammengeführt.",
+    "politicsMayorElection": "Direkte Bürgermeisterwahl",
+    "politicsElectionRound": "Wahlgang {round}",
+    "politicsElected": "gewählt",
+    "politicsVotes": "Stimmen",
+    "politicsOfficialCoverageMissing": "Keine strukturierte amtliche Abdeckung verfügbar; die Lücke wird nicht geschätzt.",
+    "politicsTurnoutValue": "Wahlbeteiligung {value}",
+    "politicsTurnoutMissing": "Wahlbeteiligung nicht veröffentlicht",
+    "politicsLayerLoading": "Wahlhistorie wird geladen…",
+    "politicsLayerError": "Wahlhistorie konnte nicht geladen werden. Die übrigen Karten bleiben verfügbar.",
     "movementView": "Komponente",
     "movementPopulationChange": "Gesamtveränderung",
     "movementPopulationChangeDefinition": "Bevölkerung am 1. Jänner des Folgejahres minus jene am Jahresanfang.",
@@ -550,8 +587,16 @@
     "project": "Projekt",
     "noProject": "Kein Projekt",
     "globalShortcut": "Strg+Umschalt+A",
-    "priorities": { "low": "Niedrig", "medium": "Mittel", "high": "Hoch" },
-    "statuses": { "open": "Offen", "done": "Erledigt", "all": "Alle" },
+    "priorities": {
+      "low": "Niedrig",
+      "medium": "Mittel",
+      "high": "Hoch"
+    },
+    "statuses": {
+      "open": "Offen",
+      "done": "Erledigt",
+      "all": "Alle"
+    },
     "origins": {
       "wikiPage": "Wiki-Dokument",
       "wikiSource": "Quelle",
@@ -607,7 +652,11 @@
     "removeTime": "Uhrzeit entfernen",
     "status": "Status",
     "globalShortcut": "Strg+Umschalt+D",
-    "statuses": { "open": "Offen", "done": "Erledigt", "all": "Alle" },
+    "statuses": {
+      "open": "Offen",
+      "done": "Erledigt",
+      "all": "Alle"
+    },
     "origins": {
       "wikiPage": "Wiki-Seite",
       "wikiSource": "Quelle",
@@ -725,8 +774,12 @@
       "personnel": {
         "description": "Bruttobezüge und österreichische Lohnnebenkosten aus einer Abrechnung."
       },
-      "svs": { "description": "SVS-Vorschreibung mit Zeitraum und Referenz." },
-      "tax_levy": { "description": "Steuern und Abgaben ohne Umsatzsteuer." }
+      "svs": {
+        "description": "SVS-Vorschreibung mit Zeitraum und Referenz."
+      },
+      "tax_levy": {
+        "description": "Steuern und Abgaben ohne Umsatzsteuer."
+      }
     },
     "help": {
       "paymentDate": "In der Einnahmen-Ausgaben-Rechnung zählt grundsätzlich das tatsächliche Zahlungsdatum.",
@@ -793,7 +846,10 @@
       "municipalPaymentDate": "Zahlung an Gemeinde",
       "provisionPaymentDate": "Zahlung an Vorsorgekasse",
       "calculationMode": "Berechnungsmodus",
-      "modes": { "auto": "Automatisch", "manual": "Manuell überschreiben" },
+      "modes": {
+        "auto": "Automatisch",
+        "manual": "Manuell überschreiben"
+      },
       "location": "Betriebsstätte",
       "calculation": "Berechnungsübersicht",
       "component": "Komponente",
@@ -1345,7 +1401,10 @@
       "other_public": "Andere öffentliche Förderung",
       "private_investor": "Private Investoren"
     },
-    "disbursementStatus": { "planned": "Geplant", "received": "Eingegangen" },
+    "disbursementStatus": {
+      "planned": "Geplant",
+      "received": "Eingegangen"
+    },
     "settlement": {
       "description": "Buchungen Kostenpositionen zuordnen und Nachweisstatus transparent halten.",
       "empty": "Lege zuerst Kostenpositionen an, um Ist-Buchungen zuordnen zu können.",
@@ -1751,7 +1810,11 @@
       "hideLayout": "Dokumentlayout ausblenden",
       "panelTitle": "Dokumentlayout",
       "panelDescription": "A4-Gestaltung, Inhalte und Exportprüfung.",
-      "tabs": { "page": "Seite", "content": "Inhalt", "check": "Prüfung" },
+      "tabs": {
+        "page": "Seite",
+        "content": "Inhalt",
+        "check": "Prüfung"
+      },
       "page": "Seite",
       "pageSize": "Format",
       "orientation": "Ausrichtung",
@@ -1775,7 +1838,11 @@
         "serif": "Serif",
         "system": "System"
       },
-      "color": { "text": "Text", "accent": "Akzent", "muted": "Sekundär" },
+      "color": {
+        "text": "Text",
+        "accent": "Akzent",
+        "muted": "Sekundär"
+      },
       "globalTypography": "Globales Schreibbild",
       "globalTypographyDescription": "Schrift, Abstände und Farben werden persönlich für alle Wiki-Seiten festgelegt. Vorlagenwerte bleiben gespeichert, werden aber nicht dargestellt.",
       "openGlobalTypography": "Schreibbild einstellen",
@@ -1918,7 +1985,10 @@
     },
     "editor": {
       "proofing": {
-        "languages": { "de": "Deutsch", "en": "Englisch" },
+        "languages": {
+          "de": "Deutsch",
+          "en": "Englisch"
+        },
         "switch": "Prüfsprache: {language}. Zu {nextLanguage} wechseln.",
         "checking": "Prüfung läuft",
         "unavailable": "Rechtschreib- und Grammatikprüfung momentan nicht erreichbar",
@@ -2030,7 +2100,10 @@
           "primaryAuthor": "Diese Seite übernimmt Änderungen sofort. Alle weiteren Wiki-Seiten, bei denen du Hauptautor bist, folgen demselben Schreibbild.",
           "otherPage": "Diese Seite behält das Schreibbild ihres Hauptautors. Deine Änderungen gelten auf allen Wiki-Seiten, bei denen du Hauptautor bist."
         },
-        "tabs": { "typography": "Typografie", "editor": "Editor" },
+        "tabs": {
+          "typography": "Typografie",
+          "editor": "Editor"
+        },
         "density": {
           "title": "Dichte",
           "description": "Wähle einen Ausgangspunkt. Sobald du einen Wert änderst, wird das Schreibbild als benutzerdefiniert markiert.",
@@ -2119,7 +2192,7 @@
     "commentPlaceholder": "Kommentar oder @Name-Erwähnung schreiben…",
     "addComment": "Kommentieren",
     "inlineComment": "Auswahl kommentieren",
-    "highlightSelection": "Hervorheben",
+    "highlightSelection": "Text markieren",
     "commentSelection": "Kommentieren",
     "insertImage": "Bild einfügen",
     "uploadingImage": "Bild wird hochgeladen…",
@@ -2192,87 +2265,165 @@
         "paragraph": {
           "label": "Text",
           "description": "Normalen Absatz schreiben",
-          "keywords": ["absatz", "paragraph", "normal"]
+          "keywords": [
+            "absatz",
+            "paragraph",
+            "normal"
+          ]
         },
         "heading1": {
           "label": "Überschrift 1",
           "description": "Große Abschnittsüberschrift",
-          "keywords": ["überschrift", "uberschrift", "heading", "h1", "titel"]
+          "keywords": [
+            "überschrift",
+            "uberschrift",
+            "heading",
+            "h1",
+            "titel"
+          ]
         },
         "heading2": {
           "label": "Überschrift 2",
           "description": "Mittlere Abschnittsüberschrift",
-          "keywords": ["überschrift", "uberschrift", "heading", "h2"]
+          "keywords": [
+            "überschrift",
+            "uberschrift",
+            "heading",
+            "h2"
+          ]
         },
         "heading3": {
           "label": "Überschrift 3",
           "description": "Kleine Abschnittsüberschrift",
-          "keywords": ["überschrift", "uberschrift", "heading", "h3"]
+          "keywords": [
+            "überschrift",
+            "uberschrift",
+            "heading",
+            "h3"
+          ]
         },
         "bulletList": {
           "label": "Aufzählung",
           "description": "Liste mit Aufzählungspunkten",
-          "keywords": ["liste", "punkte", "bullet", "unordered"]
+          "keywords": [
+            "liste",
+            "punkte",
+            "bullet",
+            "unordered"
+          ]
         },
         "orderedList": {
           "label": "Nummerierte Liste",
           "description": "Liste mit laufenden Nummern",
-          "keywords": ["liste", "nummern", "ordered"]
+          "keywords": [
+            "liste",
+            "nummern",
+            "ordered"
+          ]
         },
         "taskList": {
           "label": "Aufgabenliste",
           "description": "Checkliste mit abhakbaren Aufgaben",
-          "keywords": ["checkliste", "liste", "checkbox"]
+          "keywords": [
+            "checkliste",
+            "liste",
+            "checkbox"
+          ]
         },
         "todo": {
           "label": "Aufgabe erstellen",
           "description": "Zuweisbare Aufgabe mit Priorität und Ursprung anlegen",
-          "keywords": ["todo", "aufgabe", "task"]
+          "keywords": [
+            "todo",
+            "aufgabe",
+            "task"
+          ]
         },
         "deadline": {
           "label": "Deadline erstellen",
           "description": "Deadline mit Zeitpunkt, Nutzer und Ursprung anlegen",
-          "keywords": ["deadline", "frist", "termin"]
+          "keywords": [
+            "deadline",
+            "frist",
+            "termin"
+          ]
         },
         "blockquote": {
           "label": "Zitatblock",
           "description": "Text als hervorgehobenes Zitat",
-          "keywords": ["zitat", "quote", "blockquote"]
+          "keywords": [
+            "zitat",
+            "quote",
+            "blockquote"
+          ]
         },
         "codeBlock": {
           "label": "Codeblock",
           "description": "Vorformatierten Code einfügen",
-          "keywords": ["code", "programmieren"]
+          "keywords": [
+            "code",
+            "programmieren"
+          ]
         },
         "horizontalRule": {
           "label": "Trennlinie",
           "description": "Abschnitte visuell trennen",
-          "keywords": ["linie", "trenner", "divider", "horizontal"]
+          "keywords": [
+            "linie",
+            "trenner",
+            "divider",
+            "horizontal"
+          ]
         },
         "pageBreak": {
           "label": "Seitenumbruch",
           "description": "Im PDF eine neue Seite beginnen",
-          "keywords": ["seite", "umbruch", "page", "break"]
+          "keywords": [
+            "seite",
+            "umbruch",
+            "page",
+            "break"
+          ]
         },
         "tableOfContents": {
           "label": "Inhaltsverzeichnis",
           "description": "Verzeichnis aus Überschriften erzeugen",
-          "keywords": ["inhalt", "verzeichnis", "toc", "gliederung"]
+          "keywords": [
+            "inhalt",
+            "verzeichnis",
+            "toc",
+            "gliederung"
+          ]
         },
         "twoColumns": {
           "label": "Zwei Spalten",
           "description": "Einen zweispaltigen Abschnitt einfügen",
-          "keywords": ["spalten", "columns", "layout"]
+          "keywords": [
+            "spalten",
+            "columns",
+            "layout"
+          ]
         },
         "pageLink": {
           "label": "Seite verknüpfen",
           "description": "Link zu einer Wiki-Seite einfügen",
-          "keywords": ["verknüpfung", "verknupfung", "link", "seite", "wiki"]
+          "keywords": [
+            "verknüpfung",
+            "verknupfung",
+            "link",
+            "seite",
+            "wiki"
+          ]
         },
         "externalLink": {
           "label": "Externen Link einfügen",
           "description": "Webadresse an der Textstelle verlinken",
-          "keywords": ["link", "url", "webseite", "extern"]
+          "keywords": [
+            "link",
+            "url",
+            "webseite",
+            "extern"
+          ]
         },
         "citation": {
           "label": "Quelle zitieren",
@@ -2289,17 +2440,34 @@
         "pdfEvidence": {
           "label": "PDF-Nachweis einfügen",
           "description": "Markierung aus einer PDF übernehmen",
-          "keywords": ["pdf", "nachweis", "markierung", "evidence"]
+          "keywords": [
+            "pdf",
+            "nachweis",
+            "markierung",
+            "evidence"
+          ]
         },
         "inlineImage": {
           "label": "Bild einfügen",
           "description": "PNG-, JPEG- oder WebP-Bild hochladen",
-          "keywords": ["bild", "image", "foto", "grafik", "upload"]
+          "keywords": [
+            "bild",
+            "image",
+            "foto",
+            "grafik",
+            "upload"
+          ]
         },
         "attachment": {
           "label": "Anhang hinzufügen",
           "description": "Datei an diese Seite anhängen",
-          "keywords": ["anhang", "anhänge", "anhange", "datei", "upload"]
+          "keywords": [
+            "anhang",
+            "anhänge",
+            "anhange",
+            "datei",
+            "upload"
+          ]
         },
         "supportingSource": {
           "label": "Quelle nur verknüpfen",
@@ -2315,7 +2483,12 @@
         "pageComment": {
           "label": "Kommentar hinzufügen",
           "description": "Seitenkommentar schreiben",
-          "keywords": ["kommentar", "kommentare", "diskussion", "comment"]
+          "keywords": [
+            "kommentar",
+            "kommentare",
+            "diskussion",
+            "comment"
+          ]
         }
       }
     },
@@ -2397,7 +2570,6 @@
     "nextPage": "Nächste Seite",
     "page": "Seite",
     "documentNavigator": "Dokumentnavigation",
-    "pages": "Seiten",
     "outline": "Gliederung",
     "noOutline": "Diese PDF enthält keine Gliederung.",
     "untitled": "Ohne Titel",
@@ -2473,7 +2645,6 @@
     "currentPageComments": "Nur aktuelle Seite",
     "noMatchingComments": "Keine passenden Kommentare.",
     "resizeComments": "Breite der Kommentarleiste anpassen",
-    "highlightSelection": "Text markieren",
     "highlight": "Hervorheben",
     "note": "Notiz",
     "saveAnnotation": "Speichern",

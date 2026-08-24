@@ -91,6 +91,43 @@
     "metricAge": "Age structure",
     "metricMovement": "Population change",
     "metricCosts": "Cost overview",
+    "metricPolitics": "Politics",
+    "politicsView": "Politics view",
+    "politicsViewLeadingList": "Leading list",
+    "politicsViewPartyShare": "Vote share",
+    "politicsViewTurnout": "Turnout",
+    "politicsParty": "Party",
+    "politicsPartyoevp": "ÖVP",
+    "politicsPartyspoe": "SPÖ",
+    "politicsPartyfpoe": "FPÖ",
+    "politicsPartygruene": "Greens",
+    "politicsPartyneos": "NEOS",
+    "politicsPartykpoe": "KPÖ",
+    "politicsPartymfg": "MFG",
+    "politicsPartylocal-other": "Local and other lists",
+    "politicsPartyUnavailable": "Party not published",
+    "politicsTie": "Tie",
+    "politicsReference": "Latest municipal council election by 31 December {year}",
+    "politicsLoading": "Loading politics data…",
+    "politicsLoadError": "Politics data could not be loaded. The other maps remain available.",
+    "politicsProfileTitle": "Politics",
+    "politicsLatestCouncil": "Latest elected seat distribution",
+    "politicsHistoryTitle": "Election history since 2000",
+    "politicsElectionDate": "Election date {date}",
+    "politicsAsOf": "As of {date} ·",
+    "politicsMandates": "{count, plural, =0 {no seat} one {# seat} other {# seats}}",
+    "politicsMandatesUnavailable": "Seats not combined",
+    "politicsCouncilDisclaimer": "The elected seat distribution may not reflect later changes between council groups.",
+    "politicsAggregated": "Votes aggregated to the territorial status of 1 January 2026; seats and candidacies were not combined artificially.",
+    "politicsMayorElection": "Direct mayoral election",
+    "politicsElectionRound": "Round {round}",
+    "politicsElected": "elected",
+    "politicsVotes": "votes",
+    "politicsOfficialCoverageMissing": "No structured official coverage is available; the gap is not estimated.",
+    "politicsTurnoutValue": "Turnout {value}",
+    "politicsTurnoutMissing": "Turnout not published",
+    "politicsLayerLoading": "Loading election history…",
+    "politicsLayerError": "Election history could not be loaded. The other maps remain available.",
     "movementView": "Component",
     "movementPopulationChange": "Total change",
     "movementPopulationChangeDefinition": "Population on 1 January of the following year minus the population at the start of the year.",
@@ -550,8 +587,16 @@
     "project": "Project",
     "noProject": "No project",
     "globalShortcut": "Ctrl+Shift+A",
-    "priorities": { "low": "Low", "medium": "Medium", "high": "High" },
-    "statuses": { "open": "Open", "done": "Done", "all": "All" },
+    "priorities": {
+      "low": "Low",
+      "medium": "Medium",
+      "high": "High"
+    },
+    "statuses": {
+      "open": "Open",
+      "done": "Done",
+      "all": "All"
+    },
     "origins": {
       "wikiPage": "Wiki document",
       "wikiSource": "Source",
@@ -607,7 +652,11 @@
     "removeTime": "Remove time",
     "status": "Status",
     "globalShortcut": "Ctrl+Shift+D",
-    "statuses": { "open": "Open", "done": "Done", "all": "All" },
+    "statuses": {
+      "open": "Open",
+      "done": "Done",
+      "all": "All"
+    },
     "origins": {
       "wikiPage": "Wiki page",
       "wikiSource": "Source",
@@ -725,8 +774,12 @@
       "personnel": {
         "description": "Gross remuneration and Austrian employer costs from a payroll statement."
       },
-      "svs": { "description": "SVS assessment with period and reference." },
-      "tax_levy": { "description": "Taxes and levies without VAT." }
+      "svs": {
+        "description": "SVS assessment with period and reference."
+      },
+      "tax_levy": {
+        "description": "Taxes and levies without VAT."
+      }
     },
     "help": {
       "paymentDate": "For cash-basis accounting, the actual payment date is generally decisive.",
@@ -793,7 +846,10 @@
       "municipalPaymentDate": "Payment to municipality",
       "provisionPaymentDate": "Payment to provision fund",
       "calculationMode": "Calculation mode",
-      "modes": { "auto": "Automatic", "manual": "Manual override" },
+      "modes": {
+        "auto": "Automatic",
+        "manual": "Manual override"
+      },
       "location": "Business location",
       "calculation": "Calculation breakdown",
       "component": "Component",
@@ -1345,7 +1401,10 @@
       "other_public": "Other public support",
       "private_investor": "Private investors"
     },
-    "disbursementStatus": { "planned": "Planned", "received": "Received" },
+    "disbursementStatus": {
+      "planned": "Planned",
+      "received": "Received"
+    },
     "settlement": {
       "description": "Map bookings to cost items and keep evidence status transparent.",
       "empty": "Create cost items before assigning actual bookings.",
@@ -1751,7 +1810,11 @@
       "hideLayout": "Hide document layout",
       "panelTitle": "Document layout",
       "panelDescription": "Page design, content structure and export preflight.",
-      "tabs": { "page": "Page", "content": "Content", "check": "Check" },
+      "tabs": {
+        "page": "Page",
+        "content": "Content",
+        "check": "Check"
+      },
       "page": "Page",
       "pageSize": "Size",
       "orientation": "Orientation",
@@ -1770,8 +1833,16 @@
       "headingFont": "Headings",
       "fontSize": "Font size (pt)",
       "lineHeight": "Line height",
-      "font": { "humanist": "Humanist", "serif": "Serif", "system": "System" },
-      "color": { "text": "Text", "accent": "Accent", "muted": "Muted" },
+      "font": {
+        "humanist": "Humanist",
+        "serif": "Serif",
+        "system": "System"
+      },
+      "color": {
+        "text": "Text",
+        "accent": "Accent",
+        "muted": "Muted"
+      },
       "globalTypography": "Global writing style",
       "globalTypographyDescription": "Fonts, spacing and colors are personal settings shared by every wiki page. Template values remain stored but are no longer rendered.",
       "openGlobalTypography": "Adjust writing style",
@@ -1914,14 +1985,20 @@
     },
     "editor": {
       "proofing": {
-        "languages": { "de": "German", "en": "English" },
+        "languages": {
+          "de": "German",
+          "en": "English"
+        },
         "switch": "Proofing language: {language}. Switch to {nextLanguage}.",
         "checking": "Checking",
         "unavailable": "Spelling and grammar checking is currently unavailable",
         "browserFallback": "Fast browser proofing is active. Advanced grammar checking is currently unavailable.",
         "saveFailed": "The proofing language could not be saved.",
         "dialog": "Correction suggestions",
-        "types": { "spelling": "Spelling", "writing": "Grammar & style" },
+        "types": {
+          "spelling": "Spelling",
+          "writing": "Grammar & style"
+        },
         "noReplacement": "No replacement suggested.",
         "replaceAll": "Replace all matching occurrences",
         "ignore": "Ignore this suggestion",
@@ -2023,7 +2100,10 @@
           "primaryAuthor": "This page updates immediately. Every other wiki page where you are the primary author uses the same writing style.",
           "otherPage": "This page keeps its primary author's writing style. Your changes apply to every wiki page where you are the primary author."
         },
-        "tabs": { "typography": "Typography", "editor": "Editor" },
+        "tabs": {
+          "typography": "Typography",
+          "editor": "Editor"
+        },
         "density": {
           "title": "Density",
           "description": "Choose a starting point. Changing any value marks the writing style as custom.",
@@ -2112,7 +2192,7 @@
     "commentPlaceholder": "Write a comment or mention @Name…",
     "addComment": "Add comment",
     "inlineComment": "Comment on selection",
-    "highlightSelection": "Highlight",
+    "highlightSelection": "Highlight text",
     "commentSelection": "Comment",
     "insertImage": "Insert image",
     "uploadingImage": "Uploading image…",
@@ -2185,87 +2265,165 @@
         "paragraph": {
           "label": "Text",
           "description": "Write a normal paragraph",
-          "keywords": ["paragraph", "normal", "absatz"]
+          "keywords": [
+            "paragraph",
+            "normal",
+            "absatz"
+          ]
         },
         "heading1": {
           "label": "Heading 1",
           "description": "Large section heading",
-          "keywords": ["heading", "headline", "h1", "überschrift"]
+          "keywords": [
+            "heading",
+            "headline",
+            "h1",
+            "überschrift"
+          ]
         },
         "heading2": {
           "label": "Heading 2",
           "description": "Medium section heading",
-          "keywords": ["heading", "headline", "h2", "überschrift"]
+          "keywords": [
+            "heading",
+            "headline",
+            "h2",
+            "überschrift"
+          ]
         },
         "heading3": {
           "label": "Heading 3",
           "description": "Small section heading",
-          "keywords": ["heading", "headline", "h3", "überschrift"]
+          "keywords": [
+            "heading",
+            "headline",
+            "h3",
+            "überschrift"
+          ]
         },
         "bulletList": {
           "label": "Bullet list",
           "description": "List with bullet points",
-          "keywords": ["list", "bullets", "unordered", "aufzählung"]
+          "keywords": [
+            "list",
+            "bullets",
+            "unordered",
+            "aufzählung"
+          ]
         },
         "orderedList": {
           "label": "Numbered list",
           "description": "List with sequential numbers",
-          "keywords": ["list", "numbers", "ordered", "nummeriert"]
+          "keywords": [
+            "list",
+            "numbers",
+            "ordered",
+            "nummeriert"
+          ]
         },
         "taskList": {
           "label": "Task list",
           "description": "Checklist with completable tasks",
-          "keywords": ["checklist", "list", "checkbox"]
+          "keywords": [
+            "checklist",
+            "list",
+            "checkbox"
+          ]
         },
         "todo": {
           "label": "Create task",
           "description": "Create an assignable task with priority and origin",
-          "keywords": ["todo", "task", "aufgabe"]
+          "keywords": [
+            "todo",
+            "task",
+            "aufgabe"
+          ]
         },
         "deadline": {
           "label": "Create deadline",
           "description": "Create a deadline with timestamp, assignee and origin",
-          "keywords": ["deadline", "due", "frist", "termin"]
+          "keywords": [
+            "deadline",
+            "due",
+            "frist",
+            "termin"
+          ]
         },
         "blockquote": {
           "label": "Block quote",
           "description": "Display text as a highlighted quote",
-          "keywords": ["quote", "blockquote", "zitat"]
+          "keywords": [
+            "quote",
+            "blockquote",
+            "zitat"
+          ]
         },
         "codeBlock": {
           "label": "Code block",
           "description": "Insert preformatted code",
-          "keywords": ["code", "programming"]
+          "keywords": [
+            "code",
+            "programming"
+          ]
         },
         "horizontalRule": {
           "label": "Divider",
           "description": "Visually separate sections",
-          "keywords": ["line", "divider", "horizontal", "trennlinie"]
+          "keywords": [
+            "line",
+            "divider",
+            "horizontal",
+            "trennlinie"
+          ]
         },
         "pageBreak": {
           "label": "Page break",
           "description": "Start a new page in the PDF",
-          "keywords": ["page", "break", "new page", "umbruch"]
+          "keywords": [
+            "page",
+            "break",
+            "new page",
+            "umbruch"
+          ]
         },
         "tableOfContents": {
           "label": "Table of contents",
           "description": "Generate a contents list from headings",
-          "keywords": ["contents", "toc", "outline", "verzeichnis"]
+          "keywords": [
+            "contents",
+            "toc",
+            "outline",
+            "verzeichnis"
+          ]
         },
         "twoColumns": {
           "label": "Two columns",
           "description": "Insert a two-column section",
-          "keywords": ["columns", "layout", "spalten"]
+          "keywords": [
+            "columns",
+            "layout",
+            "spalten"
+          ]
         },
         "pageLink": {
           "label": "Link a page",
           "description": "Insert a link to another wiki page",
-          "keywords": ["link", "page", "wiki", "verknüpfung"]
+          "keywords": [
+            "link",
+            "page",
+            "wiki",
+            "verknüpfung"
+          ]
         },
         "externalLink": {
           "label": "Insert external link",
           "description": "Link a web address at the cursor",
-          "keywords": ["link", "url", "website", "external"]
+          "keywords": [
+            "link",
+            "url",
+            "website",
+            "external"
+          ]
         },
         "citation": {
           "label": "Cite source",
@@ -2282,27 +2440,53 @@
         "pdfEvidence": {
           "label": "Insert PDF evidence",
           "description": "Reuse an annotation from a PDF",
-          "keywords": ["pdf", "evidence", "annotation", "nachweis"]
+          "keywords": [
+            "pdf",
+            "evidence",
+            "annotation",
+            "nachweis"
+          ]
         },
         "inlineImage": {
           "label": "Insert image",
           "description": "Upload a PNG, JPEG, or WebP image",
-          "keywords": ["image", "photo", "picture", "upload", "bild"]
+          "keywords": [
+            "image",
+            "photo",
+            "picture",
+            "upload",
+            "bild"
+          ]
         },
         "attachment": {
           "label": "Add attachment",
           "description": "Attach a file to this page",
-          "keywords": ["attachment", "file", "upload", "anhang"]
+          "keywords": [
+            "attachment",
+            "file",
+            "upload",
+            "anhang"
+          ]
         },
         "supportingSource": {
           "label": "Link source only",
           "description": "Connect a supporting source without citing it in the text",
-          "keywords": ["source", "supporting", "link", "quelle"]
+          "keywords": [
+            "source",
+            "supporting",
+            "link",
+            "quelle"
+          ]
         },
         "pageComment": {
           "label": "Add comment",
           "description": "Write a page-level comment",
-          "keywords": ["comment", "discussion", "feedback", "kommentar"]
+          "keywords": [
+            "comment",
+            "discussion",
+            "feedback",
+            "kommentar"
+          ]
         }
       }
     },
@@ -2384,7 +2568,6 @@
     "nextPage": "Next page",
     "page": "Page",
     "documentNavigator": "Document navigator",
-    "pages": "Pages",
     "outline": "Outline",
     "noOutline": "This PDF does not contain an outline.",
     "untitled": "Untitled",
@@ -2460,7 +2643,6 @@
     "currentPageComments": "Current page only",
     "noMatchingComments": "No matching comments.",
     "resizeComments": "Resize comment panel",
-    "highlightSelection": "Highlight text",
     "highlight": "Highlight",
     "note": "Note",
     "saveAnnotation": "Save",
