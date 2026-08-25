@@ -19,6 +19,7 @@ export const DIGITAL_PLATFORM_KINDS = [
 export type DigitalPlatformKind = (typeof DIGITAL_PLATFORM_KINDS)[number];
 export type DigitalPlatformViewId =
   | "overview"
+  | "providers"
   | "citizen-app"
   | "service-portal"
   | "digital-notice-board"
@@ -35,6 +36,7 @@ export const DIGITAL_PLATFORM_VIEWS: ReadonlyArray<{
   kinds: readonly DigitalPlatformKind[];
 }> = [
   { id: "overview", kinds: DIGITAL_PLATFORM_KINDS.filter((kind) => kind !== "official-website") },
+  { id: "providers", kinds: ["citizen-app"] },
   { id: "citizen-app", kinds: ["citizen-app"] },
   { id: "service-portal", kinds: ["service-portal"] },
   { id: "digital-notice-board", kinds: ["digital-notice-board"] },
@@ -46,6 +48,43 @@ export const DIGITAL_PLATFORM_VIEWS: ReadonlyArray<{
   { id: "open-data", kinds: ["open-data"] },
   { id: "other", kinds: ["other"] },
 ];
+
+export const DIGITAL_PLATFORM_PROVIDER_FAMILIES = [
+  "gem2go",
+  "cities",
+  "gemeinde24",
+  "gemeindeapp",
+  "daheim-app",
+  "local-app",
+] as const;
+
+export type DigitalPlatformProviderFamily = (typeof DIGITAL_PLATFORM_PROVIDER_FAMILIES)[number];
+export type DigitalPlatformProviderCategory =
+  | "none"
+  | DigitalPlatformProviderFamily
+  | "multiple";
+
+export const DIGITAL_PLATFORM_PROVIDER_CATEGORIES = [
+  "none",
+  ...DIGITAL_PLATFORM_PROVIDER_FAMILIES,
+  "multiple",
+] as const satisfies readonly DigitalPlatformProviderCategory[];
+
+export const DIGITAL_PLATFORM_PROVIDER_CODES: Record<DigitalPlatformProviderCategory, number> = {
+  none: 0,
+  gem2go: 1,
+  cities: 2,
+  gemeinde24: 3,
+  gemeindeapp: 4,
+  "daheim-app": 5,
+  "local-app": 6,
+  multiple: 7,
+};
+
+export type DigitalPlatformProviderClassification = {
+  category: DigitalPlatformProviderCategory;
+  providers: DigitalPlatformProviderFamily[];
+};
 
 export type MunicipalityDigitalPlatform = {
   id: string;
@@ -106,6 +145,38 @@ export function digitalPlatformsForView(
   );
 }
 
+function providerFamilyFor(platform: MunicipalityDigitalPlatform): DigitalPlatformProviderFamily {
+  const identity = `${platform.name} ${platform.provider ?? ""}`
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLocaleLowerCase("de-AT");
+  if (identity.includes("gem2go")) return "gem2go";
+  if (identity.includes("citiesapps") || /\bcities\b/.test(identity)) return "cities";
+  if (identity.includes("gemeinde24")) return "gemeinde24";
+  if (identity.includes("gemeindeapp") || identity.includes("gemeinde app")) return "gemeindeapp";
+  if (identity.includes("daheim app") || identity.includes("daheim-app")) return "daheim-app";
+  return "local-app";
+}
+
+/** Classifies active citizen apps without changing or duplicating the source dataset. */
+export function digitalPlatformProviderClassification(
+  profile: MunicipalityDigitalPlatformProfile,
+): DigitalPlatformProviderClassification | null {
+  const providers = new Set(
+    profile.platforms
+      .filter(({ kind, status }) => kind === "citizen-app" && status === "active")
+      .map(providerFamilyFor),
+  );
+  if (!providers.size) {
+    return profile.researchStatus === "complete" ? { category: "none", providers: [] } : null;
+  }
+  const orderedProviders = DIGITAL_PLATFORM_PROVIDER_FAMILIES.filter((provider) => providers.has(provider));
+  return {
+    category: orderedProviders.length > 1 ? "multiple" : orderedProviders[0],
+    providers: orderedProviders,
+  };
+}
+
 /**
  * Returns a map value without turning incomplete research into a negative finding.
  * The overview counts distinct platform areas; focused views count concrete services.
@@ -115,6 +186,10 @@ export function digitalPlatformMetricValue(
   view: DigitalPlatformViewId,
 ): number | null {
   if (!profile) return null;
+  if (view === "providers") {
+    const classification = digitalPlatformProviderClassification(profile);
+    return classification ? DIGITAL_PLATFORM_PROVIDER_CODES[classification.category] : null;
+  }
   const matches = digitalPlatformsForView(profile, view);
   if (!matches.length) return profile.researchStatus === "complete" ? 0 : null;
   return view === "overview"

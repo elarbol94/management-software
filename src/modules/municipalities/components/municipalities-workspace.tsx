@@ -38,10 +38,13 @@ import {
 import type { MunicipalityInvestmentIndex } from "../investments";
 import {
   digitalPlatformMetricValue,
+  digitalPlatformProviderClassification,
   isDigitalPlatformViewId,
   validateMunicipalityDigitalPlatformDataset,
   type DigitalPlatformViewId,
+  type DigitalPlatformProviderCategory,
   type MunicipalityDigitalPlatformDataset,
+  type MunicipalityDigitalPlatformProfile,
 } from "../digital-platforms";
 import {
   demographicIndicatorUnit,
@@ -488,6 +491,7 @@ export function MunicipalitiesWorkspace() {
   const politicsPartyLabels = Object.fromEntries(CANONICAL_PARTIES.map((party) => [party, t(`politicsParty${party}` as "politicsPartyoevp")])) as Record<CanonicalPartyId, string>;
   const digitalViewLabels: Record<DigitalPlatformViewId, string> = {
     overview: t("digitalViewOverview"),
+    providers: t("digitalViewProviders"),
     "citizen-app": t("digitalViewCitizenApp"),
     "service-portal": t("digitalViewServicePortal"),
     "digital-notice-board": t("digitalViewNoticeBoard"),
@@ -498,6 +502,28 @@ export function MunicipalitiesWorkspace() {
     communication: t("digitalViewCommunication"),
     "open-data": t("digitalViewOpenData"),
     other: t("digitalViewOther"),
+  };
+  const digitalProviderLabels: Record<DigitalPlatformProviderCategory, string> = {
+    none: t("digitalProviderNone"),
+    gem2go: "GEM2GO",
+    cities: "CITIES",
+    gemeinde24: "Gemeinde24",
+    gemeindeapp: "GemeindeApp",
+    "daheim-app": "Daheim App",
+    "local-app": t("digitalProviderLocal"),
+    multiple: t("digitalProviderMultiple"),
+  };
+  const digitalProviderDescription = (
+    profile: MunicipalityDigitalPlatformProfile | undefined,
+  ) => {
+    if (!profile) return t("digitalCoverageUnknown");
+    const classification = digitalPlatformProviderClassification(profile);
+    if (!classification) return t("digitalCoverageUnknown");
+    if (classification.category !== "multiple") {
+      return digitalProviderLabels[classification.category];
+    }
+    return `${digitalProviderLabels.multiple} · ${classification.providers
+      .map((provider) => digitalProviderLabels[provider]).join(", ")}`;
   };
   const costMeasureDefinitions: Record<CostMeasureId, string> = {
     share: t("costMeasureShareDefinition"),
@@ -884,13 +910,15 @@ export function MunicipalitiesWorkspace() {
     metric === "digital"
       ? Object.fromEntries(index.municipalities.map(({ municipalityCode }) => {
           const value = metricValues[municipalityCode];
-          const label = value === null
-            ? t("digitalCoverageUnknown")
-            : value === 0
-              ? t("digitalNoneFound")
-              : digitalView === "overview"
-                ? t("digitalTooltipAreas", { count: value })
-                : t("digitalTooltipPlatforms", { count: value });
+          const label = digitalView === "providers"
+            ? digitalProviderDescription(digitalPlatforms?.municipalities[municipalityCode])
+            : value === null
+              ? t("digitalCoverageUnknown")
+              : value === 0
+                ? t("digitalNoneFound")
+                : digitalView === "overview"
+                  ? t("digitalTooltipAreas", { count: value })
+                  : t("digitalTooltipPlatforms", { count: value });
           return [municipalityCode, digitalViewLabels[digitalView] + " · " + label];
         }))
       : metric === "population" && populationView !== "count"
@@ -1023,7 +1051,7 @@ export function MunicipalitiesWorkspace() {
           ? ratioFormatter
           : shareFormatter;
   const chartUnit =
-    metric === "digital" ? (digitalView === "overview" ? t("digitalAreasUnit", { count: activeValue ?? 0 }) : t("digitalPlatformsUnit", { count: activeValue ?? 0 }))
+    metric === "digital" ? (digitalView === "providers" ? "" : digitalView === "overview" ? t("digitalAreasUnit", { count: activeValue ?? 0 }) : t("digitalPlatformsUnit", { count: activeValue ?? 0 }))
     : metric === "politics" ? ""
     : metric === "costs"
       ? costMeasure === "per-capita" || costMeasure === "real-per-capita"
@@ -1308,7 +1336,8 @@ export function MunicipalitiesWorkspace() {
             digitalMetric: t("metricDigital"),
             digitalView: t("digitalView"),
             digitalViews: digitalViewLabels,
-            digitalDefinition: t("digitalDefinition"),
+            digitalProviderLabels,
+            digitalDefinition: t(digitalView === "providers" ? "digitalProviderDefinition" : "digitalDefinition"),
             digitalNoneFound: t("digitalNoneFound"),
             digitalLegendOne: t("digitalLegendOne"),
             digitalLegendTwo: t("digitalLegendTwo"),
@@ -1402,7 +1431,8 @@ export function MunicipalitiesWorkspace() {
                 <dt className="text-muted-foreground">{t("district")}</dt><dd className="font-medium">{selectedProfile?.district ?? t("profileDataUnavailable")}</dd>
                 <dt className="text-muted-foreground">{t("population")}</dt><dd className="font-semibold tabular-nums">{personsFormatter.format(selectedPopulation)}</dd>
                 {metric === "population" && populationView === "density" ? <><dt className="text-muted-foreground">{t("municipalityArea")}</dt><dd className="font-medium tabular-nums">{ratioFormatter.format(selected.areaSquareKilometers)} {t("areaUnit")}</dd></> : null}
-                {activeValue !== null && metric !== "politics" && !(metric === "population" && populationView === "count") ? <><dt className="text-muted-foreground">{metricLabel}</dt><dd className="font-semibold tabular-nums">{chartFormatter.format(activeValue)}{chartUnit ? ` ${chartUnit}` : ""}</dd></> : null}
+                {metric === "digital" && digitalView === "providers" ? <><dt className="text-muted-foreground">{metricLabel}</dt><dd className="font-semibold">{digitalProviderDescription(selectedDigitalPlatforms ?? undefined)}</dd></> : null}
+                {activeValue !== null && metric !== "politics" && !(metric === "digital" && digitalView === "providers") && !(metric === "population" && populationView === "count") ? <><dt className="text-muted-foreground">{metricLabel}</dt><dd className="font-semibold tabular-nums">{chartFormatter.format(activeValue)}{chartUnit ? ` ${chartUnit}` : ""}</dd></> : null}
                 {previousValue !== null ? <><dt className="text-muted-foreground">{metric === "population" ? t("populationChangePreviousYear") : metric === "movement" ? t("movementChangePreviousYear") : metric === "age" ? t("ageChangePreviousYear") : t("costChangePreviousYear")}</dt><dd className="font-medium tabular-nums">{formatMetricChange(activeValue, previousValue)}</dd></> : null}
                 {averageAnnualPopulationChange !== null ? <><dt className="text-muted-foreground">{t("populationAverageAnnualChange", { year: populationSeries.firstYear })}</dt><dd className="font-medium tabular-nums">{signedShareFormatter.format(averageAnnualPopulationChange)}</dd></> : null}
                 <dt className="text-muted-foreground">{t("officialWebsite")}</dt><dd className="min-w-0 font-medium">{selectedProfile?.officialWebsite ? <a className="break-all text-teal-700 underline underline-offset-2 hover:text-teal-800" href={selectedProfile.officialWebsite} target="_blank" rel="noreferrer">{t("openWebsite")}</a> : t("profileDataUnavailable")}</dd>
@@ -1577,7 +1607,8 @@ export function MunicipalitiesWorkspace() {
                   <dt className="text-muted-foreground">{t("district")}</dt><dd className="font-medium">{selectedProfile?.district ?? t("profileDataUnavailable")}</dd>
                   <dt className="text-muted-foreground">{t("population")}</dt><dd className="font-semibold tabular-nums">{personsFormatter.format(selectedPopulation)}</dd>
                   {metric === "population" && populationView === "density" ? <><dt className="text-muted-foreground">{t("municipalityArea")}</dt><dd className="font-medium tabular-nums">{ratioFormatter.format(selected.areaSquareKilometers)} {t("areaUnit")}</dd></> : null}
-                  {activeValue !== null && metric !== "politics" && !(metric === "population" && populationView === "count") ? <><dt className="text-muted-foreground">{metricLabel}</dt><dd className="font-semibold tabular-nums">{chartFormatter.format(activeValue)}{chartUnit ? ` ${chartUnit}` : ""}</dd></> : null}
+                  {metric === "digital" && digitalView === "providers" ? <><dt className="text-muted-foreground">{metricLabel}</dt><dd className="font-semibold">{digitalProviderDescription(selectedDigitalPlatforms ?? undefined)}</dd></> : null}
+                  {activeValue !== null && metric !== "politics" && !(metric === "digital" && digitalView === "providers") && !(metric === "population" && populationView === "count") ? <><dt className="text-muted-foreground">{metricLabel}</dt><dd className="font-semibold tabular-nums">{chartFormatter.format(activeValue)}{chartUnit ? ` ${chartUnit}` : ""}</dd></> : null}
                   {previousValue !== null ? <><dt className="text-muted-foreground">{metric === "population" ? t("populationChangePreviousYear") : metric === "movement" ? t("movementChangePreviousYear") : metric === "age" ? t("ageChangePreviousYear") : t("costChangePreviousYear")}</dt><dd className="font-medium tabular-nums">{formatMetricChange(activeValue, previousValue)}</dd></> : null}
                   {averageAnnualPopulationChange !== null ? <><dt className="text-muted-foreground">{t("populationAverageAnnualChange", { year: populationSeries.firstYear })}</dt><dd className="font-medium tabular-nums">{signedShareFormatter.format(averageAnnualPopulationChange)}</dd></> : null}
                   <dt className="text-muted-foreground">{t("officialWebsite")}</dt>

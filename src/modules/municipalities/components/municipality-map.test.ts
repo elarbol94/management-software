@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { divergingColorStops, metricColorExpression } from "./municipality-map";
+import { DIGITAL_PLATFORM_PROVIDER_COLORS, divergingColorStops, metricColorExpression } from "./municipality-map";
 import { MUNICIPALITY_DIVERGING_COLORS, MUNICIPALITY_DIVERGING_STOPS } from "../palette";
 
 describe("divergingColorStops", () => {
@@ -71,6 +71,16 @@ describe("metricColorExpression", () => {
     const expression = metricColorExpression({ ...base, metric: "digital" as const });
     expect(kind(expression)).toBe("case");
     expect((expression as unknown[])[2]).toEqual(expect.arrayContaining(["step", ["feature-state", "metric"]]));
+  });
+
+  it("uses categorical colours for the provider landscape", () => {
+    const expression = metricColorExpression({
+      ...base,
+      metric: "digital" as const,
+      digitalView: "providers",
+    }) as unknown[];
+    expect(kind(expression)).toBe("match");
+    expect(expression).toEqual(expect.arrayContaining([DIGITAL_PLATFORM_PROVIDER_COLORS.gem2go]));
   });
 
   it("uses the diverging stops only where the metric has a sign", () => {

@@ -13,7 +13,12 @@ import type {
 import "maplibre-gl/dist/maplibre-gl.css";
 import type { MunicipalityDatasetRef } from "../analysis";
 import type { CostCategoryId, CostMeasureId } from "../costs";
-import type { DigitalPlatformViewId } from "../digital-platforms";
+import {
+  DIGITAL_PLATFORM_PROVIDER_CATEGORIES,
+  DIGITAL_PLATFORM_PROVIDER_CODES,
+  type DigitalPlatformProviderCategory,
+  type DigitalPlatformViewId,
+} from "../digital-platforms";
 import type {
   AgeGroupId,
   AgeMeasure,
@@ -87,6 +92,16 @@ const AGE_COLORS = [...MUNICIPALITY_SEQUENTIAL_COLORS];
 const MOVEMENT_COLORS = [...MUNICIPALITY_MOVEMENT_COLORS];
 const COST_COLORS = [...MUNICIPALITY_COST_COLORS];
 export const DIGITAL_PLATFORM_COLORS = ["#f1f5f9", "#d1fae5", "#86efac", "#22c55e", "#15803d", "#14532d"];
+export const DIGITAL_PLATFORM_PROVIDER_COLORS: Record<DigitalPlatformProviderCategory, string> = {
+  none: "#e2e8f0",
+  gem2go: "#2563eb",
+  cities: "#e11d48",
+  gemeinde24: "#f59e0b",
+  gemeindeapp: "#16a34a",
+  "daheim-app": "#7c3aed",
+  "local-app": "#0891b2",
+  multiple: "#334155",
+};
 export const POLITICS_PARTY_COLORS: Record<CanonicalPartyId | "tie", string> = {
   oevp: "#202124", spoe: "#d71920", fpoe: "#2056a7", gruene: "#2f8f46",
   neos: "#e83e8c", kpoe: "#8f1d21", mfg: "#e58a17",
@@ -177,6 +192,7 @@ type ColorInputs = {
   movementPalette: MovementPalette | null;
   costMeasure: CostMeasureId;
   politicsView?: PoliticsView;
+  digitalView?: DigitalPlatformViewId;
 };
 const POLITICS_LEADING_COLOR: ExpressionSpecification = [
   "match", ["feature-state", "metric"],
@@ -199,6 +215,14 @@ const DIGITAL_PLATFORM_COLOR: ExpressionSpecification = [
   ],
   MAP_NO_DATA_COLOR,
 ] as ExpressionSpecification;
+const DIGITAL_PLATFORM_PROVIDER_COLOR: ExpressionSpecification = [
+  "match", ["feature-state", "metric"],
+  ...DIGITAL_PLATFORM_PROVIDER_CATEGORIES.flatMap((category) => [
+    DIGITAL_PLATFORM_PROVIDER_CODES[category],
+    DIGITAL_PLATFORM_PROVIDER_COLORS[category],
+  ]),
+  MAP_NO_DATA_COLOR,
+] as ExpressionSpecification;
 /**
  * The fill colour for the current metric.
  *
@@ -207,9 +231,11 @@ const DIGITAL_PLATFORM_COLOR: ExpressionSpecification = [
  * movement or cost map was painted with population class breaks.
  */
 export function metricColorExpression({
-  usePopulationClasses, scaleDomain, metric, movementPalette, costMeasure, politicsView = "leading-list",
+  usePopulationClasses, scaleDomain, metric, movementPalette, costMeasure,
+  politicsView = "leading-list", digitalView = "overview",
 }: ColorInputs): ExpressionSpecification {
   if (metric === "politics" && politicsView === "leading-list") return POLITICS_LEADING_COLOR;
+  if (metric === "digital" && digitalView === "providers") return DIGITAL_PLATFORM_PROVIDER_COLOR;
   if (metric === "digital") return DIGITAL_PLATFORM_COLOR;
   if (usePopulationClasses || !scaleDomain) return POPULATION_COLOR;
   if (metric === "movement") {
@@ -269,6 +295,7 @@ type Labels = {
   digitalMetric: string;
   digitalView: string;
   digitalViews: Record<DigitalPlatformViewId, string>;
+  digitalProviderLabels: Record<DigitalPlatformProviderCategory, string>;
   digitalDefinition: string;
   digitalNoneFound: string;
   digitalLegendOne: string;
@@ -465,7 +492,7 @@ export function MunicipalityMap({
   const selectedIdRef = useRef<string | number | null>(null);
   const peerIdsRef = useRef<Set<string>>(new Set());
   const colorInputs: ColorInputs = {
-    usePopulationClasses, scaleDomain, metric, movementPalette, costMeasure, politicsView,
+    usePopulationClasses, scaleDomain, metric, movementPalette, costMeasure, politicsView, digitalView,
   };
   const liveRef = useRef({
     selected,
@@ -498,10 +525,10 @@ export function MunicipalityMap({
       );
     if (map.getLayer(FILL_LAYER_ID)) {
       map.setPaintProperty(FILL_LAYER_ID, "fill-color", metricColorExpression({
-        usePopulationClasses, scaleDomain, metric, movementPalette, costMeasure, politicsView,
+        usePopulationClasses, scaleDomain, metric, movementPalette, costMeasure, politicsView, digitalView,
       }));
     }
-  }, [costMeasure, metric, metricValues, movementPalette, politicsView, ready, scaleDomain, usePopulationClasses]);
+  }, [costMeasure, digitalView, metric, metricValues, movementPalette, politicsView, ready, scaleDomain, usePopulationClasses]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -708,6 +735,19 @@ export function MunicipalityMap({
         .map(({ color, offset }) => `${color} ${(offset * 100).toFixed(1)}%`)
         .join(",")
     : (metric === "movement" ? MOVEMENT_COLORS : metric === "costs" ? COST_COLORS : AGE_COLORS).join(",");
+  const digitalLegendItems: Array<[string, string]> = digitalView === "providers"
+    ? DIGITAL_PLATFORM_PROVIDER_CATEGORIES.map((category) => [
+        DIGITAL_PLATFORM_PROVIDER_COLORS[category],
+        labels.digitalProviderLabels[category],
+      ])
+    : [
+        [DIGITAL_PLATFORM_COLORS[0], labels.digitalNoneFound],
+        [DIGITAL_PLATFORM_COLORS[1], labels.digitalLegendOne],
+        [DIGITAL_PLATFORM_COLORS[2], labels.digitalLegendTwo],
+        [DIGITAL_PLATFORM_COLORS[3], labels.digitalLegendThreeToFour],
+        [DIGITAL_PLATFORM_COLORS[4], labels.digitalLegendFiveToSeven],
+        [DIGITAL_PLATFORM_COLORS[5], labels.digitalLegendEightPlus],
+      ];
   return (
     <div
       className="relative h-full min-h-0 overflow-hidden rounded-2xl bg-[#e8ece9]"
@@ -1082,14 +1122,7 @@ export function MunicipalityMap({
         </p>
         {metric === "digital" ? (
           <ul className="mt-2 space-y-1" aria-label={metricLabel}>
-            {[
-              [DIGITAL_PLATFORM_COLORS[0], labels.digitalNoneFound],
-              [DIGITAL_PLATFORM_COLORS[1], labels.digitalLegendOne],
-              [DIGITAL_PLATFORM_COLORS[2], labels.digitalLegendTwo],
-              [DIGITAL_PLATFORM_COLORS[3], labels.digitalLegendThreeToFour],
-              [DIGITAL_PLATFORM_COLORS[4], labels.digitalLegendFiveToSeven],
-              [DIGITAL_PLATFORM_COLORS[5], labels.digitalLegendEightPlus],
-            ].map(([color, label]) => <li key={label} className="flex items-center gap-2 text-[10px]"><span className="size-3 rounded-[3px] border border-black/10" style={{ backgroundColor: color }} /><span>{label}</span></li>)}
+            {digitalLegendItems.map(([color, label]) => <li key={label} className="flex items-center gap-2 text-[10px]"><span className="size-3 rounded-[3px] border border-black/10" style={{ backgroundColor: color }} /><span>{label}</span></li>)}
           </ul>
         ) : metric === "politics" && politicsView === "leading-list" ? (
           <ul className="mt-2 space-y-1" aria-label={metricLabel}>
@@ -1372,14 +1405,7 @@ export function MunicipalityMap({
           <p className="text-sm font-semibold">{metricLabel}</p>
           {metric === "digital" ? (
             <ul className="mt-3 grid grid-cols-2 gap-2" aria-label={metricLabel}>
-              {[
-                [DIGITAL_PLATFORM_COLORS[0], labels.digitalNoneFound],
-                [DIGITAL_PLATFORM_COLORS[1], labels.digitalLegendOne],
-                [DIGITAL_PLATFORM_COLORS[2], labels.digitalLegendTwo],
-                [DIGITAL_PLATFORM_COLORS[3], labels.digitalLegendThreeToFour],
-                [DIGITAL_PLATFORM_COLORS[4], labels.digitalLegendFiveToSeven],
-                [DIGITAL_PLATFORM_COLORS[5], labels.digitalLegendEightPlus],
-              ].map(([color, label]) => <li key={label} className="flex items-center gap-2 text-xs"><span className="size-4 rounded-[3px] border border-black/10" style={{ backgroundColor: color }} /><span>{label}</span></li>)}
+              {digitalLegendItems.map(([color, label]) => <li key={label} className="flex items-center gap-2 text-xs"><span className="size-4 rounded-[3px] border border-black/10" style={{ backgroundColor: color }} /><span>{label}</span></li>)}
             </ul>
           ) : metric === "politics" && politicsView === "leading-list" ? (
             <ul className="mt-3 grid grid-cols-2 gap-2" aria-label={metricLabel}>

@@ -4,7 +4,10 @@ import { describe, expect, it } from "vitest";
 import { validateMunicipalityIndex, type MunicipalityIndex } from "./data";
 import {
   digitalPlatformMetricValue,
+  digitalPlatformProviderClassification,
+  DIGITAL_PLATFORM_PROVIDER_CODES,
   validateMunicipalityDigitalPlatformDataset,
+  type MunicipalityDigitalPlatform,
   type MunicipalityDigitalPlatformDataset,
   type MunicipalityDigitalPlatformProfile,
 } from "./digital-platforms";
@@ -17,6 +20,23 @@ describe("municipality digital platforms", () => {
   const index = readJson<MunicipalityIndex>("public/data/municipalities-at-2026.index.json");
   const codes = validateMunicipalityIndex(index).municipalities.map(({ municipalityCode }) => municipalityCode);
   const dataset = readJson<MunicipalityDigitalPlatformDataset>("public/data/municipality-digital-platforms.json");
+
+  const citizenApp = (
+    id: string,
+    name: string,
+    provider: string | null = null,
+    status: MunicipalityDigitalPlatform["status"] = "active",
+  ) => ({
+    id,
+    name,
+    provider,
+    kind: "citizen-app",
+    status,
+  }) as MunicipalityDigitalPlatform;
+  const profile = (
+    platforms: MunicipalityDigitalPlatform[],
+    researchStatus: MunicipalityDigitalPlatformProfile["researchStatus"] = "complete",
+  ) => ({ researchStatus, platforms }) as MunicipalityDigitalPlatformProfile;
 
   it("validates complete coverage and source references", () => {
     expect(validateMunicipalityDigitalPlatformDataset(dataset, codes)).toBe(dataset);
@@ -42,5 +62,57 @@ describe("municipality digital platforms", () => {
   it("does not present an incomplete zero result as a confirmed absence", () => {
     const profile = { researchStatus: "partial", platforms: [] } as unknown as MunicipalityDigitalPlatformProfile;
     expect(digitalPlatformMetricValue(profile, "overview")).toBeNull();
+  });
+
+  it.each([
+    ["GEM2GO", null, "gem2go"],
+    ["Gemeinde News", "RiS GmbH / GEM2GO Partnernetzwerk", "gem2go"],
+    ["CITIES", null, "cities"],
+    ["Gemeinde News", "citiesapps S&R GmbH", "cities"],
+    ["Gemeinde24", null, "gemeinde24"],
+    ["GemeindeApp", "gemeindeapp.at", "gemeindeapp"],
+    ["Daheim App", null, "daheim-app"],
+    ["Zeillern App", null, "local-app"],
+  ] as const)("normalizes %s (%s) to %s", (name, provider, expected) => {
+    expect(
+      digitalPlatformProviderClassification(profile([citizenApp("1", name, provider)])),
+    ).toEqual({ category: expected, providers: [expected] });
+  });
+
+  it("deduplicates repeated evidence for the same provider family", () => {
+    expect(
+      digitalPlatformProviderClassification(profile([
+        citizenApp("1", "GEM2GO"),
+        citizenApp("2", "Gemeinde-App", "GEM2GO"),
+      ])),
+    ).toEqual({ category: "gem2go", providers: ["gem2go"] });
+  });
+
+  it("uses a dedicated category for municipalities with multiple app families", () => {
+    const classified = digitalPlatformProviderClassification(profile([
+      citizenApp("1", "GEM2GO"),
+      citizenApp("2", "CITIES"),
+    ]));
+    expect(classified).toEqual({
+      category: "multiple",
+      providers: ["gem2go", "cities"],
+    });
+    expect(digitalPlatformMetricValue(profile([
+      citizenApp("1", "GEM2GO"),
+      citizenApp("2", "CITIES"),
+    ]), "providers")).toBe(DIGITAL_PLATFORM_PROVIDER_CODES.multiple);
+  });
+
+  it("ignores inactive apps and distinguishes confirmed absence from incomplete research", () => {
+    const inactive = [citizenApp("1", "GEM2GO", null, "unclear")];
+    expect(digitalPlatformProviderClassification(profile(inactive))).toEqual({
+      category: "none",
+      providers: [],
+    });
+    expect(digitalPlatformProviderClassification(profile(inactive, "partial"))).toBeNull();
+    expect(digitalPlatformMetricValue(profile(inactive), "providers")).toBe(
+      DIGITAL_PLATFORM_PROVIDER_CODES.none,
+    );
+    expect(digitalPlatformMetricValue(profile(inactive, "partial"), "providers")).toBeNull();
   });
 });
