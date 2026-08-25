@@ -13,6 +13,7 @@ import type {
 import "maplibre-gl/dist/maplibre-gl.css";
 import type { MunicipalityDatasetRef } from "../analysis";
 import type { CostCategoryId, CostMeasureId } from "../costs";
+import type { DigitalPlatformViewId } from "../digital-platforms";
 import type {
   AgeGroupId,
   AgeMeasure,
@@ -85,6 +86,7 @@ const POPULATION_COLOR: ExpressionSpecification = [
 const AGE_COLORS = [...MUNICIPALITY_SEQUENTIAL_COLORS];
 const MOVEMENT_COLORS = [...MUNICIPALITY_MOVEMENT_COLORS];
 const COST_COLORS = [...MUNICIPALITY_COST_COLORS];
+export const DIGITAL_PLATFORM_COLORS = ["#f1f5f9", "#d1fae5", "#86efac", "#22c55e", "#15803d", "#14532d"];
 export const POLITICS_PARTY_COLORS: Record<CanonicalPartyId | "tie", string> = {
   oevp: "#202124", spoe: "#d71920", fpoe: "#2056a7", gruene: "#2f8f46",
   neos: "#e83e8c", kpoe: "#8f1d21", mfg: "#e58a17",
@@ -183,6 +185,20 @@ const POLITICS_LEADING_COLOR: ExpressionSpecification = [
   6, POLITICS_PARTY_COLORS.mfg, 7, POLITICS_PARTY_COLORS["local-other"], 8, POLITICS_PARTY_COLORS.tie,
   MAP_NO_DATA_COLOR,
 ] as ExpressionSpecification;
+const DIGITAL_PLATFORM_COLOR: ExpressionSpecification = [
+  "case",
+  ["boolean", ["feature-state", "hasMetric"], false],
+  [
+    "step", ["feature-state", "metric"],
+    DIGITAL_PLATFORM_COLORS[0],
+    1, DIGITAL_PLATFORM_COLORS[1],
+    2, DIGITAL_PLATFORM_COLORS[2],
+    3, DIGITAL_PLATFORM_COLORS[3],
+    5, DIGITAL_PLATFORM_COLORS[4],
+    8, DIGITAL_PLATFORM_COLORS[5],
+  ],
+  MAP_NO_DATA_COLOR,
+] as ExpressionSpecification;
 /**
  * The fill colour for the current metric.
  *
@@ -194,6 +210,7 @@ export function metricColorExpression({
   usePopulationClasses, scaleDomain, metric, movementPalette, costMeasure, politicsView = "leading-list",
 }: ColorInputs): ExpressionSpecification {
   if (metric === "politics" && politicsView === "leading-list") return POLITICS_LEADING_COLOR;
+  if (metric === "digital") return DIGITAL_PLATFORM_COLOR;
   if (usePopulationClasses || !scaleDomain) return POPULATION_COLOR;
   if (metric === "movement") {
     return movementPalette === "diverging"
@@ -249,6 +266,16 @@ type Labels = {
   movementMetric: string;
   costsMetric: string;
   politicsMetric: string;
+  digitalMetric: string;
+  digitalView: string;
+  digitalViews: Record<DigitalPlatformViewId, string>;
+  digitalDefinition: string;
+  digitalNoneFound: string;
+  digitalLegendOne: string;
+  digitalLegendTwo: string;
+  digitalLegendThreeToFour: string;
+  digitalLegendFiveToSeven: string;
+  digitalLegendEightPlus: string;
   politicsView: string;
   politicsViews: Record<PoliticsView, string>;
   politicsParty: string;
@@ -283,6 +310,8 @@ type Labels = {
   costsError: string;
   loadingPolitics: string;
   politicsError: string;
+  loadingDigital: string;
+  digitalError: string;
   loadingStructure: string;
   structureError: string;
   noData: string;
@@ -318,6 +347,7 @@ export function MunicipalityMap({
   costMeasure,
   politicsView,
   politicsParty,
+  digitalView,
   peerMunicipalityCodes,
   peerGroupLabel,
   movementDefinition,
@@ -331,6 +361,8 @@ export function MunicipalityMap({
   costsError,
   politicsLoading,
   politicsError,
+  digitalLoading,
+  digitalError,
   structureLoading,
   structureError,
   onYearChange,
@@ -344,6 +376,7 @@ export function MunicipalityMap({
   onCostMeasureChange,
   onPoliticsViewChange,
   onPoliticsPartyChange,
+  onDigitalViewChange,
   onSelect,
   onReset,
   onOpenDetails,
@@ -377,6 +410,7 @@ export function MunicipalityMap({
   costMeasure: CostMeasureId;
   politicsView: PoliticsView;
   politicsParty: CanonicalPartyId;
+  digitalView: DigitalPlatformViewId;
   peerMunicipalityCodes: string[] | null;
   peerGroupLabel: string | null;
   movementDefinition: string | null;
@@ -390,6 +424,8 @@ export function MunicipalityMap({
   costsError: boolean;
   politicsLoading: boolean;
   politicsError: boolean;
+  digitalLoading: boolean;
+  digitalError: boolean;
   structureLoading: boolean;
   structureError: boolean;
   onYearChange: (year: number) => void;
@@ -403,6 +439,7 @@ export function MunicipalityMap({
   onCostMeasureChange: (measure: CostMeasureId) => void;
   onPoliticsViewChange: (view: PoliticsView) => void;
   onPoliticsPartyChange: (party: CanonicalPartyId) => void;
+  onDigitalViewChange: (view: DigitalPlatformViewId) => void;
   onSelect: (code: string) => void;
   onReset: () => void;
   onOpenDetails: () => void;
@@ -461,10 +498,10 @@ export function MunicipalityMap({
       );
     if (map.getLayer(FILL_LAYER_ID)) {
       map.setPaintProperty(FILL_LAYER_ID, "fill-color", metricColorExpression({
-        usePopulationClasses, scaleDomain, metric, movementPalette, costMeasure,
+        usePopulationClasses, scaleDomain, metric, movementPalette, costMeasure, politicsView,
       }));
     }
-  }, [costMeasure, metric, metricValues, movementPalette, ready, scaleDomain, usePopulationClasses]);
+  }, [costMeasure, metric, metricValues, movementPalette, politicsView, ready, scaleDomain, usePopulationClasses]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -758,6 +795,7 @@ export function MunicipalityMap({
             <option value="movement">{labels.movementMetric}</option>
             <option value="costs">{labels.costsMetric}</option>
             <option value="politics">{labels.politicsMetric}</option>
+            <option value="digital">{labels.digitalMetric}</option>
           </select>
         </div>
         {metric === "population" && (
@@ -934,6 +972,19 @@ export function MunicipalityMap({
             {politicsError ? <p className="text-[10px] text-destructive" role="alert">{labels.politicsError}</p> : null}
           </div>
         )}
+        {metric === "digital" && (
+          <div className="mt-2 space-y-2 border-t pt-2">
+            <div className="grid grid-cols-[5.5rem_1fr] items-center gap-2">
+              <label htmlFor="municipality-digital-view" className="text-[10px] font-semibold">{labels.digitalView}</label>
+              <select id="municipality-digital-view" value={digitalView} className="h-8 min-w-0 rounded-md border bg-background px-2 text-[10px]" onChange={(event) => onDigitalViewChange(event.target.value as DigitalPlatformViewId)}>
+                {Object.entries(labels.digitalViews).map(([id, label]) => <option key={id} value={id}>{label}</option>)}
+              </select>
+            </div>
+            <p className="text-[10px] leading-4 text-muted-foreground">{labels.digitalDefinition}</p>
+            {digitalLoading ? <p className="text-[10px] text-muted-foreground">{labels.loadingDigital}</p> : null}
+            {digitalError ? <p className="text-[10px] text-destructive" role="alert">{labels.digitalError}</p> : null}
+          </div>
+        )}
         {metric === "costs" && (
           <div className="mt-2 space-y-2 border-t pt-2">
             <div className="grid grid-cols-[5.5rem_1fr] items-center gap-2">
@@ -976,7 +1027,7 @@ export function MunicipalityMap({
             {costsError && <p className="text-[10px] text-destructive" role="alert">{labels.costsError}</p>}
           </div>
         )}
-        <div className="mt-2 flex items-baseline justify-between gap-3 border-t pt-2">
+        {metric !== "digital" ? <><div className="mt-2 flex items-baseline justify-between gap-3 border-t pt-2">
           <label
             htmlFor="municipality-population-year"
             className="text-xs font-semibold"
@@ -1019,7 +1070,7 @@ export function MunicipalityMap({
           >
             ›
           </button>
-        </div>
+        </div></> : null}
       </div>
       <div
         className="absolute bottom-3 left-3 z-10 hidden w-44 max-w-[calc(100%-1.5rem)] rounded-xl border bg-background/95 p-3 shadow-sm backdrop-blur lg:block"
@@ -1029,7 +1080,18 @@ export function MunicipalityMap({
         <p className="mt-0.5 text-[10px] text-muted-foreground">
           {labels.reference}
         </p>
-        {metric === "politics" && politicsView === "leading-list" ? (
+        {metric === "digital" ? (
+          <ul className="mt-2 space-y-1" aria-label={metricLabel}>
+            {[
+              [DIGITAL_PLATFORM_COLORS[0], labels.digitalNoneFound],
+              [DIGITAL_PLATFORM_COLORS[1], labels.digitalLegendOne],
+              [DIGITAL_PLATFORM_COLORS[2], labels.digitalLegendTwo],
+              [DIGITAL_PLATFORM_COLORS[3], labels.digitalLegendThreeToFour],
+              [DIGITAL_PLATFORM_COLORS[4], labels.digitalLegendFiveToSeven],
+              [DIGITAL_PLATFORM_COLORS[5], labels.digitalLegendEightPlus],
+            ].map(([color, label]) => <li key={label} className="flex items-center gap-2 text-[10px]"><span className="size-3 rounded-[3px] border border-black/10" style={{ backgroundColor: color }} /><span>{label}</span></li>)}
+          </ul>
+        ) : metric === "politics" && politicsView === "leading-list" ? (
           <ul className="mt-2 space-y-1" aria-label={metricLabel}>
             {[...CANONICAL_PARTIES, "tie" as const].map((party) => <li key={party} className="flex items-center gap-2 text-[10px]"><span className="size-3 rounded-[3px] border border-black/10" style={{ backgroundColor: POLITICS_PARTY_COLORS[party] }} /><span>{party === "tie" ? labels.politicsTie : labels.politicsParties[party]}</span></li>)}
           </ul>
@@ -1163,7 +1225,8 @@ export function MunicipalityMap({
               <option value="age">{labels.ageMetric}</option>
               <option value="movement">{labels.movementMetric}</option>
               <option value="costs">{labels.costsMetric}</option>
-            <option value="politics">{labels.politicsMetric}</option>
+              <option value="politics">{labels.politicsMetric}</option>
+              <option value="digital">{labels.digitalMetric}</option>
             </select>
           </div>
 
@@ -1251,6 +1314,18 @@ export function MunicipalityMap({
             </div>
           ) : null}
 
+          {metric === "digital" ? (
+            <div className="space-y-3 border-t pt-4">
+              <label htmlFor="municipality-digital-view-mobile" className="text-sm font-semibold">{labels.digitalView}</label>
+              <select id="municipality-digital-view-mobile" value={digitalView} className="h-11 w-full rounded-md border bg-background px-3 text-sm" onChange={(event) => onDigitalViewChange(event.target.value as DigitalPlatformViewId)}>
+                {Object.entries(labels.digitalViews).map(([id, label]) => <option key={id} value={id}>{label}</option>)}
+              </select>
+              <p className="text-xs leading-5 text-muted-foreground">{labels.digitalDefinition}</p>
+              {digitalLoading ? <p className="text-xs text-muted-foreground">{labels.loadingDigital}</p> : null}
+              {digitalError ? <p className="text-xs text-destructive" role="alert">{labels.digitalError}</p> : null}
+            </div>
+          ) : null}
+
           {metric === "costs" ? (
             <div className="space-y-3 border-t pt-4">
               <div className="space-y-2">
@@ -1272,7 +1347,7 @@ export function MunicipalityMap({
             </div>
           ) : null}
 
-          <div className="space-y-3 border-t pt-4">
+          {metric !== "digital" ? <div className="space-y-3 border-t pt-4">
             <div className="flex items-baseline justify-between gap-3">
               <label htmlFor="municipality-population-year-mobile" className="text-sm font-semibold">{labels.year}</label>
               <output htmlFor="municipality-population-year-mobile" className="text-lg font-semibold tabular-nums">{year}</output>
@@ -1282,7 +1357,7 @@ export function MunicipalityMap({
               <input id="municipality-population-year-mobile" type="range" min={firstYear} max={latestYear} value={year} aria-label={labels.year} className="h-2 min-w-0 flex-1 accent-teal-700" onChange={(event) => onYearChange(Number(event.target.value))} />
               <button type="button" className="grid size-11 shrink-0 place-items-center rounded-md border text-xl" aria-label={labels.nextYear} disabled={year === latestYear} onClick={() => onYearChange(year + 1)}>›</button>
             </div>
-          </div>
+          </div> : null}
         </div>
       </MobileBottomSheet>
 
@@ -1295,7 +1370,18 @@ export function MunicipalityMap({
       >
         <div data-testid="mobile-population-legend">
           <p className="text-sm font-semibold">{metricLabel}</p>
-          {metric === "politics" && politicsView === "leading-list" ? (
+          {metric === "digital" ? (
+            <ul className="mt-3 grid grid-cols-2 gap-2" aria-label={metricLabel}>
+              {[
+                [DIGITAL_PLATFORM_COLORS[0], labels.digitalNoneFound],
+                [DIGITAL_PLATFORM_COLORS[1], labels.digitalLegendOne],
+                [DIGITAL_PLATFORM_COLORS[2], labels.digitalLegendTwo],
+                [DIGITAL_PLATFORM_COLORS[3], labels.digitalLegendThreeToFour],
+                [DIGITAL_PLATFORM_COLORS[4], labels.digitalLegendFiveToSeven],
+                [DIGITAL_PLATFORM_COLORS[5], labels.digitalLegendEightPlus],
+              ].map(([color, label]) => <li key={label} className="flex items-center gap-2 text-xs"><span className="size-4 rounded-[3px] border border-black/10" style={{ backgroundColor: color }} /><span>{label}</span></li>)}
+            </ul>
+          ) : metric === "politics" && politicsView === "leading-list" ? (
             <ul className="mt-3 grid grid-cols-2 gap-2" aria-label={metricLabel}>
               {[...CANONICAL_PARTIES, "tie" as const].map((party) => <li key={party} className="flex items-center gap-2 text-xs"><span className="size-4 rounded-[3px] border border-black/10" style={{ backgroundColor: POLITICS_PARTY_COLORS[party] }} /><span>{party === "tie" ? labels.politicsTie : labels.politicsParties[party]}</span></li>)}
             </ul>

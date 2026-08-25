@@ -67,6 +67,12 @@ describe("metricColorExpression", () => {
     }
   });
 
+  it("uses the dedicated availability classes for digital platforms", () => {
+    const expression = metricColorExpression({ ...base, metric: "digital" as const });
+    expect(kind(expression)).toBe("case");
+    expect((expression as unknown[])[2]).toEqual(expect.arrayContaining(["step", ["feature-state", "metric"]]));
+  });
+
   it("uses the diverging stops only where the metric has a sign", () => {
     const diverging = metricColorExpression(base) as unknown[];
     const sequential = metricColorExpression({ ...base, movementPalette: "sequential" }) as unknown[];

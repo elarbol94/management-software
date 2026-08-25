@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { MobileBottomSheet } from "@/components/ui/mobile-bottom-sheet";
 import { Skeleton } from "@/components/ui/skeleton";
 import { MunicipalityMetricChart } from "./municipality-metric-chart";
+import { MunicipalityDigitalPlatformsPanel } from "./municipality-digital-platforms-panel";
 import { MunicipalityPoliticsPanel } from "./municipality-politics-panel";
 import type { MunicipalityDatasetRef } from "../analysis";
 import {
@@ -35,6 +36,13 @@ import {
   type MunicipalityIndexItem,
 } from "../data";
 import type { MunicipalityInvestmentIndex } from "../investments";
+import {
+  digitalPlatformMetricValue,
+  isDigitalPlatformViewId,
+  validateMunicipalityDigitalPlatformDataset,
+  type DigitalPlatformViewId,
+  type MunicipalityDigitalPlatformDataset,
+} from "../digital-platforms";
 import {
   demographicIndicatorUnit,
   demographicIndicatorValue,
@@ -269,6 +277,10 @@ export function MunicipalitiesWorkspace() {
       }),
     [locale],
   );
+  const dateFormatter = useMemo(
+    () => new Intl.DateTimeFormat(locale, { dateStyle: "medium" }),
+    [locale],
+  );
   const currencyFormatter = useMemo(
     () => new Intl.NumberFormat(locale, { style: "currency", currency: "EUR" }),
     [locale],
@@ -292,6 +304,7 @@ export function MunicipalitiesWorkspace() {
   const [structureSeries, setStructureSeries] =
     useState<MunicipalityStructureSeries | null>(null);
   const [costSeries, setCostSeries] = useState<MunicipalityCostSeries | null>(null);
+  const [digitalPlatforms, setDigitalPlatforms] = useState<MunicipalityDigitalPlatformDataset | null>(null);
   const [investmentMunicipalityCodes, setInvestmentMunicipalityCodes] = useState<Set<string> | null>(null);
   const [profiles, setProfiles] = useState<MunicipalityProfileDataset | null>(null);
   const [currentPolitics, setCurrentPolitics] = useState<MunicipalityCurrentPoliticsDataset | null>(null);
@@ -303,6 +316,8 @@ export function MunicipalitiesWorkspace() {
   const [movementError, setMovementError] = useState(false);
   const [structureError, setStructureError] = useState(false);
   const [costError, setCostError] = useState(false);
+  const [digitalPlatformsError, setDigitalPlatformsError] = useState(false);
+  const digitalReferenceDate = dateFormatter.format(new Date(`${digitalPlatforms?.referenceDate ?? "2026-08-25"}T00:00:00`));
   const paramsRef = useRef(searchParams.toString());
   useEffect(() => {
     paramsRef.current = searchParams.toString();
@@ -318,7 +333,7 @@ export function MunicipalitiesWorkspace() {
     : "count";
   const metricParameter = searchParams.get("metric");
   const metric: MapMetric =
-    metricParameter === "age" || metricParameter === "movement" || metricParameter === "costs" || metricParameter === "politics"
+    metricParameter === "age" || metricParameter === "movement" || metricParameter === "costs" || metricParameter === "politics" || metricParameter === "digital"
       ? metricParameter
       : "population";
   const ageGroupParameter = searchParams.get("ageGroup") ?? "0-5";
@@ -351,6 +366,8 @@ export function MunicipalitiesWorkspace() {
   const politicsView: PoliticsView = isPoliticsView(politicsViewParameter) ? politicsViewParameter : "leading-list";
   const politicsPartyParameter = searchParams.get("politicsParty") ?? "oevp";
   const politicsParty: CanonicalPartyId = isCanonicalPartyId(politicsPartyParameter) ? politicsPartyParameter : "oevp";
+  const digitalViewParameter = searchParams.get("digitalView") ?? "overview";
+  const digitalView: DigitalPlatformViewId = isDigitalPlatformViewId(digitalViewParameter) ? digitalViewParameter : "overview";
   const selectedCode = searchParams.get("municipality") ?? "";
   const selected = useMemo(
     () =>
@@ -363,15 +380,19 @@ export function MunicipalitiesWorkspace() {
   const selectedProfile = selected ? (profiles?.profiles[selected.municipalityCode] ?? null) : null;
   const selectedCurrentPolitics = selected ? (currentPolitics?.municipalities[selected.municipalityCode] ?? null) : null;
   const selectedElectionHistory = selected ? (electionHistory?.municipalities[selected.municipalityCode]?.events ?? null) : null;
-  const availableFirstYear = metric === "politics" ? POLITICS_FIRST_YEAR
+  const selectedDigitalPlatforms = selected ? (digitalPlatforms?.municipalities[selected.municipalityCode] ?? null) : null;
+  const availableFirstYear = metric === "digital" ? 2026
+    : metric === "politics" ? POLITICS_FIRST_YEAR
     : metric === "costs"
     ? MUNICIPALITY_COSTS_FIRST_YEAR
     : usesCitizenship ? MUNICIPALITY_STRUCTURE_FIRST_YEAR : populationSeries?.firstYear;
-  const availableLatestYear = metric === "politics" ? POLITICS_LATEST_YEAR
+  const availableLatestYear = metric === "digital" ? 2026
+    : metric === "politics" ? POLITICS_LATEST_YEAR
     : metric === "costs"
     ? MUNICIPALITY_COSTS_LATEST_YEAR
     : usesCitizenship ? MUNICIPALITY_STRUCTURE_LATEST_YEAR : populationSeries?.latestYear;
   const year = useMemo(() => {
+    if (metric === "digital") return 2026;
     const value = Number(searchParams.get(metric === "politics" ? "politicsYear" : "populationYear"));
     return populationSeries && availableFirstYear !== undefined && availableLatestYear !== undefined &&
       Number.isInteger(value) && value >= availableFirstYear && value <= availableLatestYear
@@ -465,6 +486,19 @@ export function MunicipalitiesWorkspace() {
     turnout: t("politicsViewTurnout"),
   };
   const politicsPartyLabels = Object.fromEntries(CANONICAL_PARTIES.map((party) => [party, t(`politicsParty${party}` as "politicsPartyoevp")])) as Record<CanonicalPartyId, string>;
+  const digitalViewLabels: Record<DigitalPlatformViewId, string> = {
+    overview: t("digitalViewOverview"),
+    "citizen-app": t("digitalViewCitizenApp"),
+    "service-portal": t("digitalViewServicePortal"),
+    "digital-notice-board": t("digitalViewNoticeBoard"),
+    "website-cms": t("digitalViewWebsiteCms"),
+    "waste-platform": t("digitalViewWastePlatform"),
+    "appointment-booking": t("digitalViewAppointmentBooking"),
+    participation: t("digitalViewParticipation"),
+    communication: t("digitalViewCommunication"),
+    "open-data": t("digitalViewOpenData"),
+    other: t("digitalViewOther"),
+  };
   const costMeasureDefinitions: Record<CostMeasureId, string> = {
     share: t("costMeasureShareDefinition"),
     "per-capita": t("costMeasurePerCapitaDefinition"),
@@ -480,6 +514,10 @@ export function MunicipalitiesWorkspace() {
   // keeps the scale — and therefore the colours — comparable.
   const dataset = useMemo(() => {
     if (!index || !populationSeries) return null;
+    if (metric === "digital") {
+      const valueFor = (code: string) => digitalPlatformMetricValue(digitalPlatforms?.municipalities[code], digitalView);
+      return { valueFor, peerMedianFor: () => null, years: () => [2026], domain: [0, 8] as [number, number] };
+    }
     if (metric === "politics") {
       const valueFor = (code: string, targetYear: number) => politicsMapValue(electionAsOf(electionHistory?.municipalities[code]?.events ?? [], targetYear), politicsView, politicsParty);
       return { valueFor, peerMedianFor: () => null, years: () => Array.from({ length: POLITICS_LATEST_YEAR - POLITICS_FIRST_YEAR + 1 }, (_, offset) => POLITICS_FIRST_YEAR + offset), domain: politicsView === "leading-list" ? null : [0, 1] as [number, number] };
@@ -512,7 +550,7 @@ export function MunicipalitiesWorkspace() {
     return { ...lookup, domain: diverging ? symmetricDomain(collected) : datasetDomain(collected) };
   }, [
     ageMeasure, ageView, costCategory, costMeasure, costSeries, demographySeries, index,
-    electionHistory, metric, movementSeries, movementView, politicsParty, politicsView, populationSeries, populationView, sex, structureSeries,
+    digitalPlatforms, digitalView, electionHistory, metric, movementSeries, movementView, politicsParty, politicsView, populationSeries, populationView, sex, structureSeries,
   ]);
 
   useEffect(() => {
@@ -682,6 +720,23 @@ export function MunicipalitiesWorkspace() {
     return () => controller.abort();
   }, [costError, costSeries, index, metric]);
 
+  useEffect(() => {
+    if (metric !== "digital" || digitalPlatforms || digitalPlatformsError || !index) return;
+    const controller = new AbortController();
+    fetchJson<MunicipalityDigitalPlatformDataset>(
+      "/data/municipality-digital-platforms.json",
+      controller.signal,
+    )
+      .then((data) => setDigitalPlatforms(validateMunicipalityDigitalPlatformDataset(
+        data,
+        index.municipalities.map(({ municipalityCode }) => municipalityCode),
+      )))
+      .catch((error: unknown) => {
+        if (!(error instanceof DOMException && error.name === "AbortError")) setDigitalPlatformsError(true);
+      });
+    return () => controller.abort();
+  }, [digitalPlatforms, digitalPlatformsError, index, metric]);
+
   function replace(next: URLSearchParams) {
     const value = next.toString();
     paramsRef.current = value;
@@ -826,7 +881,19 @@ export function MunicipalitiesWorkspace() {
   const indicatorUnitLabel =
     indicatorUnit === "per-100" ? t("per100Persons") : indicatorUnit === "years" ? t("yearsUnit") : "";
   const tooltipValues =
-    metric === "population" && populationView !== "count"
+    metric === "digital"
+      ? Object.fromEntries(index.municipalities.map(({ municipalityCode }) => {
+          const value = metricValues[municipalityCode];
+          const label = value === null
+            ? t("digitalCoverageUnknown")
+            : value === 0
+              ? t("digitalNoneFound")
+              : digitalView === "overview"
+                ? t("digitalTooltipAreas", { count: value })
+                : t("digitalTooltipPlatforms", { count: value });
+          return [municipalityCode, digitalViewLabels[digitalView] + " · " + label];
+        }))
+      : metric === "population" && populationView !== "count"
       ? Object.fromEntries(
           index.municipalities.map(({ municipalityCode }) => {
             const value = metricValues[municipalityCode];
@@ -925,7 +992,7 @@ export function MunicipalitiesWorkspace() {
   const metricValueForYear = (targetYear: number) =>
     selected ? valueFor(selected.municipalityCode, targetYear) : null;
   const previousValue =
-    metric === "politics" || previousYear === null ? null : metricValueForYear(previousYear);
+    metric === "politics" || metric === "digital" || previousYear === null ? null : metricValueForYear(previousYear);
   const firstValue = metricValueForYear(availableFirstYear!);
   const historyAvailable =
     (metric === "population" && (!usesCitizenship || structureSeries)) ||
@@ -940,7 +1007,8 @@ export function MunicipalitiesWorkspace() {
         }))
       : null;
   const chartFormatter =
-    metric === "politics" ? shareFormatter
+    metric === "digital" ? personsFormatter
+    : metric === "politics" ? shareFormatter
     : metric === "costs"
       ? costMeasure === "share" || costMeasure === "peer-deviation"
         ? shareFormatter
@@ -955,7 +1023,8 @@ export function MunicipalitiesWorkspace() {
           ? ratioFormatter
           : shareFormatter;
   const chartUnit =
-    metric === "politics" ? ""
+    metric === "digital" ? (digitalView === "overview" ? t("digitalAreasUnit", { count: activeValue ?? 0 }) : t("digitalPlatformsUnit", { count: activeValue ?? 0 }))
+    : metric === "politics" ? ""
     : metric === "costs"
       ? costMeasure === "per-capita" || costMeasure === "real-per-capita"
         ? t("costPerInhabitantUnit")
@@ -972,7 +1041,8 @@ export function MunicipalitiesWorkspace() {
             ? t("yearsUnit")
             : "";
   const metricLabel =
-    metric === "politics" ? politicsView === "party-share" ? `${politicsViewLabels[politicsView]} · ${politicsPartyLabels[politicsParty]}` : politicsViewLabels[politicsView]
+    metric === "digital" ? digitalViewLabels[digitalView]
+    : metric === "politics" ? politicsView === "party-share" ? `${politicsViewLabels[politicsView]} · ${politicsPartyLabels[politicsParty]}` : politicsViewLabels[politicsView]
     : metric === "costs"
       ? costCategoryLabels[costCategory] + " · " + costMeasureLabels[costMeasure]
       : metric === "population"
@@ -995,7 +1065,8 @@ export function MunicipalitiesWorkspace() {
                   : "sexAll",
             );
   const metricChartLabel = selected
-    ? metric === "politics" ? ""
+    ? metric === "digital" ? ""
+      : metric === "politics" ? ""
       : metric === "costs"
       ? t("costChartLabel", { municipality: selected.name, category: metricLabel })
       : metric === "population"
@@ -1006,7 +1077,7 @@ export function MunicipalitiesWorkspace() {
           ? t("movementChartLabel", { municipality: selected.name, metric: metricLabel })
           : t("ageChartLabel", { municipality: selected.name, ageGroup: metricLabel })
     : "";
-  const analysisDataset: MunicipalityDatasetRef | null = !selected || metric === "politics"
+  const analysisDataset: MunicipalityDatasetRef | null = !selected || metric === "politics" || metric === "digital"
     ? null
     : metric === "costs"
       ? { kind: "cost-share", municipalityCode: selected.municipalityCode, municipalityName: selected.name, category: costCategory, measure: costMeasure }
@@ -1167,6 +1238,7 @@ export function MunicipalitiesWorkspace() {
           costMeasure={costMeasure}
           politicsView={politicsView}
           politicsParty={politicsParty}
+          digitalView={digitalView}
           peerMunicipalityCodes={selectedPeerGroup?.municipalityCodes ?? null}
           peerGroupLabel={selectedPeerGroup?.label ?? null}
           movementDefinition={movementDefinitions[movementView] ?? null}
@@ -1184,6 +1256,8 @@ export function MunicipalitiesWorkspace() {
           costsError={costError}
           politicsLoading={metric === "politics" && !electionHistory && !politicsError}
           politicsError={politicsError}
+          digitalLoading={metric === "digital" && !digitalPlatforms && !digitalPlatformsError}
+          digitalError={digitalPlatformsError}
           structureLoading={usesCitizenship && !structureSeries && !structureError}
           structureError={structureError}
           onYearChange={(value) =>
@@ -1201,6 +1275,7 @@ export function MunicipalitiesWorkspace() {
           onCostMeasureChange={(value) => setParameter("costMeasure", value === "share" ? null : value)}
           onPoliticsViewChange={(value) => setParameter("politicsView", value === "leading-list" ? null : value)}
           onPoliticsPartyChange={(value) => setParameter("politicsParty", value === "oevp" ? null : value)}
+          onDigitalViewChange={(value) => setParameter("digitalView", value === "overview" ? null : value)}
           onSelect={selectByCode}
           onReset={() => updateSelection(null)}
           onOpenDetails={() => setDetailsOpen(true)}
@@ -1212,7 +1287,8 @@ export function MunicipalitiesWorkspace() {
             municipalityCode: t("municipalityCode"),
             population: t("population"),
             reference:
-              metric === "politics" ? t("politicsReference", { year })
+              metric === "digital" ? t("digitalReference", { date: digitalReferenceDate })
+              : metric === "politics" ? t("politicsReference", { year })
               : metric === "costs"
                 ? t("costReference", { year })
                 : metric === "movement"
@@ -1229,6 +1305,16 @@ export function MunicipalitiesWorkspace() {
             movementMetric: t("metricMovement"),
             costsMetric: t("metricCosts"),
             politicsMetric: t("metricPolitics"),
+            digitalMetric: t("metricDigital"),
+            digitalView: t("digitalView"),
+            digitalViews: digitalViewLabels,
+            digitalDefinition: t("digitalDefinition"),
+            digitalNoneFound: t("digitalNoneFound"),
+            digitalLegendOne: t("digitalLegendOne"),
+            digitalLegendTwo: t("digitalLegendTwo"),
+            digitalLegendThreeToFour: t("digitalLegendThreeToFour"),
+            digitalLegendFiveToSeven: t("digitalLegendFiveToSeven"),
+            digitalLegendEightPlus: t("digitalLegendEightPlus"),
             politicsView: t("politicsView"),
             politicsViews: politicsViewLabels,
             politicsParty: t("politicsParty"),
@@ -1268,6 +1354,8 @@ export function MunicipalitiesWorkspace() {
             costsError: t("costLayerError"),
             loadingPolitics: t("politicsLayerLoading"),
             politicsError: t("politicsLayerError"),
+            loadingDigital: t("digitalLayerLoading"),
+            digitalError: t("digitalLayerError"),
             loadingStructure: t("structureLayerLoading"),
             structureError: t("structureLayerError"),
             addToAnalysis: t("addToAnalysis"),
@@ -1319,6 +1407,11 @@ export function MunicipalitiesWorkspace() {
                 {averageAnnualPopulationChange !== null ? <><dt className="text-muted-foreground">{t("populationAverageAnnualChange", { year: populationSeries.firstYear })}</dt><dd className="font-medium tabular-nums">{signedShareFormatter.format(averageAnnualPopulationChange)}</dd></> : null}
                 <dt className="text-muted-foreground">{t("officialWebsite")}</dt><dd className="min-w-0 font-medium">{selectedProfile?.officialWebsite ? <a className="break-all text-teal-700 underline underline-offset-2 hover:text-teal-800" href={selectedProfile.officialWebsite} target="_blank" rel="noreferrer">{t("openWebsite")}</a> : t("profileDataUnavailable")}</dd>
               </dl>
+              {metric === "digital" && selectedDigitalPlatforms && digitalPlatforms ? (
+                <div className="mt-5">
+                  <MunicipalityDigitalPlatformsPanel profile={selectedDigitalPlatforms} referenceDate={digitalPlatforms.referenceDate} />
+                </div>
+              ) : null}
               <div className="mt-5">
                 <MunicipalityPoliticsPanel
                   current={selectedCurrentPolitics}
@@ -1332,7 +1425,9 @@ export function MunicipalitiesWorkspace() {
               </div>
               <p className="mt-3 flex items-center gap-1.5 text-xs text-muted-foreground">
                 <Users className="size-3.5" />
-                {metric === "politics"
+                {metric === "digital"
+                  ? t("digitalReference", { date: digitalReferenceDate })
+                  : metric === "politics"
                   ? t("politicsReference", { year })
                   : metric === "costs"
                   ? t("costReference", { year })
@@ -1439,6 +1534,9 @@ export function MunicipalitiesWorkspace() {
               {" (" + movementSeries.source.license + ")."}
             </p>
           )}
+          {digitalPlatforms && (
+            <p className="mt-2">{t("digitalDataBasis", { date: digitalReferenceDate })}</p>
+          )}
           {costSeries && (
             <>
               <p className="mt-2">
@@ -1489,6 +1587,11 @@ export function MunicipalitiesWorkspace() {
                     ) : t("profileDataUnavailable")}
                   </dd>
                 </dl>
+                {metric === "digital" && selectedDigitalPlatforms && digitalPlatforms ? (
+                  <div className="mt-5">
+                    <MunicipalityDigitalPlatformsPanel profile={selectedDigitalPlatforms} referenceDate={digitalPlatforms.referenceDate} />
+                  </div>
+                ) : null}
                 <div className="mt-5">
                   <MunicipalityPoliticsPanel
                     current={selectedCurrentPolitics}
@@ -1502,7 +1605,9 @@ export function MunicipalitiesWorkspace() {
                 </div>
                 <p className="mt-4 flex items-center gap-1.5 border-t pt-3 text-xs text-muted-foreground">
                   <Users className="size-3.5" />
-                  {metric === "politics"
+                  {metric === "digital"
+                    ? t("digitalReference", { date: digitalReferenceDate })
+                    : metric === "politics"
                     ? t("politicsReference", { year })
                     : metric === "costs"
                     ? t("costReference", { year })
