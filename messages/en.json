@@ -182,6 +182,8 @@
     "politicsAsOf": "As of {date} ·",
     "politicsMandates": "{count, plural, =0 {no seat} one {# seat} other {# seats}}",
     "politicsMandatesUnavailable": "Seats not combined",
+    "politicsSeatDistributionLabel": "Municipal council seat distribution",
+    "politicsVoters": "voters",
     "politicsCouncilDisclaimer": "The elected seat distribution may not reflect later changes between council groups.",
     "politicsAggregated": "Votes aggregated to the territorial status of 1 January 2026; seats and candidacies were not combined artificially.",
     "politicsMayorElection": "Direct mayoral election",

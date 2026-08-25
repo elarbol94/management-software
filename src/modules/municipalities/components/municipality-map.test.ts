@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { DIGITAL_PLATFORM_PROVIDER_COLORS, divergingColorStops, metricColorExpression } from "./municipality-map";
-import { MUNICIPALITY_DIVERGING_COLORS, MUNICIPALITY_DIVERGING_STOPS } from "../palette";
+import { MUNICIPALITY_DIVERGING_COLORS, MUNICIPALITY_DIVERGING_STOPS, POLITICS_PARTY_COLORS } from "../palette";
 
 describe("divergingColorStops", () => {
   it("returns stops in the ascending order MapLibre's interpolate requires", () => {
@@ -33,6 +33,12 @@ describe("divergingColorStops", () => {
       expect(offset).toBeLessThanOrEqual(1);
     }
     expect(divergingColorStops(89).find(({ value }) => value === 0)?.offset).toBe(0.5);
+  });
+});
+
+describe("politics party colours", () => {
+  it("gives local and other lists a categorical colour instead of a neutral grey", () => {
+    expect(POLITICS_PARTY_COLORS["local-other"]).toBe("#0e7490");
   });
 });
 

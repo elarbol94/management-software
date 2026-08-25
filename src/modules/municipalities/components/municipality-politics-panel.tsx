@@ -1,6 +1,8 @@
 "use client";
 
+import { useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
+import { POLITICS_PARTY_COLORS } from "../palette";
 import type { MunicipalityCurrentPolitics, MunicipalityElectionEvent, PoliticsSource } from "../politics";
 
 function SourceLinks({ ids, sources }: { ids: string[]; sources: PoliticsSource[] }) {
@@ -12,16 +14,98 @@ function SourceLinks({ ids, sources }: { ids: string[]; sources: PoliticsSource[
   return <span>{links.map((source, index) => <span key={source.id}>{index ? ", " : ""}<a className="text-teal-700 underline underline-offset-2" href={source.url} target="_blank" rel="noreferrer">{source.title}</a></span>)}</span>;
 }
 
+const HEMICYCLE_CENTER_X = 110;
+const HEMICYCLE_CENTER_Y = 104;
+const HEMICYCLE_OUTER_RADIUS = 92;
+const HEMICYCLE_INNER_RADIUS = 52;
+
+function polarPoint(radius: number, angle: number) {
+  return {
+    x: HEMICYCLE_CENTER_X + radius * Math.cos(angle),
+    y: HEMICYCLE_CENTER_Y + radius * Math.sin(angle),
+  };
+}
+
+function hemicyclePath(startAngle: number, endAngle: number) {
+  const outerStart = polarPoint(HEMICYCLE_OUTER_RADIUS, startAngle);
+  const outerEnd = polarPoint(HEMICYCLE_OUTER_RADIUS, endAngle);
+  const innerEnd = polarPoint(HEMICYCLE_INNER_RADIUS, endAngle);
+  const innerStart = polarPoint(HEMICYCLE_INNER_RADIUS, startAngle);
+  const largeArc = endAngle - startAngle > Math.PI ? 1 : 0;
+  return [
+    `M ${outerStart.x} ${outerStart.y}`,
+    `A ${HEMICYCLE_OUTER_RADIUS} ${HEMICYCLE_OUTER_RADIUS} 0 ${largeArc} 1 ${outerEnd.x} ${outerEnd.y}`,
+    `L ${innerEnd.x} ${innerEnd.y}`,
+    `A ${HEMICYCLE_INNER_RADIUS} ${HEMICYCLE_INNER_RADIUS} 0 ${largeArc} 0 ${innerStart.x} ${innerStart.y}`,
+    "Z",
+  ].join(" ");
+}
+
+function CouncilHemicycle({ event }: { event: MunicipalityElectionEvent }) {
+  const t = useTranslations("municipalities");
+  const number = new Intl.NumberFormat(useLocale());
+  const [activeListKey, setActiveListKey] = useState<string | null>(null);
+  const lists = event.lists
+    .filter((list) => list.mandates !== null && list.mandates > 0)
+    .toSorted((a, b) => (b.mandates ?? 0) - (a.mandates ?? 0) || b.votes - a.votes);
+  const complete = lists.length > 0 && event.lists.every((list) => list.mandates !== null);
+  const totalMandates = lists.reduce((sum, list) => sum + (list.mandates ?? 0), 0);
+
+  if (!complete || totalMandates === 0) return null;
+
+  const segments = lists.map((list, index) => {
+    const key = `${list.party}-${list.name}`;
+    const usedMandates = lists.slice(0, index).reduce((sum, previous) => sum + (previous.mandates ?? 0), 0);
+    const startAngle = -Math.PI + (usedMandates / totalMandates) * Math.PI;
+    const endAngle = -Math.PI + ((usedMandates + (list.mandates ?? 0)) / totalMandates) * Math.PI;
+    const gap = lists.length > 1 ? 0.012 : 0;
+    return { key, list, path: hemicyclePath(startAngle + gap, endAngle - gap) };
+  });
+  const activeList = segments.find(({ key }) => key === activeListKey)?.list ?? null;
+  const describe = (list: (typeof lists)[number]) => `${list.name}: ${t("politicsMandates", { count: list.mandates ?? 0 })}, ${number.format(list.votes)} ${t("politicsVoters")}`;
+
+  return (
+    <div className="relative mt-2" data-testid="politics-seat-distribution">
+      {activeList ? (
+        <div className="pointer-events-none absolute left-1/2 top-2 z-10 min-w-36 -translate-x-1/2 rounded-lg border bg-popover px-3 py-2 text-center text-xs shadow-md" role="tooltip" data-testid="politics-seat-tooltip">
+          <p className="font-semibold">{activeList.name}</p>
+          <p className="mt-0.5 text-muted-foreground">{t("politicsMandates", { count: activeList.mandates ?? 0 })} · {number.format(activeList.votes)} {t("politicsVoters")}</p>
+        </div>
+      ) : null}
+      <svg viewBox="0 0 220 110" className="mx-auto block w-full max-w-60" role="img" aria-label={t("politicsSeatDistributionLabel")}>
+        {segments.map(({ key, list, path }) => (
+          <path
+            key={key}
+            d={path}
+            fill={POLITICS_PARTY_COLORS[list.party]}
+            className="cursor-help stroke-card transition-opacity hover:opacity-80 focus:opacity-80 focus:outline-none"
+            strokeWidth="2"
+            tabIndex={0}
+            aria-label={describe(list)}
+            onMouseEnter={() => setActiveListKey(key)}
+            onMouseLeave={() => setActiveListKey(null)}
+            onFocus={() => setActiveListKey(key)}
+            onBlur={() => setActiveListKey(null)}
+          >
+            <title>{describe(list)}</title>
+          </path>
+        ))}
+      </svg>
+    </div>
+  );
+}
+
 function Council({ event }: { event: MunicipalityElectionEvent }) {
   const t = useTranslations("municipalities");
   const number = new Intl.NumberFormat(useLocale());
   return (
     <div className="mt-3 space-y-2">
       <p className="text-xs text-muted-foreground">{t("politicsElectionDate", { date: event.date })}</p>
+      <CouncilHemicycle event={event} />
       <ul className="space-y-1.5">
         {event.lists.toSorted((a, b) => (b.mandates ?? -1) - (a.mandates ?? -1) || b.votes - a.votes).map((list) => (
           <li key={`${list.party}-${list.name}`} className="flex items-start justify-between gap-3 text-xs">
-            <span>{list.name}</span>
+            <span className="flex min-w-0 items-start gap-2"><span className="mt-0.5 size-2.5 shrink-0 rounded-full border border-black/10" style={{ backgroundColor: POLITICS_PARTY_COLORS[list.party] }} /><span>{list.name}</span></span>
             <span className="shrink-0 font-semibold tabular-nums">{list.mandates === null ? t("politicsMandatesUnavailable") : t("politicsMandates", { count: list.mandates })} · {number.format(list.votes)}</span>
           </li>
         ))}

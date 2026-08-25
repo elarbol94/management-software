@@ -45,6 +45,7 @@ import {
   MUNICIPALITY_DIVERGING_STOPS,
   MUNICIPALITY_MOVEMENT_COLORS,
   MUNICIPALITY_SEQUENTIAL_COLORS,
+  POLITICS_PARTY_COLORS,
 } from "../palette";
 import { POPULATION_CLASSES } from "../population";
 import { MobileBottomSheet } from "@/components/ui/mobile-bottom-sheet";
@@ -102,12 +103,6 @@ export const DIGITAL_PLATFORM_PROVIDER_COLORS: Record<DigitalPlatformProviderCat
   "local-app": "#0891b2",
   multiple: "#334155",
 };
-export const POLITICS_PARTY_COLORS: Record<CanonicalPartyId | "tie", string> = {
-  oevp: "#202124", spoe: "#d71920", fpoe: "#2056a7", gruene: "#2f8f46",
-  neos: "#e83e8c", kpoe: "#8f1d21", mfg: "#e58a17",
-  "local-other": "#737b83", tie: "#7656a8",
-};
-
 function asMapBounds(
   bounds: MunicipalityBounds,
 ): [[number, number], [number, number]] {

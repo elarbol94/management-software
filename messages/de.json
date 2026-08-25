@@ -182,6 +182,8 @@
     "politicsAsOf": "Stand {date} ·",
     "politicsMandates": "{count, plural, =0 {kein Mandat} one {# Mandat} other {# Mandate}}",
     "politicsMandatesUnavailable": "Mandate nicht zusammengeführt",
+    "politicsSeatDistributionLabel": "Sitzverteilung im Gemeinderat",
+    "politicsVoters": "Wähler:innen",
     "politicsCouncilDisclaimer": "Die gewählte Sitzverteilung bildet spätere Fraktionswechsel nicht zwingend ab.",
     "politicsAggregated": "Stimmen auf den Gebietsstand 1. Jänner 2026 aggregiert; Mandate und Kandidaturen wurden nicht künstlich zusammengeführt.",
     "politicsMayorElection": "Direkte Bürgermeisterwahl",

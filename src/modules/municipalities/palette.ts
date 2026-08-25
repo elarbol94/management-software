@@ -22,6 +22,19 @@ export const MAP_HOVER_FILL_OPACITY = 0.92;
 export const MAP_NO_DATA_OPACITY = 0.25;
 export const MAP_NO_DATA_COLOR = "#b4b4ae";
 
+/** Shared categorical colours for municipality politics maps and charts. */
+export const POLITICS_PARTY_COLORS = {
+  oevp: "#202124",
+  spoe: "#d71920",
+  fpoe: "#2056a7",
+  gruene: "#2f8f46",
+  neos: "#e83e8c",
+  kpoe: "#8f1d21",
+  mfg: "#e58a17",
+  "local-other": "#0e7490",
+  tie: "#7656a8",
+} as const;
+
 export const MUNICIPALITY_SEQUENTIAL_COLORS = [
   "#9dede3",
   "#6acabf",
