@@ -86,6 +86,60 @@ export type DigitalPlatformProviderClassification = {
   providers: DigitalPlatformProviderFamily[];
 };
 
+export type DigitalPlatformCostConfidence = "medium" | "low";
+
+export type DigitalPlatformCostEstimate = {
+  annualEuros: readonly [minimum: number, maximum: number];
+  setupEuros: readonly [minimum: number, maximum: number];
+  confidence: DigitalPlatformCostConfidence;
+  providers: DigitalPlatformProviderFamily[];
+};
+
+type DigitalPlatformCostBand = {
+  annualEuros: readonly [number, number];
+  setupEuros: readonly [number, number];
+  confidence: DigitalPlatformCostConfidence;
+};
+
+// Rounded planning corridors derived from public municipal offers from 2023–2026.
+// Providers without a public price example deliberately use wider, low-confidence
+// comparable-app bands. These are planning benchmarks, never inferred contract prices.
+const DIGITAL_PLATFORM_COST_BANDS: Record<
+  DigitalPlatformProviderFamily,
+  readonly [small: DigitalPlatformCostBand, medium: DigitalPlatformCostBand, large: DigitalPlatformCostBand]
+> = {
+  gem2go: [
+    { annualEuros: [2_000, 3_500], setupEuros: [4_000, 6_500], confidence: "medium" },
+    { annualEuros: [2_500, 5_000], setupEuros: [5_000, 9_000], confidence: "medium" },
+    { annualEuros: [4_000, 8_000], setupEuros: [7_000, 11_000], confidence: "medium" },
+  ],
+  cities: [
+    { annualEuros: [1_700, 4_400], setupEuros: [0, 3_000], confidence: "medium" },
+    { annualEuros: [3_000, 7_000], setupEuros: [0, 7_000], confidence: "medium" },
+    { annualEuros: [5_000, 12_000], setupEuros: [0, 10_800], confidence: "medium" },
+  ],
+  gemeinde24: [
+    { annualEuros: [1_500, 2_500], setupEuros: [1_000, 2_000], confidence: "medium" },
+    { annualEuros: [1_800, 3_500], setupEuros: [1_000, 3_000], confidence: "medium" },
+    { annualEuros: [2_500, 5_000], setupEuros: [1_500, 4_000], confidence: "medium" },
+  ],
+  gemeindeapp: [
+    { annualEuros: [1_700, 5_000], setupEuros: [1_000, 5_000], confidence: "low" },
+    { annualEuros: [3_000, 7_000], setupEuros: [2_000, 8_000], confidence: "low" },
+    { annualEuros: [5_000, 12_000], setupEuros: [3_000, 11_000], confidence: "low" },
+  ],
+  "daheim-app": [
+    { annualEuros: [0, 2_500], setupEuros: [0, 1_000], confidence: "low" },
+    { annualEuros: [0, 4_000], setupEuros: [0, 2_000], confidence: "low" },
+    { annualEuros: [0, 6_000], setupEuros: [0, 3_000], confidence: "low" },
+  ],
+  "local-app": [
+    { annualEuros: [1_700, 6_000], setupEuros: [0, 8_000], confidence: "low" },
+    { annualEuros: [3_000, 10_000], setupEuros: [2_000, 15_000], confidence: "low" },
+    { annualEuros: [5_000, 20_000], setupEuros: [5_000, 25_000], confidence: "low" },
+  ],
+};
+
 export type MunicipalityDigitalPlatform = {
   id: string;
   name: string;
@@ -174,6 +228,41 @@ export function digitalPlatformProviderClassification(
   return {
     category: orderedProviders.length > 1 ? "multiple" : orderedProviders[0],
     providers: orderedProviders,
+  };
+}
+
+/**
+ * Estimates planning corridors from active app families and the latest population.
+ * A completed profile without an app has a zero corridor; incomplete negative
+ * findings remain unknown. Multiple distinct families are added once each.
+ */
+export function digitalPlatformCostEstimate(
+  profile: MunicipalityDigitalPlatformProfile,
+  population: number,
+): DigitalPlatformCostEstimate | null {
+  if (!Number.isFinite(population) || population <= 0) return null;
+  const classification = digitalPlatformProviderClassification(profile);
+  if (!classification) return null;
+  if (classification.category === "none") {
+    return {
+      annualEuros: [0, 0],
+      setupEuros: [0, 0],
+      confidence: "medium",
+      providers: [],
+    };
+  }
+
+  const sizeBand = population < 2_500 ? 0 : population < 10_000 ? 1 : 2;
+  const bands = classification.providers.map(
+    (provider) => DIGITAL_PLATFORM_COST_BANDS[provider][sizeBand],
+  );
+  const sum = (key: "annualEuros" | "setupEuros", index: 0 | 1) =>
+    bands.reduce((total, band) => total + band[key][index], 0);
+  return {
+    annualEuros: [sum("annualEuros", 0), sum("annualEuros", 1)],
+    setupEuros: [sum("setupEuros", 0), sum("setupEuros", 1)],
+    confidence: bands.every(({ confidence }) => confidence === "medium") ? "medium" : "low",
+    providers: classification.providers,
   };
 }
 

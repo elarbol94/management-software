@@ -41,9 +41,21 @@ test("provider landscape is categorical, shareable and responsive", async ({ pag
   await expect(page.getByTestId("municipality-details")).toContainText(
     "Mehrere Plattformen · GEM2GO, CITIES",
   );
+  await expect(page.getByTestId("municipality-details")).toContainText(
+    "3.700 €–7.900 €",
+  );
+  await expect(page.getByTestId("municipality-details")).toContainText(
+    "4.000 €–9.500 €",
+  );
+  await expect(page.getByTestId("municipality-details")).toContainText("Mittlere Sicherheit");
+  await expect(page.getByTestId("municipality-details")).toContainText("Preisgrundlagen");
 
   await page.goto("/municipalities/overview?metric=digital&digitalView=providers&municipality=90001");
   await expect(page.getByTestId("municipality-details")).toContainText("Keine vergleichbare App");
+  await expect(page.getByTestId("municipality-details")).toContainText("0 €");
+
+  await page.goto("/municipalities/overview?metric=digital&digitalView=providers&municipality=20435");
+  await expect(page.getByTestId("municipality-details")).toContainText("Nicht belastbar schätzbar");
   await page.reload();
   await expect(page.getByLabel("Ansicht")).toHaveValue("providers");
 

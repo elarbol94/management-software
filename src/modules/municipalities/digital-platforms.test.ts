@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { validateMunicipalityIndex, type MunicipalityIndex } from "./data";
 import {
+  digitalPlatformCostEstimate,
   digitalPlatformMetricValue,
   digitalPlatformProviderClassification,
   DIGITAL_PLATFORM_PROVIDER_CODES,
@@ -114,5 +115,53 @@ describe("municipality digital platforms", () => {
       DIGITAL_PLATFORM_PROVIDER_CODES.none,
     );
     expect(digitalPlatformMetricValue(profile(inactive, "partial"), "providers")).toBeNull();
+  });
+
+  it("estimates annual and setup corridors by provider and municipality size", () => {
+    expect(digitalPlatformCostEstimate(profile([citizenApp("1", "GEM2GO")]), 1_500)).toMatchObject({
+      annualEuros: [2_000, 3_500],
+      setupEuros: [4_000, 6_500],
+      confidence: "medium",
+    });
+    expect(digitalPlatformCostEstimate(profile([citizenApp("1", "CITIES")]), 25_000)).toMatchObject({
+      annualEuros: [5_000, 12_000],
+      setupEuros: [0, 10_800],
+    });
+  });
+
+  it("deduplicates cost families and adds genuinely different active apps", () => {
+    const duplicatedGem2go = digitalPlatformCostEstimate(profile([
+      citizenApp("1", "GEM2GO"),
+      citizenApp("2", "Gemeinde-App", "GEM2GO"),
+    ]), 3_000);
+    expect(duplicatedGem2go?.annualEuros).toEqual([2_500, 5_000]);
+
+    const multiple = digitalPlatformCostEstimate(profile([
+      citizenApp("1", "GEM2GO"),
+      citizenApp("2", "CITIES"),
+    ]), 3_000);
+    expect(multiple?.annualEuros).toEqual([5_500, 12_000]);
+    expect(multiple?.setupEuros).toEqual([5_000, 16_000]);
+  });
+
+  it("shows zero only for completed research without an active comparable app", () => {
+    expect(digitalPlatformCostEstimate(profile([]), 1_500)?.annualEuros).toEqual([0, 0]);
+    expect(digitalPlatformCostEstimate(profile([], "partial"), 1_500)).toBeNull();
+    expect(digitalPlatformCostEstimate(profile([citizenApp("1", "GEM2GO", null, "unclear")]), 1_500)?.annualEuros).toEqual([0, 0]);
+  });
+
+  it("produces a corridor for every municipality with a conclusive app finding", () => {
+    const population = readJson<{ years: Record<string, { values: Record<string, number> }> }>(
+      "public/data/municipality-population-2002-2025.json",
+    ).years["2025"].values;
+    const estimates = Object.entries(dataset.municipalities).map(([code, municipality]) =>
+      digitalPlatformCostEstimate(municipality, population[code]),
+    );
+
+    expect(estimates.filter(Boolean)).toHaveLength(2_062);
+    expect(estimates.filter((estimate) => estimate === null)).toHaveLength(30);
+    expect(Object.entries(dataset.municipalities).every(([code, municipality]) =>
+      municipality.researchStatus === "partial" || digitalPlatformCostEstimate(municipality, population[code]) !== null,
+    )).toBe(true);
   });
 });
