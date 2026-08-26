@@ -2797,6 +2797,21 @@
       "editHint": "Ctrl+Enter applies, Escape discards.",
       "empty": "Empty diagram — click to edit.",
       "renderFailed": "The diagram could not be drawn."
+    },
+    "categories": {
+      "title": "Argument",
+      "description": "The report outline. Evidence is filed here by claim, not by document.",
+      "newPlaceholder": "New point…",
+      "addChild": "Add sub-point",
+      "untitled": "Untitled",
+      "empty": "No outline yet. Create the first point.",
+      "selectPrompt": "Choose a point in the outline.",
+      "noEvidence": "No evidence is filed under this point yet.",
+      "evidenceCount": "{count, plural, one {# passage} other {# passages}}",
+      "rename": "Rename point",
+      "moveTo": "Move to",
+      "deleteConfirm": "Delete this point and all sub-points? The evidence itself is kept.",
+      "actionFailed": "The change could not be saved."
     }
   },
   "settings": {

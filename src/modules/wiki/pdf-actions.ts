@@ -33,7 +33,7 @@ function targetExists(type: (typeof evidenceTargetTypes)[number], id: string) {
   const tables: Record<typeof type, string> = {
     wikiPage: "wiki_pages", project: "projects", task: "tasks", accountingEntry: "entries",
     invoice: "invoices", fundingProject: "funding_projects", fundingBudgetItem: "funding_budget_items",
-    fundingBookingAllocation: "funding_booking_allocations",
+    fundingBookingAllocation: "funding_booking_allocations", wikiCategory: "wiki_categories",
   };
   return Boolean(sqlite.prepare(`SELECT id FROM ${tables[type]} WHERE id = ? LIMIT 1`).get(id));
 }

@@ -9,6 +9,7 @@ export const evidenceTargetTypes = [
   "fundingProject",
   "fundingBudgetItem",
   "fundingBookingAllocation",
+  "wikiCategory",
 ] as const;
 
 export type EvidenceTargetType = (typeof evidenceTargetTypes)[number];

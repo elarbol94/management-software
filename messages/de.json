@@ -2799,6 +2799,21 @@
       "editHint": "Strg+Enter übernimmt, Escape verwirft.",
       "empty": "Leeres Diagramm — zum Bearbeiten klicken.",
       "renderFailed": "Das Diagramm konnte nicht gezeichnet werden."
+    },
+    "categories": {
+      "title": "Argumentation",
+      "description": "Gliederung des Berichts. Belege werden hier nach Aussage abgelegt, nicht nach Dokument.",
+      "newPlaceholder": "Neuer Punkt…",
+      "addChild": "Unterpunkt hinzufügen",
+      "untitled": "Unbenannt",
+      "empty": "Noch keine Gliederung. Lege den ersten Punkt an.",
+      "selectPrompt": "Wähle einen Punkt der Gliederung.",
+      "noEvidence": "Diesem Punkt sind noch keine Belege zugeordnet.",
+      "evidenceCount": "{count, plural, one {# Beleg} other {# Belege}}",
+      "rename": "Punkt umbenennen",
+      "moveTo": "Verschieben nach",
+      "deleteConfirm": "Diesen Punkt und alle Unterpunkte löschen? Die Belege selbst bleiben erhalten.",
+      "actionFailed": "Die Änderung konnte nicht gespeichert werden."
     }
   },
   "settings": {

@@ -45,6 +45,31 @@ export const wikiDocumentTemplates = sqliteTable(
   (table) => [index("wiki_document_templates_name_idx").on(table.name)],
 );
 
+/**
+ * An outline of the argument, kept separate from the page tree on purpose.
+ *
+ * Pages organise documents; categories organise what the sources actually say. Evidence
+ * attaches to a category through evidenceLinks, so a passage can support a point in the
+ * report without first belonging to a page — which is how research is read (by claim)
+ * rather than how it is filed (by document).
+ */
+export const wikiCategories = sqliteTable(
+  "wiki_categories",
+  {
+    id: text("id").primaryKey().$defaultFn(() => createId()),
+    name: text("name").notNull(),
+    description: text("description").notNull().default(""),
+    parentId: text("parent_id").references((): AnySQLiteColumn => wikiCategories.id, { onDelete: "cascade" }),
+    sortOrder: integer("sort_order").notNull().default(0),
+    createdBy: text("created_by").notNull().references(() => user.id),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("wiki_categories_parent_idx").on(table.parentId, table.sortOrder),
+  ],
+);
+
 export const wikiPages = sqliteTable(
   "wiki_pages",
   {

@@ -5,19 +5,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useLocale, useTranslations } from "next-intl";
 import { toast } from "sonner";
-import {
-  Bell,
-  BookOpen,
-  FileText,
-  House,
-  Inbox,
-  LibraryBig,
-  Plus,
-  Search,
-  Star,
-  Trash2,
-  X,
-} from "lucide-react";
+import { Bell, BookOpen, FileText, FolderTree, House, Inbox, LibraryBig, Plus, Search, Star, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -370,6 +358,7 @@ export function ResearchSidebar({
             <NavItem href="/wiki" icon={House} label={t("start")} compact={compact} onNavigate={onNavigate} />
             <NavItem href="/wiki/pages" icon={FileText} label={t("documents")} compact={compact} onNavigate={onNavigate} />
             <NavItem href="/wiki/sources" icon={LibraryBig} label={t("sources")} badge={counts.sources} compact={compact} onNavigate={onNavigate} />
+            <NavItem href="/wiki/categories" icon={FolderTree} label={t("categories.title")} compact={compact} onNavigate={onNavigate} />
             <div className="mt-2 border-t pt-2">
               {!compact && <p className="mb-1 px-2 text-[10px] font-semibold tracking-wider text-muted-foreground uppercase">{t("more")}</p>}
               <NavItem href="/wiki/inbox" icon={Inbox} label={t("inbox")} badge={counts.inbox} compact={compact} onNavigate={onNavigate} />
