@@ -2561,6 +2561,17 @@
             "feedback",
             "kommentar"
           ]
+        },
+        "mermaidDiagram": {
+          "label": "Mermaid diagram",
+          "description": "Write a diagram as text",
+          "keywords": [
+            "mermaid",
+            "diagram",
+            "flowchart",
+            "graph",
+            "chart"
+          ]
         }
       }
     },
@@ -2779,6 +2790,13 @@
       "source": "Source",
       "pdfPage": "PDF page",
       "annotation": "Annotation"
+    },
+    "mermaid": {
+      "source": "Mermaid source",
+      "edit": "Edit diagram",
+      "editHint": "Ctrl+Enter applies, Escape discards.",
+      "empty": "Empty diagram — click to edit.",
+      "renderFailed": "The diagram could not be drawn."
     }
   },
   "settings": {

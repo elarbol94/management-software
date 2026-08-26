@@ -162,3 +162,52 @@ describe("document renderer", () => {
     expect(markdown).toContain("(https://wiki.example.org/api/wiki/svg-assets/abc/content?v=1.2)");
   });
 });
+
+describe("mermaid diagrams", () => {
+  const settings = DEFAULT_DOCUMENT_SETTINGS;
+  const withDiagram = (attrs: Record<string, string>): TiptapNode => ({
+    type: "doc",
+    content: [{ type: "mermaidDiagram", attrs }],
+  });
+
+  it("exports the cached SVG so no mermaid runtime is needed on the server", async () => {
+    const result = await renderDocumentHtml({
+      title: "Proposal",
+      doc: withDiagram({ code: "flowchart TD\n A --> B", svg: "<svg id=\"drawn\"></svg>" }),
+      settings,
+    });
+    expect(result.html).toContain('<figure class="mermaid-diagram">');
+    expect(result.html).toContain('<svg id="drawn">');
+  });
+
+  it("falls back to the source when nothing was cached, rather than dropping the node", async () => {
+    const result = await renderDocumentHtml({
+      title: "Proposal",
+      doc: withDiagram({ code: "flowchart TD\n A --> B", svg: "" }),
+      settings,
+    });
+    expect(result.html).toContain('<pre class="mermaid-source">');
+    expect(result.html).toContain("flowchart TD");
+  });
+
+  it("escapes the fallback source", async () => {
+    const result = await renderDocumentHtml({
+      title: "Proposal",
+      doc: withDiagram({ code: "A[<script>alert(1)</script>]", svg: "" }),
+      settings,
+    });
+    expect(result.html).not.toContain("<script>alert(1)</script>");
+    expect(result.html).toContain("&lt;script&gt;");
+  });
+
+  it("emits a fenced mermaid block in Markdown, keeping the source round-trippable", async () => {
+    const markdown = renderDocumentMarkdown(
+      withDiagram({ code: "flowchart TD\n  A --> B", svg: "<svg></svg>" }),
+      settings,
+    );
+    expect(markdown).toContain("```mermaid");
+    expect(markdown).toContain("A --> B");
+    // The rendered SVG is a cache, not content: Markdown carries the source.
+    expect(markdown).not.toContain("<svg>");
+  });
+});

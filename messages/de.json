@@ -2563,6 +2563,17 @@
             "diskussion",
             "comment"
           ]
+        },
+        "mermaidDiagram": {
+          "label": "Mermaid-Diagramm",
+          "description": "Diagramm als Text schreiben",
+          "keywords": [
+            "mermaid",
+            "diagramm",
+            "flowchart",
+            "ablauf",
+            "graph"
+          ]
         }
       }
     },
@@ -2781,6 +2792,13 @@
       "source": "Quelle",
       "pdfPage": "PDF-Seite",
       "annotation": "Markierung"
+    },
+    "mermaid": {
+      "source": "Mermaid-Quelltext",
+      "edit": "Diagramm bearbeiten",
+      "editHint": "Strg+Enter übernimmt, Escape verwirft.",
+      "empty": "Leeres Diagramm — zum Bearbeiten klicken.",
+      "renderFailed": "Das Diagramm konnte nicht gezeichnet werden."
     }
   },
   "settings": {

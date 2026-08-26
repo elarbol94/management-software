@@ -273,6 +273,13 @@ async function renderNode(
       return `<td style="${attrs.widthPercent ? `width:${clampNumber(attrs.widthPercent, 0, 1, 100)}%;` : ""}text-align:${["center", "right"].includes(String(attrs.alignment)) ? String(attrs.alignment) : "left"}">${await children()}</td>`;
     case "pageBreak":
       return `<div class="page-break" aria-hidden="true"></div>`;
+    case "mermaidDiagram": {
+      // The editor caches the render, so exporting needs no mermaid runtime on the
+      // server. Without a cache the source is emitted, which still carries the meaning.
+      const svg = String(attrs.svg ?? "");
+      if (svg.trim()) return `<figure class="mermaid-diagram">${svg}</figure>`;
+      return `<pre class="mermaid-source">${escapeHtml(String(attrs.code ?? ""))}</pre>`;
+    }
     case "tableOfContents": {
       const title = escapeHtml(attrs.title || "Contents");
       const maxLevel = clampNumber(attrs.maxLevel, 3, 1, 6);
@@ -534,6 +541,7 @@ export function renderDocumentMarkdown(doc: TiptapNode, settings: DocumentSettin
       case "citation": return String(node.attrs?.label ?? "");
       case "documentVariable": return settings.variables[String(node.attrs?.key ?? "")] || `{${String(node.attrs?.key ?? "variable")}}`;
       case "pageBreak": return "\n<div style=\"page-break-after: always\"></div>\n\n";
+      case "mermaidDiagram": return `\n\`\`\`mermaid\n${String(node.attrs?.code ?? "").trim()}\n\`\`\`\n\n`;
       case "commentableImage": {
         const caption = String(node.attrs?.caption ?? "").trim();
         return `![${String(node.attrs?.alt ?? "")}](${absolute(String(node.attrs?.src ?? ""))})\n${caption ? `\n*${caption}*\n` : ""}\n`;
