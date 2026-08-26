@@ -17,10 +17,10 @@ import {
 
 export function LoginForm() {
   const t = useTranslations("auth");
-  const router = useRouter();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const router = useRouter();
   const [pending, setPending] = useState(false);
 
   async function onSubmit(e: React.FormEvent) {
@@ -35,8 +35,11 @@ export function LoginForm() {
         return;
       }
 
+      // No router.refresh() here. It re-rendered the route being left while this
+      // navigation was still in flight, which cancelled it and stranded the user on
+      // /login holding a valid session. It was also redundant: the session cookie is
+      // set before this runs, so the server renders "/" as the signed-in user anyway.
       router.push("/");
-      router.refresh();
     } catch {
       setError(t("invalidCredentials"));
     } finally {

@@ -37,8 +37,10 @@ export function UserMenu({ name, email, compact = false }: { name: string; email
 
   async function handleLogout() {
     await authClient.signOut();
+    // Same reason as the login form: a refresh() alongside the push re-renders the route
+    // being left and can cancel the navigation. The session is already gone, so /login
+    // renders correctly on arrival.
     router.push("/login");
-    router.refresh();
   }
 
   return (

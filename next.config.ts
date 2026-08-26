@@ -5,6 +5,10 @@ const withNextIntl = createNextIntlPlugin();
 
 const nextConfig: NextConfig = {
   cacheComponents: true,
+  // The dev indicator sits bottom-left, over the sidebar's user menu, and its portal
+  // swallows clicks aimed at it. Hidden for end-to-end runs only; compile and runtime
+  // errors are still surfaced.
+  ...(process.env.E2E_TEST === "true" ? { devIndicators: false as const } : {}),
   output: "standalone",
   // sqlite-vec ships a native .so and @huggingface/transformers loads onnxruntime
   // bindings; both must stay out of the bundle and be required at runtime.

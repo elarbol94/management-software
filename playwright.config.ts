@@ -10,6 +10,10 @@ const webServerCommand =
 export default defineConfig({
   testDir: "./e2e",
   timeout: 60_000,
+  // The suite runs against a dev server that compiles each route on first visit, so the
+  // first assertion after a navigation can take several seconds -- a cold login lands
+  // around 9s. The 5s default made that look like a failure.
+  expect: { timeout: 25_000 },
   // Single worker: all spec files share one dev server and SQLite database,
   // and the accounting spec bootstraps the admin account the others reuse.
   workers: 1,
