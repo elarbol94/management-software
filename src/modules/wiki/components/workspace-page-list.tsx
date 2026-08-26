@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { updatePageResearchMeta, toggleFavorite } from "../research-actions";
 import type { WorkspacePage } from "../research-queries";
+import { parseTagList } from "../lib/tags";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -25,11 +26,8 @@ import {
 import { cn } from "@/lib/utils";
 const statuses = ["inbox", "working", "evergreen"] as const;
 type Status = (typeof statuses)[number];
-const tagsFor = (page: WorkspacePage) =>
-  page.tags
-    ?.split(",")
-    .map((tag) => tag.trim())
-    .filter(Boolean) ?? [];
+const tagsFor = (page: WorkspacePage) => parseTagList(page.tags);
+const tagNamesFor = (page: WorkspacePage) => tagsFor(page).map((tag) => tag.name);
 export function WorkspacePageList({
   pages: initialPages,
 }: {
@@ -51,7 +49,7 @@ export function WorkspacePageList({
   }, [initialPages]);
   const tags = useMemo(
     () =>
-      Array.from(new Set(pages.flatMap(tagsFor))).sort((a, b) =>
+      Array.from(new Set(pages.flatMap(tagNamesFor))).sort((a, b) =>
         a.localeCompare(b, locale),
       ),
     [locale, pages],
@@ -64,11 +62,11 @@ export function WorkspacePageList({
           [
             page.title,
             page.contentText,
-            page.tags ?? "",
+            tagNamesFor(page).join(" "),
             page.updatedByName,
           ].some((value) => value.toLocaleLowerCase(locale).includes(clean))) &&
         (statusFilter === "all" || page.status === statusFilter) &&
-        (tagFilter === "all" || tagsFor(page).includes(tagFilter)) &&
+        (tagFilter === "all" || tagNamesFor(page).includes(tagFilter)) &&
         (!favoritesOnly || page.favorite),
     );
   }, [favoritesOnly, locale, pages, query, statusFilter, tagFilter]);
@@ -84,7 +82,7 @@ export function WorkspacePageList({
         pageId: page.id,
         status,
         citationLocale: page.citationLocale,
-        tagNames: tagsFor(page),
+        tagNames: tagNamesFor(page),
       });
     } catch {
       setPages(previous);
@@ -305,12 +303,13 @@ export function WorkspacePageList({
                           {tagsFor(page).length > 0 && (
                             <div className="mt-2 flex flex-wrap gap-1">
                               {tagsFor(page).map((tag) => (
-                                <span
-                                  key={tag}
-                                  className="rounded-full bg-indigo-50 px-2 py-0.5 text-[10px] text-indigo-700 dark:bg-indigo-950 dark:text-indigo-200"
+                                <Link
+                                  key={tag.id}
+                                  href={`/wiki/tags/${tag.id}`}
+                                  className="rounded-full bg-indigo-50 px-2 py-0.5 text-[10px] text-indigo-700 hover:bg-indigo-100 dark:bg-indigo-950 dark:text-indigo-200 dark:hover:bg-indigo-900"
                                 >
-                                  {tag}
-                                </span>
+                                  {tag.name}
+                                </Link>
                               ))}
                             </div>
                           )}

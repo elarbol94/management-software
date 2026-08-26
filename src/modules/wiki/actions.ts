@@ -30,7 +30,7 @@ import {
 import type { TiptapNode } from "./lib/tiptap";
 import { normalizeDocumentSettings, serializeDocumentSettings } from "./lib/document-settings";
 
-function uniqueSlug(title: string): string {
+function uniqueSlug(title: string, excludePageId?: string): string {
   const base = slugify(title);
   let slug = base;
   for (let i = 2; i < 100; i++) {
@@ -39,7 +39,7 @@ function uniqueSlug(title: string): string {
       .from(wikiPages)
       .where(eq(wikiPages.slug, slug))
       .get();
-    if (!exists) return slug;
+    if (!exists || exists.id === excludePageId) return slug;
     slug = `${base}-${i}`;
   }
   throw new Error("Could not allocate a unique slug");
@@ -175,14 +175,23 @@ export async function renamePage(id: string, title: string) {
   const page = db.select().from(wikiPages).where(eq(wikiPages.id, id)).get();
   if (!page) throw new Error("Page not found");
 
+  // Keep the URL in step with the title, but remember the old slug so existing links
+  // (in other pages' content, bookmarks, chat messages) still resolve.
+  const nextSlug = uniqueSlug(cleanTitle, id);
+  const slugChanged = nextSlug !== page.slug;
+  const previousSlugs = slugChanged
+    ? [...page.previousSlugs.split(",").filter((slug) => slug && slug !== nextSlug), page.slug].join(",")
+    : page.previousSlugs;
+
   db.transaction(() => {
     db.update(wikiPages)
-      .set({ title: cleanTitle, updatedBy: user.id, updatedAt: new Date(), version: page.version + 1 })
+      .set({ title: cleanTitle, slug: nextSlug, previousSlugs, updatedBy: user.id, updatedAt: new Date(), version: page.version + 1 })
       .where(eq(wikiPages.id, id))
       .run();
   });
   syncFts(id, cleanTitle, page.contentText);
   revalidatePath("/wiki", "layout");
+  return { slug: nextSlug };
 }
 
 const saveSchema = z.object({

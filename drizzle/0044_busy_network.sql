@@ -1,0 +1,1 @@
+ALTER TABLE `wiki_pages` ADD `previous_slugs` text DEFAULT '' NOT NULL;

@@ -1,0 +1,26 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "case \"$(jq -r '.tool_input.file_path // \"\"')\" in */drizzle/*) echo 'drizzle/ is generated migration history. Change the owning schema, then run npm run db:generate.' >&2; exit 2;; esac"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "case \"$(jq -r '.tool_input.file_path // \"\"')\" in */messages/??.json) cd \"$CLAUDE_PROJECT_DIR\" && node scripts/check-message-parity.mjs 2>&1 || exit 2;; esac"
+          }
+        ]
+      }
+    ]
+  }
+}

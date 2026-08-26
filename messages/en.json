@@ -2733,7 +2733,20 @@
     "findEvidence": "Search PDF annotations…",
     "noEvidenceAvailable": "No reusable PDF annotations are available yet.",
     "loading": "Loading…",
-    "exportPage": "Export page"
+    "exportPage": "Export page",
+    "documentsDescription": "Every document in the knowledge base, in its hierarchy.",
+    "searchDocuments": "Search documents…",
+    "noSearchResults": "No matches for this search.",
+    "noDocuments": "No documents yet",
+    "noDocumentsDescription": "Create a quick note to start filling the knowledge base.",
+    "existingTags": "Existing tags",
+    "savedVersionsOnly": "Saved versions only",
+    "noSavedVersions": "No version has been saved for this page yet.",
+    "mergeTagDescription": "All documents and sources tagged \"{name}\" move to the chosen tag. \"{name}\" is removed afterwards.",
+    "mergeTagTarget": "Choose target tag",
+    "errorDescription": "This part of the wiki could not be loaded. Try again or go back to the start page.",
+    "notFoundTitle": "Not found",
+    "notFoundDescription": "This wiki page does not exist (any more). It may have been deleted, or the link is wrong."
   },
   "settings": {
     "title": "Settings",

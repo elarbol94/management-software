@@ -99,8 +99,12 @@ export function getResearchNavigation(userId: string) {
     unread: number;
     trash: number;
   };
-  const tags = db.select().from(wikiTags).orderBy(asc(wikiTags.name)).all();
+  const tags = listTags();
   return { counts, tags, tree: getPageTree() };
+}
+
+export function listTags() {
+  return db.select().from(wikiTags).orderBy(asc(wikiTags.name)).all();
 }
 
 export function listInboxPages() {
@@ -204,7 +208,7 @@ export function listSources(
     SELECT s.id, s.type, s.document_type AS documentType, s.title, s.issued_date AS issuedDate, s.reading_status AS readingStatus,
            s.doi, s.url, s.updated_at AS updatedAt,
            group_concat(DISTINCT CASE WHEN c.literal != '' THEN c.literal ELSE trim(c.given || ' ' || c.family) END) AS contributors,
-           group_concat(DISTINCT t.name) AS tags,
+           group_concat(DISTINCT t.id || ':' || t.name) AS tags,
            (SELECT count(DISTINCT ps.page_id) FROM wiki_page_sources ps WHERE ps.source_id = s.id AND ps.relation = 'citation') AS citationCount,
            (SELECT count(*) FROM attachments a WHERE a.entity_type = 'wikiSource' AND a.entity_id = s.id) AS attachmentCount
     FROM wiki_sources s
@@ -650,6 +654,9 @@ export type WorkspacePage = {
   updatedByName: string;
   tags: string | null;
   favorite: boolean;
+  parentId: string | null;
+  sortOrder: number;
+  createdAt: number;
 };
 
 export function listWorkspacePages(userId: string): WorkspacePage[] {
@@ -658,7 +665,8 @@ export function listWorkspacePages(userId: string): WorkspacePage[] {
       `
     SELECT p.id, p.title, p.slug, p.content_text AS contentText, p.status,
            p.citation_locale AS citationLocale, p.updated_at AS updatedAt,
-           u.name AS updatedByName, group_concat(DISTINCT t.name) AS tags,
+           p.parent_id AS parentId, p.sort_order AS sortOrder, p.created_at AS createdAt,
+           u.name AS updatedByName, group_concat(DISTINCT t.id || ':' || t.name) AS tags,
            EXISTS(
              SELECT 1 FROM wiki_favorites f
              WHERE f.user_id = ? AND f.entity_type = 'page' AND f.entity_id = p.id

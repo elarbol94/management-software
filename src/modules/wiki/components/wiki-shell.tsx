@@ -51,7 +51,7 @@ function PageHeaderActions({ pageId, favorite, onNewSubpage, onToggleFavorite, o
   </DropdownMenu>;
 }
 
-export function WikiShell({ page, backlinks, allPages, sources, research, comments, currentUserId, users, attachments, documentTemplates, typography, editableTypography, typographyTemplates, tasks, deadlines, focusTaskId, focusDeadlineId, proposalData, meta }: {
+export function WikiShell({ page, backlinks, allPages, sources, research, comments, currentUserId, users, attachments, documentTemplates, typography, editableTypography, typographyTemplates, tasks, deadlines, focusTaskId, focusDeadlineId, proposalData, allTags, meta }: {
   page: { id: string; title: string; slug: string; contentJson: string; status: "inbox" | "working" | "evergreen"; citationLocale: string; proofingLanguage: "de-DE" | "en-US"; version: number; contentVersion: number; documentMode: boolean; documentSettingsJson: string; createdBy: string };
   backlinks: PageRef[]; allPages: PageRef[]; sources: SourceRef[];
   research: { tags: Array<{ id: string; name: string; color: string }>; supportingSources: Array<{ id: string; title: string; issuedDate: string; relation: string }>; favorite: boolean; revisions: Array<{ id: string; version: number; contentVersion: number; contentHash: string; label: string | null; kind: string; createdAt: Date; createdByName: string; contentJson: string }> };
@@ -66,21 +66,31 @@ export function WikiShell({ page, backlinks, allPages, sources, research, commen
   focusTaskId?: string;
   focusDeadlineId?: string;
   proposalData: ProposalWorkspaceData;
+  allTags: Array<{ id: string; name: string }>;
   meta: { updatedAt: number; updatedByName: string } | null;
 }) {
   const t = useTranslations("wiki"); const common = useTranslations("common"); const format = useFormatter(); const locale = useLocale(); const router = useRouter();
   const { isFocused } = useFocusMode();
   const [status, setStatus] = useState(page.status); const [citationLocale, setCitationLocale] = useState(page.citationLocale);
-  const [tags, setTags] = useState(research.tags.map((tag) => tag.name).join(", ")); const [metaSaved, setMetaSaved] = useState(false);
+  const [tags, setTags] = useState(research.tags.map((tag) => tag.name).join(", "));
+  const tagNames = tags.split(",").map((tag) => tag.trim()).filter(Boolean);
+  // ponytail: clicking existing tags is what stops typo duplicates; the field stays free text for new ones.
+  function toggleTag(name: string) {
+    const next = tagNames.includes(name) ? tagNames.filter((tag) => tag !== name) : [...tagNames, name];
+    setTags(next.join(", "));
+    void saveMeta(status, citationLocale, next.join(", "));
+  } const [metaSaved, setMetaSaved] = useState(false);
   const [sourceToLink, setSourceToLink] = useState("");
   const [supportingSourceOpen, setSupportingSourceOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [savedRevisionsOnly, setSavedRevisionsOnly] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [supportingSourcesCollapsed, setSupportingSourcesCollapsed] = useState(true);
   const [selectedRevisionId, setSelectedRevisionId] = useState(research.revisions[0]?.id ?? "");
   const editorActions = useRef<WikiEditorHandle | null>(null);
   const attachmentRef = useRef<AttachmentPanelHandle>(null); const supportingSourceSectionRef = useRef<HTMLElement>(null); const supportingSourceTriggerRef = useRef<HTMLButtonElement>(null);
   const selectedRevision = research.revisions.find((revision) => revision.id === selectedRevisionId) ?? research.revisions[0];
+  const visibleRevisions = savedRevisionsOnly ? research.revisions.filter((revision) => revision.kind !== "autosave") : research.revisions;
   const currentText = extractText(parseStoredDocument(page.contentJson));
   const revisionText = selectedRevision ? extractText(parseStoredDocument(selectedRevision.contentJson)) : "";
 
@@ -108,12 +118,12 @@ export function WikiShell({ page, backlinks, allPages, sources, research, commen
     }, 0);
   }
 
-  async function saveMeta(nextStatus = status, nextLocale = citationLocale) {
-    await updatePageResearchMeta({ pageId: page.id, status: nextStatus, citationLocale: nextLocale as "de-DE" | "en-US", tagNames: tags.split(",").map((tag) => tag.trim()).filter(Boolean) });
+  async function saveMeta(nextStatus = status, nextLocale = citationLocale, nextTags = tags) {
+    await updatePageResearchMeta({ pageId: page.id, status: nextStatus, citationLocale: nextLocale as "de-DE" | "en-US", tagNames: nextTags.split(",").map((tag) => tag.trim()).filter(Boolean) });
     setMetaSaved(true); setTimeout(() => setMetaSaved(false), 1600); router.refresh();
   }
 
-  async function rename() { const title = prompt(t("pageTitle"), page.title); if (!title?.trim()) return; await renamePage(page.id, title.trim()); router.refresh(); }
+  async function rename() { const title = prompt(t("pageTitle"), page.title); if (!title?.trim()) return; const renamed = await renamePage(page.id, title.trim()); if (renamed.slug !== page.slug) router.replace(`/wiki/pages/${encodeURIComponent(renamed.slug)}`); router.refresh(); }
   async function remove() { if (!confirm(common("confirmDeleteTitle"))) return; await deletePage(page.id); router.push("/wiki/inbox"); router.refresh(); }
 
   return <div className={isFocused ? "w-full max-w-none p-4 md:p-7" : "mx-auto max-w-[112rem] p-4 md:p-7"}>
@@ -135,6 +145,7 @@ export function WikiShell({ page, backlinks, allPages, sources, research, commen
             <Select value={citationLocale} onValueChange={(value) => { if (!value) return; setCitationLocale(value); void saveMeta(status, value); }}><SelectTrigger aria-label={t("citationLanguage")} className="h-8 w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="de-DE">IEEE · DE</SelectItem><SelectItem value="en-US">IEEE · EN</SelectItem></SelectContent></Select>
           </div>
           <div className="flex items-center gap-1"><Input value={tags} onChange={(event) => setTags(event.target.value)} onBlur={() => void saveMeta()} placeholder={t("tagsHint")} className="h-8 min-w-0 text-xs" />{metaSaved && <Check className="size-4 shrink-0 text-emerald-600" />}</div>
+          {allTags.length > 0 && <div className="flex flex-wrap gap-1" aria-label={t("existingTags")}>{allTags.map((tag) => { const active = tagNames.includes(tag.name); return <button key={tag.id} type="button" aria-pressed={active} onClick={() => toggleTag(tag.name)} className={`rounded-full px-2 py-0.5 text-[10px] transition-colors ${active ? "bg-indigo-500 text-white" : "bg-muted text-muted-foreground hover:bg-indigo-50 hover:text-indigo-700 dark:hover:bg-indigo-950 dark:hover:text-indigo-200"}`}>{tag.name}</button>; })}</div>}
         </section>
         <ContextPanel
           subjectType="wikiPage"
@@ -156,7 +167,9 @@ export function WikiShell({ page, backlinks, allPages, sources, research, commen
         <DialogHeader><DialogTitle>{t("history")}</DialogTitle><DialogDescription>{t("historyComparisonDescription")}</DialogDescription></DialogHeader>
         {research.revisions.length ? <div className="grid min-h-0 gap-4 md:grid-cols-[15rem_minmax(0,1fr)]">
           <nav className="max-h-[65dvh] space-y-1 overflow-y-auto border-r pr-3" aria-label={t("history")}>
-            {research.revisions.map((revision) => <button key={revision.id} type="button" onClick={() => setSelectedRevisionId(revision.id)} className={`w-full rounded-md px-2 py-2 text-left text-xs ${selectedRevision?.id === revision.id ? "bg-accent" : "hover:bg-accent/60"}`}><span className="font-medium">v{revision.contentVersion}</span> · {revision.label || t(`revisionKinds.${revision.kind}`)}<span className="mt-0.5 block text-muted-foreground">{revision.createdByName} · {format.dateTime(new Date(revision.createdAt), { dateStyle: "medium", timeStyle: "short" })}</span></button>)}
+            <Button type="button" variant={savedRevisionsOnly ? "secondary" : "outline"} size="xs" aria-pressed={savedRevisionsOnly} className="mb-2 w-full" onClick={() => setSavedRevisionsOnly((value) => !value)}><BookMarked className="size-3" />{t("savedVersionsOnly")}</Button>
+            {visibleRevisions.length === 0 && <p className="px-2 py-3 text-xs text-muted-foreground">{t("noSavedVersions")}</p>}
+            {visibleRevisions.map((revision) => <button key={revision.id} type="button" onClick={() => setSelectedRevisionId(revision.id)} className={`w-full rounded-md px-2 py-2 text-left text-xs ${selectedRevision?.id === revision.id ? "bg-accent" : "hover:bg-accent/60"}`}><span className="font-medium">v{revision.contentVersion}</span> · {revision.label || t(`revisionKinds.${revision.kind}`)}<span className="mt-0.5 block text-muted-foreground">{revision.createdByName} · {format.dateTime(new Date(revision.createdAt), { dateStyle: "medium", timeStyle: "short" })}</span></button>)}
           </nav>
           <RevisionDiffView oldText={revisionText} currentText={currentText} oldTitle={t("selectedVersion", { version: selectedRevision?.version ?? 0 })} currentTitle={t("currentVersion")} />
         </div> : <p className="py-12 text-center text-sm text-muted-foreground">{t("noHistory")}</p>}

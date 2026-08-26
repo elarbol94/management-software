@@ -46,6 +46,17 @@ export function getPageBySlug(slug: string) {
     .get();
 }
 
+// Renaming a page moves its slug; the old one stays listed so links keep working.
+export function getPageByPreviousSlug(slug: string) {
+  // Slugs only ever contain [a-z0-9-]; anything else would smuggle LIKE wildcards into the lookup.
+  if (!/^[a-z0-9-]+$/.test(slug)) return undefined;
+  return sqlite
+    .prepare(
+      "SELECT id, slug FROM wiki_pages WHERE deleted_at IS NULL AND (',' || previous_slugs || ',') LIKE ? LIMIT 1",
+    )
+    .get(`%,${slug},%`) as { id: string; slug: string } | undefined;
+}
+
 export function getFirstPage() {
   return db
     .select()

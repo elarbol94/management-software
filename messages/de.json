@@ -2735,7 +2735,20 @@
     "findEvidence": "PDF-Markierungen durchsuchen…",
     "noEvidenceAvailable": "Noch keine verwendbaren PDF-Markierungen vorhanden.",
     "loading": "Wird geladen…",
-    "exportPage": "Seite exportieren"
+    "exportPage": "Seite exportieren",
+    "documentsDescription": "Alle Dokumente der Wissensbasis, hierarchisch geordnet.",
+    "searchDocuments": "Dokumente durchsuchen…",
+    "noSearchResults": "Keine Treffer für diese Suche.",
+    "noDocuments": "Noch keine Dokumente",
+    "noDocumentsDescription": "Lege eine schnelle Notiz an, um die Wissensbasis zu füllen.",
+    "existingTags": "Vorhandene Schlagwörter",
+    "savedVersionsOnly": "Nur gemerkte Versionen",
+    "noSavedVersions": "Für diese Seite wurde noch keine Version gemerkt.",
+    "mergeTagDescription": "Alle Dokumente und Quellen von „{name}\" werden dem gewählten Schlagwort zugeordnet. „{name}\" wird danach entfernt.",
+    "mergeTagTarget": "Ziel-Schlagwort wählen",
+    "errorDescription": "Dieser Bereich des Wikis konnte nicht geladen werden. Versuche es erneut oder gehe zurück zur Startseite.",
+    "notFoundTitle": "Nicht gefunden",
+    "notFoundDescription": "Diese Wiki-Seite gibt es nicht (mehr). Vielleicht wurde sie gelöscht oder der Link ist falsch."
   },
   "settings": {
     "title": "Einstellungen",

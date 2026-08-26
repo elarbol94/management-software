@@ -50,6 +50,8 @@ export const wikiPages = sqliteTable(
       .$defaultFn(() => createId()),
     title: text("title").notNull(),
     slug: text("slug").notNull().unique(),
+    // Comma-separated slugs this page used to live at, so old links keep resolving.
+    previousSlugs: text("previous_slugs").notNull().default(""),
     parentId: text("parent_id").references((): AnySQLiteColumn => wikiPages.id),
     sortOrder: integer("sort_order").notNull().default(0),
     contentJson: text("content_json").notNull().default(""),
