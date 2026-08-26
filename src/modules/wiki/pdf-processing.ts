@@ -6,10 +6,11 @@ import path from "node:path";
 import { execFile } from "node:child_process";
 import { and, eq } from "drizzle-orm";
 import { db, sqlite } from "@/db";
-import { wikiPdfDocuments, wikiPdfPages } from "@/db/schema";
+import { wikiPdfDocuments, wikiPdfPages, wikiSourceContributors, wikiSources } from "@/db/schema";
 import { getAttachmentAbsolutePath, UPLOADS_PATH } from "@/lib/files";
 import { chooseExtractionMethod, extractPdfMetadataSuggestions } from "./lib/pdf-evidence";
 import { openPdfDocument, pdfMetadataAsInfo } from "./lib/pdf-node";
+import { fetchCrossrefWork } from "./lib/crossref";
 
 type PdfJob = {
   id: string;
@@ -168,20 +169,88 @@ async function processClaimedJob(job: PdfJob) {
       });
     }
 
+    const suggestions = extractPdfMetadataSuggestions(info, firstPageTexts.join("\n"), job.metadataJson);
     db.update(wikiPdfDocuments).set({
       status: "ready",
       progressPage: pageCount,
-      metadataJson: JSON.stringify(extractPdfMetadataSuggestions(info, firstPageTexts.join("\n"), job.metadataJson)),
+      metadataJson: JSON.stringify(suggestions),
       lockedAt: null,
       nextAttemptAt: null,
       processedAt: new Date(),
       updatedAt: new Date(),
     }).where(eq(wikiPdfDocuments.id, job.id)).run();
+    if (suggestions.suggestedDoi) {
+      // Enrichment is a bonus: Crossref being unreachable must not fail a processed PDF.
+      await enrichSourceFromDoi(job.sourceId, suggestions.suggestedDoi).catch((error: unknown) => {
+        console.warn(JSON.stringify({ event: "pdf_source_enrich_failed", sourceId: job.sourceId, reason: error instanceof Error ? error.message : "unknown" }));
+      });
+    }
     console.info(JSON.stringify({ event: "pdf_processed", documentId: job.id, pageCount, durationMs: Date.now() - startedAt }));
   } finally {
     await closePdf?.();
     await fs.rm(temporary, { recursive: true, force: true });
   }
+}
+
+/**
+ * Fills in a source that was auto-created from a dropped PDF, using the DOI the
+ * extractor found on its first pages. Only ever touches an untouched stub — a source
+ * that still has no DOI, no contributors and no manual edit — so a record somebody
+ * has already curated is never rewritten by a background job.
+ */
+async function enrichSourceFromDoi(sourceId: string, doi: string) {
+  const source = db.select().from(wikiSources).where(eq(wikiSources.id, sourceId)).get();
+  if (!source || source.deletedAt) return;
+  if (source.doi || source.version > 1) return;
+  const existingContributors = db
+    .select({ id: wikiSourceContributors.id })
+    .from(wikiSourceContributors)
+    .where(eq(wikiSourceContributors.sourceId, sourceId))
+    .all();
+  if (existingContributors.length) return;
+
+  const work = await fetchCrossrefWork(doi);
+  if (!work.title) return;
+
+  db.transaction(() => {
+    // Empty columns only: the filename-derived title is the one value worth replacing.
+    const keep = (current: string, next: string) => (current.trim() ? current : next);
+    db.update(wikiSources).set({
+      type: work.type,
+      title: work.title,
+      subtitle: keep(source.subtitle, work.subtitle),
+      issuedDate: keep(source.issuedDate, work.issuedDate),
+      containerTitle: keep(source.containerTitle, work.containerTitle),
+      publisher: keep(source.publisher, work.publisher),
+      volume: keep(source.volume, work.volume),
+      issue: keep(source.issue, work.issue),
+      pages: keep(source.pages, work.pages),
+      doi: work.doi,
+      url: keep(source.url, work.url),
+      updatedAt: new Date(),
+    }).where(eq(wikiSources.id, sourceId)).run();
+
+    if (work.contributors.length) {
+      db.insert(wikiSourceContributors).values(work.contributors.map((person, index) => ({
+        sourceId,
+        role: person.role,
+        given: person.given,
+        family: person.family,
+        literal: person.literal,
+        sortOrder: index,
+      }))).run();
+    }
+
+    // wiki_sources_fts is maintained by hand, so the new title has to be reindexed here.
+    const contributors = work.contributors
+      .map((person) => person.literal || `${person.given} ${person.family}`.trim())
+      .join(" ");
+    const metadata = [work.type, work.issuedDate, work.containerTitle, work.publisher, work.doi, work.url].join(" ");
+    sqlite.prepare("DELETE FROM wiki_sources_fts WHERE source_id = ?").run(sourceId);
+    sqlite.prepare("INSERT INTO wiki_sources_fts (source_id, title, contributors, metadata, abstract, notes) VALUES (?, ?, ?, ?, ?, ?)")
+      .run(sourceId, work.title, contributors, metadata, source.abstract, source.notes);
+  });
+  console.info(JSON.stringify({ event: "pdf_source_enriched", sourceId, doi: work.doi }));
 }
 
 let running = false;

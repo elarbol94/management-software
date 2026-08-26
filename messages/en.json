@@ -1612,6 +1612,13 @@
     "documentTypePlaceholder": "e.g. funding, paper, report",
     "readingStatus": "Reading status",
     "citationLanguage": "Citation language",
+    "citationStyle": "Citation style",
+    "citationStyles": {
+      "ieee": "IEEE",
+      "apa": "APA",
+      "vancouver": "Vancouver",
+      "harvard1": "Harvard"
+    },
     "contributors": "Contributors",
     "year": "Year",
     "evidence": "Evidence",
@@ -2585,6 +2592,7 @@
     "lookupMetadata": "Look up metadata",
     "lookup": "Look up",
     "reviewMetadata": "Review and correct the retrieved metadata before saving.",
+    "replaceLookupConfirm": "Look up new metadata? The reviewed values in the form will be discarded.",
     "importLibrary": "Import",
     "reviewImport": "Review import",
     "importPreview": "{count} records found in {name}.",

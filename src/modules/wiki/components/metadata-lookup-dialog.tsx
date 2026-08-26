@@ -50,7 +50,6 @@ export function MetadataLookupDialog({
     const request = ++requestId.current;
     setPending(true);
     setError("");
-    setResult(null);
     try {
       const response = await fetch("/api/wiki/metadata", {
         method: "POST",
@@ -110,7 +109,10 @@ export function MetadataLookupDialog({
           className="flex gap-2"
           onSubmit={(event) => {
             event.preventDefault();
-            if (value.trim() && !pending) void lookup();
+            if (!value.trim() || pending) return;
+            // A reviewed form is remounted by the new result, so ask before discarding edits.
+            if (result && !window.confirm(t("replaceLookupConfirm"))) return;
+            void lookup();
           }}
         >
           <Select

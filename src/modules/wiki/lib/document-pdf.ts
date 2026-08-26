@@ -3,8 +3,7 @@ import { eq } from "drizzle-orm";
 import { db } from "@/db";
 import { wikiPages, wikiSvgAssets } from "@/db/schema";
 import { getAttachment, getAttachmentAbsolutePath } from "@/lib/files";
-import { formatBibliographyEntry } from "./citations";
-import { formatIeeeBibliography } from "./citations.server";
+import { formatBibliography } from "./citations";
 import { localizeDocumentSettings, parseDocumentSettings } from "./document-settings";
 import { renderDocumentHtml, type RenderedDocument } from "./document-renderer";
 import { parseStoredDocument } from "./tiptap";
@@ -48,7 +47,11 @@ export async function renderStoredWikiDocument(pageId: string, typography: WikiT
     page.citationLocale,
   );
   const doc = parseStoredDocument(page.contentJson);
-  const references = getCitationSourcesForPage(page.id).map((source, index) => `[${index + 1}] ${formatIeeeBibliography(source, page.citationLocale) || formatBibliographyEntry(source, page.citationLocale)}`);
+  const references = formatBibliography(
+    getCitationSourcesForPage(page.id, page.citationLocale, page.citationStyle),
+    page.citationLocale,
+    page.citationStyle,
+  ).map((entry) => entry.text);
   const rendered = await renderDocumentHtml({
     title: page.title,
     doc,

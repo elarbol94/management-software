@@ -76,7 +76,7 @@ import { useTaskCreator } from "@/modules/tasks/components/task-create-provider"
 import { useDeadlineCreator } from "@/modules/tasks/components/deadline-create-provider";
 import { localDateValue } from "@/modules/tasks/deadline-utils";
 import type { ContextDeadlineMarker, ContextTaskMarker } from "@/modules/tasks/types";
-import { formatBibliography, formatIeeeCitation, formatInlineCitation, type CitationSource } from "../lib/citations";
+import { formatBibliography, formatIeeeCitation, formatInlineCitation, isNumericCitationStyle, type CitationSource, type CitationStyle } from "../lib/citations";
 import { NewSourceDialog } from "./new-source-dialog";
 import { SvgGraphicsPanel } from "./svg-graphics-panel";
 import type { ProposalWorkspaceData } from "../lib/proposal";
@@ -192,6 +192,7 @@ type WikiEditorProps = {
   sources: SourceRef[];
   users: Array<{ id: string; name: string; markColor: UserMarkColor }>;
   citationLocale: string;
+  citationStyle: CitationStyle;
   comments: CommentThread[];
   currentUserId: string;
   contextTasks: ContextTaskMarker[];
@@ -251,7 +252,12 @@ function citationNumberForSource(editor: Editor, sourceId: string) {
   return order.get(sourceId) ?? order.size + 1;
 }
 
-function normalizeIeeeCitationLabels(editor: Editor) {
+function normalizeCitationLabels(
+  editor: Editor,
+  sources: CitationSource[],
+  style: CitationStyle,
+  locale: string,
+) {
   const order = new Map<string, number>();
   const updates: Array<{ position: number; attrs: Record<string, unknown> }> = [];
   editor.state.doc.descendants((node, position) => {
@@ -260,7 +266,15 @@ function normalizeIeeeCitationLabels(editor: Editor) {
     for (const item of node.attrs.items as Array<{ sourceId?: unknown; locator?: unknown }>) {
       if (typeof item.sourceId !== "string") continue;
       if (!order.has(item.sourceId)) order.set(item.sourceId, order.size + 1);
-      labels.push(formatIeeeCitation(order.get(item.sourceId)!, typeof item.locator === "string" ? item.locator : undefined));
+      const locator = typeof item.locator === "string" ? item.locator : undefined;
+      if (isNumericCitationStyle(style)) {
+        labels.push(formatIeeeCitation(order.get(item.sourceId)!, locator));
+        continue;
+      }
+      const source = sources.find((candidate) => candidate.id === item.sourceId);
+      labels.push(source
+        ? formatInlineCitation(source, locator, locale, order.get(item.sourceId)!, style)
+        : formatIeeeCitation(order.get(item.sourceId)!, locator));
     }
     const label = labels.join(", ");
     if (label && node.attrs.label !== label) updates.push({ position, attrs: { ...node.attrs, label } });
@@ -684,6 +698,7 @@ export function WikiEditor({
   sources,
   users,
   citationLocale,
+  citationStyle,
   comments,
   contextTasks,
   contextDeadlines,
@@ -1118,10 +1133,10 @@ export function WikiEditor({
     onCreate({ editor }) {
       liveEditor.current = editor;
       backfillCommentNodeIds(editor);
-      if (!normalizeIeeeCitationLabels(editor)) updateDerivedState(editor);
+      if (!normalizeCitationLabels(editor, sources, citationStyle, citationLocale)) updateDerivedState(editor);
     },
     onUpdate({ editor }) {
-      if (normalizeIeeeCitationLabels(editor)) return;
+      if (normalizeCitationLabels(editor, sources, citationStyle, citationLocale)) return;
       if (conflictBlocked.current) setSaveState("conflict");
       else setSaveState("unsaved");
       refreshToolbarState();
@@ -1884,6 +1899,7 @@ export function WikiEditor({
       return source ? [source] : [];
     }),
     citationLocale,
+    citationStyle,
   );
   const bibliographyVisible = documentMode && documentSettings.bibliography.enabled && bibliography.length > 0;
   function bibliographyHref(source: SourceRef) {
@@ -1974,8 +1990,7 @@ export function WikiEditor({
     setImageUploading(true); setImageError("");
     try {
       const attachment = await uploadInlineAttachment(pageId, file);
-      toolbarChain().insertContent({ type: "commentableImage", attrs: imageNodeAttrs(attachment) }).run();
-      setInlineImagePickerOpen(false);
+      insertImageWithCaption(attachment);
       router.refresh();
     } catch (error) {
       setImageError(error instanceof Error ? error.message : t("uploadFailed"));
@@ -1983,9 +1998,35 @@ export function WikiEditor({
       setImageUploading(false);
     }
   }
-  function insertExistingImage(attachment: ExistingImageAttachment) {
-    toolbarChain().insertContent({ type: "commentableImage", attrs: imageNodeAttrs(attachment) }).run();
+  /**
+   * Selects a just-inserted image so the caption dialog, which acts on the current
+   * NodeSelection, targets it.
+   */
+  function selectImageNode(nodeId: string) {
+    let position = -1;
+    activeEditor.state.doc.descendants((node, pos) => {
+      if (position >= 0) return false;
+      if (node.type.name === "commentableImage" && node.attrs.nodeId === nodeId) position = pos;
+      return undefined;
+    });
+    if (position < 0) return false;
+    activeEditor.chain().focus().setNodeSelection(position).run();
+    return true;
+  }
+
+  /**
+   * Inserts an image and asks for its caption straight away. The caption otherwise
+   * defaults to the file name, which is almost never what belongs under a figure.
+   */
+  function insertImageWithCaption(attachment: UploadedAttachment) {
+    const attrs = imageNodeAttrs(attachment);
+    toolbarChain().insertContent({ type: "commentableImage", attrs }).run();
     setInlineImagePickerOpen(false);
+    if (selectImageNode(String(attrs.nodeId))) openImageDescription();
+  }
+
+  function insertExistingImage(attachment: ExistingImageAttachment) {
+    insertImageWithCaption(attachment);
   }
   async function submitComment() {
     if (!pendingAnchor || !commentBody.trim()) return;

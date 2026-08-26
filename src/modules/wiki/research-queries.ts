@@ -21,7 +21,8 @@ import {
   wikiTags,
 } from "@/db/schema";
 import { getPageTree } from "./queries";
-import type { CitationSource, Contributor } from "./lib/citations";
+import { buildFtsQuery } from "./lib/tiptap";
+import type { CitationSource, CitationStyle, Contributor } from "./lib/citations";
 import { decorateCitationSource } from "./lib/citations.server";
 import { resolveStoredUserMarkColor } from "@/lib/user-mark-colors.server";
 import { measureServerOperation } from "@/lib/performance-server";
@@ -180,11 +181,24 @@ export function listSources(
   const where = ["s.deleted_at IS NULL"];
   const params: Array<string | number> = [];
   if (options.query?.trim()) {
-    where.push(
-      "(s.title LIKE ? OR s.doi LIKE ? OR s.isbn LIKE ? OR EXISTS (SELECT 1 FROM wiki_source_contributors c2 WHERE c2.source_id = s.id AND (c2.family LIKE ? OR c2.literal LIKE ?)))",
-    );
+    // The library list used to search titles and identifiers with LIKE only, so a word
+    // that lived in an abstract or in notes was findable from the sidebar search and
+    // returned nothing here. Search the same FTS index the sidebar uses, and keep LIKE
+    // alongside it for partial identifiers, which prefix-matching alone would miss.
     const like = `%${options.query.trim()}%`;
+    const fts = buildFtsQuery(options.query);
+    const clauses = [
+      "s.title LIKE ?",
+      "s.doi LIKE ?",
+      "s.isbn LIKE ?",
+      "EXISTS (SELECT 1 FROM wiki_source_contributors c2 WHERE c2.source_id = s.id AND (c2.family LIKE ? OR c2.literal LIKE ?))",
+    ];
     params.push(like, like, like, like, like);
+    if (fts) {
+      clauses.push("s.id IN (SELECT source_id FROM wiki_sources_fts WHERE wiki_sources_fts MATCH ?)");
+      params.push(fts);
+    }
+    where.push(`(${clauses.join(" OR ")})`);
   }
   if (options.status) {
     where.push("s.reading_status = ?");
@@ -300,7 +314,7 @@ export function getSourceById(id: string) {
   return { source, contributors, tags, pages, revisions };
 }
 
-export function getCitationSourcesForPage(pageId: string): CitationSource[] {
+export function getCitationSourcesForPage(pageId: string, locale = "en-US", style: CitationStyle = "ieee"): CitationSource[] {
   const pageContent = db.select({ contentJson: wikiPages.contentJson }).from(wikiPages).where(eq(wikiPages.id, pageId)).get()?.contentJson ?? "";
   const citationOrder: string[] = [];
   try {
@@ -351,16 +365,16 @@ export function getCitationSourcesForPage(pageId: string): CitationSource[] {
     .where(inArray(wikiPdfDocuments.sourceId, ids))
     .orderBy(desc(wikiPdfDocuments.version))
     .all();
-  return rows.map((source) => ({
+  return rows.map((source) => decorateCitationSource({
     ...source,
     contributors: contributors.filter(
       (person) => person.sourceId === source.id,
     ),
     pdfDocumentId: documents.find((document) => document.sourceId === source.id)?.id,
-  }));
+  }, locale, style));
 }
 
-export function listCitationSources(locale = "en-US", limit = 500): CitationSource[] {
+export function listCitationSources(locale = "en-US", limit = 500, style: CitationStyle = "ieee"): CitationSource[] {
   const rows = db
     .select()
     .from(wikiSources)
@@ -385,7 +399,7 @@ export function listCitationSources(locale = "en-US", limit = 500): CitationSour
     ...source,
     contributors: contributors.filter((person) => person.sourceId === source.id),
     pdfDocumentId: documents.find((document) => document.sourceId === source.id)?.id,
-  }, locale));
+  }, locale, style));
 }
 
 export function getPageResearchMeta(pageId: string, userId: string) {

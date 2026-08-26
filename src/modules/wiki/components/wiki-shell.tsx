@@ -7,7 +7,7 @@ import { useFormatter, useLocale, useTranslations } from "next-intl";
 import { ArrowLeft, BookMarked, Check, ChevronDown, Clock3, Download, Eye, FileText, History, Link2, MoreHorizontal, PanelRightClose, PanelRightOpen, Plus, Star, Trash2, X } from "lucide-react";
 import { createPage, deletePage, renamePage } from "../actions";
 import { createPageCheckpoint, linkSupportingSource, restorePageRevision, toggleFavorite, unlinkSupportingSource, updatePageResearchMeta } from "../research-actions";
-import type { CitationSource } from "../lib/citations";
+import { CITATION_STYLES, isCitationStyle, type CitationSource, type CitationStyle } from "../lib/citations";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -52,7 +52,7 @@ function PageHeaderActions({ pageId, favorite, onNewSubpage, onToggleFavorite, o
 }
 
 export function WikiShell({ page, backlinks, allPages, sources, research, comments, currentUserId, users, attachments, documentTemplates, typography, editableTypography, typographyTemplates, tasks, deadlines, focusTaskId, focusDeadlineId, proposalData, allTags, meta }: {
-  page: { id: string; title: string; slug: string; contentJson: string; status: "inbox" | "working" | "evergreen"; citationLocale: string; proofingLanguage: "de-DE" | "en-US"; version: number; contentVersion: number; documentMode: boolean; documentSettingsJson: string; createdBy: string };
+  page: { id: string; title: string; slug: string; contentJson: string; status: "inbox" | "working" | "evergreen"; citationLocale: string; citationStyle: CitationStyle; proofingLanguage: "de-DE" | "en-US"; version: number; contentVersion: number; documentMode: boolean; documentSettingsJson: string; createdBy: string };
   backlinks: PageRef[]; allPages: PageRef[]; sources: SourceRef[];
   research: { tags: Array<{ id: string; name: string; color: string }>; supportingSources: Array<{ id: string; title: string; issuedDate: string; relation: string }>; favorite: boolean; revisions: Array<{ id: string; version: number; contentVersion: number; contentHash: string; label: string | null; kind: string; createdAt: Date; createdByName: string; contentJson: string }> };
   comments: CommentThread[]; currentUserId: string; users: Array<{ id: string; name: string; markColor: UserMarkColor }>;
@@ -72,6 +72,7 @@ export function WikiShell({ page, backlinks, allPages, sources, research, commen
   const t = useTranslations("wiki"); const common = useTranslations("common"); const format = useFormatter(); const locale = useLocale(); const router = useRouter();
   const { isFocused } = useFocusMode();
   const [status, setStatus] = useState(page.status); const [citationLocale, setCitationLocale] = useState(page.citationLocale);
+  const [citationStyle, setCitationStyle] = useState<CitationStyle>(page.citationStyle);
   const [tags, setTags] = useState(research.tags.map((tag) => tag.name).join(", "));
   const tagNames = tags.split(",").map((tag) => tag.trim()).filter(Boolean);
   // ponytail: clicking existing tags is what stops typo duplicates; the field stays free text for new ones.
@@ -118,8 +119,8 @@ export function WikiShell({ page, backlinks, allPages, sources, research, commen
     }, 0);
   }
 
-  async function saveMeta(nextStatus = status, nextLocale = citationLocale, nextTags = tags) {
-    await updatePageResearchMeta({ pageId: page.id, status: nextStatus, citationLocale: nextLocale as "de-DE" | "en-US", tagNames: nextTags.split(",").map((tag) => tag.trim()).filter(Boolean) });
+  async function saveMeta(nextStatus = status, nextLocale = citationLocale, nextTags = tags, nextStyle = citationStyle) {
+    await updatePageResearchMeta({ pageId: page.id, status: nextStatus, citationLocale: nextLocale as "de-DE" | "en-US", citationStyle: nextStyle, tagNames: nextTags.split(",").map((tag) => tag.trim()).filter(Boolean) });
     setMetaSaved(true); setTimeout(() => setMetaSaved(false), 1600); router.refresh();
   }
 
@@ -134,7 +135,7 @@ export function WikiShell({ page, backlinks, allPages, sources, research, commen
 
     <div className={isFocused || !detailsOpen ? "w-full" : "grid gap-7 xl:grid-cols-[minmax(0,1fr)_17rem]"}>
       <section className="min-w-0">
-        <WikiEditor key={page.id} actionsRef={editorActions} focused={isFocused} pageId={page.id} pageTitle={page.title} pageSlug={page.slug} pageVersion={page.version} pageContentVersion={page.contentVersion} initialContent={page.contentJson} initialProofingLanguage={page.proofingLanguage} initialDocumentMode={page.documentMode} initialDocumentSettings={page.documentSettingsJson} initialTypography={typography} editableTypography={editableTypography} typographyTemplates={typographyTemplates} isPrimaryAuthor={page.createdBy === currentUserId} documentTemplates={documentTemplates} allPages={allPages} sources={sources} users={users} citationLocale={citationLocale} comments={comments} contextTasks={tasks} contextDeadlines={deadlines} focusTaskId={focusTaskId} focusDeadlineId={focusDeadlineId} proposalData={proposalData} currentUserId={currentUserId} pageActions={{ addAttachment: openAttachmentPicker, linkSupportingSource: openSupportingSourcePicker }} />
+        <WikiEditor key={page.id} actionsRef={editorActions} focused={isFocused} pageId={page.id} pageTitle={page.title} pageSlug={page.slug} pageVersion={page.version} pageContentVersion={page.contentVersion} initialContent={page.contentJson} initialProofingLanguage={page.proofingLanguage} initialDocumentMode={page.documentMode} initialDocumentSettings={page.documentSettingsJson} initialTypography={typography} editableTypography={editableTypography} typographyTemplates={typographyTemplates} isPrimaryAuthor={page.createdBy === currentUserId} documentTemplates={documentTemplates} allPages={allPages} sources={sources} users={users} citationLocale={citationLocale} citationStyle={citationStyle} comments={comments} contextTasks={tasks} contextDeadlines={deadlines} focusTaskId={focusTaskId} focusDeadlineId={focusDeadlineId} proposalData={proposalData} currentUserId={currentUserId} pageActions={{ addAttachment: openAttachmentPicker, linkSupportingSource: openSupportingSourcePicker }} />
         {!isFocused && backlinks.length > 0 && <section className="mt-8 border-t pt-5"><h2 className="mb-3 flex items-center gap-2 text-sm font-medium"><Link2 className="size-4 text-indigo-500" />{t("backlinks")}</h2><div className="flex flex-wrap gap-2">{backlinks.map((item) => <Link key={item.id} href={`/wiki/pages/${item.slug}`} className="rounded-md border px-2 py-1 text-sm hover:bg-accent">{item.title}</Link>)}</div></section>}
       </section>
 
@@ -142,7 +143,8 @@ export function WikiShell({ page, backlinks, allPages, sources, research, commen
         <section data-testid="note-metadata-controls" className="space-y-2">
           <div className="grid grid-cols-2 gap-2">
             <Select value={status} onValueChange={(value) => { if (!value) return; const next = value as typeof status; setStatus(next); void saveMeta(next, citationLocale); }}><SelectTrigger aria-label={t("allPageStatuses")} className="h-8 w-full"><SelectValue /></SelectTrigger><SelectContent>{["inbox","working","evergreen"].map((item) => <SelectItem key={item} value={item}>{t(`pageStatuses.${item}`)}</SelectItem>)}</SelectContent></Select>
-            <Select value={citationLocale} onValueChange={(value) => { if (!value) return; setCitationLocale(value); void saveMeta(status, value); }}><SelectTrigger aria-label={t("citationLanguage")} className="h-8 w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="de-DE">IEEE · DE</SelectItem><SelectItem value="en-US">IEEE · EN</SelectItem></SelectContent></Select>
+            <Select value={citationLocale} onValueChange={(value) => { if (!value) return; setCitationLocale(value); void saveMeta(status, value); }}><SelectTrigger aria-label={t("citationLanguage")} className="h-8 w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="de-DE">DE</SelectItem><SelectItem value="en-US">EN</SelectItem></SelectContent></Select>
+            <Select value={citationStyle} onValueChange={(value) => { if (!value || !isCitationStyle(value)) return; setCitationStyle(value); void saveMeta(status, citationLocale, tags, value); }}><SelectTrigger aria-label={t("citationStyle")} className="h-8 w-full"><SelectValue /></SelectTrigger><SelectContent>{CITATION_STYLES.map((item) => <SelectItem key={item} value={item}>{t(`citationStyles.${item}`)}</SelectItem>)}</SelectContent></Select>
           </div>
           <div className="flex items-center gap-1"><Input value={tags} onChange={(event) => setTags(event.target.value)} onBlur={() => void saveMeta()} placeholder={t("tagsHint")} className="h-8 min-w-0 text-xs" />{metaSaved && <Check className="size-4 shrink-0 text-emerald-600" />}</div>
           {allTags.length > 0 && <div className="flex flex-wrap gap-1" aria-label={t("existingTags")}>{allTags.map((tag) => { const active = tagNames.includes(tag.name); return <button key={tag.id} type="button" aria-pressed={active} onClick={() => toggleTag(tag.name)} className={`rounded-full px-2 py-0.5 text-[10px] transition-colors ${active ? "bg-indigo-500 text-white" : "bg-muted text-muted-foreground hover:bg-indigo-50 hover:text-indigo-700 dark:hover:bg-indigo-950 dark:hover:text-indigo-200"}`}>{tag.name}</button>; })}</div>}

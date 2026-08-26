@@ -22,6 +22,9 @@ export const wikiSourceTypes = [
   "document",
 ] as const;
 export const wikiReadingStatuses = ["toRead", "reading", "read"] as const;
+// "ieee" keeps the hand-rolled renderer every existing page was written against;
+// the rest are rendered by citation-js from real CSL styles.
+export const wikiCitationStyles = ["ieee", "apa", "vancouver", "harvard1"] as const;
 
 export const wikiDocumentTemplates = sqliteTable(
   "wiki_document_templates",
@@ -59,6 +62,7 @@ export const wikiPages = sqliteTable(
     icon: text("icon"),
     status: text("status", { enum: wikiPageStatuses }).notNull().default("inbox"),
     citationLocale: text("citation_locale").notNull().default("de-DE"),
+    citationStyle: text("citation_style", { enum: wikiCitationStyles }).notNull().default("ieee"),
     proofingLanguage: text("proofing_language", { enum: ["de-DE", "en-US"] }).notNull().default("de-DE"),
     documentMode: integer("document_mode", { mode: "boolean" }).notNull().default(false),
     documentSettingsJson: text("document_settings_json").notNull().default(""),
@@ -232,6 +236,7 @@ export const wikiPageRevisions = sqliteTable(
     contentJson: text("content_json").notNull(),
     status: text("status", { enum: wikiPageStatuses }).notNull(),
     citationLocale: text("citation_locale").notNull(),
+    citationStyle: text("citation_style", { enum: wikiCitationStyles }).notNull().default("ieee"),
     documentMode: integer("document_mode", { mode: "boolean" }).notNull().default(false),
     documentSettingsJson: text("document_settings_json").notNull().default(""),
     documentTemplateId: text("document_template_id").references(() => wikiDocumentTemplates.id, { onDelete: "set null" }),

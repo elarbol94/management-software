@@ -103,6 +103,7 @@ export async function applyDocumentTemplate(input: z.infer<typeof applyTemplateS
       contentJson: page.contentJson,
       status: page.status,
       citationLocale: page.citationLocale,
+      citationStyle: page.citationStyle,
       documentMode: page.documentMode,
       documentSettingsJson: page.documentSettingsJson,
       documentTemplateId: page.documentTemplateId,

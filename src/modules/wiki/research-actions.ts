@@ -18,6 +18,7 @@ import {
   wikiNotifications,
   wikiPageRevisions,
   wikiPages,
+  wikiCitationStyles,
   wikiPdfAnnotations,
   wikiPdfDocuments,
   wikiPageSources,
@@ -71,6 +72,7 @@ export async function createPageCheckpoint(pageId: string, label?: string) {
     contentJson: page.contentJson,
     status: page.status,
     citationLocale: page.citationLocale,
+    citationStyle: page.citationStyle,
     documentMode: page.documentMode,
     documentSettingsJson: page.documentSettingsJson,
     documentTemplateId: page.documentTemplateId,
@@ -112,6 +114,7 @@ const pageMetaSchema = z.object({
   pageId: z.string().min(1),
   status: z.enum(["inbox", "working", "evergreen"]),
   citationLocale: z.enum(["de-DE", "en-US"]),
+  citationStyle: z.enum(wikiCitationStyles).optional(),
   tagNames: z.array(z.string().trim().min(1).max(40)).max(20),
 });
 
@@ -124,14 +127,14 @@ function ensureTags(names: string[], userId: string) {
   });
 }
 
-export async function updatePageResearchMeta(input: z.infer<typeof pageMetaSchema>) {
+export async function updatePageResearchMeta(input: z.input<typeof pageMetaSchema>) {
   const currentUser = await requireUserOrThrow();
   const data = pageMetaSchema.parse(input);
   const page = db.select().from(wikiPages).where(and(eq(wikiPages.id, data.pageId), isNull(wikiPages.deletedAt))).get();
   if (!page) throw new Error("Page not found");
   const tags = ensureTags(data.tagNames, currentUser.id);
   db.transaction(() => {
-    db.update(wikiPages).set({ status: data.status, citationLocale: data.citationLocale, updatedBy: currentUser.id, updatedAt: new Date(), version: page.version + 1 }).where(eq(wikiPages.id, page.id)).run();
+    db.update(wikiPages).set({ status: data.status, citationLocale: data.citationLocale, ...(data.citationStyle ? { citationStyle: data.citationStyle } : {}), updatedBy: currentUser.id, updatedAt: new Date(), version: page.version + 1 }).where(eq(wikiPages.id, page.id)).run();
     db.delete(wikiPageTags).where(eq(wikiPageTags.pageId, page.id)).run();
     if (tags.length) db.insert(wikiPageTags).values(tags.map((tag) => ({ pageId: page.id, tagId: tag.id }))).run();
   });
@@ -427,8 +430,8 @@ export async function restorePageRevision(revisionId: string) {
   const restoredContentJson = JSON.stringify(restoredDocument);
   const contentText = extractText(restoredDocument);
   db.transaction(() => {
-    db.insert(wikiPageRevisions).values({ pageId: page.id, version: page.version, contentVersion: page.contentVersion, contentHash: pageSnapshotHash(page), title: page.title, contentJson: page.contentJson, status: page.status, citationLocale: page.citationLocale, documentMode: page.documentMode, documentSettingsJson: page.documentSettingsJson, documentTemplateId: page.documentTemplateId, kind: "restore", createdBy: currentUser.id }).run();
-    db.update(wikiPages).set({ title: revision.title, contentJson: restoredContentJson, contentText, status: revision.status, citationLocale: revision.citationLocale, documentMode: revision.documentMode, documentSettingsJson: revision.documentSettingsJson, documentTemplateId: revision.documentTemplateId, version: page.version + 1, contentVersion: page.contentVersion + 1, updatedBy: currentUser.id, updatedAt: new Date() }).where(eq(wikiPages.id, page.id)).run();
+    db.insert(wikiPageRevisions).values({ pageId: page.id, version: page.version, contentVersion: page.contentVersion, contentHash: pageSnapshotHash(page), title: page.title, contentJson: page.contentJson, status: page.status, citationLocale: page.citationLocale, citationStyle: page.citationStyle, documentMode: page.documentMode, documentSettingsJson: page.documentSettingsJson, documentTemplateId: page.documentTemplateId, kind: "restore", createdBy: currentUser.id }).run();
+    db.update(wikiPages).set({ title: revision.title, contentJson: restoredContentJson, contentText, status: revision.status, citationLocale: revision.citationLocale, citationStyle: revision.citationStyle, documentMode: revision.documentMode, documentSettingsJson: revision.documentSettingsJson, documentTemplateId: revision.documentTemplateId, version: page.version + 1, contentVersion: page.contentVersion + 1, updatedBy: currentUser.id, updatedAt: new Date() }).where(eq(wikiPages.id, page.id)).run();
     sqlite.prepare("DELETE FROM wiki_pages_fts WHERE page_id = ?").run(page.id);
     sqlite.prepare("INSERT INTO wiki_pages_fts (page_id, title, content_text) VALUES (?, ?, ?)").run(page.id, revision.title, contentText);
   });

@@ -6,6 +6,21 @@ export type Contributor = {
   sortOrder: number;
 };
 
+export const CITATION_STYLES = ["ieee", "apa", "vancouver", "harvard1"] as const;
+export type CitationStyle = (typeof CITATION_STYLES)[number];
+
+/** Numeric styles cite by order of appearance; the rest cite by author and year. */
+export function isNumericCitationStyle(style: CitationStyle) {
+  return style === "ieee" || style === "vancouver";
+}
+
+export function isCitationStyle(value: string): value is CitationStyle {
+  return (CITATION_STYLES as readonly string[]).includes(value);
+}
+
+/** Placeholder the server substitutes a locator into, so the client can render one without citeproc. */
+export const LOCATOR_PLACEHOLDER = "{locator}";
+
 export type CitationSource = {
   id: string;
   type: string;
@@ -21,7 +36,12 @@ export type CitationSource = {
   url: string;
   accessedAt: string;
   contributors: Contributor[];
-  ieeeBibliography?: string;
+  /** Bibliography entry rendered server-side; citeproc cannot run in the editor. */
+  renderedBibliography?: string;
+  /** In-text citation without a locator, e.g. "(Müller, 2024)". Empty for numeric styles. */
+  renderedInline?: string;
+  /** Same, with LOCATOR_PLACEHOLDER where the page number goes, e.g. "(Müller, 2024, S. {locator})". */
+  renderedInlineTemplate?: string;
   pdfDocumentId?: string;
 };
 
@@ -91,13 +111,18 @@ function contributorLabel(source: CitationSource) {
 }
 
 export function formatInlineCitation(
-  _source: CitationSource,
+  source: CitationSource,
   locator?: string,
   _locale = "en-US",
   citationNumber = 1,
+  style: CitationStyle = "ieee",
 ) {
   void _locale;
-  return formatIeeeCitation(citationNumber, locator);
+  if (isNumericCitationStyle(style)) return formatIeeeCitation(citationNumber, locator);
+  if (locator && source.renderedInlineTemplate) {
+    return source.renderedInlineTemplate.replace(LOCATOR_PLACEHOLDER, locator);
+  }
+  return source.renderedInline || formatIeeeCitation(citationNumber, locator);
 }
 
 export function formatIeeeCitation(citationNumber: number, locator?: string) {
@@ -105,7 +130,7 @@ export function formatIeeeCitation(citationNumber: number, locator?: string) {
 }
 
 export function formatBibliographyEntry(source: CitationSource, locale = "en-US") {
-  if (source.ieeeBibliography) return source.ieeeBibliography;
+  if (source.renderedBibliography) return source.renderedBibliography;
   void locale;
   const creators = contributorLabel(source);
   const issuedYear = year(source);
@@ -129,10 +154,23 @@ export function formatBibliographyEntry(source: CitationSource, locale = "en-US"
   return `${entry}${identifiers.length ? `, ${identifiers.join(", ")}` : ""}.`.replace(/\s+/g, " ").trim();
 }
 
-export function formatBibliography(sources: CitationSource[], locale = "en-US") {
+export function formatBibliography(
+  sources: CitationSource[],
+  locale = "en-US",
+  style: CitationStyle = "ieee",
+) {
   const unique = [...new Map(sources.map((source) => [source.id, source])).values()];
+  if (isNumericCitationStyle(style)) {
+    return unique
+      .map((source, index) => ({ source, text: `[${index + 1}] ${formatBibliographyEntry(source, locale)}` }));
+  }
+  // ponytail: author-date reference lists sort alphabetically, and every CSL style
+  // renders the author first, so sorting the rendered string matches citeproc's own
+  // order for all but exotic styles. Render the whole list through one Cite call if
+  // a style ever needs true citeproc sorting.
   return unique
-    .map((source, index) => ({ source, text: `[${index + 1}] ${formatBibliographyEntry(source, locale)}` }));
+    .map((source) => ({ source, text: formatBibliographyEntry(source, locale) }))
+    .sort((a, b) => a.text.localeCompare(b.text, locale));
 }
 
 export function normalizeDoi(value: string) {

@@ -33,9 +33,9 @@ export default async function WikiPage({ params, searchParams }: { params: Promi
     fundingProjects: fundingProjects.map((project) => ({ id: project.id, name: project.name, programme: project.programName, fundingBody: project.fundingBody, start: project.projectStart, end: project.projectEnd, totalCostCents: project.totalProjectCostCents, approvedFundingCents: project.approvedFundingCents })),
   };
   return <WikiShell
-    page={{ id: page.id, title: page.title, slug: page.slug, contentJson: page.contentJson, status: page.status, citationLocale: page.citationLocale, proofingLanguage: page.proofingLanguage, version: page.version, contentVersion: page.contentVersion, documentMode: page.documentMode, documentSettingsJson: page.documentSettingsJson, createdBy: page.createdBy }}
+    page={{ id: page.id, title: page.title, slug: page.slug, contentJson: page.contentJson, status: page.status, citationLocale: page.citationLocale, citationStyle: page.citationStyle, proofingLanguage: page.proofingLanguage, version: page.version, contentVersion: page.contentVersion, documentMode: page.documentMode, documentSettingsJson: page.documentSettingsJson, createdBy: page.createdBy }}
     backlinks={getBacklinks(page.id)} allPages={listPagesFlat().filter((item) => item.id !== page.id)}
-    sources={listCitationSources(page.citationLocale)}
+    sources={listCitationSources(page.citationLocale, 500, page.citationStyle)}
     allTags={listTags()}
     research={getPageResearchMeta(page.id, currentUser.id)}
     comments={getPageComments(page.id)} currentUserId={currentUser.id} users={listUsers()}

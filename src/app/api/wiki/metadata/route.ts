@@ -5,7 +5,8 @@ import net from "node:net";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { getSession } from "@/lib/auth";
-import { normalizeDoi, normalizeIsbn, normalizeUrl } from "@/modules/wiki/lib/citations";
+import { normalizeIsbn, normalizeUrl } from "@/modules/wiki/lib/citations";
+import { fetchCrossrefWork } from "@/modules/wiki/lib/crossref";
 
 const lookupSchema = z.object({
   kind: z.enum(["doi", "isbn", "url"]),
@@ -191,9 +192,7 @@ export async function POST(request: Request) {
   const { kind, value, accessedAt } = parsed.data;
   try {
     if (kind === "doi") {
-      const doi = normalizeDoi(value); const response = await fetch(`https://api.crossref.org/works/${encodeURIComponent(doi)}`, { signal: AbortSignal.timeout(8_000), headers: { "User-Agent": "CompanyHQ/0.1 (metadata lookup)" } });
-      if (!response.ok) throw new Error("DOI metadata was not found"); const item = (await response.json()).message;
-      return NextResponse.json({ type: item.type === "journal-article" ? "journalArticle" : item.type === "book-chapter" ? "bookChapter" : item.type === "book" ? "book" : "document", title: item.title?.[0] ?? "", subtitle: item.subtitle?.[0] ?? "", issuedDate: item.issued?.["date-parts"]?.[0]?.join("-") ?? "", containerTitle: item["container-title"]?.[0] ?? "", publisher: item.publisher ?? "", volume: item.volume ?? "", issue: item.issue ?? "", pages: item.page ?? "", doi, url: item.URL ?? "", contributors: (item.author ?? []).map((person: { given?: string; family?: string }) => ({ role: "author", given: person.given ?? "", family: person.family ?? "", literal: "" })) });
+      return NextResponse.json(await fetchCrossrefWork(value));
     }
     if (kind === "isbn") {
       const isbn = normalizeIsbn(value); const response = await fetch(`https://openlibrary.org/api/books?bibkeys=ISBN:${isbn}&jscmd=data&format=json`, { signal: AbortSignal.timeout(8_000) }); if (!response.ok) throw new Error("ISBN metadata was not found"); const body = await response.json(); const item = body[`ISBN:${isbn}`]; if (!item) throw new Error("ISBN metadata was not found");

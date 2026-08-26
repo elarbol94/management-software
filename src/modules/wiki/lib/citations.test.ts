@@ -57,3 +57,33 @@ describe("identifier normalization", () => {
     expect(normalizeUrl("https://example.com/path/#section")).toBe("https://example.com/path");
   });
 });
+
+describe("citation styles", () => {
+  it("keeps IEEE numeric in-text labels and ordering", () => {
+    expect(formatInlineCitation(source, "14", "en-US", 3, "ieee")).toBe("[3, p. 14]");
+    const list = formatBibliography([source], "en-US", "ieee");
+    expect(list[0]?.text.startsWith("[1] ")).toBe(true);
+  });
+
+  it("uses the server-rendered author-date label when one is present", () => {
+    const decorated: CitationSource = {
+      ...source,
+      renderedInline: "(Smith, 2026)",
+      renderedInlineTemplate: "(Smith, 2026, p. {locator})",
+    };
+    expect(formatInlineCitation(decorated, undefined, "en-US", 3, "apa")).toBe("(Smith, 2026)");
+    expect(formatInlineCitation(decorated, "14", "en-US", 3, "apa")).toBe("(Smith, 2026, p. 14)");
+  });
+
+  it("falls back to the numeric label when the server rendered nothing", () => {
+    expect(formatInlineCitation(source, "14", "en-US", 3, "apa")).toBe("[3, p. 14]");
+  });
+
+  it("drops the numeric prefix and sorts author-date bibliographies", () => {
+    const zebra: CitationSource = { ...source, id: "z", renderedBibliography: "Zeller, A. (2020). Later." };
+    const anton: CitationSource = { ...source, id: "a", renderedBibliography: "Anton, B. (2021). Earlier." };
+    const list = formatBibliography([zebra, anton], "en-US", "apa");
+    expect(list.map((entry) => entry.source.id)).toEqual(["a", "z"]);
+    expect(list[0]?.text).toBe("Anton, B. (2021). Earlier.");
+  });
+});

@@ -152,8 +152,13 @@ export async function linkPdfEvidence(input: { annotationId: string; targetType:
 }
 
 export async function unlinkPdfEvidence(linkId: string) {
-  await requireUserOrThrow();
-  db.delete(evidenceLinks).where(eq(evidenceLinks.id, z.string().min(1).parse(linkId))).run();
+  const currentUser = await requireUserOrThrow();
+  const id = z.string().min(1).parse(linkId);
+  const link = db.select({ createdBy: evidenceLinks.createdBy }).from(evidenceLinks).where(eq(evidenceLinks.id, id)).get();
+  if (!link) return;
+  if (link.createdBy !== currentUser.id && currentUser.role !== "admin") throw new Error("Forbidden");
+  db.delete(evidenceLinks).where(eq(evidenceLinks.id, id)).run();
+  // Evidence targets span eight modules, so the whole layout has to revalidate.
   revalidatePath("/", "layout");
 }
 

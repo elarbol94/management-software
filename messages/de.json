@@ -1612,6 +1612,13 @@
     "documentTypePlaceholder": "z. B. Förderung, Paper, Bericht",
     "readingStatus": "Lesestatus",
     "citationLanguage": "Zitiersprache",
+    "citationStyle": "Zitierstil",
+    "citationStyles": {
+      "ieee": "IEEE",
+      "apa": "APA",
+      "vancouver": "Vancouver",
+      "harvard1": "Harvard"
+    },
     "contributors": "Mitwirkende",
     "year": "Jahr",
     "evidence": "Nachweise",
@@ -2587,6 +2594,7 @@
     "lookupMetadata": "Metadaten abrufen",
     "lookup": "Abrufen",
     "reviewMetadata": "Prüfe und korrigiere die abgerufenen Metadaten vor dem Speichern.",
+    "replaceLookupConfirm": "Neue Metadaten abrufen? Die geprüften Angaben im Formular gehen dabei verloren.",
     "importLibrary": "Importieren",
     "reviewImport": "Import prüfen",
     "importPreview": "{count} Einträge in {name} gefunden.",
