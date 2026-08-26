@@ -69,6 +69,10 @@ export const wikiPages = sqliteTable(
     documentTemplateId: text("document_template_id").references(() => wikiDocumentTemplates.id, { onDelete: "set null" }),
     version: integer("version").notNull().default(1),
     contentVersion: integer("content_version").notNull().default(1),
+    /** Who last confirmed this page is still accurate, and until when. */
+    verifiedAt: integer("verified_at", { mode: "timestamp_ms" }),
+    verifiedUntil: integer("verified_until", { mode: "timestamp_ms" }),
+    verifiedBy: text("verified_by").references(() => user.id, { onDelete: "set null" }),
     createdBy: text("created_by")
       .notNull()
       .references(() => user.id),
@@ -90,6 +94,7 @@ export const wikiPages = sqliteTable(
       table.status,
       table.updatedAt,
     ),
+    index("wiki_pages_verified_until_idx").on(table.deletedAt, table.verifiedUntil),
   ],
 );
 

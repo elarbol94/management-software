@@ -66,6 +66,29 @@ export function getFirstPage() {
     .get();
 }
 
+/**
+ * Pages that mention this page's title in their text but never linked to it. Explicit
+ * links need the author to remember; this surfaces what they forgot.
+ */
+export function getUnlinkedMentions(pageId: string, title: string, limit = 20) {
+  const needle = title.trim();
+  // A very short title matches almost everything, so it is not worth offering.
+  if (needle.length < 4) return [];
+  return sqlite.prepare(`
+    SELECT p.id, p.title, p.slug
+    FROM wiki_pages p
+    WHERE p.deleted_at IS NULL
+      AND p.id != ?
+      AND p.content_text LIKE ? COLLATE NOCASE
+      AND NOT EXISTS (
+        SELECT 1 FROM wiki_links l
+        WHERE l.source_page_id = p.id AND l.target_page_id = ?
+      )
+    ORDER BY p.updated_at DESC
+    LIMIT ?
+  `).all(pageId, `%${needle}%`, pageId, limit) as Array<{ id: string; title: string; slug: string }>;
+}
+
 export function getBacklinks(pageId: string) {
   return db
     .select({

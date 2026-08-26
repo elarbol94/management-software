@@ -5,6 +5,17 @@ import { PdfReader } from "@/modules/wiki/components/pdf-reader";
 import { PdfProcessingState } from "@/modules/wiki/components/pdf-processing-state";
 import { ensureUserMarkColor } from "@/lib/user-mark-colors.server";
 import { listDeadlinesForContext, listTasksForContext } from "@/modules/projects/queries";
+import { getPageTree } from "@/modules/wiki/queries";
+
+type TreeNode = { id: string; title: string; slug: string; children?: TreeNode[] };
+
+/** Flat, depth-first page list for the reader's "send to page" picker. */
+function flattenPageTree(nodes: TreeNode[]): Array<{ id: string; title: string; slug: string }> {
+  return nodes.flatMap((node) => [
+    { id: node.id, title: node.title, slug: node.slug },
+    ...flattenPageTree(node.children ?? []),
+  ]);
+}
 
 export default async function PdfReaderPage({ params, searchParams }: {
   params: Promise<{ id: string; documentId: string }>;
@@ -23,6 +34,7 @@ export default async function PdfReaderPage({ params, searchParams }: {
     initialTaskId={query.task} contextTasks={listTasksForContext("pdf", documentId)}
     initialDeadlineId={query.deadline} contextDeadlines={listDeadlinesForContext("pdf", documentId)}
     hasExplicitPage={typeof query.page === "string"}
+    wikiPages={flattenPageTree(getPageTree())}
     user={{ id: currentUser.id, name: currentUser.name, role: currentUser.role, markColor: ensureUserMarkColor(currentUser.id) }}
   />;
 }

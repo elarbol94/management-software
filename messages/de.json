@@ -2756,7 +2756,17 @@
     "mergeTagTarget": "Ziel-Schlagwort wählen",
     "errorDescription": "Dieser Bereich des Wikis konnte nicht geladen werden. Versuche es erneut oder gehe zurück zur Startseite.",
     "notFoundTitle": "Nicht gefunden",
-    "notFoundDescription": "Diese Wiki-Seite gibt es nicht (mehr). Vielleicht wurde sie gelöscht oder der Link ist falsch."
+    "notFoundDescription": "Diese Wiki-Seite gibt es nicht (mehr). Vielleicht wurde sie gelöscht oder der Link ist falsch.",
+    "sendToPage": "An Seite senden",
+    "findPage": "Seite suchen…",
+    "evidenceInserted": "Beleg in „{source}“ eingefügt.",
+    "evidenceInsertFailed": "Der Beleg konnte nicht eingefügt werden.",
+    "unlinkedMentions": "Unverlinkte Erwähnungen",
+    "unlinkedMentionsHint": "Diese Seiten nennen den Titel, verlinken ihn aber nicht.",
+    "markVerified": "Als geprüft markieren",
+    "verifyAgain": "Erneut prüfen",
+    "verifiedUntilLabel": "Geprüft bis {date}.",
+    "verificationOverdue": "Prüfung seit {date} fällig."
   },
   "settings": {
     "title": "Einstellungen",

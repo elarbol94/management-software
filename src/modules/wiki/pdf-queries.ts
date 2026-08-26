@@ -178,6 +178,29 @@ export function listEvidenceForTarget(targetType: EvidenceTargetType, targetId: 
     }));
 }
 
+type EvidenceAnnotationRow = {
+  id: string; sourceId: string; documentId: string; pageNumber: number; kind: string;
+  selectedText: string; note: string; label: string; createdByMarkColor: string; sourceTitle: string;
+};
+
+const EVIDENCE_ANNOTATION_COLUMNS = `
+  SELECT a.id, a.source_id AS sourceId, a.document_id AS documentId,
+         a.page_number AS pageNumber, a.kind, a.selected_text AS selectedText,
+         a.note, a.label, COALESCE(p.mark_color, 'amber') AS createdByMarkColor,
+         s.title AS sourceTitle
+  FROM wiki_pdf_annotations a
+  JOIN wiki_sources s ON s.id = a.source_id
+  LEFT JOIN user_profile_preferences p ON p.user_id = a.created_by
+`;
+
+/** One annotation in the shape the editor inserts, for the reader's "insert into page" hand-off. */
+export function getEvidenceAnnotation(id: string) {
+  return sqlite.prepare(`
+    ${EVIDENCE_ANNOTATION_COLUMNS}
+    WHERE a.id = ? AND a.deleted_at IS NULL AND s.deleted_at IS NULL
+  `).get(id) as EvidenceAnnotationRow | undefined;
+}
+
 export function searchEvidenceAnnotations(query = "", limit = 100) {
   const like = `%${query.trim()}%`;
   return sqlite.prepare(`

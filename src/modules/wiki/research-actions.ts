@@ -127,6 +127,25 @@ function ensureTags(names: string[], userId: string) {
   });
 }
 
+/** Confirms a page is still accurate for a period; 0 months clears the confirmation. */
+export async function verifyPage(input: { pageId: string; months: number }) {
+  const currentUser = await requireUserOrThrow();
+  const data = z.object({ pageId: z.string().min(1), months: z.number().int().min(0).max(24) }).parse(input);
+  const page = db.select().from(wikiPages).where(and(eq(wikiPages.id, data.pageId), isNull(wikiPages.deletedAt))).get();
+  if (!page) throw new Error("Page not found");
+  if (data.months === 0) {
+    db.update(wikiPages).set({ verifiedAt: null, verifiedUntil: null, verifiedBy: null }).where(eq(wikiPages.id, page.id)).run();
+    revalidateWiki();
+    return { verifiedUntil: null };
+  }
+  const verifiedAt = new Date();
+  const verifiedUntil = new Date(verifiedAt);
+  verifiedUntil.setMonth(verifiedUntil.getMonth() + data.months);
+  db.update(wikiPages).set({ verifiedAt, verifiedUntil, verifiedBy: currentUser.id }).where(eq(wikiPages.id, page.id)).run();
+  revalidateWiki();
+  return { verifiedUntil: verifiedUntil.toISOString() };
+}
+
 export async function updatePageResearchMeta(input: z.input<typeof pageMetaSchema>) {
   const currentUser = await requireUserOrThrow();
   const data = pageMetaSchema.parse(input);

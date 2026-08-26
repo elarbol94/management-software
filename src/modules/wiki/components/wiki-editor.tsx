@@ -193,6 +193,7 @@ type WikiEditorProps = {
   users: Array<{ id: string; name: string; markColor: UserMarkColor }>;
   citationLocale: string;
   citationStyle: CitationStyle;
+  insertEvidenceId?: string;
   comments: CommentThread[];
   currentUserId: string;
   contextTasks: ContextTaskMarker[];
@@ -612,23 +613,73 @@ function EvidencePicker({ editor, pageId, locale, open, onOpenChange }: { editor
   const [query, setQuery] = useState("");
   const [items, setItems] = useState<EvidenceRef[]>([]);
   const [loading, setLoading] = useState(false);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const searchRequest = useRef(0);
 
   async function load(search = "") {
+    const request = ++searchRequest.current;
     setLoading(true);
     try {
       const response = await fetch(`/api/wiki/evidence?targetType=wikiPage&targetId=${encodeURIComponent(pageId)}&q=${encodeURIComponent(search)}`);
       if (response.ok) {
         const body = await response.json() as { available: EvidenceRef[] };
-        setItems(body.available);
+        // A slower earlier request must not overwrite a newer result.
+        if (searchRequest.current === request) setItems(body.available);
       }
     } finally {
-      setLoading(false);
+      if (searchRequest.current === request) setLoading(false);
     }
   }
 
+  /** Debounced like every other search in the module, instead of waiting for a button. */
+  function updateQuery(value: string) {
+    setQuery(value);
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = setTimeout(() => {
+      timer.current = null;
+      void load(value);
+    }, 220);
+  }
+
+  function searchNow() {
+    if (timer.current) { clearTimeout(timer.current); timer.current = null; }
+    void load(query);
+  }
+
+  useEffect(() => () => { if (timer.current) clearTimeout(timer.current); }, []);
+
   function insert(item: EvidenceRef) {
+    editor.chain().focus().insertContent(evidenceInsertContent(item, locale)).run();
+    onOpenChange(false);
+    setQuery("");
+  }
+
+  return (
+    <Popover open={open} onOpenChange={(value) => { onOpenChange(value); if (value) void load(); }}>
+      <PopoverTrigger render={<Button type="button" variant="ghost" size="icon-sm" title={t("insertPdfEvidence")} aria-label={t("insertPdfEvidence")} />}>
+        <Highlighter className="size-4 text-indigo-600" />
+      </PopoverTrigger>
+      <PopoverContent className="w-96 p-2">
+        <div className="flex gap-2">
+          <Input autoFocus value={query} onChange={(event) => updateQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); searchNow(); } }} placeholder={t("findEvidence")} className="h-8" />
+        </div>
+        <div className="mt-2 max-h-72 overflow-y-auto">
+          {loading ? <p className="p-3 text-sm text-muted-foreground">{t("loading")}</p> : items.length === 0 ? <p className="p-3 text-sm text-muted-foreground">{t("noEvidenceAvailable")}</p> : items.map((item) => (
+            <button key={item.id} type="button" className="block w-full rounded px-2 py-2 text-left hover:bg-accent" onClick={() => insert(item)}>
+              <span className="block text-sm font-medium">{item.label || item.sourceTitle} · {t("pageNumber", { page: item.pageNumber })}</span>
+              {item.selectedText && <span className="mt-1 line-clamp-3 block text-xs italic text-muted-foreground">“{item.selectedText}”</span>}
+            </button>
+          ))}
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+/** The evidence block plus its citation, shared by the picker and the reader hand-off. */
+function evidenceInsertContent(item: EvidenceRef, locale: string) {
     const pageLabel = locale.startsWith("de") ? "S." : "p.";
-    editor.chain().focus().insertContent([
+    return [
       {
         type: "pdfEvidence",
         attrs: {
@@ -654,33 +705,9 @@ function EvidencePicker({ editor, pageId, locale, open, onOpenChange }: { editor
           },
         }],
       },
-    ]).run();
-    onOpenChange(false);
-    setQuery("");
-  }
-
-  return (
-    <Popover open={open} onOpenChange={(value) => { onOpenChange(value); if (value) void load(); }}>
-      <PopoverTrigger render={<Button type="button" variant="ghost" size="icon-sm" title={t("insertPdfEvidence")} aria-label={t("insertPdfEvidence")} />}>
-        <Highlighter className="size-4 text-indigo-600" />
-      </PopoverTrigger>
-      <PopoverContent className="w-96 p-2">
-        <div className="flex gap-2">
-          <Input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void load(query); }} placeholder={t("findEvidence")} className="h-8" />
-          <Button type="button" size="sm" onClick={() => void load(query)}>{t("search")}</Button>
-        </div>
-        <div className="mt-2 max-h-72 overflow-y-auto">
-          {loading ? <p className="p-3 text-sm text-muted-foreground">{t("loading")}</p> : items.length === 0 ? <p className="p-3 text-sm text-muted-foreground">{t("noEvidenceAvailable")}</p> : items.map((item) => (
-            <button key={item.id} type="button" className="block w-full rounded px-2 py-2 text-left hover:bg-accent" onClick={() => insert(item)}>
-              <span className="block text-sm font-medium">{item.label || item.sourceTitle} · {t("pageNumber", { page: item.pageNumber })}</span>
-              {item.selectedText && <span className="mt-1 line-clamp-3 block text-xs italic text-muted-foreground">“{item.selectedText}”</span>}
-            </button>
-          ))}
-        </div>
-      </PopoverContent>
-    </Popover>
-  );
+    ];
 }
+
 
 export function WikiEditor({
   focused = false,
@@ -699,6 +726,7 @@ export function WikiEditor({
   users,
   citationLocale,
   citationStyle,
+  insertEvidenceId,
   comments,
   contextTasks,
   contextDeadlines,
@@ -1751,6 +1779,30 @@ export function WikiEditor({
     });
     if (changed) editor.view.dispatch(transaction);
   }, [contextDeadlines, editor, format]);
+
+  const insertedEvidence = useRef<string | null>(null);
+  useEffect(() => {
+    if (!editor || !insertEvidenceId) return;
+    // Inserting is a mutation, not a focus like the effects below, so it must happen
+    // exactly once: the ref guards a re-render and the URL is stripped immediately so
+    // a reload cannot repeat it.
+    if (insertedEvidence.current === insertEvidenceId) return;
+    insertedEvidence.current = insertEvidenceId;
+    const url = new URL(window.location.href);
+    url.searchParams.delete("insertEvidence");
+    router.replace(url.pathname + url.search, { scroll: false });
+    void (async () => {
+      try {
+        const response = await fetch(`/api/wiki/evidence?annotationId=${encodeURIComponent(insertEvidenceId)}`);
+        if (!response.ok) throw new Error(t("evidenceInsertFailed"));
+        const { annotation } = await response.json() as { annotation: EvidenceRef };
+        editor.chain().focus("end").insertContent(evidenceInsertContent(annotation, citationLocale)).run();
+        toast.success(t("evidenceInserted", { source: annotation.sourceTitle }));
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : t("evidenceInsertFailed"));
+      }
+    })();
+  }, [citationLocale, editor, insertEvidenceId, router, t]);
 
   useEffect(() => {
     if (!editor || !focusTaskId) return;

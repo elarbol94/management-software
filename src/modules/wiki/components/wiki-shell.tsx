@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { useFormatter, useLocale, useTranslations } from "next-intl";
 import { ArrowLeft, BookMarked, Check, ChevronDown, Clock3, Download, Eye, FileText, History, Link2, MoreHorizontal, PanelRightClose, PanelRightOpen, Plus, Star, Trash2, X } from "lucide-react";
 import { createPage, deletePage, renamePage } from "../actions";
-import { createPageCheckpoint, linkSupportingSource, restorePageRevision, toggleFavorite, unlinkSupportingSource, updatePageResearchMeta } from "../research-actions";
+import { createPageCheckpoint, linkSupportingSource, restorePageRevision, toggleFavorite, unlinkSupportingSource, updatePageResearchMeta, verifyPage } from "../research-actions";
 import { CITATION_STYLES, isCitationStyle, type CitationSource, type CitationStyle } from "../lib/citations";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -32,13 +32,14 @@ import { ContextPanel } from "@/modules/context/components/context-panel";
 type PageRef = { id: string; title: string; slug: string };
 type SourceRef = CitationSource;
 
-function PageHeaderActions({ pageId, favorite, onNewSubpage, onToggleFavorite, onDelete }: { pageId: string; favorite: boolean; onNewSubpage: () => void; onToggleFavorite: () => void; onDelete: () => void }) {
+function PageHeaderActions({ pageId, favorite, onNewSubpage, onToggleFavorite, onVerify, onDelete }: { pageId: string; favorite: boolean; onNewSubpage: () => void; onToggleFavorite: () => void; onVerify: () => void; onDelete: () => void }) {
   const t = useTranslations("wiki");
   return <DropdownMenu>
     <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" title={t("editor.toolbar.more")} aria-label={t("editor.toolbar.more")} />}><MoreHorizontal className="size-4" /></DropdownMenuTrigger>
     <DropdownMenuContent align="end" className="w-56">
       <DropdownMenuItem onClick={onNewSubpage}><Plus />{t("newSubpage")}</DropdownMenuItem>
       <DropdownMenuItem onClick={onToggleFavorite}><Star className={favorite ? "fill-indigo-400 text-indigo-500" : ""} />{t("favorite")}</DropdownMenuItem>
+      <DropdownMenuItem onClick={onVerify}><Check />{t("markVerified")}</DropdownMenuItem>
       <DropdownMenuSeparator />
       <DropdownMenuItem render={<a href={"/api/wiki/pages/" + pageId + "/export?format=pdf&disposition=inline"} target="_blank" rel="noreferrer" />}><Eye />{t("document.previewPdf")}</DropdownMenuItem>
       <DropdownMenuItem render={<a href={"/api/wiki/pages/" + pageId + "/export?format=pdf"} />}><Download />{t("document.downloadPdf")}</DropdownMenuItem>
@@ -51,9 +52,9 @@ function PageHeaderActions({ pageId, favorite, onNewSubpage, onToggleFavorite, o
   </DropdownMenu>;
 }
 
-export function WikiShell({ page, backlinks, allPages, sources, research, comments, currentUserId, users, attachments, documentTemplates, typography, editableTypography, typographyTemplates, tasks, deadlines, focusTaskId, focusDeadlineId, proposalData, allTags, meta }: {
-  page: { id: string; title: string; slug: string; contentJson: string; status: "inbox" | "working" | "evergreen"; citationLocale: string; citationStyle: CitationStyle; proofingLanguage: "de-DE" | "en-US"; version: number; contentVersion: number; documentMode: boolean; documentSettingsJson: string; createdBy: string };
-  backlinks: PageRef[]; allPages: PageRef[]; sources: SourceRef[];
+export function WikiShell({ page, backlinks, unlinkedMentions = [], allPages, sources, research, comments, currentUserId, users, attachments, documentTemplates, typography, editableTypography, typographyTemplates, tasks, deadlines, focusTaskId, focusDeadlineId, insertEvidenceId, proposalData, allTags, meta }: {
+  page: { id: string; title: string; slug: string; contentJson: string; status: "inbox" | "working" | "evergreen"; citationLocale: string; citationStyle: CitationStyle; verifiedUntil: string | null; proofingLanguage: "de-DE" | "en-US"; version: number; contentVersion: number; documentMode: boolean; documentSettingsJson: string; createdBy: string };
+  backlinks: PageRef[]; unlinkedMentions?: PageRef[]; allPages: PageRef[]; sources: SourceRef[];
   research: { tags: Array<{ id: string; name: string; color: string }>; supportingSources: Array<{ id: string; title: string; issuedDate: string; relation: string }>; favorite: boolean; revisions: Array<{ id: string; version: number; contentVersion: number; contentHash: string; label: string | null; kind: string; createdAt: Date; createdByName: string; contentJson: string }> };
   comments: CommentThread[]; currentUserId: string; users: Array<{ id: string; name: string; markColor: UserMarkColor }>;
   attachments: Array<{ id: string; fileName: string; mimeType: string; sizeBytes: number }>;
@@ -64,6 +65,7 @@ export function WikiShell({ page, backlinks, allPages, sources, research, commen
   tasks: ContextTaskMarker[];
   deadlines: ContextDeadlineMarker[];
   focusTaskId?: string;
+  insertEvidenceId?: string;
   focusDeadlineId?: string;
   proposalData: ProposalWorkspaceData;
   allTags: Array<{ id: string; name: string }>;
@@ -73,6 +75,14 @@ export function WikiShell({ page, backlinks, allPages, sources, research, commen
   const { isFocused } = useFocusMode();
   const [status, setStatus] = useState(page.status); const [citationLocale, setCitationLocale] = useState(page.citationLocale);
   const [citationStyle, setCitationStyle] = useState<CitationStyle>(page.citationStyle);
+  const [verifiedUntil, setVerifiedUntil] = useState(page.verifiedUntil);
+  // Captured once per mount: reading the clock during render is impure.
+  const [renderedAt] = useState(() => Date.now());
+  const verificationOverdue = Boolean(verifiedUntil && new Date(verifiedUntil).getTime() < renderedAt);
+  async function runVerify(months: number) {
+    const result = await verifyPage({ pageId: page.id, months });
+    setVerifiedUntil(result.verifiedUntil);
+  }
   const [tags, setTags] = useState(research.tags.map((tag) => tag.name).join(", "));
   const tagNames = tags.split(",").map((tag) => tag.trim()).filter(Boolean);
   // ponytail: clicking existing tags is what stops typo duplicates; the field stays free text for new ones.
@@ -130,13 +140,23 @@ export function WikiShell({ page, backlinks, allPages, sources, research, commen
   return <div className={isFocused ? "w-full max-w-none p-4 md:p-7" : "mx-auto max-w-[112rem] p-4 md:p-7"}>
     <header className="mb-5 border-b pb-4">
       <div className="flex flex-wrap items-start justify-between gap-4"><div className="flex min-w-0 items-start gap-2"><Link href="/wiki" aria-label={t("backToWikiStart")} title={t("backToWikiStart")} className="mt-1 grid size-8 shrink-0 place-items-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"><ArrowLeft className="size-4" /></Link><div className="min-w-0"><button type="button" aria-label={`${t("rename")}: ${page.title}`} onClick={rename} className={isFocused ? "max-w-4xl text-left text-2xl font-semibold tracking-tight hover:text-indigo-700 dark:hover:text-indigo-300" : "max-w-4xl text-left text-3xl font-semibold tracking-tight hover:text-indigo-700 dark:hover:text-indigo-300"}>{page.title}</button>{!isFocused && meta && <p className="mt-1 flex items-center gap-1 text-xs text-muted-foreground"><Clock3 className="size-3" />{t("lastEdited", { name: meta.updatedByName })} · {format.dateTime(new Date(meta.updatedAt), { dateStyle: "medium", timeStyle: "short" })}</p>}</div></div>
-        <div className="flex items-center gap-1">{!isFocused && <><Button variant={detailsOpen ? "secondary" : "ghost"} size="sm" className="gap-1.5" title={detailsOpen ? t("hideDocumentDetails") : t("showDocumentDetails")} aria-label={detailsOpen ? t("hideDocumentDetails") : t("showDocumentDetails")} aria-pressed={detailsOpen} onClick={() => changeDetailsOpen(!detailsOpen)}>{detailsOpen ? <PanelRightClose className="size-4" /> : <PanelRightOpen className="size-4" />}<span className="hidden text-xs sm:inline">{t("documentDetails")}</span></Button><PageHeaderActions pageId={page.id} favorite={research.favorite} onNewSubpage={async () => { const title = prompt(t("pageTitle")); if (!title?.trim()) return; const child = await createPage({ title: title.trim(), parentId: page.id, proofingLanguage: locale === "en" ? "en-US" : "de-DE" }); router.push("/wiki/pages/" + child.slug); router.refresh(); }} onToggleFavorite={async () => { await toggleFavorite("page", page.id); router.refresh(); }} onDelete={remove} /></>}<FocusModeToggle compact={isFocused} /></div></div>
+        <div className="flex items-center gap-1">{!isFocused && <><Button variant={detailsOpen ? "secondary" : "ghost"} size="sm" className="gap-1.5" title={detailsOpen ? t("hideDocumentDetails") : t("showDocumentDetails")} aria-label={detailsOpen ? t("hideDocumentDetails") : t("showDocumentDetails")} aria-pressed={detailsOpen} onClick={() => changeDetailsOpen(!detailsOpen)}>{detailsOpen ? <PanelRightClose className="size-4" /> : <PanelRightOpen className="size-4" />}<span className="hidden text-xs sm:inline">{t("documentDetails")}</span></Button><PageHeaderActions pageId={page.id} favorite={research.favorite} onNewSubpage={async () => { const title = prompt(t("pageTitle")); if (!title?.trim()) return; const child = await createPage({ title: title.trim(), parentId: page.id, proofingLanguage: locale === "en" ? "en-US" : "de-DE" }); router.push("/wiki/pages/" + child.slug); router.refresh(); }} onToggleFavorite={async () => { await toggleFavorite("page", page.id); router.refresh(); }} onVerify={() => void runVerify(6)} onDelete={remove} /></>}<FocusModeToggle compact={isFocused} /></div></div>
     </header>
 
     <div className={isFocused || !detailsOpen ? "w-full" : "grid gap-7 xl:grid-cols-[minmax(0,1fr)_17rem]"}>
       <section className="min-w-0">
-        <WikiEditor key={page.id} actionsRef={editorActions} focused={isFocused} pageId={page.id} pageTitle={page.title} pageSlug={page.slug} pageVersion={page.version} pageContentVersion={page.contentVersion} initialContent={page.contentJson} initialProofingLanguage={page.proofingLanguage} initialDocumentMode={page.documentMode} initialDocumentSettings={page.documentSettingsJson} initialTypography={typography} editableTypography={editableTypography} typographyTemplates={typographyTemplates} isPrimaryAuthor={page.createdBy === currentUserId} documentTemplates={documentTemplates} allPages={allPages} sources={sources} users={users} citationLocale={citationLocale} citationStyle={citationStyle} comments={comments} contextTasks={tasks} contextDeadlines={deadlines} focusTaskId={focusTaskId} focusDeadlineId={focusDeadlineId} proposalData={proposalData} currentUserId={currentUserId} pageActions={{ addAttachment: openAttachmentPicker, linkSupportingSource: openSupportingSourcePicker }} />
+        {!isFocused && (verifiedUntil || verificationOverdue) && (
+          <div className={`mb-3 flex flex-wrap items-center gap-2 rounded-md border px-3 py-2 text-sm ${verificationOverdue ? "border-amber-500/40 bg-amber-500/10" : "border-emerald-500/30 bg-emerald-500/5"}`}>
+            <Check className={`size-4 ${verificationOverdue ? "text-amber-600" : "text-emerald-600"}`} />
+            <span>{verificationOverdue
+              ? t("verificationOverdue", { date: format.dateTime(new Date(verifiedUntil!), { dateStyle: "medium" }) })
+              : t("verifiedUntilLabel", { date: format.dateTime(new Date(verifiedUntil!), { dateStyle: "medium" }) })}</span>
+            <Button type="button" size="xs" variant="ghost" className="ml-auto" onClick={() => void runVerify(6)}>{t("verifyAgain")}</Button>
+          </div>
+        )}
+        <WikiEditor key={page.id} actionsRef={editorActions} focused={isFocused} pageId={page.id} pageTitle={page.title} pageSlug={page.slug} pageVersion={page.version} pageContentVersion={page.contentVersion} initialContent={page.contentJson} initialProofingLanguage={page.proofingLanguage} initialDocumentMode={page.documentMode} initialDocumentSettings={page.documentSettingsJson} initialTypography={typography} editableTypography={editableTypography} typographyTemplates={typographyTemplates} isPrimaryAuthor={page.createdBy === currentUserId} documentTemplates={documentTemplates} allPages={allPages} sources={sources} users={users} citationLocale={citationLocale} citationStyle={citationStyle} insertEvidenceId={insertEvidenceId} comments={comments} contextTasks={tasks} contextDeadlines={deadlines} focusTaskId={focusTaskId} focusDeadlineId={focusDeadlineId} proposalData={proposalData} currentUserId={currentUserId} pageActions={{ addAttachment: openAttachmentPicker, linkSupportingSource: openSupportingSourcePicker }} />
         {!isFocused && backlinks.length > 0 && <section className="mt-8 border-t pt-5"><h2 className="mb-3 flex items-center gap-2 text-sm font-medium"><Link2 className="size-4 text-indigo-500" />{t("backlinks")}</h2><div className="flex flex-wrap gap-2">{backlinks.map((item) => <Link key={item.id} href={`/wiki/pages/${item.slug}`} className="rounded-md border px-2 py-1 text-sm hover:bg-accent">{item.title}</Link>)}</div></section>}
+        {!isFocused && unlinkedMentions.length > 0 && <section className="mt-6"><h2 className="mb-1 flex items-center gap-2 text-sm font-medium"><Link2 className="size-4 text-muted-foreground" />{t("unlinkedMentions")}</h2><p className="mb-3 text-xs text-muted-foreground">{t("unlinkedMentionsHint")}</p><div className="flex flex-wrap gap-2">{unlinkedMentions.map((item) => <Link key={item.id} href={`/wiki/pages/${item.slug}`} className="rounded-md border border-dashed px-2 py-1 text-sm text-muted-foreground hover:bg-accent hover:text-foreground">{item.title}</Link>)}</div></section>}
       </section>
 
       {!isFocused && detailsOpen && <aside data-testid="note-metadata-sidebar" className="mt-6 space-y-6 border-t pt-5 xl:sticky xl:top-4 xl:mt-0 xl:self-start xl:border-l xl:border-t-0 xl:pl-6 xl:pt-0">

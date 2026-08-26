@@ -2754,7 +2754,17 @@
     "mergeTagTarget": "Choose target tag",
     "errorDescription": "This part of the wiki could not be loaded. Try again or go back to the start page.",
     "notFoundTitle": "Not found",
-    "notFoundDescription": "This wiki page does not exist (any more). It may have been deleted, or the link is wrong."
+    "notFoundDescription": "This wiki page does not exist (any more). It may have been deleted, or the link is wrong.",
+    "sendToPage": "Send to page",
+    "findPage": "Search pages…",
+    "evidenceInserted": "Evidence inserted from “{source}”.",
+    "evidenceInsertFailed": "The evidence could not be inserted.",
+    "unlinkedMentions": "Unlinked mentions",
+    "unlinkedMentionsHint": "These pages name this title without linking to it.",
+    "markVerified": "Mark as verified",
+    "verifyAgain": "Verify again",
+    "verifiedUntilLabel": "Verified until {date}.",
+    "verificationOverdue": "Verification overdue since {date}."
   },
   "settings": {
     "title": "Settings",
