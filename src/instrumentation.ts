@@ -13,6 +13,9 @@ async function warmLanguageTool() {
 // Runs once when the Next.js server boots (dev and production).
 // Applies migrations and starts the durable local PDF extraction worker.
 export async function register() {
+  // `next build` imports route modules in parallel workers; letting each one migrate and
+  // seed the same SQLite file deadlocks the build (and would touch the dev database).
+  if (process.env.NEXT_PHASE === "phase-production-build") return;
   if (process.env.NEXT_RUNTIME === "nodejs") {
     const { runMigrations } = await import("./db/migrate");
     runMigrations();

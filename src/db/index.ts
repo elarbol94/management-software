@@ -16,9 +16,11 @@ const sqlite =
   globalForDb.sqlite ??
   (() => {
     const conn = new Database(dbPath);
+    // Set the busy timeout first: switching the journal mode needs a lock of its own, so
+    // a concurrent writer makes the open itself fail with SQLITE_BUSY otherwise.
+    conn.pragma("busy_timeout = 5000");
     conn.pragma("journal_mode = WAL");
     conn.pragma("foreign_keys = ON");
-    conn.pragma("busy_timeout = 5000");
     conn.pragma("synchronous = NORMAL");
     conn.pragma("temp_store = MEMORY");
     conn.pragma("cache_size = -32768");
