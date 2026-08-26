@@ -433,7 +433,11 @@
     "saveAsKennzahlMissingInput": "An operator still has an unconnected input.",
     "saveAsKennzahlPending": "The analysis is still being saved. Wait a moment and try again.",
     "customDelete": "Delete metric",
-    "customDeleteConfirm": "Really delete the metric “{name}”?"
+    "customDeleteConfirm": "Really delete the metric “{name}”?",
+    "kennzahlCatalogTitle": "Metrics and how they are derived",
+    "kennzahlCatalogDescription": "Every metric with the formula that computes it from the source data.",
+    "kennzahlOpenAsGraph": "Open as a graph",
+    "kennzahlOwnSection": "Own metrics"
   },
   "municipalityInvestments": {
     "back": "Back to municipality overview",

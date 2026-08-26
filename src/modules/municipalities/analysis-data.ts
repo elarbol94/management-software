@@ -18,12 +18,16 @@ function fetchJson<T>(url: string) {
   return request;
 }
 
+/** Just the municipality list, sharing the same request as a full analysis load. */
+export async function loadMunicipalityIndex() {
+  return validateMunicipalityIndex(await fetchJson<MunicipalityIndex>("/data/municipalities-at-2026.index.json"));
+}
+
 export async function loadMunicipalityAnalysisData(graph: MunicipalityAnalysisGraph): Promise<MunicipalityAnalysisData> {
-  const [rawIndex, rawPopulation] = await Promise.all([
-    fetchJson<MunicipalityIndex>("/data/municipalities-at-2026.index.json"),
+  const [index, rawPopulation] = await Promise.all([
+    loadMunicipalityIndex(),
     fetchJson<MunicipalityPopulationSeries>("/data/municipality-population-2002-2025.json"),
   ]);
-  const index = validateMunicipalityIndex(rawIndex);
   const codes = index.municipalities.map(({ municipalityCode }) => municipalityCode);
   const population = validateMunicipalityPopulationSeries(rawPopulation, codes);
   const datasets = graph.nodes.flatMap((node) => node.type === "dataset" ? [node.data.dataset] : []);

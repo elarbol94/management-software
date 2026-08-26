@@ -26,6 +26,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import {
+  createMunicipalityAnalysis,
   createMunicipalityAnalysisAndRedirect,
   deleteMunicipalityAnalysis,
   renameMunicipalityAnalysis,
@@ -45,8 +46,9 @@ import {
   type MunicipalityAnalysisGraphOperation,
   type MunicipalityDatasetRef,
 } from "../analysis";
-import { loadMunicipalityAnalysisData } from "../analysis-data";
+import { loadMunicipalityAnalysisData, loadMunicipalityIndex } from "../analysis-data";
 import { searchMunicipalities, type MunicipalityIndexItem } from "../data";
+import type { MapMetric } from "../demography";
 import type { MovementTargetId } from "../movement";
 import type { PopulationViewId } from "../structure";
 import {
@@ -58,9 +60,10 @@ import {
   KENNZAHL_CATALOG,
   nextGraphOrigin,
   type KennzahlDefinition,
+  type KennzahlExpression,
   type KennzahlInput,
 } from "../kennzahlen";
-import type { MunicipalityAnalysisSummary } from "../queries";
+import type { MunicipalityAnalysisSummary, MunicipalityMetricRecord } from "../queries";
 import { AnalysisSeriesChart } from "./analysis-series-chart";
 import { useMunicipalityAnalysisPersistence } from "./municipality-analysis-persistence-provider";
 
@@ -167,86 +170,215 @@ function datasetTitle(dataset: MunicipalityDatasetRef | KennzahlInput, t: Return
   return t(key);
 }
 
+/** One row: what the Kennzahl is called, and the formula it is actually computed from. */
+function KennzahlRow({
+  label,
+  formula,
+  derivable,
+  variant,
+  disabled,
+  openLabel,
+  onOpen,
+}: {
+  label: string;
+  formula: string;
+  derivable: boolean;
+  variant: CatalogVariant;
+  disabled: boolean;
+  openLabel: string;
+  onOpen: () => void;
+}) {
+  const page = variant === "page";
+  if (!derivable) {
+    return (
+      <div className={cn("rounded-lg border border-dashed bg-muted/20 px-2 py-1.5", page && "px-3 py-2")}>
+        <p className={cn("font-medium", page ? "text-sm" : "text-[11px]")}>{label}</p>
+        <p className={cn("mt-0.5 text-muted-foreground", page ? "text-xs" : "text-[10px]")}>{formula}</p>
+      </div>
+    );
+  }
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      title={disabled ? openLabel : undefined}
+      aria-label={`${label} — ${openLabel}`}
+      className={cn(
+        "rounded-lg border bg-background text-left hover:border-teal-600 hover:bg-teal-50 disabled:opacity-55 disabled:hover:border-border disabled:hover:bg-background dark:hover:bg-teal-950",
+        page ? "px-3 py-2" : "px-2 py-1.5",
+      )}
+      onClick={onOpen}
+    >
+      <span className="flex items-center gap-1.5">
+        <Sigma className={cn("shrink-0 text-teal-700 dark:text-teal-300", page ? "size-4" : "size-3")} />
+        <span className={cn("font-medium", page ? "text-sm" : "text-[11px]")}>{label}</span>
+      </span>
+      {/* Never truncated: a formula cut off after three terms is not a derivation. */}
+      <span className={cn("mt-1 block break-words text-muted-foreground", page ? "text-xs leading-5" : "text-[10px] leading-4")}>
+        {formula}
+      </span>
+    </button>
+  );
+}
+
+type CatalogVariant = "sidebar" | "page";
+
 /**
- * Every Kennzahl the app computes, with the formula it is built from. Picking one drops
- * that derivation onto the canvas as real Ausgangsdaten and operator nodes, so the way a
- * Kennzahl is calculated is something you can look at and edit rather than take on trust.
+ * Every Kennzahl the app computes, with the formula it is built from. Opening one puts
+ * that derivation on a canvas as real Ausgangsdaten and operator nodes, so the way a
+ * Kennzahl is calculated is something you can read and edit rather than take on trust.
+ *
+ * The formulas need no municipality — only turning one into a graph does.
  */
 function KennzahlCatalog({
-  municipalities,
+  variant,
   initialMunicipality,
-  onInsert,
+  ownMetrics = [],
+  onOpen,
 }: {
-  municipalities: MunicipalityIndexItem[];
-  initialMunicipality: MunicipalityIndexItem | null;
-  onInsert: (definition: KennzahlDefinition, municipality: MunicipalityIndexItem) => void;
+  variant: CatalogVariant;
+  initialMunicipality?: MunicipalityIndexItem | null;
+  ownMetrics?: MunicipalityMetricRecord[];
+  onOpen: (
+    request: { label: string; dataset: MunicipalityDatasetRef },
+    municipality: MunicipalityIndexItem,
+  ) => void;
 }) {
   const t = useTranslations("municipalities");
   const format = useFormatter();
-  const [municipality, setMunicipality] = useState(initialMunicipality);
+  const page = variant === "page";
+  const [municipalities, setMunicipalities] = useState<MunicipalityIndexItem[]>([]);
+  // Derived rather than synced: the editor learns which municipality its graph is about
+  // only after this has mounted, and an explicit pick must still win over it.
+  const [chosen, setChosen] = useState<MunicipalityIndexItem | null>(null);
+  const municipality = chosen ?? initialMunicipality ?? null;
   const [query, setQuery] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    loadMunicipalityIndex()
+      .then((index) => { if (!cancelled) setMunicipalities(index.municipalities); })
+      .catch(() => undefined);
+    return () => { cancelled = true; };
+  }, []);
+
+
   const results = useMemo(
     () => (query.trim() ? searchMunicipalities(municipalities, query).slice(0, 6) : []),
     [municipalities, query],
   );
+  const describe = (expression: KennzahlExpression | null) => (expression
+    ? kennzahlFormulaText(expression, (input) => datasetTitle(input, t), (value) => format.number(value))
+    : t("kennzahlPrimary"));
+
+  const groups = useMemo(() => {
+    const byCategory = new Map<MapMetric, KennzahlDefinition[]>();
+    for (const definition of KENNZAHL_CATALOG) {
+      byCategory.set(definition.category, [...(byCategory.get(definition.category) ?? []), definition]);
+    }
+    return [...byCategory];
+  }, []);
+
+  const categoryLabel = (category: MapMetric) => t(
+    (category === "population" ? "metricPopulation"
+      : category === "age" ? "metricAge"
+        : category === "movement" ? "metricMovement"
+          : category === "costs" ? "metricCosts"
+            : category === "politics" ? "metricPolitics"
+              : category === "digital" ? "metricDigital" : "metricCustom") as "metricPopulation",
+  );
 
   return (
-    <div className="mt-5 border-t pt-4" data-testid="kennzahl-catalog">
-      <div className="flex items-center justify-between gap-2">
-        <h2 className="text-xs font-semibold tracking-wide uppercase">{t("kennzahlCatalog")}</h2>
-        <span className="text-[10px] text-muted-foreground">{t("kennzahlCatalogHint")}</span>
+    <section className={cn(page ? "" : "mt-5 border-t pt-4")} data-testid="kennzahl-catalog">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <h2 className={cn("font-semibold", page ? "text-xl" : "text-xs tracking-wide uppercase")}>
+          {page ? t("kennzahlCatalogTitle") : t("kennzahlCatalog")}
+        </h2>
+        <span className={cn("text-muted-foreground", page ? "text-sm" : "text-[10px]")}>
+          {page ? t("kennzahlCatalogDescription") : t("kennzahlCatalogHint")}
+        </span>
       </div>
-      <Input
-        className="mt-2 h-8 text-xs"
-        value={query}
-        maxLength={80}
-        aria-label={t("kennzahlMunicipality")}
-        placeholder={t("kennzahlMunicipalityPlaceholder")}
-        onValueChange={(value) => setQuery(value)}
-      />
-      {results.length > 0 && (
-        <div className="mt-1 grid gap-0.5">
-          {results.map((item) => (
-            <button
-              key={item.municipalityCode}
-              type="button"
-              className="truncate rounded-md px-2 py-1 text-left text-[11px] hover:bg-accent"
-              onClick={() => { setMunicipality(item); setQuery(""); }}
-            >
-              {item.name} · {item.municipalityCode}
-            </button>
-          ))}
-        </div>
-      )}
-      <p className="mt-1 truncate text-[11px] font-medium" data-testid="kennzahl-catalog-municipality">
-        {municipality ? municipality.name : t("kennzahlNeedsMunicipality")}
-      </p>
-      <div className="mt-2 grid max-h-80 gap-1 overflow-y-auto pr-1">
-        {KENNZAHL_CATALOG.map((definition) => {
-          const expression = kennzahlExpressionFor(definition.output);
-          const label = t(definition.labelKey as "populationDensity");
-          const formula = expression
-            ? kennzahlFormulaText(expression, (input) => datasetTitle(input, t), (value) => format.number(value))
-            : t("kennzahlPrimary");
-          return (
-            <button
-              key={definition.id}
-              type="button"
-              disabled={!expression || !municipality}
-              title={formula}
-              className="rounded-lg border bg-background px-2 py-1.5 text-left hover:border-teal-600 hover:bg-teal-50 disabled:opacity-55 disabled:hover:border-border disabled:hover:bg-background dark:hover:bg-teal-950"
-              onClick={() => { if (municipality) onInsert(definition, municipality); }}
-            >
-              <span className="flex items-center gap-1.5">
-                <Sigma className="size-3 shrink-0 text-teal-700 dark:text-teal-300" />
-                <span className="truncate text-[11px] font-medium">{label}</span>
-              </span>
-              <span className="mt-0.5 block truncate text-[10px] text-muted-foreground">{formula}</span>
-            </button>
-          );
-        })}
+
+      <div className={cn("mt-3", page && "max-w-sm")}>
+        <Input
+          className={cn(page ? "" : "h-8 text-xs")}
+          value={query}
+          maxLength={80}
+          aria-label={t("kennzahlMunicipality")}
+          placeholder={t("kennzahlMunicipalityPlaceholder")}
+          onValueChange={(value) => setQuery(value)}
+        />
+        {results.length > 0 && (
+          <div className="mt-1 grid gap-0.5">
+            {results.map((item) => (
+              <button
+                key={item.municipalityCode}
+                type="button"
+                className={cn("truncate rounded-md px-2 py-1 text-left hover:bg-accent", page ? "text-sm" : "text-[11px]")}
+                onClick={() => { setChosen(item); setQuery(""); }}
+              >
+                {item.name} · {item.municipalityCode}
+              </button>
+            ))}
+          </div>
+        )}
+        <p className={cn("mt-1 truncate font-medium", page ? "text-sm" : "text-[11px]")} data-testid="kennzahl-catalog-municipality">
+          {municipality ? municipality.name : t("kennzahlNeedsMunicipality")}
+        </p>
       </div>
-    </div>
+
+      <div className={cn("mt-3", page ? "grid gap-5" : "grid max-h-80 gap-3 overflow-y-auto pr-1")}>
+        {groups.map(([category, definitions]) => (
+          <div key={category}>
+            <h3 className={cn("font-semibold text-muted-foreground", page ? "text-xs tracking-wide uppercase" : "text-[10px] uppercase")}>
+              {categoryLabel(category)}
+            </h3>
+            <div className={cn("mt-1.5 grid gap-1.5", page && "sm:grid-cols-2 xl:grid-cols-3")}>
+              {definitions.map((definition) => {
+                const expression = kennzahlExpressionFor(definition.output);
+                const label = t(definition.labelKey as "populationDensity");
+                return (
+                  <KennzahlRow
+                    key={definition.id}
+                    label={label}
+                    formula={describe(expression)}
+                    derivable={Boolean(expression)}
+                    variant={variant}
+                    disabled={!municipality}
+                    openLabel={t("kennzahlOpenAsGraph")}
+                    onOpen={() => {
+                      if (!municipality) return;
+                      onOpen({
+                        label,
+                        dataset: bindKennzahlInput(definition.output, municipality.municipalityCode, municipality.name),
+                      }, municipality);
+                    }}
+                  />
+                );
+              })}
+            </div>
+          </div>
+        ))}
+
+        {ownMetrics.length > 0 && (
+          <div>
+            <h3 className={cn("font-semibold text-muted-foreground", page ? "text-xs tracking-wide uppercase" : "text-[10px] uppercase")}>
+              {t("kennzahlOwnSection")}
+            </h3>
+            <div className={cn("mt-1.5 grid gap-1.5", page && "sm:grid-cols-2 xl:grid-cols-3")}>
+              {ownMetrics.map((metric) => (
+                <div key={metric.id} className={cn("rounded-lg border bg-background", page ? "px-3 py-2" : "px-2 py-1.5")}>
+                  <p className={cn("font-medium", page ? "text-sm" : "text-[11px]")}>{metric.name}</p>
+                  <p className={cn("mt-1 break-words text-muted-foreground", page ? "text-xs leading-5" : "text-[10px] leading-4")}>
+                    {describe(metric.expression)}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    </section>
   );
 }
 
@@ -404,16 +536,14 @@ function AnalysisEditor({ analysis, analyses }: { analysis: AnalysisRecord; anal
     return data.index.municipalities.find((item) => item.municipalityCode === municipalityCode) ?? null;
   }, [data, graph.nodes]);
 
-  function insertKennzahl(definition: KennzahlDefinition, municipality: MunicipalityIndexItem) {
+  function insertKennzahl(request: { label: string; dataset: MunicipalityDatasetRef }) {
     const operations = kennzahlDerivationOperations(
-      bindKennzahlInput(definition.output, municipality.municipalityCode, municipality.name),
+      request.dataset,
       nextGraphOrigin(graphRef.current.nodes),
       graphRef.current,
     );
     if (!operations) return;
-    if (commitOperations(operations)) {
-      toast.success(t("kennzahlInserted", { kennzahl: t(definition.labelKey as "populationDensity") }));
-    }
+    if (commitOperations(operations)) toast.success(t("kennzahlInserted", { kennzahl: request.label }));
   }
 
   /**
@@ -489,13 +619,7 @@ function AnalysisEditor({ analysis, analyses }: { analysis: AnalysisRecord; anal
           ))}
         </div>
         <p className="mt-4 text-[11px] leading-5 text-muted-foreground">{t("analysisUnitRule")}</p>
-        {data ? (
-          <KennzahlCatalog
-            municipalities={data.index.municipalities}
-            initialMunicipality={graphMunicipality}
-            onInsert={insertKennzahl}
-          />
-        ) : null}
+        <KennzahlCatalog variant="sidebar" initialMunicipality={graphMunicipality} onOpen={insertKennzahl} />
       </aside>
 
       <section className="relative min-h-[32rem] overflow-hidden rounded-2xl border bg-muted/20 shadow-sm">
@@ -568,12 +692,33 @@ function AnalysisEditor({ analysis, analyses }: { analysis: AnalysisRecord; anal
   );
 }
 
-function AnalysisLanding({ analyses }: { analyses: MunicipalityAnalysisSummary[] }) {
+function AnalysisLanding({
+  analyses,
+  metrics,
+}: {
+  analyses: MunicipalityAnalysisSummary[];
+  metrics: MunicipalityMetricRecord[];
+}) {
   const t = useTranslations("municipalities");
   const format = useFormatter();
   const router = useRouter();
+  const [pending, startTransition] = useTransition();
+
+  // No analysis is open here, so opening a derivation creates one for it.
+  function openAsAnalysis(request: { label: string; dataset: MunicipalityDatasetRef }, municipality: MunicipalityIndexItem) {
+    if (pending) return;
+    startTransition(async () => {
+      const created = await createMunicipalityAnalysis({
+        name: `${request.label} · ${municipality.name}`.slice(0, 120),
+        dataset: request.dataset,
+      });
+      router.push(`/municipalities/analysis?analysis=${encodeURIComponent(created.id)}`);
+    });
+  }
+
   return (
-    <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_22rem]" data-testid="municipality-analysis-landing">
+    <div className="grid gap-4" data-testid="municipality-analysis-landing">
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_22rem]">
       <section className="rounded-2xl border bg-card p-5 shadow-sm">
         <h2 className="text-xl font-semibold">{t("savedAnalyses")}</h2>
         <p className="mt-1 text-sm text-muted-foreground">{t("savedAnalysesDescription")}</p>
@@ -595,12 +740,17 @@ function AnalysisLanding({ analyses }: { analyses: MunicipalityAnalysisSummary[]
           <Input className="mt-4" name="name" maxLength={120} required placeholder={t("analysisNamePlaceholder")} />
           <Button className="mt-2 w-full" type="submit"><Plus className="size-4" />{t("create")}</Button>
         </form>
-      </aside>
+        </aside>
+      </div>
+
+      <section className="rounded-2xl border bg-card p-5 shadow-sm">
+        <KennzahlCatalog variant="page" ownMetrics={metrics} onOpen={openAsAnalysis} />
+      </section>
     </div>
   );
 }
 
-export function MunicipalityAnalysisClient({ analyses, initialAnalysis }: { analyses: MunicipalityAnalysisSummary[]; initialAnalysis: AnalysisRecord | null }) {
-  if (!initialAnalysis) return <AnalysisLanding analyses={analyses} />;
+export function MunicipalityAnalysisClient({ analyses, initialAnalysis, metrics }: { analyses: MunicipalityAnalysisSummary[]; initialAnalysis: AnalysisRecord | null; metrics: MunicipalityMetricRecord[] }) {
+  if (!initialAnalysis) return <AnalysisLanding analyses={analyses} metrics={metrics} />;
   return <ReactFlowProvider><AnalysisEditor key={initialAnalysis.id} analysis={initialAnalysis} analyses={analyses} /></ReactFlowProvider>;
 }

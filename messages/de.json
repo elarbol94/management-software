@@ -433,7 +433,11 @@
     "saveAsKennzahlMissingInput": "Ein Operator hat noch einen offenen Eingang.",
     "saveAsKennzahlPending": "Die Analyse wird noch gespeichert. Kurz warten und erneut versuchen.",
     "customDelete": "Kennzahl löschen",
-    "customDeleteConfirm": "Kennzahl „{name}“ wirklich löschen?"
+    "customDeleteConfirm": "Kennzahl „{name}“ wirklich löschen?",
+    "kennzahlCatalogTitle": "Kennzahlen und ihre Herleitung",
+    "kennzahlCatalogDescription": "Jede Kennzahl mit der Formel, mit der sie aus den Ausgangsdaten berechnet wird.",
+    "kennzahlOpenAsGraph": "Als Graph öffnen",
+    "kennzahlOwnSection": "Eigene Kennzahlen"
   },
   "municipalityInvestments": {
     "back": "Zur Gemeindeübersicht",

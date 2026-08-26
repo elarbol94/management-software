@@ -47,18 +47,22 @@ test("a Kennzahl derivation can be inspected, saved and used on the map", async 
   );
   expect(builtIn).not.toBeNull();
 
-  // Insert that Kennzahl's derivation into an analysis.
+  // The analysis landing page is the reference: every Kennzahl with its formula, no
+  // analysis needed to read it.
   await page.goto("/municipalities/analysis");
-  await page.getByPlaceholder("z. B. Bevölkerungsvergleich").fill("Eigene Kennzahl");
-  await page.getByRole("button", { name: "Erstellen" }).click();
-  await expect(page).toHaveURL(/analysis=/);
-
   const catalog = page.getByTestId("kennzahl-catalog");
   await expect(catalog).toBeVisible({ timeout: 30_000 });
+  // The formula must be readable in full, not cut off after the first terms.
+  await expect(catalog.getByRole("button", { name: /Alterungsindex/ }))
+    .toContainText("(65–79 (Ruhestand) · Personen + 80+ (Hochaltrigkeit) · Personen) ÷ (0–5 (Frühe Kindheit) · Personen + 6–14 (Schulalter) · Personen)) × 100");
+  // A primary calculation is listed but cannot be opened as a graph.
+  await expect(catalog.getByText("Primärberechnung", { exact: false }).first()).toBeVisible();
+
   await catalog.getByLabel("Gemeinde").fill("Graz");
   await catalog.getByRole("button", { name: /^Graz · 60101$/ }).click();
   await expect(page.getByTestId("kennzahl-catalog-municipality")).toHaveText("Graz");
-  await catalog.getByRole("button", { name: "Geburtenrate" }).click();
+  await catalog.getByRole("button", { name: /^Geburtenrate/ }).click();
+  await expect(page).toHaveURL(/analysis=/, { timeout: 30_000 });
 
   // Geburtenrate is (Lebendgeborene ÷ Einwohnerzahl) × 1.000: three inputs, two operators.
   await expect(page.locator(".react-flow__node-dataset")).toHaveCount(3);

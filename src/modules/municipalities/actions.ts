@@ -10,6 +10,7 @@ import { requireUserOrThrow } from "@/lib/auth";
 import {
   addDatasetToGraph,
   applyMunicipalityAnalysisGraphOperations,
+  ANALYSIS_OPERATION_VERSION,
   emptyMunicipalityAnalysisGraph,
   municipalityAnalysisGraphOperationsSchema,
   municipalityAnalysisGraphSchema,
@@ -63,10 +64,21 @@ export async function createMunicipalityAnalysis(input: {
   let graph = emptyMunicipalityAnalysisGraph();
   let nodeId: string | null = null;
   const datasets = [...(parsed.dataset ? [parsed.dataset] : []), ...(parsed.datasets ?? [])];
-  for (const dataset of datasets) {
-    const added = addDatasetToGraph(graph, dataset, createId());
-    graph = added.graph;
-    nodeId = added.nodeId;
+  if (datasets.length) {
+    // Same route as a transfer from the map: an Ausgangsdatum becomes one node, a
+    // Kennzahl its whole derivation.
+    const result = applyMunicipalityAnalysisGraphOperations(
+      graph,
+      datasets.map((dataset) => ({
+        version: ANALYSIS_OPERATION_VERSION as typeof ANALYSIS_OPERATION_VERSION,
+        type: "add-kennzahl" as const,
+        nodeId: createId(),
+        dataset,
+      })),
+      expandKennzahlIntoGraph,
+    );
+    graph = result.graph;
+    nodeId = result.lastDatasetNodeId;
   }
   db.insert(municipalityAnalyses).values({
     id,
