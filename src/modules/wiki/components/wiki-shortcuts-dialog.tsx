@@ -7,7 +7,6 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
   DEFAULT_WIKI_SHORTCUT_BINDINGS,
-  displayWikiShortcut,
   isReservedWikiShortcut,
   normalizeWikiShortcut,
   WIKI_SHORTCUT_GROUPS,
@@ -15,6 +14,7 @@ import {
   type WikiShortcutAction,
   type WikiShortcutBindings,
 } from "../lib/wiki-shortcuts";
+import { displayShortcut } from "../lib/shortcut-display";
 
 type WikiShortcutsDialogProps = {
   open: boolean;
@@ -27,6 +27,7 @@ export function WikiShortcutsDialog({ open, onOpenChange, bindings, onBindingsCh
   const t = useTranslations("wiki.shortcuts");
   const [recording, setRecording] = useState<WikiShortcutAction | null>(null);
   const [error, setError] = useState("");
+  const shortcutKeys = { ctrl: t("keys.ctrl"), delete: t("keys.delete") };
   const label = (action: WikiShortcutAction) => t(`actions.${action}`);
 
   function capture(action: WikiShortcutAction, event: KeyboardEvent<HTMLButtonElement>) {
@@ -62,7 +63,7 @@ export function WikiShortcutsDialog({ open, onOpenChange, bindings, onBindingsCh
               <span className="min-w-0 text-sm">{label(action)}</span>
               <div className="flex shrink-0 items-center gap-1">
                 <Button type="button" variant={recording === action ? "secondary" : "outline"} size="sm" className="min-w-24 font-mono text-xs" data-shortcut-recorder onClick={() => { setRecording(action); setError(""); }} onKeyDown={(event) => { if (recording === action) capture(action, event); }}>
-                  {recording === action ? t("recording") : displayWikiShortcut(bindings[action])}
+                  {recording === action ? t("recording") : displayShortcut(bindings[action], shortcutKeys)}
                 </Button>
                 <Button type="button" variant="ghost" size="xs" disabled={bindings[action] === DEFAULT_WIKI_SHORTCUT_BINDINGS[action]} aria-label={t("resetOne", { action: label(action) })} onClick={() => { onBindingsChange({ ...bindings, [action]: DEFAULT_WIKI_SHORTCUT_BINDINGS[action] }); setRecording(null); setError(""); }}>
                   <RotateCcw className="size-3.5" />

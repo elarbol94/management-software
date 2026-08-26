@@ -20,8 +20,22 @@ type InitialSource = Partial<{
   tags: Array<{ name: string }>;
 }>;
 
-function contributorLines(initial?: InitialSource) {
-  return (initial?.contributors ?? []).map((person) => person.literal ? `@${person.literal}` : `${person.family}, ${person.given}`).join("\n");
+type ContributorRole = "author" | "editor";
+
+function contributorLines(initial: InitialSource | undefined, role: ContributorRole) {
+  return (initial?.contributors ?? [])
+    .filter((person) => (person.role ?? "author") === role)
+    .map((person) => person.literal ? `@${person.literal}` : `${person.family}, ${person.given}`)
+    .join("\n");
+}
+
+/** One name per line: "Family, Given", or "@Literal" for institutions and corporate authors. */
+function parseContributors(value: string, role: ContributorRole) {
+  return value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).map((line) => {
+    if (line.startsWith("@")) return { role, given: "", family: "", literal: line.slice(1).trim() };
+    const [family, ...given] = line.split(",");
+    return { role, family: family.trim(), given: given.join(",").trim(), literal: "" };
+  });
 }
 
 export function SourceForm({ initial: initialSource, documentTypes = [], compact = false, redirectTo, onSaved }: { initial?: InitialSource; documentTypes?: string[]; compact?: boolean; redirectTo?: string; onSaved?: () => void }) {
@@ -37,11 +51,10 @@ export function SourceForm({ initial: initialSource, documentTypes = [], compact
   async function submit(formData: FormData) {
     setPending(true); setError("");
     const value = (name: string) => String(formData.get(name) ?? "").trim();
-    const contributors = value("contributors").split(/\r?\n/).map((line) => line.trim()).filter(Boolean).map((line) => {
-      if (line.startsWith("@")) return { role: "author" as const, given: "", family: "", literal: line.slice(1).trim() };
-      const [family, ...given] = line.split(",");
-      return { role: "author" as const, family: family.trim(), given: given.join(",").trim(), literal: "" };
-    });
+    const contributors = [
+      ...parseContributors(value("contributors"), "author"),
+      ...parseContributors(value("editors"), "editor"),
+    ];
     try {
       const result = await saveSource({ id: initial?.id, type, documentType: value("documentType"), readingStatus, contributors,
         title: value("title"), subtitle: value("subtitle"), issuedDate: value("issuedDate"), containerTitle: value("containerTitle"),
@@ -64,7 +77,8 @@ export function SourceForm({ initial: initialSource, documentTypes = [], compact
       <div className="space-y-1.5"><Label htmlFor="issuedDate">{t("issuedDate")}</Label><Input id="issuedDate" name="issuedDate" defaultValue={initial?.issuedDate} placeholder="2026 or 2026-07-20" /></div>
     </div>
     <div className="grid gap-4 md:grid-cols-2"><div className="space-y-1.5"><Label htmlFor="title">{t("sourceTitle")}</Label><Input id="title" name="title" required defaultValue={initial?.title} /></div><div className="space-y-1.5"><Label htmlFor="subtitle">{t("subtitle")}</Label><Input id="subtitle" name="subtitle" defaultValue={initial?.subtitle} /></div></div>
-    <div className="space-y-1.5"><Label htmlFor="contributors">{t("contributors")}</Label><Textarea id="contributors" name="contributors" rows={3} defaultValue={contributorLines(initial)} placeholder={t("contributorsHint")} /><p className="text-xs text-muted-foreground">{t("contributorsHelp")}</p></div>
+    <div className="space-y-1.5"><Label htmlFor="contributors">{t("contributors")}</Label><Textarea id="contributors" name="contributors" rows={3} defaultValue={contributorLines(initial, "author")} placeholder={t("contributorsHint")} /><p className="text-xs text-muted-foreground">{t("contributorsHelp")}</p></div>
+    <div className="space-y-1.5"><Label htmlFor="editors">{t("editors")}</Label><Textarea id="editors" name="editors" rows={2} defaultValue={contributorLines(initial, "editor")} placeholder={t("contributorsHint")} /><p className="text-xs text-muted-foreground">{t("editorsHelp")}</p></div>
     <div className="grid gap-4 md:grid-cols-2"><div className="space-y-1.5"><Label htmlFor="containerTitle">{t("containerTitle")}</Label><Input id="containerTitle" name="containerTitle" defaultValue={initial?.containerTitle} /></div><div className="space-y-1.5"><Label htmlFor="publisher">{t("publisher")}</Label><Input id="publisher" name="publisher" defaultValue={initial?.publisher} /></div></div>
     {!compact && <>
       <div className="grid grid-cols-2 gap-4 md:grid-cols-5"><Field name="institution" label={t("institution")} value={initial?.institution} /><Field name="edition" label={t("edition")} value={initial?.edition} /><Field name="volume" label={t("volume")} value={initial?.volume} /><Field name="issue" label={t("issue")} value={initial?.issue} /><Field name="pages" label={t("pageRange")} value={initial?.pages} /></div>

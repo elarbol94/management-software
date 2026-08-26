@@ -87,3 +87,37 @@ describe("citation styles", () => {
     expect(list[0]?.text).toBe("Anton, B. (2021). Earlier.");
   });
 });
+
+describe("editors in citations", () => {
+  const editedVolume: CitationSource = {
+    ...source,
+    type: "book",
+    title: "Gemeindefinanzen im Vergleich",
+    contributors: [{ role: "editor", given: "Anna", family: "Müller", literal: "", sortOrder: 0 }],
+  };
+
+  it("renders editors under IEEE instead of dropping to the publisher", () => {
+    // Previously an editors-only source rendered with no creators at all.
+    expect(formatBibliographyEntry(editedVolume, "en-US")).toContain("A. Müller (ed.)");
+    expect(formatBibliographyEntry(editedVolume, "de-DE")).toContain("A. Müller (Hrsg.)");
+  });
+
+  it("still prefers authors when both roles are present", () => {
+    const both: CitationSource = {
+      ...editedVolume,
+      contributors: [
+        { role: "author", given: "Eva", family: "Berger", literal: "", sortOrder: 0 },
+        { role: "editor", given: "Anna", family: "Müller", literal: "", sortOrder: 1 },
+      ],
+    };
+    const entry = formatBibliographyEntry(both, "de-DE");
+    expect(entry).toContain("E. Berger");
+    expect(entry).not.toContain("Hrsg.");
+  });
+
+  it("passes editors through to CSL, where citeproc renders them", () => {
+    const csl = toCslJson(editedVolume) as { author: unknown[]; editor: unknown[] };
+    expect(csl.author).toEqual([]);
+    expect(csl.editor).toEqual([{ given: "Anna", family: "Müller" }]);
+  });
+});

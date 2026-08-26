@@ -69,12 +69,12 @@ import {
 } from "../lib/document-table";
 import {
   DEFAULT_WIKI_SHORTCUT_BINDINGS,
-  displayWikiShortcut,
   normalizeWikiShortcut,
   parseWikiShortcutBindings,
   WIKI_SHORTCUT_ACTIONS,
   type WikiShortcutAction,
 } from "../lib/wiki-shortcuts";
+import { displayShortcut } from "../lib/shortcut-display";
 import { useTaskCreator } from "@/modules/tasks/components/task-create-provider";
 import { useDeadlineCreator } from "@/modules/tasks/components/deadline-create-provider";
 import { localDateValue } from "@/modules/tasks/deadline-utils";
@@ -2218,7 +2218,7 @@ export function WikiEditor({
     error: { label: t("editor.save.error"), icon: <AlertCircle className="size-3.5" />, className: "text-destructive" },
     conflict: { label: t("editConflict"), icon: <CloudOff className="size-3.5" />, className: "text-amber-700 dark:text-amber-400" },
   }[saveState];
-  const shortcutLabel = (action: WikiShortcutAction) => displayWikiShortcut(wikiShortcuts[action]);
+  const shortcutLabel = (action: WikiShortcutAction) => displayShortcut(wikiShortcuts[action], { ctrl: t("shortcuts.keys.ctrl"), delete: t("shortcuts.keys.delete") });
   const proofingLanguageLabel = proofingLanguage === "de-DE" ? t("editor.proofing.languages.de") : t("editor.proofing.languages.en");
   const nextProofingLanguageLabel = proofingLanguage === "de-DE" ? t("editor.proofing.languages.en") : t("editor.proofing.languages.de");
   const proofingButtonTitle = proofingStatus === "error"

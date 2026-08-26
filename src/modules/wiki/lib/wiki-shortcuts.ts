@@ -37,9 +37,6 @@ export function normalizeWikiShortcut(input: { key: string; ctrlKey: boolean; sh
   return ["Ctrl", input.altKey ? "Alt" : "", input.shiftKey && !implicitCharacterShift ? "Shift" : "", key].filter(Boolean).join("+");
 }
 
-export function displayWikiShortcut(shortcut: string) {
-  return shortcut.replaceAll("Ctrl", "Strg").replaceAll("ArrowLeft", "←").replaceAll("ArrowRight", "→").replaceAll("ArrowUp", "↑").replaceAll("ArrowDown", "↓").replaceAll("Delete", "Entf");
-}
 
 export function isReservedWikiShortcut(shortcut: string) {
   return reservedShortcutKeys.has(shortcut.split("+").at(-1) ?? "");

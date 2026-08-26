@@ -1,0 +1,1 @@
+ALTER TABLE `wiki_pdf_annotations` DROP COLUMN `color`;

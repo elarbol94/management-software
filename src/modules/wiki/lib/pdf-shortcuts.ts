@@ -10,26 +10,17 @@ export const PDF_SHORTCUT_ACTIONS = [
 export type PdfShortcutAction = typeof PDF_SHORTCUT_ACTIONS[number];
 export type PdfShortcutBindings = Record<PdfShortcutAction, string>;
 
-export const PDF_SHORTCUT_GROUPS: Array<{ label: string; actions: PdfShortcutAction[] }> = [
-  { label: "Navigation und Zoom", actions: ["previousPage", "nextPage", "zoomOut", "zoomIn", "fitWidth", "fitPage", "actualSize"] },
-  { label: "Ansichten", actions: ["continuousView", "singlePageView", "doublePageView"] },
-  { label: "Suche", actions: ["search", "previousMatch", "nextMatch", "caseSensitive", "wholeWord"] },
-  { label: "Navigator", actions: ["navigatorPages", "navigatorSearch", "outline", "toggleNavigator"] },
-  { label: "Kommentare, Markierungen und Aufgaben", actions: ["captureRegion", "bookmarkPage", "comments", "previousAnnotation", "nextAnnotation", "backToComments", "copyCitation", "editAnnotation", "deleteAnnotation", "createTask", "createDeadline"] },
-  { label: "Dokument und Oberfläche", actions: ["rotate", "openOriginal", "download", "printPdf", "focusMode", "shortcuts"] },
-];
+export type PdfShortcutGroup = "navigation" | "views" | "search" | "navigator" | "annotations" | "document";
 
-export const PDF_SHORTCUT_LABELS: Record<PdfShortcutAction, string> = {
-  previousPage: "Vorherige Seite", nextPage: "Nächste Seite", zoomOut: "Verkleinern", zoomIn: "Vergrößern",
-  fitWidth: "An Breite anpassen", fitPage: "Ganze Seite", actualSize: "Originalgröße",
-  continuousView: "Fortlaufende Ansicht", singlePageView: "Einzelseite", doublePageView: "Doppelseite",
-  search: "PDF durchsuchen", previousMatch: "Vorheriger Treffer", nextMatch: "Nächster Treffer",
-  caseSensitive: "Groß-/Kleinschreibung", wholeWord: "Nur ganze Wörter", navigatorPages: "Seiten", navigatorSearch: "Suche", outline: "Gliederung",
-  captureRegion: "Bereich markieren", bookmarkPage: "Seite merken", comments: "Kommentare", previousAnnotation: "Vorheriger Kommentar", nextAnnotation: "Nächster Kommentar", backToComments: "Zurück zu Kommentaren", copyCitation: "Zitat kopieren", editAnnotation: "Annotation bearbeiten", deleteAnnotation: "Annotation löschen",
-  createTask: "Aufgabe erstellen",
-  createDeadline: "Deadline erstellen",
-  rotate: "Drehen", toggleNavigator: "Navigator ein-/ausblenden", openOriginal: "Original öffnen", download: "Herunterladen", printPdf: "Drucken", focusMode: "Fokusmodus", shortcuts: "Tastenkürzel",
-};
+/** Labels are message keys, resolved by the component: this lib cannot reach next-intl. */
+export const PDF_SHORTCUT_GROUPS: Array<{ label: PdfShortcutGroup; actions: PdfShortcutAction[] }> = [
+  { label: "navigation", actions: ["previousPage", "nextPage", "zoomOut", "zoomIn", "fitWidth", "fitPage", "actualSize"] },
+  { label: "views", actions: ["continuousView", "singlePageView", "doublePageView"] },
+  { label: "search", actions: ["search", "previousMatch", "nextMatch", "caseSensitive", "wholeWord"] },
+  { label: "navigator", actions: ["navigatorPages", "navigatorSearch", "outline", "toggleNavigator"] },
+  { label: "annotations", actions: ["captureRegion", "bookmarkPage", "comments", "previousAnnotation", "nextAnnotation", "backToComments", "copyCitation", "editAnnotation", "deleteAnnotation", "createTask", "createDeadline"] },
+  { label: "document", actions: ["rotate", "openOriginal", "download", "printPdf", "focusMode", "shortcuts"] },
+];
 
 export const DEFAULT_PDF_SHORTCUT_BINDINGS: PdfShortcutBindings = {
   previousPage: "Ctrl+ArrowLeft", nextPage: "Ctrl+ArrowRight", zoomOut: "Ctrl+-", zoomIn: "Ctrl++",
@@ -53,10 +44,6 @@ export function normalizePdfShortcut(input: { key: string; ctrlKey: boolean; shi
   // physical Shift modifier would make the configured shortcut impossible to match.
   const implicitCharacterShift = key.length === 1 && !/[\p{L}\p{N}]/u.test(key);
   return ["Ctrl", input.altKey ? "Alt" : "", input.shiftKey && !implicitCharacterShift ? "Shift" : "", key].filter(Boolean).join("+");
-}
-
-export function displayPdfShortcut(shortcut: string) {
-  return shortcut.replaceAll("Ctrl", "Strg").replaceAll("ArrowLeft", "←").replaceAll("ArrowRight", "→").replaceAll("ArrowUp", "↑").replaceAll("ArrowDown", "↓").replaceAll("Delete", "Entf");
 }
 
 export function isReservedPdfShortcut(shortcut: string) {

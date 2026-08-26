@@ -75,7 +75,6 @@ export const wikiPdfAnnotations = sqliteTable(
     selectedText: text("selected_text").notNull().default(""),
     note: text("note").notNull().default(""),
     label: text("label").notNull().default(""),
-    color: text("color").notNull().default("yellow"),
     geometryJson: text("geometry_json").notNull().default("[]"),
     previewStoredName: text("preview_stored_name").notNull().default(""),
     createdBy: text("created_by").notNull().references(() => user.id),

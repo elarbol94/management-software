@@ -10,7 +10,7 @@ import {
 
 describe("PDF reader utilities", () => {
   it("parses and clamps persisted preferences", () => {
-    expect(parsePdfReaderPreferences('{"version":1,"scale":9,"navigatorWidth":20,"commentPanelWidth":999,"viewMode":"double","fitMode":"page","rotation":90,"color":"blue","navigatorTab":"outline","navigatorVisible":false}')).toMatchObject({
+    expect(parsePdfReaderPreferences('{"version":1,"scale":9,"navigatorWidth":20,"commentPanelWidth":999,"viewMode":"double","fitMode":"page","rotation":90,"navigatorTab":"outline","navigatorVisible":false}')).toMatchObject({
       scale: 3, navigatorWidth: 104, commentPanelWidth: 420, viewMode: "double",
       fitMode: "page", rotation: 90, navigatorTab: "outline", navigatorVisible: false,
     });

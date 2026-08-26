@@ -13,7 +13,7 @@ import { userMarkColorStyle, type UserMarkColor } from "@/lib/user-mark-colors";
 
 type EvidenceItem = {
   linkId?: string; id?: string; annotationId?: string; sourceId: string; documentId: string; pageNumber: number;
-  kind: string; selectedText: string; note: string; label: string; color?: string; createdByMarkColor: UserMarkColor; sourceTitle: string; deletedAt?: string | null;
+  kind: string; selectedText: string; note: string; label: string; createdByMarkColor: UserMarkColor; sourceTitle: string; deletedAt?: string | null;
 };
 
 type EvidencePanelProps = { targetType: EvidenceTargetType; targetId: string; compact?: boolean };

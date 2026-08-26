@@ -226,7 +226,7 @@ export function listSources(
            (SELECT count(DISTINCT ps.page_id) FROM wiki_page_sources ps WHERE ps.source_id = s.id AND ps.relation = 'citation') AS citationCount,
            (SELECT count(*) FROM attachments a WHERE a.entity_type = 'wikiSource' AND a.entity_id = s.id) AS attachmentCount
     FROM wiki_sources s
-    LEFT JOIN wiki_source_contributors c ON c.source_id = s.id AND c.role = 'author'
+    LEFT JOIN wiki_source_contributors c ON c.source_id = s.id
     LEFT JOIN wiki_source_tags st ON st.source_id = s.id
     LEFT JOIN wiki_tags t ON t.id = st.tag_id
     WHERE ${where.join(" AND ")}

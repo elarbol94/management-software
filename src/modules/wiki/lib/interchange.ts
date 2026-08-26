@@ -2,15 +2,22 @@ import type { z } from "zod";
 import type { sourceInputSchema } from "./source-input";
 export type ImportedSource = z.infer<typeof sourceInputSchema>;
 const empty = { documentType: "", subtitle: "", containerTitle: "", publisher: "", institution: "", edition: "", volume: "", issue: "", pages: "", doi: "", isbn: "", url: "", accessedAt: "", language: "", abstract: "", notes: "", readingStatus: "toRead" as const, tagNames: [] as string[] };
-function person(name: string) {
+type ContributorRole = "author" | "editor";
+
+function person(name: string, role: ContributorRole = "author") {
   const normalized = name.trim();
   if (normalized.includes(",")) {
     const [family, ...given] = normalized.split(",");
-    return { role: "author" as const, family: family.trim(), given: given.join(",").trim(), literal: "" };
+    return { role, family: family.trim(), given: given.join(",").trim(), literal: "" };
   }
   const parts = normalized.split(/\s+/).filter(Boolean);
   const family = parts.pop() ?? "";
-  return { role: "author" as const, family, given: parts.join(" "), literal: "" };
+  return { role, family, given: parts.join(" "), literal: "" };
+}
+
+/** BibTeX separates names with " and ". */
+function bibNames(value: string | undefined, role: ContributorRole) {
+  return (value || "").split(/\s+and\s+/i).filter(Boolean).map((name) => person(name, role));
 }
 
 function readDelimitedValue(input: string, start: number) {
@@ -93,7 +100,7 @@ export function parseBibTeX(input: string): ImportedSource[] {
     const kind = start[1].toLowerCase();
     if (["comment", "preamble", "string"].includes(kind)) continue;
     const fields = parseBibFields(input.slice(bodyStart, bodyEnd));
-    records.push({ ...empty, type: kind.includes("article") ? "journalArticle" : kind.includes("inbook") ? "bookChapter" : kind.includes("book") ? "book" : kind.includes("report") ? "report" : "document", title: fields.title || "Untitled source", issuedDate: fields.year || "", containerTitle: fields.journal || fields.booktitle || "", publisher: fields.publisher || "", volume: fields.volume || "", issue: fields.number || "", pages: fields.pages || "", doi: fields.doi || "", isbn: fields.isbn || "", url: fields.url || "", contributors: (fields.author || "").split(/\s+and\s+/i).filter(Boolean).map(person) });
+    records.push({ ...empty, type: kind.includes("article") ? "journalArticle" : kind.includes("inbook") ? "bookChapter" : kind.includes("book") ? "book" : kind.includes("report") ? "report" : "document", title: fields.title || "Untitled source", issuedDate: fields.year || "", containerTitle: fields.journal || fields.booktitle || "", publisher: fields.publisher || "", volume: fields.volume || "", issue: fields.number || "", pages: fields.pages || "", doi: fields.doi || "", isbn: fields.isbn || "", url: fields.url || "", contributors: [...bibNames(fields.author, "author"), ...bibNames(fields.editor, "editor")] });
   }
   return records;
 }
@@ -109,9 +116,9 @@ export function parseRis(input: string): ImportedSource[] {
     if (!title) continue;
     const ty = fields.get("TY")?.[0];
     const type: ImportedSource["type"] = ty === "JOUR" ? "journalArticle" : ty === "BOOK" ? "book" : ty === "CHAP" ? "bookChapter" : ty === "RPRT" ? "report" : ty === "ELEC" ? "webPage" : "document";
-    records.push({ ...empty, type, title, issuedDate: fields.get("PY")?.[0] || fields.get("Y1")?.[0] || "", containerTitle: fields.get("JO")?.[0] || fields.get("T2")?.[0] || "", publisher: fields.get("PB")?.[0] || "", volume: fields.get("VL")?.[0] || "", issue: fields.get("IS")?.[0] || "", pages: [fields.get("SP")?.[0], fields.get("EP")?.[0]].filter(Boolean).join("-"), doi: fields.get("DO")?.[0] || "", isbn: fields.get("SN")?.[0] || "", url: fields.get("UR")?.[0] || "", abstract: fields.get("AB")?.[0] || "", notes: fields.get("N1")?.join("\n") || "", contributors: (fields.get("AU") ?? []).map(person) });
+    records.push({ ...empty, type, title, issuedDate: fields.get("PY")?.[0] || fields.get("Y1")?.[0] || "", containerTitle: fields.get("JO")?.[0] || fields.get("T2")?.[0] || "", publisher: fields.get("PB")?.[0] || "", volume: fields.get("VL")?.[0] || "", issue: fields.get("IS")?.[0] || "", pages: [fields.get("SP")?.[0], fields.get("EP")?.[0]].filter(Boolean).join("-"), doi: fields.get("DO")?.[0] || "", isbn: fields.get("SN")?.[0] || "", url: fields.get("UR")?.[0] || "", abstract: fields.get("AB")?.[0] || "", notes: fields.get("N1")?.join("\n") || "", contributors: [...(fields.get("AU") ?? []).map((name) => person(name, "author")), ...(fields.get("ED") ?? []).map((name) => person(name, "editor"))] });
   }
   return records;
 }
-export function toBibTeX(source: { id:string; type:string; title:string; issuedDate:string; containerTitle:string; publisher:string; volume:string; issue:string; pages:string; doi:string; isbn:string; url:string; contributors:Array<{given:string;family:string;literal:string}> }) { const type = source.type === "journalArticle" ? "article" : source.type === "book" ? "book" : source.type === "bookChapter" ? "inbook" : "misc"; const authors = source.contributors.map((item) => item.literal || `${item.family}, ${item.given}`).join(" and "); const fields = [["title",source.title],["author",authors],["year",source.issuedDate.slice(0,4)],["journal",source.containerTitle],["publisher",source.publisher],["volume",source.volume],["number",source.issue],["pages",source.pages],["doi",source.doi],["isbn",source.isbn],["url",source.url]].filter(([,value]) => value); return `@${type}{${source.id},\n${fields.map(([key,value]) => `  ${key} = {${value}}`).join(",\n")}\n}`; }
-export function toRis(source: Parameters<typeof toBibTeX>[0]) { const ty = source.type === "journalArticle" ? "JOUR" : source.type === "book" ? "BOOK" : source.type === "bookChapter" ? "CHAP" : "GEN"; return [`TY  - ${ty}`,`TI  - ${source.title}`,...source.contributors.map((item) => `AU  - ${item.literal || `${item.family}, ${item.given}`}`),source.issuedDate && `PY  - ${source.issuedDate}`,source.containerTitle && `JO  - ${source.containerTitle}`,source.publisher && `PB  - ${source.publisher}`,source.doi && `DO  - ${source.doi}`,source.isbn && `SN  - ${source.isbn}`,source.url && `UR  - ${source.url}`,"ER  -"].filter(Boolean).join("\n"); }
+export function toBibTeX(source: { id:string; type:string; title:string; issuedDate:string; containerTitle:string; publisher:string; volume:string; issue:string; pages:string; doi:string; isbn:string; url:string; contributors:Array<{given:string;family:string;literal:string;role?:string}> }) { const type = source.type === "journalArticle" ? "article" : source.type === "book" ? "book" : source.type === "bookChapter" ? "inbook" : "misc"; const name = (item: {given:string;family:string;literal:string}) => item.literal || `${item.family}, ${item.given}`; const byRole = (role: string) => source.contributors.filter((item) => (item.role ?? "author") === role).map(name).join(" and "); const fields = [["title",source.title],["author",byRole("author")],["editor",byRole("editor")],["year",source.issuedDate.slice(0,4)],["journal",source.containerTitle],["publisher",source.publisher],["volume",source.volume],["number",source.issue],["pages",source.pages],["doi",source.doi],["isbn",source.isbn],["url",source.url]].filter(([,value]) => value); return `@${type}{${source.id},\n${fields.map(([key,value]) => `  ${key} = {${value}}`).join(",\n")}\n}`; }
+export function toRis(source: Parameters<typeof toBibTeX>[0]) { const ty = source.type === "journalArticle" ? "JOUR" : source.type === "book" ? "BOOK" : source.type === "bookChapter" ? "CHAP" : "GEN"; return [`TY  - ${ty}`,`TI  - ${source.title}`,...source.contributors.map((item) => `${(item.role ?? "author") === "editor" ? "ED" : "AU"}  - ${item.literal || `${item.family}, ${item.given}`}`),source.issuedDate && `PY  - ${source.issuedDate}`,source.containerTitle && `JO  - ${source.containerTitle}`,source.publisher && `PB  - ${source.publisher}`,source.doi && `DO  - ${source.doi}`,source.isbn && `SN  - ${source.isbn}`,source.url && `UR  - ${source.url}`,"ER  -"].filter(Boolean).join("\n"); }

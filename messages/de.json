@@ -1873,6 +1873,10 @@
         "tableAlignRight": "Tabellenzelle rechts ausrichten",
         "tableDeleteRow": "Aktuelle Tabellenzeile löschen",
         "tableDeleteColumn": "Aktuelle Tabellenspalte löschen"
+      },
+      "keys": {
+        "ctrl": "Strg",
+        "delete": "Entf"
       }
     },
     "document": {
@@ -2688,14 +2692,6 @@
     "resetShortcuts": "Standards wiederherstellen",
     "resetShortcut": "Zurücksetzen",
     "done": "Fertig",
-    "annotationColor": "Markierungsfarbe",
-    "annotationColors": {
-      "yellow": "Gelb",
-      "green": "Grün",
-      "blue": "Blau",
-      "pink": "Rosa",
-      "purple": "Violett"
-    },
     "captureRegion": "Bereich markieren",
     "bookmarkPage": "Seite merken",
     "viewMode": "Ansicht",
@@ -2820,7 +2816,57 @@
       "leaveMode": "Direkt bearbeiten",
       "acceptAll": "{count, plural, one {# Vorschlag übernehmen} other {# Vorschläge übernehmen}}",
       "rejectAll": "Vorschläge verwerfen"
-    }
+    },
+    "pdfShortcuts": {
+      "groups": {
+        "navigation": "Navigation und Zoom",
+        "views": "Ansichten",
+        "search": "Suche",
+        "navigator": "Navigator",
+        "annotations": "Kommentare, Markierungen und Aufgaben",
+        "document": "Dokument und Oberfläche"
+      },
+      "actions": {
+        "previousPage": "Vorherige Seite",
+        "nextPage": "Nächste Seite",
+        "zoomOut": "Verkleinern",
+        "zoomIn": "Vergrößern",
+        "fitWidth": "An Breite anpassen",
+        "fitPage": "Ganze Seite",
+        "actualSize": "Originalgröße",
+        "continuousView": "Alle Seiten",
+        "singlePageView": "Eine Seite",
+        "doublePageView": "Zwei Seiten",
+        "search": "Suchen",
+        "previousMatch": "Vorheriger Treffer",
+        "nextMatch": "Nächster Treffer",
+        "caseSensitive": "Groß-/Kleinschreibung",
+        "wholeWord": "Nur ganze Wörter",
+        "navigatorPages": "Seiten",
+        "navigatorSearch": "Suche",
+        "outline": "Gliederung",
+        "captureRegion": "Bereich markieren",
+        "bookmarkPage": "Seite merken",
+        "comments": "Kommentare",
+        "previousAnnotation": "Vorherige Markierung",
+        "nextAnnotation": "Nächste Markierung",
+        "backToComments": "Zurück zu den Kommentaren",
+        "copyCitation": "Mit Quellenangabe kopieren",
+        "editAnnotation": "Annotation bearbeiten",
+        "deleteAnnotation": "Annotation löschen",
+        "createTask": "Aufgabe erstellen",
+        "createDeadline": "Deadline erstellen",
+        "rotate": "Im Uhrzeigersinn drehen",
+        "toggleNavigator": "Navigator ein-/ausblenden",
+        "openOriginal": "Original-PDF öffnen",
+        "download": "PDF herunterladen",
+        "printPdf": "PDF drucken",
+        "focusMode": "Fokusmodus",
+        "shortcuts": "Tastenkürzel"
+      }
+    },
+    "editors": "Herausgeber:innen",
+    "editorsHelp": "Eine Person pro Zeile, wie oben. Leer lassen, wenn es keine gibt."
   },
   "settings": {
     "title": "Einstellungen",

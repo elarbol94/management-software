@@ -1873,6 +1873,10 @@
         "tableAlignRight": "Align table cell right",
         "tableDeleteRow": "Delete current table row",
         "tableDeleteColumn": "Delete current table column"
+      },
+      "keys": {
+        "ctrl": "Ctrl",
+        "delete": "Del"
       }
     },
     "document": {
@@ -2686,14 +2690,6 @@
     "resetShortcuts": "Restore defaults",
     "resetShortcut": "Reset",
     "done": "Done",
-    "annotationColor": "Annotation color",
-    "annotationColors": {
-      "yellow": "Yellow",
-      "green": "Green",
-      "blue": "Blue",
-      "pink": "Pink",
-      "purple": "Purple"
-    },
     "captureRegion": "Capture region",
     "bookmarkPage": "Bookmark page",
     "viewMode": "View",
@@ -2818,7 +2814,57 @@
       "leaveMode": "Edit directly",
       "acceptAll": "{count, plural, one {Accept # suggestion} other {Accept # suggestions}}",
       "rejectAll": "Reject suggestions"
-    }
+    },
+    "pdfShortcuts": {
+      "groups": {
+        "navigation": "Navigation and zoom",
+        "views": "Views",
+        "search": "Search",
+        "navigator": "Navigator",
+        "annotations": "Comments, annotations and tasks",
+        "document": "Document and interface"
+      },
+      "actions": {
+        "previousPage": "Previous page",
+        "nextPage": "Next page",
+        "zoomOut": "Zoom out",
+        "zoomIn": "Zoom in",
+        "fitWidth": "Fit to width",
+        "fitPage": "Fit page",
+        "actualSize": "Actual size",
+        "continuousView": "All pages",
+        "singlePageView": "Single page",
+        "doublePageView": "Two pages",
+        "search": "Search",
+        "previousMatch": "Previous match",
+        "nextMatch": "Next match",
+        "caseSensitive": "Match case",
+        "wholeWord": "Whole words only",
+        "navigatorPages": "Pages",
+        "navigatorSearch": "Search",
+        "outline": "Outline",
+        "captureRegion": "Capture region",
+        "bookmarkPage": "Bookmark page",
+        "comments": "Comments",
+        "previousAnnotation": "Previous annotation",
+        "nextAnnotation": "Next annotation",
+        "backToComments": "Back to comments",
+        "copyCitation": "Copy with citation",
+        "editAnnotation": "Edit annotation",
+        "deleteAnnotation": "Delete annotation",
+        "createTask": "Create task",
+        "createDeadline": "Create deadline",
+        "rotate": "Rotate clockwise",
+        "toggleNavigator": "Toggle navigator",
+        "openOriginal": "Open original PDF",
+        "download": "Download PDF",
+        "printPdf": "Print PDF",
+        "focusMode": "Focus mode",
+        "shortcuts": "Keyboard shortcuts"
+      }
+    },
+    "editors": "Editors",
+    "editorsHelp": "One person per line, as above. Leave empty if there are none."
   },
   "settings": {
     "title": "Settings",

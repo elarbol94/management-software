@@ -63,7 +63,7 @@ export async function createPdfAnnotation(input: z.input<typeof annotationSchema
   db.insert(wikiPdfAnnotations).values({
     id, sourceId: document.sourceId, documentId: data.documentId, pageNumber: data.pageNumber,
     kind: data.kind, selectedText: data.selectedText.trim(), note: data.note.trim(), label: data.label.trim(),
-    color: "yellow", geometryJson: JSON.stringify(data.geometry), previewStoredName,
+    geometryJson: JSON.stringify(data.geometry), previewStoredName,
     createdBy: currentUser.id, updatedBy: currentUser.id,
   }).run();
   revalidatePath(`/wiki/sources/${document.sourceId}`, "page");

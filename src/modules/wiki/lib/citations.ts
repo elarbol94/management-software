@@ -93,21 +93,29 @@ export function toCslJson(source: CitationSource) {
   };
 }
 
-function contributorLabel(source: CitationSource) {
+function contributorLabel(source: CitationSource, locale = "en-US") {
   const authors = source.contributors.filter((person) => person.role === "author");
+  const editors = source.contributors.filter((person) => person.role === "editor");
+  // An edited volume has no authors. Falling straight through to the publisher made such
+  // a source render with no creators at all under IEEE.
+  if (authors.length === 0 && editors.length > 0) {
+    const marker = locale.startsWith("de") ? "Hrsg." : "ed.";
+    return `${editors.map(nameOf).join(", ")} (${marker})`;
+  }
   if (authors.length === 0) return source.institution || source.publisher || source.title;
-  const name = (person: Contributor) => {
-    if (person.literal) return person.literal;
-    const initials = person.given
-      .split(/\s+/)
-      .filter(Boolean)
-      .map((part) => `${part[0]?.toUpperCase()}.`)
-      .join(" ");
-    return [initials, person.family].filter(Boolean).join(" ");
-  };
   return authors
-    .map(name)
+    .map(nameOf)
     .join(authors.length > 1 ? ", " : "");
+}
+
+function nameOf(person: Contributor) {
+  if (person.literal) return person.literal;
+  const initials = person.given
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((part) => `${part[0]?.toUpperCase()}.`)
+    .join(" ");
+  return [initials, person.family].filter(Boolean).join(" ");
 }
 
 export function formatInlineCitation(
@@ -131,8 +139,7 @@ export function formatIeeeCitation(citationNumber: number, locator?: string) {
 
 export function formatBibliographyEntry(source: CitationSource, locale = "en-US") {
   if (source.renderedBibliography) return source.renderedBibliography;
-  void locale;
-  const creators = contributorLabel(source);
+  const creators = contributorLabel(source, locale);
   const issuedYear = year(source);
   const publisher = source.publisher || source.institution;
   const pages = source.pages ? `${source.pages.includes("-") ? "pp." : "p."} ${source.pages}` : "";
