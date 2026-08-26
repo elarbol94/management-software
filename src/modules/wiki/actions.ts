@@ -17,6 +17,7 @@ import {
   wikiPdfAnnotations,
 } from "@/db/schema";
 import { requireUserOrThrow } from "@/lib/auth";
+import { indexText, removeFromIndex } from "./lib/vector-store.server";
 import { isCommentAnchorOrphaned, type CommentAnchor } from "./lib/comment-anchors";
 import {
   extractCitations,
@@ -43,6 +44,18 @@ function uniqueSlug(title: string, excludePageId?: string): string {
     slug = `${base}-${i}`;
   }
   throw new Error("Could not allocate a unique slug");
+}
+
+/**
+ * Embedding is slower than the rest of a save, so it runs after the transaction commits
+ * and never blocks or fails it: a page that cannot be embedded is still saved, just not
+ * semantically searchable until the next successful index.
+ */
+function scheduleIndex(pageId: string, title: string, contentText: string) {
+  void indexText({ kind: "page", refId: pageId, text: `${title}\n\n${contentText}` })
+    .catch((error: unknown) => console.warn(JSON.stringify({
+      event: "page_index_failed", pageId, reason: error instanceof Error ? error.message : "unknown",
+    })));
 }
 
 function syncFts(pageId: string, title: string, contentText: string) {
@@ -146,6 +159,7 @@ export async function createPage(
     .get();
 
   syncFts(row.id, data.title, "");
+  scheduleIndex(row.id, data.title, "");
   revalidatePath("/wiki", "layout");
   return { slug };
 }
@@ -223,6 +237,7 @@ export async function renamePage(id: string, title: string) {
       .run();
   });
   syncFts(id, cleanTitle, page.contentText);
+  scheduleIndex(id, cleanTitle, page.contentText);
   revalidatePath("/wiki", "layout");
   return { slug: nextSlug };
 }
@@ -440,6 +455,7 @@ export async function savePageContent(input: z.infer<typeof saveSchema>) {
     }
 
     syncFts(data.id, effectiveTitle, contentText);
+    scheduleIndex(data.id, effectiveTitle, contentText);
     return true;
   });
   if (!applied) {
@@ -503,6 +519,7 @@ export async function deletePage(id: string) {
       .run();
     for (const pageId of toDelete) {
       sqlite.prepare("DELETE FROM wiki_pages_fts WHERE page_id = ?").run(pageId);
+      removeFromIndex("page", pageId);
     }
   });
 

@@ -53,6 +53,35 @@ export const wikiDocumentTemplates = sqliteTable(
  * report without first belonging to a page — which is how research is read (by claim)
  * rather than how it is filed (by document).
  */
+export const wikiEmbeddingKinds = ["page", "pdfPage"] as const;
+
+/**
+ * Metadata for one embedded chunk. The vectors live in a sqlite-vec virtual table keyed
+ * by this row's integer id, because vec0 only accepts integer rowids and cannot hold the
+ * cuid2 strings the rest of the schema uses.
+ *
+ * contentHash lets a re-index skip text that has not changed, which matters because
+ * embedding is the slow part of saving.
+ */
+export const wikiEmbeddings = sqliteTable(
+  "wiki_embeddings",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    kind: text("kind", { enum: wikiEmbeddingKinds }).notNull(),
+    /** Page id, or PDF document id. */
+    refId: text("ref_id").notNull(),
+    pageNumber: integer("page_number").notNull().default(0),
+    chunkIndex: integer("chunk_index").notNull().default(0),
+    contentHash: text("content_hash").notNull(),
+    text: text("text").notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex("wiki_embeddings_chunk_unique").on(table.kind, table.refId, table.pageNumber, table.chunkIndex),
+    index("wiki_embeddings_ref_idx").on(table.kind, table.refId),
+  ],
+);
+
 export const wikiCategories = sqliteTable(
   "wiki_categories",
   {

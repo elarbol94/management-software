@@ -37,6 +37,7 @@ import { normalizeDoi, normalizeIsbn, normalizeUrl } from "./lib/citations";
 import type { CommentAnchor } from "./lib/comment-anchors";
 import { buildFtsQuery, extractText, parseStoredDocument, slugify } from "./lib/tiptap";
 import { fuseRankings } from "./lib/search-ranking";
+import { searchSimilar } from "./lib/vector-store.server";
 import { getPageComments } from "./research-queries";
 import { searchPdfPageText } from "./pdf-queries";
 
@@ -546,10 +547,47 @@ export async function searchResearch(query: string, options: { limit?: number; t
     pageNumber: row.pageNumber,
   }));
 
+  // Semantic hits, when the model and vector extension are both available. They are
+  // fused with the keyword lists rather than replacing them: embedding distances on this
+  // model sit in a narrow band, so a correct match can beat a wrong one by a few
+  // thousandths. Agreement between the two retrievers is what makes a result trustworthy.
+  const semanticHits: SearchHit[] = [];
+  const semantic = await searchSimilar(clean, 20).catch(() => null);
+  if (semantic?.length) {
+    const pageIds = semantic.filter((hit) => hit.kind === "page").map((hit) => hit.refId);
+    const documentIds = semantic.filter((hit) => hit.kind === "pdfPage").map((hit) => hit.refId);
+    const pageRows = pageIds.length ? sqlite.prepare(
+      `SELECT id, title, slug, status FROM wiki_pages WHERE deleted_at IS NULL AND id IN (${pageIds.map(() => "?").join(",")})`,
+    ).all(...pageIds) as Array<{ id: string; title: string; slug: string; status: string }> : [];
+    const documentRows = documentIds.length ? sqlite.prepare(
+      `SELECT d.id, d.source_id AS sourceId, s.title AS sourceTitle FROM wiki_pdf_documents d
+       JOIN wiki_sources s ON s.id = d.source_id
+       WHERE s.deleted_at IS NULL AND d.id IN (${documentIds.map(() => "?").join(",")})`,
+    ).all(...documentIds) as Array<{ id: string; sourceId: string; sourceTitle: string }> : [];
+    const pageById = new Map(pageRows.map((row) => [row.id, row]));
+    const documentById = new Map(documentRows.map((row) => [row.id, row]));
+
+    for (const hit of semantic) {
+      const snippet = hit.text.slice(0, 240);
+      if (hit.kind === "page") {
+        const page = pageById.get(hit.refId);
+        if (!page) continue;
+        semanticHits.push({ kind: "page", key: `page:${page.id}`, title: page.title, snippet, href: `/wiki/pages/${page.slug}`, status: page.status });
+      } else {
+        const document = documentById.get(hit.refId);
+        if (!document) continue;
+        semanticHits.push({
+          kind: "pdfPage", key: `pdf:${document.id}:${hit.pageNumber}`, title: document.sourceTitle, snippet,
+          href: `/wiki/sources/${document.sourceId}/read/${document.id}?page=${hit.pageNumber}`, pageNumber: hit.pageNumber,
+        });
+      }
+    }
+  }
+
   // One ranked list rather than four capped sections: a page hit ranked eleventh used
   // to be invisible even when it beat every PDF hit.
   const results = fuseRankings<SearchHit>(
-    [pageHits, sourceHits, pdfHits, annotationHits],
+    [pageHits, sourceHits, pdfHits, annotationHits, semanticHits],
     (hit) => hit.key,
   ).slice(0, limit);
   return { results };

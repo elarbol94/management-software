@@ -11,6 +11,7 @@ import { getAttachmentAbsolutePath, UPLOADS_PATH } from "@/lib/files";
 import { chooseExtractionMethod, extractPdfMetadataSuggestions } from "./lib/pdf-evidence";
 import { openPdfDocument, pdfMetadataAsInfo } from "./lib/pdf-node";
 import { fetchCrossrefWork } from "./lib/crossref";
+import { indexText } from "./lib/vector-store.server";
 
 type PdfJob = {
   id: string;
@@ -127,6 +128,7 @@ async function processClaimedJob(job: PdfJob) {
       .where(eq(wikiPdfDocuments.id, job.id)).run();
 
     const firstPageTexts: string[] = [];
+    const indexedPages: Array<{ pageNumber: number; text: string }> = [];
     for (let pageNumber = 1; pageNumber <= pageCount; pageNumber += 1) {
       const page = await document.getPage(pageNumber);
       const content = await page.getTextContent();
@@ -164,9 +166,20 @@ async function processClaimedJob(job: PdfJob) {
         sqlite.prepare("DELETE FROM wiki_pdf_pages_fts WHERE document_id = ? AND page_number = ?").run(job.id, pageNumber);
         sqlite.prepare("INSERT INTO wiki_pdf_pages_fts (document_id, page_number, source_id, text) VALUES (?, ?, ?, ?)")
           .run(job.id, pageNumber, job.sourceId, text);
+        indexedPages.push({ pageNumber, text });
         db.update(wikiPdfDocuments).set({ progressPage: pageNumber, lockedAt: new Date(), updatedAt: new Date() })
           .where(eq(wikiPdfDocuments.id, job.id)).run();
       });
+    }
+
+    // Embedding after extraction, not inside the per-page transaction: it is the slow
+    // step and must never hold a write lock or fail a processed document.
+    for (const page of indexedPages) {
+      await indexText({ kind: "pdfPage", refId: job.id, pageNumber: page.pageNumber, text: page.text })
+        .catch((error: unknown) => console.warn(JSON.stringify({
+          event: "pdf_page_index_failed", documentId: job.id, pageNumber: page.pageNumber,
+          reason: error instanceof Error ? error.message : "unknown",
+        })));
     }
 
     const suggestions = extractPdfMetadataSuggestions(info, firstPageTexts.join("\n"), job.metadataJson);
