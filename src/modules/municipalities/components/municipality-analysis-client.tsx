@@ -34,7 +34,10 @@ import {
 } from "../actions";
 import {
   ANALYSIS_OPERATION_VERSION,
+  ANALYSIS_OPERATOR_SYMBOLS,
   analysisOperatorIds,
+  isUnaryAnalysisOperator,
+  MAX_ANALYSIS_SHIFT_YEARS,
   applyMunicipalityAnalysisGraphOperations,
   datasetMunicipalityName,
   evaluateAnalysisGraph,
@@ -74,16 +77,15 @@ type AnalysisRecord = {
   updatedAt: number;
 };
 
-const OPERATOR_SYMBOLS: Record<AnalysisOperatorId, string> = {
-  add: "+", subtract: "−", multiply: "×", divide: "÷", "greater-than": ">",
-  "greater-or-equal": "≥", "less-than": "<", "less-or-equal": "≤", equal: "=",
-};
 const OPERATOR_DRAG_TYPE = "application/x-municipality-analysis-operator";
+/** Dragged like an operator, but drops a constant node. */
+const CONSTANT_DRAG_VALUE = "constant";
 
 function seriesErrorLabel(error: AnalysisSeries["error"], t: ReturnType<typeof useTranslations>) {
   if (!error) return null;
   if (error === "missing-input") return t("analysisMissingInput");
   if (error === "incompatible-units") return t("analysisIncompatibleUnits");
+  if (error === "no-common-years") return t("analysisNoCommonYears");
   return t("analysisMissingMunicipality");
 }
 
@@ -93,6 +95,10 @@ type DisplayNodeData = {
   subtitle: string;
   pinned?: boolean;
   symbol?: string;
+  /** Constants and unary operators carry a number the reader edits on the node itself. */
+  editor?: { value: number; label: string; min?: number; max?: number; step: number; commit: (value: number) => void };
+  /** Unary operators read input A only, so B would be an input nothing can satisfy. */
+  singleInput?: boolean;
   series: AnalysisSeries | null;
   errorLabel: string | null;
   warningLabel: string | null;
@@ -108,8 +114,8 @@ function AnalysisNodeCard({ data, selected }: NodeProps<DisplayNode>) {
     )}>
       {data.kind === "operator" && (
         <>
-          <Handle type="target" id="a" position={Position.Left} style={{ top: "38%" }} />
-          <Handle type="target" id="b" position={Position.Left} style={{ top: "72%" }} />
+          <Handle type="target" id="a" position={Position.Left} style={{ top: data.singleInput ? "50%" : "38%" }} />
+          {!data.singleInput && <Handle type="target" id="b" position={Position.Left} style={{ top: "72%" }} />}
         </>
       )}
       <div className="drag-handle flex cursor-grab items-center gap-2 border-b px-3 py-2 active:cursor-grabbing">
@@ -124,6 +130,23 @@ function AnalysisNodeCard({ data, selected }: NodeProps<DisplayNode>) {
         </div>
       </div>
       <div className="px-3 py-2">
+        {data.editor && (
+          <input
+            type="number"
+            className="mb-2 h-8 w-full rounded-lg border bg-background px-2 text-xs"
+            aria-label={data.editor.label}
+            min={data.editor.min}
+            max={data.editor.max}
+            step={data.editor.step}
+            // Uncontrolled: the value settles on blur or Enter, so a half-typed "-" or
+            // an empty field is never pushed into the graph. Keyed on the committed value
+            // so a clamped or discarded entry does not keep standing in the field.
+            key={data.editor.value}
+            defaultValue={data.editor.value}
+            onBlur={(event) => data.editor?.commit(Number(event.target.value))}
+            onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }}
+          />
+        )}
         {data.errorLabel ? (
           <p className="flex min-h-14 items-center gap-2 text-xs text-destructive"><TriangleAlert className="size-4 shrink-0" />{data.errorLabel}</p>
         ) : data.series ? (
@@ -441,6 +464,16 @@ function AnalysisEditor({ analysis, analyses }: { analysis: AnalysisRecord; anal
     }
   }, [analysis.id, enqueue, t]);
 
+  // Debounced: editing a constant is typing, and each keystroke should not become its own
+  // entry in the operation journal.
+  const setNodeValue = useCallback((nodeId: string, value: number) => {
+    if (!Number.isFinite(value)) return;
+    commitOperations(
+      [{ version: ANALYSIS_OPERATION_VERSION, type: "set-node-value", nodeId, value }],
+      { debounceKey: `node-value:${nodeId}`, delay: 400 },
+    );
+  }, [commitOperations]);
+
   const results = useMemo(() => data ? evaluateAnalysisGraph(graph, data) : new Map<string, AnalysisSeries>(), [data, graph]);
   const displayNodes = useMemo<DisplayNode[]>(() => graph.nodes.map((node) => {
     const series = results.get(node.id) ?? null;
@@ -462,14 +495,21 @@ function AnalysisEditor({ analysis, analyses }: { analysis: AnalysisRecord; anal
             ?? graph.subject?.municipalityName
             ?? t("analysisSubjectNone"),
         pinned: Boolean(datasetMunicipalityName(node.data.dataset)),
+        editor: node.data.dataset.kind === "constant"
+          ? { value: node.data.dataset.value, label: t("constantValue"), step: 1, commit: (value: number) => setNodeValue(node.id, value) }
+          : undefined,
         series,
         errorLabel, warningLabel: series?.warnings.length ? t("analysisDivisionWarnings", { count: series.warnings.length }) : null,
       } : {
-        kind: "operator", title: t(`operator_${node.data.operator}`), subtitle: t("operatorNode"), symbol: OPERATOR_SYMBOLS[node.data.operator], series,
+        kind: "operator", title: t(`operator_${node.data.operator}`), subtitle: t("operatorNode"), symbol: ANALYSIS_OPERATOR_SYMBOLS[node.data.operator], series,
+        singleInput: isUnaryAnalysisOperator(node.data.operator),
+        editor: isUnaryAnalysisOperator(node.data.operator)
+          ? { value: node.data.years ?? 1, label: t("shiftYears"), min: 1, max: MAX_ANALYSIS_SHIFT_YEARS, step: 1, commit: (value: number) => setNodeValue(node.id, value) }
+          : undefined,
         errorLabel, warningLabel: series?.warnings.length ? t("analysisDivisionWarnings", { count: series.warnings.length }) : null,
       },
     };
-  }), [graph.nodes, graph.selectedNodeId, graph.subject, results, t]);
+  }), [graph.nodes, graph.selectedNodeId, graph.subject, results, setNodeValue, t]);
   const displayEdges = useMemo<Edge[]>(() => graph.edges.map((edge) => ({ ...edge, type: "smoothstep", animated: false })), [graph.edges]);
   const selectedNode = graph.selectedNodeId ? graph.nodes.find(({ id }) => id === graph.selectedNodeId) : null;
   const selectedSeries = selectedNode ? results.get(selectedNode.id) ?? null : null;
@@ -541,6 +581,19 @@ function AnalysisEditor({ analysis, analyses }: { analysis: AnalysisRecord; anal
     }]);
   }
 
+  function addConstant(position?: { x: number; y: number }) {
+    if (graphRef.current.nodes.length >= 100) { toast.error(t("analysisNodeLimit")); return; }
+    commitOperations([{
+      version: ANALYSIS_OPERATION_VERSION,
+      type: "add-node",
+      node: {
+        id: createId(), type: "dataset",
+        position: position ?? { x: 360, y: 120 + graphRef.current.nodes.length * 30 },
+        data: { dataset: { kind: "constant", value: 0 } },
+      },
+    }]);
+  }
+
   function insertKennzahl(request: { label: string; dataset: MunicipalityDatasetRef }) {
     const operations = kennzahlDerivationOperations(
       request.dataset,
@@ -575,7 +628,8 @@ function AnalysisEditor({ analysis, analyses }: { analysis: AnalysisRecord; anal
       toast.error(t(
         result.reason === "mixed-municipalities" ? "saveAsKennzahlMixedMunicipalities"
           : result.reason === "no-municipality-input" ? "saveAsKennzahlNoMunicipality"
-            : "saveAsKennzahlMissingInput",
+            : result.reason === "unsupported-operator" ? "saveAsKennzahlUnsupportedOperator"
+              : "saveAsKennzahlMissingInput",
       ));
     });
   }
@@ -620,8 +674,17 @@ function AnalysisEditor({ analysis, analyses }: { analysis: AnalysisRecord; anal
               aria-label={t("addOperator", { operator: t(`operator_${operator}`) })}
               onClick={() => addOperator(operator)}
               onDragStart={(event) => { event.dataTransfer.effectAllowed = "copy"; event.dataTransfer.setData(OPERATOR_DRAG_TYPE, operator); }}
-            >{OPERATOR_SYMBOLS[operator]}</button>
+            >{ANALYSIS_OPERATOR_SYMBOLS[operator]}</button>
           ))}
+          <button
+            type="button"
+            draggable
+            className="grid h-10 place-items-center rounded-lg border bg-background text-xs font-semibold hover:border-teal-600 hover:bg-teal-50 dark:hover:bg-teal-950"
+            title={t("constantNode")}
+            aria-label={t("addConstant")}
+            onClick={() => addConstant()}
+            onDragStart={(event) => { event.dataTransfer.effectAllowed = "copy"; event.dataTransfer.setData(OPERATOR_DRAG_TYPE, CONSTANT_DRAG_VALUE); }}
+          >123</button>
         </div>
         <p className="mt-4 text-[11px] leading-5 text-muted-foreground">{t("analysisUnitRule")}</p>
         <KennzahlCatalog variant="sidebar" onOpen={insertKennzahl} />
@@ -694,8 +757,10 @@ function AnalysisEditor({ analysis, analyses }: { analysis: AnalysisRecord; anal
           onDragOver={(event) => { if (event.dataTransfer.types.includes(OPERATOR_DRAG_TYPE)) { event.preventDefault(); event.dataTransfer.dropEffect = "copy"; } }}
           onDrop={(event) => {
             event.preventDefault();
-            const operator = event.dataTransfer.getData(OPERATOR_DRAG_TYPE) as AnalysisOperatorId;
-            if (analysisOperatorIds.includes(operator)) addOperator(operator, reactFlow.screenToFlowPosition({ x: event.clientX, y: event.clientY }));
+            const payload = event.dataTransfer.getData(OPERATOR_DRAG_TYPE);
+            const position = reactFlow.screenToFlowPosition({ x: event.clientX, y: event.clientY });
+            if (payload === CONSTANT_DRAG_VALUE) addConstant(position);
+            else if (analysisOperatorIds.includes(payload as AnalysisOperatorId)) addOperator(payload as AnalysisOperatorId, position);
           }}
         >
           <Background gap={22} size={1} />

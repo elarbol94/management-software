@@ -26,6 +26,14 @@ const series = (unit: string, values: Array<[number, number | null]>): AnalysisS
   warnings: [],
 });
 
+const truths = (values: Array<[number, boolean]>): AnalysisSeries => ({
+  unit: "boolean",
+  valueType: "boolean",
+  points: values.map(([year, value]) => ({ year, value })),
+  error: null,
+  warnings: [],
+});
+
 const dataset = (municipalityCode: string) => ({ kind: "population" as const, municipalityCode, municipalityName: municipalityCode, view: "count" as const });
 
 describe("municipality analysis graph", () => {
@@ -147,11 +155,71 @@ describe("municipality analysis operators", () => {
     expect(divided.warnings).toEqual([{ year: 2024, code: "division-by-zero" }]);
   });
 
+  it("compares a unit-carrying series with a bare constant", () => {
+    const result = evaluateAnalysisOperator(
+      "greater-than",
+      series("persons", [[2023, 1800], [2024, 2200]]),
+      series("", [[2023, 2000], [2024, 2000]]),
+    );
+    expect(result.error).toBeNull();
+    expect(result.points).toEqual([{ year: 2023, value: false }, { year: 2024, value: true }]);
+  });
+
+  it("combines two comparisons with and/or", () => {
+    const above = truths([[2023, true], [2024, true]]);
+    const below = truths([[2023, true], [2024, false]]);
+    expect(evaluateAnalysisOperator("and", above, below).points).toEqual([{ year: 2023, value: true }, { year: 2024, value: false }]);
+    expect(evaluateAnalysisOperator("or", above, below).points).toEqual([{ year: 2023, value: true }, { year: 2024, value: true }]);
+    // Numbers are not truth values: anding a series with a count is a mistake, not a cast.
+    expect(evaluateAnalysisOperator("and", above, series("persons", [[2023, 1]])).error).toBe("incompatible-units");
+  });
+
+  it("negates equality", () => {
+    const result = evaluateAnalysisOperator("not-equal", series("persons", [[2024, 10]]), series("persons", [[2024, 10]]));
+    expect(result.points).toEqual([{ year: 2024, value: false }]);
+  });
+
+  it("shifts a series forward so subtracting it yields the change from n years ago", () => {
+    const population = series("persons", [[2022, 100], [2023, 110], [2024, 125]]);
+    const previous = evaluateAnalysisOperator("shift", population, null, 1);
+    expect(previous.unit).toBe("persons");
+    expect(previous.points).toEqual([{ year: 2023, value: 100 }, { year: 2024, value: 110 }, { year: 2025, value: 125 }]);
+    // The first year has nothing to compare against and drops out of the intersection.
+    expect(evaluateAnalysisOperator("subtract", population, previous).points)
+      .toEqual([{ year: 2023, value: 10 }, { year: 2024, value: 15 }]);
+  });
+
+  it("reports inputs without a shared year instead of an empty chart", () => {
+    const result = evaluateAnalysisOperator("add", series("persons", [[2020, 1]]), series("persons", [[2024, 1]]));
+    expect(result.error).toBe("no-common-years");
+  });
+
   it("returns boolean comparison series", () => {
     const result = evaluateAnalysisOperator("greater-than", series("persons", [[2024, 10]]), series("persons", [[2024, 8]]));
     expect(result.valueType).toBe("boolean");
     expect(result.unit).toBe("boolean");
     expect(result.points).toEqual([{ year: 2024, value: true }]);
+  });
+});
+
+describe("editing the number on a node", () => {
+  const graph = {
+    ...emptyMunicipalityAnalysisGraph(),
+    nodes: [
+      { id: "c", type: "dataset" as const, position: { x: 0, y: 0 }, data: { dataset: { kind: "constant" as const, value: 0 } } },
+      { id: "s", type: "operator" as const, position: { x: 1, y: 1 }, data: { operator: "shift" as const } },
+    ],
+  };
+
+  it("sets a constant and clamps a shift into range", () => {
+    const result = applyMunicipalityAnalysisGraphOperations(graph, [
+      { version: 1, type: "set-node-value", nodeId: "c", value: 2000 },
+      { version: 1, type: "set-node-value", nodeId: "s", value: 99 },
+    ]).graph;
+    const constant = result.nodes.find(({ id }) => id === "c");
+    expect(constant?.type === "dataset" && constant.data.dataset).toEqual({ kind: "constant", value: 2000 });
+    const shift = result.nodes.find(({ id }) => id === "s");
+    expect(shift?.type === "operator" && shift.data.years).toBe(20);
   });
 });
 

@@ -105,3 +105,32 @@ test("municipality subpages route and transfer a dataset into a saved analysis",
   await page.setViewportSize({ width: 390, height: 844 });
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 });
+
+test("a constant and a time shift keep the number typed into them", async ({ page }) => {
+  await page.route("https://mapsneu.wien.gv.at/**", (route) => route.abort());
+  await login(page);
+
+  await page.goto("/municipalities/analysis");
+  await page.getByPlaceholder("z. B. Bevölkerungsvergleich").fill("Konstanten");
+  await page.getByRole("button", { name: "Erstellen" }).click();
+  await expect(page.getByTestId("municipality-analysis-editor")).toBeVisible();
+
+  await page.getByRole("button", { name: "Konstante hinzufügen" }).click();
+  const value = page.getByLabel("Wert der Konstante");
+  await value.fill("2000");
+  await value.blur();
+
+  await page.getByRole("button", { name: "Operator Zeitversatz hinzufügen" }).click();
+  const years = page.getByLabel("Um wie viele Jahre zurück");
+  await years.fill("99");
+  await years.blur();
+  // Out-of-range entries settle on the nearest usable value instead of being rejected.
+  await expect(years).toHaveValue("20");
+  // A shift reads input A only, so it offers one target handle rather than two.
+  await expect(page.locator(".react-flow__node-operator .react-flow__handle-left")).toHaveCount(1);
+
+  await expect(page.getByTestId("municipality-analysis-editor").getByText("Gespeichert", { exact: true })).toBeVisible({ timeout: 30_000 });
+  await page.reload();
+  await expect(page.getByLabel("Wert der Konstante")).toHaveValue("2000");
+  await expect(page.getByLabel("Um wie viele Jahre zurück")).toHaveValue("20");
+});

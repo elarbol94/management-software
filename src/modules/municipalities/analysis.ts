@@ -32,11 +32,27 @@ export const MAX_ANALYSIS_NODES = 100;
 export const MAX_ANALYSIS_EDGES = 200;
 export const MAX_ANALYSIS_JSON_BYTES = 250_000;
 
-export const analysisOperatorIds = [
+export const analysisBinaryOperatorIds = [
   "add", "subtract", "multiply", "divide", "greater-than",
-  "greater-or-equal", "less-than", "less-or-equal", "equal",
+  "greater-or-equal", "less-than", "less-or-equal", "equal", "not-equal",
+  "and", "or",
 ] as const;
+/** Operators reading input A plus a number typed into the node, rather than a second input. */
+export const analysisUnaryOperatorIds = ["shift"] as const;
+export const analysisOperatorIds = [...analysisBinaryOperatorIds, ...analysisUnaryOperatorIds] as const;
 export type AnalysisOperatorId = (typeof analysisOperatorIds)[number];
+export const isUnaryAnalysisOperator = (operator: AnalysisOperatorId): boolean =>
+  (analysisUnaryOperatorIds as readonly string[]).includes(operator);
+
+export const ANALYSIS_OPERATOR_SYMBOLS: Record<AnalysisOperatorId, string> = {
+  add: "+", subtract: "−", multiply: "×", divide: "÷", "greater-than": ">",
+  "greater-or-equal": "≥", "less-than": "<", "less-or-equal": "≤", equal: "=",
+  "not-equal": "≠", and: "∧", or: "∨", shift: "↺",
+};
+
+/** How many years a shift may reach back; also the default when the node carries none. */
+export const MAX_ANALYSIS_SHIFT_YEARS = 20;
+export const DEFAULT_ANALYSIS_SHIFT_YEARS = 1;
 
 const positionSchema = z.object({ x: z.number().finite(), y: z.number().finite() });
 export const analysisSubjectSchema = z.object({
@@ -90,7 +106,11 @@ export const analysisDatasetNodeSchema = z.object({
 });
 export const analysisOperatorNodeSchema = z.object({
   id: z.string().min(1).max(100), type: z.literal("operator"), position: positionSchema,
-  data: z.object({ operator: z.enum(analysisOperatorIds) }),
+  // Only the unary operators read `years`; older graphs carry none and take the default.
+  data: z.object({
+    operator: z.enum(analysisOperatorIds),
+    years: z.number().int().min(1).max(MAX_ANALYSIS_SHIFT_YEARS).optional(),
+  }),
 });
 export const analysisNodeSchema = z.discriminatedUnion("type", [analysisDatasetNodeSchema, analysisOperatorNodeSchema]);
 export const analysisEdgeSchema = z.object({
@@ -141,6 +161,8 @@ export const municipalityAnalysisGraphOperationSchema = z.discriminatedUnion("ty
   // knows which Ausgangsdaten are already on the canvas and where there is room.
   z.object({ version: z.literal(ANALYSIS_OPERATION_VERSION), type: z.literal("add-kennzahl"), nodeId: z.string().min(1).max(100), dataset: municipalityDatasetRefSchema }),
   z.object({ version: z.literal(ANALYSIS_OPERATION_VERSION), type: z.literal("set-subject"), subject: analysisSubjectSchema.nullable() }),
+  // The number typed into a node: a constant's value, or a unary operator's year count.
+  z.object({ version: z.literal(ANALYSIS_OPERATION_VERSION), type: z.literal("set-node-value"), nodeId: z.string().min(1).max(100), value: z.number().finite() }),
 ]);
 export const municipalityAnalysisGraphOperationsSchema = z.array(municipalityAnalysisGraphOperationSchema).min(1).max(200);
 export type MunicipalityAnalysisGraphOperation = z.infer<typeof municipalityAnalysisGraphOperationSchema>;
@@ -242,6 +264,22 @@ export function applyMunicipalityAnalysisGraphOperations(
       next = { ...next, viewport: operation.viewport };
     } else if (operation.type === "set-subject") {
       next = { ...next, subject: operation.subject };
+    } else if (operation.type === "set-node-value") {
+      next = {
+        ...next,
+        nodes: next.nodes.map((node) => {
+          if (node.id !== operation.nodeId) return node;
+          // Clamped rather than validated: a typed-in 0 or 99 should settle on the nearest
+          // usable value instead of throwing away the whole operation batch.
+          if (node.type === "operator") {
+            const years = Math.min(MAX_ANALYSIS_SHIFT_YEARS, Math.max(1, Math.round(operation.value)));
+            return { ...node, data: { ...node.data, years } };
+          }
+          return node.data.dataset.kind === "constant"
+            ? { ...node, data: { dataset: { kind: "constant" as const, value: operation.value } } }
+            : node;
+        }),
+      };
     } else {
       next = {
         ...next,
@@ -272,7 +310,7 @@ export function wouldCreateAnalysisCycle(edges: MunicipalityAnalysisEdge[], sour
 export type AnalysisPoint = { year: number; value: number | boolean | null };
 export type AnalysisSeries = {
   unit: string; valueType: "number" | "boolean"; points: AnalysisPoint[];
-  error: "missing-input" | "incompatible-units" | "missing-municipality" | null;
+  error: "missing-input" | "incompatible-units" | "missing-municipality" | "no-common-years" | null;
   warnings: Array<{ year: number; code: "division-by-zero" }>;
 };
 export type MunicipalityAnalysisData = {
@@ -395,7 +433,10 @@ export function resolveMunicipalityDataset(
   return { unit: datasetUnit(dataset), valueType: "number", points, error: null, warnings: [] };
 }
 
-const comparisonOperators = new Set<AnalysisOperatorId>(["greater-than", "greater-or-equal", "less-than", "less-or-equal", "equal"]);
+const comparisonOperators = new Set<AnalysisOperatorId>(["greater-than", "greater-or-equal", "less-than", "less-or-equal", "equal", "not-equal"]);
+const booleanOperators = new Set<AnalysisOperatorId>(["and", "or"]);
+export const isBooleanAnalysisOperator = (operator: AnalysisOperatorId) =>
+  comparisonOperators.has(operator) || booleanOperators.has(operator);
 
 /**
  * The unit an operator produces. A dimensionless side contributes nothing, so scaling a
@@ -407,21 +448,46 @@ export function composeAnalysisUnit(operator: AnalysisOperatorId, left: string, 
   return left || right;
 }
 
-export function evaluateAnalysisOperator(operator: AnalysisOperatorId, left: AnalysisSeries | null, right: AnalysisSeries | null): AnalysisSeries {
+export function evaluateAnalysisOperator(
+  operator: AnalysisOperatorId,
+  left: AnalysisSeries | null,
+  right: AnalysisSeries | null,
+  years: number = DEFAULT_ANALYSIS_SHIFT_YEARS,
+): AnalysisSeries {
   const comparison = comparisonOperators.has(operator);
+  const logical = booleanOperators.has(operator);
   const fail = (error: AnalysisSeries["error"]): AnalysisSeries => ({
-    unit: comparison ? "boolean" : "",
-    valueType: comparison ? "boolean" : "number",
+    unit: comparison || logical ? "boolean" : "",
+    valueType: comparison || logical ? "boolean" : "number",
     points: [], error, warnings: [],
   });
+
+  // Shift moves the input forward in time, so the value at a year is what the input read
+  // `years` earlier. Unit and value type are untouched; only the years move.
+  if (operator === "shift") {
+    if (!left) return fail("missing-input");
+    if (left.error) return fail(left.error);
+    return {
+      unit: left.unit, valueType: left.valueType,
+      points: left.points.map(({ year, value }) => ({ year: year + years, value })),
+      error: null, warnings: [],
+    };
+  }
+
   if (!left || !right) return fail("missing-input");
   // An input that could not be computed is the reason this cannot be either — say so
   // here rather than showing an empty chart with no explanation.
   const inherited = left.error ?? right.error;
   if (inherited) return fail(inherited);
-  const requiresSameUnit = operator === "add" || operator === "subtract" || comparison;
-  if (requiresSameUnit && (left.unit !== right.unit || left.valueType !== "number" || right.valueType !== "number")) {
+  if (logical) {
+    if (left.valueType !== "boolean" || right.valueType !== "boolean") return fail("incompatible-units");
+  } else if (left.valueType !== "number" || right.valueType !== "number") {
     return fail("incompatible-units");
+  } else if (operator === "add" || operator === "subtract" || comparison) {
+    // A constant is dimensionless, and "Einwohnerzahl > 2.000" is exactly what it is for,
+    // so a bare number pairs with any unit instead of being rejected as incompatible.
+    const dimensionless = !left.unit || !right.unit;
+    if (left.unit !== right.unit && !dimensionless) return fail("incompatible-units");
   }
   const rightByYear = new Map(right.points.map((point) => [point.year, point.value]));
   const warnings: AnalysisSeries["warnings"] = [];
@@ -429,15 +495,23 @@ export function evaluateAnalysisOperator(operator: AnalysisOperatorId, left: Ana
     if (!rightByYear.has(point.year)) return [];
     const a = point.value;
     const b = rightByYear.get(point.year);
+    if (logical) {
+      if (typeof a !== "boolean" || typeof b !== "boolean") return [{ year: point.year, value: null }];
+      return [{ year: point.year, value: operator === "and" ? a && b : a || b }];
+    }
     if (typeof a !== "number" || typeof b !== "number") return [{ year: point.year, value: null }];
     if (operator === "divide" && b === 0) { warnings.push({ year: point.year, code: "division-by-zero" }); return [{ year: point.year, value: null }]; }
     const value = operator === "add" ? a + b : operator === "subtract" ? a - b : operator === "multiply" ? a * b
       : operator === "divide" ? a / b : operator === "greater-than" ? a > b : operator === "greater-or-equal" ? a >= b
-        : operator === "less-than" ? a < b : operator === "less-or-equal" ? a <= b : a === b;
+        : operator === "less-than" ? a < b : operator === "less-or-equal" ? a <= b
+          : operator === "not-equal" ? a !== b : a === b;
     return [{ year: point.year, value }];
   });
-  const valueType = comparison ? "boolean" as const : "number" as const;
-  const unit = comparison ? "boolean" : composeAnalysisUnit(operator, left.unit, right.unit);
+  // Inputs are paired by year. Sharing none is not an empty result but an unanswerable
+  // question, and an empty chart with no reason reads as a bug.
+  if (!points.length) return fail("no-common-years");
+  const valueType = comparison || logical ? "boolean" as const : "number" as const;
+  const unit = comparison || logical ? "boolean" : composeAnalysisUnit(operator, left.unit, right.unit);
   return { unit, valueType, points, error: null, warnings };
 }
 
@@ -459,7 +533,7 @@ export function evaluateAnalysisGraph(graph: MunicipalityAnalysisGraph, data: Mu
         const edge = graph.edges.find((item) => item.target === id && item.targetHandle === handle);
         return edge ? evaluate(edge.source) : null;
       };
-      result = evaluateAnalysisOperator(node.data.operator, input("a"), input("b"));
+      result = evaluateAnalysisOperator(node.data.operator, input("a"), input("b"), node.data.years);
     }
     evaluating.delete(id);
     if (result) results.set(id, result);

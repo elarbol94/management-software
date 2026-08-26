@@ -1,7 +1,10 @@
 import { createId } from "@paralleldrive/cuid2";
 import { z } from "zod";
 import {
-  analysisOperatorIds,
+  analysisBinaryOperatorIds,
+  ANALYSIS_OPERATOR_SYMBOLS,
+  isBooleanAnalysisOperator,
+  isUnaryAnalysisOperator,
   type AnalysisSubject,
   municipalityDatasetRefSchema,
   ANALYSIS_OPERATION_VERSION,
@@ -234,11 +237,6 @@ export const KENNZAHL_CATALOG: KennzahlDefinition[] = [
 
 // --- graph construction -----------------------------------------------------
 
-const OPERATOR_SYMBOLS: Record<AnalysisOperatorId, string> = {
-  add: "+", subtract: "−", multiply: "×", divide: "÷", "greater-than": ">",
-  "greater-or-equal": "≥", "less-than": "<", "less-or-equal": "≤", equal: "=",
-};
-
 const expressionKey = (expression: KennzahlExpression): string =>
   "input" in expression ? `i:${JSON.stringify(expression.input)}`
     : "constant" in expression ? `c:${expression.constant}`
@@ -389,7 +387,7 @@ export function kennzahlFormulaText(
   const render = (node: KennzahlExpression, parenthesise: boolean): string => {
     if ("input" in node) return label(node.input);
     if ("constant" in node) return formatNumber(node.constant);
-    const text = `${render(node.a, true)} ${OPERATOR_SYMBOLS[node.op]} ${render(node.b, true)}`;
+    const text = `${render(node.a, true)} ${ANALYSIS_OPERATOR_SYMBOLS[node.op]} ${render(node.b, true)}`;
     return parenthesise ? `(${text})` : text;
   };
   return render(expression, false);
@@ -470,7 +468,7 @@ export const isDataKind = (value: string | null): value is DataKind =>
 
 export type KennzahlFromGraph =
   | { ok: true; expression: KennzahlExpression; municipality: AnalysisSubject | null }
-  | { ok: false; reason: "missing-input" | "mixed-municipalities" | "no-municipality-input" };
+  | { ok: false; reason: "missing-input" | "mixed-municipalities" | "no-municipality-input" | "unsupported-operator" };
 
 /**
  * Reads the sub-graph feeding `nodeId` back into a Kennzahl definition.
@@ -499,6 +497,10 @@ export function kennzahlFromGraph(
         municipalities.set(dataset.municipalityCode, dataset.municipalityName ?? dataset.municipalityCode);
       }
       return { input: unbindKennzahlInput(dataset)! };
+    }
+    if (isUnaryAnalysisOperator(node.data.operator)) {
+      failure ??= { ok: false, reason: "unsupported-operator" };
+      return null;
     }
     const side = (handle: "a" | "b") => {
       const edge = graph.edges.find((item) => item.target === id && item.targetHandle === handle);
@@ -536,18 +538,13 @@ export function kennzahlExpressionInputs(expression: KennzahlExpression): Kennza
 export function kennzahlExpressionUnit(expression: KennzahlExpression): string {
   if ("constant" in expression) return "";
   if ("input" in expression) return datasetUnit(expression.input as MunicipalityDatasetRef);
-  const comparison = COMPARISON_OPERATORS.has(expression.op);
-  if (comparison) return "boolean";
+  if (isBooleanAnalysisOperator(expression.op)) return "boolean";
   return composeAnalysisUnit(
     expression.op,
     kennzahlExpressionUnit(expression.a),
     kennzahlExpressionUnit(expression.b),
   );
 }
-
-const COMPARISON_OPERATORS = new Set<AnalysisOperatorId>([
-  "greater-than", "greater-or-equal", "less-than", "less-or-equal", "equal",
-]);
 
 // --- evaluating a Kennzahl for the whole map --------------------------------
 
@@ -686,7 +683,13 @@ export function createKennzahlLookup(
       case "greater-or-equal": return a >= b ? 1 : 0;
       case "less-than": return a < b ? 1 : 0;
       case "less-or-equal": return a <= b ? 1 : 0;
-      default: return a === b ? 1 : 0;
+      case "equal": return a === b ? 1 : 0;
+      case "not-equal": return a !== b ? 1 : 0;
+      case "and": return a !== 0 && b !== 0 ? 1 : 0;
+      case "or": return a !== 0 || b !== 0 ? 1 : 0;
+      // ponytail: unary operators have no place in a Kennzahl expression yet — the graph
+      // rejects them on extraction, so this is unreachable rather than a silent wrong answer.
+      default: return null;
     }
   };
   return (code, year) => evaluate(expression, code, year);
@@ -717,7 +720,7 @@ const kennzahlInputSchema = z.looseObject({}).transform((value, context) => {
 export const kennzahlExpressionSchema: z.ZodType<KennzahlExpression> = z.lazy(() => z.union([
   z.object({ constant: z.number().finite() }),
   z.object({ input: kennzahlInputSchema }),
-  z.object({ op: z.enum(analysisOperatorIds), a: kennzahlExpressionSchema, b: kennzahlExpressionSchema }),
+  z.object({ op: z.enum(analysisBinaryOperatorIds), a: kennzahlExpressionSchema, b: kennzahlExpressionSchema }),
 ]));
 
 export function serializeKennzahlExpression(expression: KennzahlExpression) {
