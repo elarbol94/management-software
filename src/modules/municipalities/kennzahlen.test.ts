@@ -267,7 +267,7 @@ describe("saving a graph as a Kennzahl", () => {
     const result = kennzahlFromGraph(graph, rootId);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.municipalityCode).toBe(MUNICIPALITIES[0].municipalityCode);
+    expect(result.municipality?.municipalityCode).toBe(MUNICIPALITIES[0].municipalityCode);
     expect(result.expression).toEqual(kennzahlExpressionFor(output));
   });
 
@@ -364,5 +364,94 @@ describe("adding a Kennzahl to a graph", () => {
       kind: "age-indicator", municipalityCode: "60101", municipalityName: "Graz", indicator: "average-age",
     });
     expect(counts(graph)).toEqual({ datasets: 1, operators: 0 });
+  });
+});
+
+describe("the municipality as a graph parameter", () => {
+  const graphOf = (expression: Parameters<typeof buildKennzahlGraph>[0], municipality: Parameters<typeof buildKennzahlGraph>[1], subject: { municipalityCode: string; municipalityName: string } | null) => {
+    const { nodes, edges, rootId } = buildKennzahlGraph(expression, municipality);
+    const graph = municipalityAnalysisGraphSchema.parse({
+      version: ANALYSIS_GRAPH_VERSION, nodes, edges,
+      viewport: { x: 0, y: 0, zoom: 1 }, selectedNodeId: rootId, subject,
+    });
+    return { graph, rootId };
+  };
+
+  // The whole point of the parameter: an open graph evaluated for a municipality has to
+  // produce exactly what a graph pinned to it produces.
+  for (const output of DERIVED_OUTPUTS) {
+    if (isPrimaryOnly(output)) continue;
+    const expression = kennzahlExpressionFor(output)!;
+    const name = JSON.stringify(output);
+
+    it(`evaluates ${name} the same open as pinned`, () => {
+      for (const municipality of MUNICIPALITIES) {
+        const { graph, rootId } = graphOf(expression, null, municipality);
+        const actual = evaluateAnalysisGraph(graph, data).get(rootId)!;
+        const expected = resolveMunicipalityDataset(
+          bindKennzahlInput(output, municipality.municipalityCode, municipality.municipalityName),
+          data,
+        );
+        expect(actual.error, name).toBeNull();
+        expect(actual.points.map(({ year }) => year), `${name} years`).toEqual(expected.points.map(({ year }) => year));
+        const expectedByYear = new Map(expected.points.map(({ year, value }) => [year, value]));
+        for (const { year, value } of actual.points) {
+          const want = expectedByYear.get(year);
+          const label = `${name} @ ${municipality.municipalityName}/${year}`;
+          if (typeof want === "number" && typeof value === "number") {
+            expect(close(value, want), `${label}: ${value} vs ${want}`).toBe(true);
+          } else {
+            expect(value, label).toBe(want);
+          }
+        }
+      }
+    });
+  }
+
+  it("reports an open node without a subject, all the way up the chain", () => {
+    const expression = kennzahlExpressionFor({ kind: "movement", metric: "birth-rate" })!;
+    const { graph, rootId } = graphOf(expression, null, null);
+    const results = evaluateAnalysisGraph(graph, data);
+    const openDataset = graph.nodes.find((node) => node.type === "dataset" && node.data.dataset.kind === "movement")!;
+    expect(results.get(openDataset.id)!.error).toBe("missing-municipality");
+    // The operators above it must say why they are empty, not just be empty.
+    expect(results.get(rootId)!.error).toBe("missing-municipality");
+  });
+
+  it("lets a pinned node ignore the subject", () => {
+    // A graph stored before the subject existed is pinned throughout and must not change
+    // its numbers when a subject is set.
+    const output: KennzahlInput = { kind: "movement", metric: "birth-rate" };
+    const expression = kennzahlExpressionFor(output)!;
+    const { graph, rootId } = graphOf(expression, MUNICIPALITIES[0], MUNICIPALITIES[1]);
+    const actual = evaluateAnalysisGraph(graph, data).get(rootId)!;
+    const expected = resolveMunicipalityDataset(
+      bindKennzahlInput(output, MUNICIPALITIES[0].municipalityCode, MUNICIPALITIES[0].municipalityName),
+      data,
+    );
+    const expectedByYear = new Map(expected.points.map(({ year, value }) => [year, value]));
+    for (const { year, value } of actual.points) {
+      const want = expectedByYear.get(year);
+      if (typeof want === "number" && typeof value === "number") expect(close(value, want), String(year)).toBe(true);
+      else expect(value, String(year)).toBe(want);
+    }
+  });
+
+  it("saves an open sub-graph as a Kennzahl without asking for a municipality", () => {
+    const expression = kennzahlExpressionFor({ kind: "population", view: "density" })!;
+    const { graph, rootId } = graphOf(expression, null, null);
+    const result = kennzahlFromGraph(graph, rootId);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.municipality).toBeNull();
+    expect(result.expression).toEqual(expression);
+  });
+
+  it("keeps parsing a graph stored before the subject existed", () => {
+    const legacy = municipalityAnalysisGraphSchema.parse({
+      version: ANALYSIS_GRAPH_VERSION, nodes: [], edges: [],
+      viewport: { x: 0, y: 0, zoom: 1 }, selectedNodeId: null,
+    });
+    expect(legacy.subject).toBeNull();
   });
 });

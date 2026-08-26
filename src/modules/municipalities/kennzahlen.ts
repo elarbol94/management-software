@@ -2,6 +2,7 @@ import { createId } from "@paralleldrive/cuid2";
 import { z } from "zod";
 import {
   analysisOperatorIds,
+  type AnalysisSubject,
   municipalityDatasetRefSchema,
   ANALYSIS_OPERATION_VERSION,
   composeAnalysisUnit,
@@ -45,7 +46,7 @@ type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K>
 
 /** A dataset reference with the municipality left open — the parameter of a Kennzahl. */
 export type KennzahlInput = DistributiveOmit<
-  Extract<MunicipalityDatasetRef, { municipalityCode: string }>,
+  Exclude<MunicipalityDatasetRef, { kind: "constant" }>,
   "municipalityCode" | "municipalityName"
 >;
 
@@ -62,12 +63,15 @@ export type KennzahlDefinition = {
   output: KennzahlInput;
 };
 
+/** Ties an input to a municipality, or leaves it open when none is given. */
 export function bindKennzahlInput(
   input: KennzahlInput,
-  municipalityCode: string,
-  municipalityName: string,
+  municipalityCode?: string,
+  municipalityName?: string,
 ): MunicipalityDatasetRef {
-  return { ...input, municipalityCode, municipalityName } as MunicipalityDatasetRef;
+  return (municipalityCode
+    ? { ...input, municipalityCode, municipalityName }
+    : { ...input }) as MunicipalityDatasetRef;
 }
 
 // --- classification ---------------------------------------------------------
@@ -247,7 +251,8 @@ const expressionKey = (expression: KennzahlExpression): string =>
  */
 export function buildKennzahlGraph(
   expression: KennzahlExpression,
-  municipality: { municipalityCode: string; municipalityName: string },
+  /** Pins every input to this municipality; open nodes follow the graph's subject. */
+  municipality: { municipalityCode?: string; municipalityName?: string } | null,
   origin: { x: number; y: number } = { x: 80, y: 80 },
   /** What is already on the canvas; matching parts wire in instead of being duplicated. */
   existing: { nodes: readonly MunicipalityAnalysisNode[]; edges: readonly MunicipalityAnalysisEdge[] } = { nodes: [], edges: [] },
@@ -293,7 +298,7 @@ export function buildKennzahlGraph(
     if (!("op" in node)) {
       const dataset: MunicipalityDatasetRef = "constant" in node
         ? { kind: "constant", value: node.constant }
-        : bindKennzahlInput(node.input, municipality.municipalityCode, municipality.municipalityName);
+        : bindKennzahlInput(node.input, municipality?.municipalityCode, municipality?.municipalityName);
       const reused = existingByDataset.get(datasetRefKey(dataset));
       if (reused) {
         idByKey.set(key, reused);
@@ -464,15 +469,15 @@ export const isDataKind = (value: string | null): value is DataKind =>
 // --- turning a saved graph back into a Kennzahl -----------------------------
 
 export type KennzahlFromGraph =
-  | { ok: true; expression: KennzahlExpression; municipalityCode: string; municipalityName: string }
+  | { ok: true; expression: KennzahlExpression; municipality: AnalysisSubject | null }
   | { ok: false; reason: "missing-input" | "mixed-municipalities" | "no-municipality-input" };
 
 /**
  * Reads the sub-graph feeding `nodeId` back into a Kennzahl definition.
  *
- * The municipality becomes the parameter, which only works if the whole sub-graph talks
- * about one municipality — a graph comparing Graz with Wien is a comparison, not a
- * Kennzahl, and is rejected rather than silently reinterpreted.
+ * Open nodes are already the parameter and need no unbinding. Pinned nodes do, and that
+ * only works if they all name the same municipality — a graph comparing Graz with Wien is
+ * a comparison, not a Kennzahl, and is rejected rather than silently reinterpreted.
  */
 export function kennzahlFromGraph(
   graph: { nodes: readonly MunicipalityAnalysisNode[]; edges: readonly MunicipalityAnalysisEdge[] },
@@ -480,6 +485,7 @@ export function kennzahlFromGraph(
 ): KennzahlFromGraph {
   const nodesById = new Map(graph.nodes.map((node) => [node.id, node]));
   const municipalities = new Map<string, string>();
+  let inputCount = 0;
   let failure: KennzahlFromGraph | null = null;
 
   const walk = (id: string): KennzahlExpression | null => {
@@ -488,7 +494,10 @@ export function kennzahlFromGraph(
     if (node.type === "dataset") {
       const dataset = node.data.dataset;
       if (dataset.kind === "constant") return { constant: dataset.value };
-      municipalities.set(dataset.municipalityCode, dataset.municipalityName);
+      inputCount += 1;
+      if (dataset.municipalityCode) {
+        municipalities.set(dataset.municipalityCode, dataset.municipalityName ?? dataset.municipalityCode);
+      }
       return { input: unbindKennzahlInput(dataset)! };
     }
     const side = (handle: "a" | "b") => {
@@ -507,9 +516,14 @@ export function kennzahlFromGraph(
   const expression = walk(nodeId);
   if (!expression) return failure ?? { ok: false, reason: "missing-input" };
   if (municipalities.size > 1) return { ok: false, reason: "mixed-municipalities" };
+  // Constants alone are not a Kennzahl — it has to read something.
+  if (!inputCount) return { ok: false, reason: "no-municipality-input" };
   const [municipalityCode, municipalityName] = municipalities.entries().next().value ?? [];
-  if (!municipalityCode) return { ok: false, reason: "no-municipality-input" };
-  return { ok: true, expression, municipalityCode, municipalityName: municipalityName ?? municipalityCode };
+  return {
+    ok: true,
+    expression,
+    municipality: municipalityCode ? { municipalityCode, municipalityName: municipalityName ?? municipalityCode } : null,
+  };
 }
 
 /** Every Ausgangsdatum a Kennzahl reads, for working out which data files it needs. */

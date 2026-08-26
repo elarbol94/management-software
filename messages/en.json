@@ -415,11 +415,9 @@
     "constantNode": "Constant",
     "kennzahlCatalog": "Metrics",
     "kennzahlCatalogHint": "Click to insert the derivation",
-    "kennzahlMunicipality": "Municipality",
     "kennzahlMunicipalityPlaceholder": "Search municipality",
     "kennzahlPrimary": "Primary calculation — not derivable from other source data.",
     "kennzahlInserted": "Inserted the derivation of {kennzahl}.",
-    "kennzahlNeedsMunicipality": "Choose a municipality first.",
     "ageGroupTotal": "Total population (age statistics)",
     "metricCustom": "Own metrics",
     "customView": "Own metric",
@@ -437,7 +435,10 @@
     "kennzahlCatalogTitle": "Metrics and how they are derived",
     "kennzahlCatalogDescription": "Every metric with the formula that computes it from the source data.",
     "kennzahlOpenAsGraph": "Open as a graph",
-    "kennzahlOwnSection": "Own metrics"
+    "kennzahlOwnSection": "Own metrics",
+    "analysisSubject": "Municipality of the graph",
+    "analysisSubjectNone": "No municipality chosen",
+    "analysisMissingMunicipality": "Choose a municipality to see values."
   },
   "municipalityInvestments": {
     "back": "Back to municipality overview",

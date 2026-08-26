@@ -20,7 +20,7 @@ import {
   type Viewport,
   useReactFlow,
 } from "@xyflow/react";
-import { BarChart3, Bookmark, Database, GripVertical, Pencil, Plus, Save, Sigma, Trash2, TriangleAlert } from "lucide-react";
+import { BarChart3, Bookmark, Database, GripVertical, MapPin, Pencil, Pin, Plus, Save, Sigma, Trash2, TriangleAlert } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -80,10 +80,18 @@ const OPERATOR_SYMBOLS: Record<AnalysisOperatorId, string> = {
 };
 const OPERATOR_DRAG_TYPE = "application/x-municipality-analysis-operator";
 
+function seriesErrorLabel(error: AnalysisSeries["error"], t: ReturnType<typeof useTranslations>) {
+  if (!error) return null;
+  if (error === "missing-input") return t("analysisMissingInput");
+  if (error === "incompatible-units") return t("analysisIncompatibleUnits");
+  return t("analysisMissingMunicipality");
+}
+
 type DisplayNodeData = {
   kind: "dataset" | "operator";
   title: string;
   subtitle: string;
+  pinned?: boolean;
   symbol?: string;
   series: AnalysisSeries | null;
   errorLabel: string | null;
@@ -109,7 +117,10 @@ function AnalysisNodeCard({ data, selected }: NodeProps<DisplayNode>) {
         {data.kind === "dataset" ? <Database className="size-4 text-teal-700 dark:text-teal-300" /> : <span className="grid size-6 place-items-center rounded-md bg-violet-100 font-semibold text-violet-700 dark:bg-violet-950 dark:text-violet-300">{data.symbol}</span>}
         <div className="min-w-0 flex-1">
           <p className="truncate text-xs font-semibold">{data.title}</p>
-          <p className="truncate text-[10px] text-muted-foreground">{data.subtitle}</p>
+          <p className={cn("flex items-center gap-1 truncate text-[10px]", data.pinned ? "text-foreground" : "text-muted-foreground")}>
+            {data.pinned && <Pin className="size-2.5 shrink-0" />}
+            <span className="truncate">{data.subtitle}</span>
+          </p>
         </div>
       </div>
       <div className="px-3 py-2">
@@ -176,7 +187,6 @@ function KennzahlRow({
   formula,
   derivable,
   variant,
-  disabled,
   openLabel,
   onOpen,
 }: {
@@ -184,7 +194,6 @@ function KennzahlRow({
   formula: string;
   derivable: boolean;
   variant: CatalogVariant;
-  disabled: boolean;
   openLabel: string;
   onOpen: () => void;
 }) {
@@ -200,8 +209,6 @@ function KennzahlRow({
   return (
     <button
       type="button"
-      disabled={disabled}
-      title={disabled ? openLabel : undefined}
       aria-label={`${label} — ${openLabel}`}
       className={cn(
         "rounded-lg border bg-background text-left hover:border-teal-600 hover:bg-teal-50 disabled:opacity-55 disabled:hover:border-border disabled:hover:bg-background dark:hover:bg-teal-950",
@@ -221,6 +228,62 @@ function KennzahlRow({
   );
 }
 
+/** Search-and-pick over the municipality index, used wherever one has to be chosen. */
+function MunicipalityPicker({
+  label,
+  placeholder,
+  compact = false,
+  onPick,
+}: {
+  label: string;
+  placeholder: string;
+  compact?: boolean;
+  onPick: (municipality: MunicipalityIndexItem) => void;
+}) {
+  const [municipalities, setMunicipalities] = useState<MunicipalityIndexItem[]>([]);
+  const [query, setQuery] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    loadMunicipalityIndex()
+      .then((index) => { if (!cancelled) setMunicipalities(index.municipalities); })
+      .catch(() => undefined);
+    return () => { cancelled = true; };
+  }, []);
+
+  const results = useMemo(
+    () => (query.trim() ? searchMunicipalities(municipalities, query).slice(0, 6) : []),
+    [municipalities, query],
+  );
+
+  return (
+    <div className="relative">
+      <Input
+        className={cn(compact && "h-8 text-xs")}
+        value={query}
+        maxLength={80}
+        aria-label={label}
+        placeholder={placeholder}
+        onValueChange={(value) => setQuery(value)}
+      />
+      {results.length > 0 && (
+        <div className="absolute top-full right-0 left-0 z-20 mt-1 grid gap-0.5 rounded-lg border bg-background p-1 shadow-lg">
+          {results.map((item) => (
+            <button
+              key={item.municipalityCode}
+              type="button"
+              className={cn("truncate rounded-md px-2 py-1 text-left hover:bg-accent", compact ? "text-[11px]" : "text-sm")}
+              onClick={() => { onPick(item); setQuery(""); }}
+            >
+              {item.name} · {item.municipalityCode}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 type CatalogVariant = "sidebar" | "page";
 
 /**
@@ -232,41 +295,16 @@ type CatalogVariant = "sidebar" | "page";
  */
 function KennzahlCatalog({
   variant,
-  initialMunicipality,
   ownMetrics = [],
   onOpen,
 }: {
   variant: CatalogVariant;
-  initialMunicipality?: MunicipalityIndexItem | null;
   ownMetrics?: MunicipalityMetricRecord[];
-  onOpen: (
-    request: { label: string; dataset: MunicipalityDatasetRef },
-    municipality: MunicipalityIndexItem,
-  ) => void;
+  onOpen: (request: { label: string; dataset: MunicipalityDatasetRef }) => void;
 }) {
   const t = useTranslations("municipalities");
   const format = useFormatter();
   const page = variant === "page";
-  const [municipalities, setMunicipalities] = useState<MunicipalityIndexItem[]>([]);
-  // Derived rather than synced: the editor learns which municipality its graph is about
-  // only after this has mounted, and an explicit pick must still win over it.
-  const [chosen, setChosen] = useState<MunicipalityIndexItem | null>(null);
-  const municipality = chosen ?? initialMunicipality ?? null;
-  const [query, setQuery] = useState("");
-
-  useEffect(() => {
-    let cancelled = false;
-    loadMunicipalityIndex()
-      .then((index) => { if (!cancelled) setMunicipalities(index.municipalities); })
-      .catch(() => undefined);
-    return () => { cancelled = true; };
-  }, []);
-
-
-  const results = useMemo(
-    () => (query.trim() ? searchMunicipalities(municipalities, query).slice(0, 6) : []),
-    [municipalities, query],
-  );
   const describe = (expression: KennzahlExpression | null) => (expression
     ? kennzahlFormulaText(expression, (input) => datasetTitle(input, t), (value) => format.number(value))
     : t("kennzahlPrimary"));
@@ -299,34 +337,6 @@ function KennzahlCatalog({
         </span>
       </div>
 
-      <div className={cn("mt-3", page && "max-w-sm")}>
-        <Input
-          className={cn(page ? "" : "h-8 text-xs")}
-          value={query}
-          maxLength={80}
-          aria-label={t("kennzahlMunicipality")}
-          placeholder={t("kennzahlMunicipalityPlaceholder")}
-          onValueChange={(value) => setQuery(value)}
-        />
-        {results.length > 0 && (
-          <div className="mt-1 grid gap-0.5">
-            {results.map((item) => (
-              <button
-                key={item.municipalityCode}
-                type="button"
-                className={cn("truncate rounded-md px-2 py-1 text-left hover:bg-accent", page ? "text-sm" : "text-[11px]")}
-                onClick={() => { setChosen(item); setQuery(""); }}
-              >
-                {item.name} · {item.municipalityCode}
-              </button>
-            ))}
-          </div>
-        )}
-        <p className={cn("mt-1 truncate font-medium", page ? "text-sm" : "text-[11px]")} data-testid="kennzahl-catalog-municipality">
-          {municipality ? municipality.name : t("kennzahlNeedsMunicipality")}
-        </p>
-      </div>
-
       <div className={cn("mt-3", page ? "grid gap-5" : "grid max-h-80 gap-3 overflow-y-auto pr-1")}>
         {groups.map(([category, definitions]) => (
           <div key={category}>
@@ -344,15 +354,10 @@ function KennzahlCatalog({
                     formula={describe(expression)}
                     derivable={Boolean(expression)}
                     variant={variant}
-                    disabled={!municipality}
                     openLabel={t("kennzahlOpenAsGraph")}
-                    onOpen={() => {
-                      if (!municipality) return;
-                      onOpen({
-                        label,
-                        dataset: bindKennzahlInput(definition.output, municipality.municipalityCode, municipality.name),
-                      }, municipality);
-                    }}
+                    // Open, not pinned: the derivation is the same everywhere, and which
+                    // municipality it is read for is the graph's business.
+                    onOpen={() => onOpen({ label, dataset: bindKennzahlInput(definition.output) })}
                   />
                 );
               })}
@@ -439,7 +444,7 @@ function AnalysisEditor({ analysis, analyses }: { analysis: AnalysisRecord; anal
   const results = useMemo(() => data ? evaluateAnalysisGraph(graph, data) : new Map<string, AnalysisSeries>(), [data, graph]);
   const displayNodes = useMemo<DisplayNode[]>(() => graph.nodes.map((node) => {
     const series = results.get(node.id) ?? null;
-    const errorLabel = series?.error === "missing-input" ? t("analysisMissingInput") : series?.error === "incompatible-units" ? t("analysisIncompatibleUnits") : null;
+    const errorLabel = seriesErrorLabel(series?.error ?? null, t);
     return {
       id: node.id,
       type: node.type,
@@ -447,14 +452,24 @@ function AnalysisEditor({ analysis, analyses }: { analysis: AnalysisRecord; anal
       selected: graph.selectedNodeId === node.id,
       dragHandle: ".drag-handle",
       data: node.type === "dataset" ? {
-        kind: "dataset", title: datasetTitle(node.data.dataset, t), subtitle: datasetMunicipalityName(node.data.dataset) ?? t("constantNode"), series,
+        kind: "dataset",
+        title: datasetTitle(node.data.dataset, t),
+        // Pinned nodes name their own municipality; open ones show the graph's, so
+        // switching the subject visibly moves them and leaves the pinned ones behind.
+        subtitle: node.data.dataset.kind === "constant"
+          ? t("constantNode")
+          : datasetMunicipalityName(node.data.dataset)
+            ?? graph.subject?.municipalityName
+            ?? t("analysisSubjectNone"),
+        pinned: Boolean(datasetMunicipalityName(node.data.dataset)),
+        series,
         errorLabel, warningLabel: series?.warnings.length ? t("analysisDivisionWarnings", { count: series.warnings.length }) : null,
       } : {
         kind: "operator", title: t(`operator_${node.data.operator}`), subtitle: t("operatorNode"), symbol: OPERATOR_SYMBOLS[node.data.operator], series,
         errorLabel, warningLabel: series?.warnings.length ? t("analysisDivisionWarnings", { count: series.warnings.length }) : null,
       },
     };
-  }), [graph.nodes, graph.selectedNodeId, results, t]);
+  }), [graph.nodes, graph.selectedNodeId, graph.subject, results, t]);
   const displayEdges = useMemo<Edge[]>(() => graph.edges.map((edge) => ({ ...edge, type: "smoothstep", animated: false })), [graph.edges]);
   const selectedNode = graph.selectedNodeId ? graph.nodes.find(({ id }) => id === graph.selectedNodeId) : null;
   const selectedSeries = selectedNode ? results.get(selectedNode.id) ?? null : null;
@@ -525,16 +540,6 @@ function AnalysisEditor({ analysis, analyses }: { analysis: AnalysisRecord; anal
       node: { id, type: "operator", position: position ?? { x: 360, y: 120 + graphRef.current.nodes.length * 30 }, data: { operator } },
     }]);
   }
-
-  // Reuses the municipality already on the canvas, so the catalogue opens on whatever the
-  // analysis is about instead of asking again.
-  const graphMunicipality = useMemo(() => {
-    if (!data) return null;
-    const node = graph.nodes.find((item) => item.type === "dataset" && item.data.dataset.kind !== "constant");
-    const code = node && node.type === "dataset" ? datasetMunicipalityName(node.data.dataset) && node.data.dataset : null;
-    const municipalityCode = code && "municipalityCode" in code ? code.municipalityCode : null;
-    return data.index.municipalities.find((item) => item.municipalityCode === municipalityCode) ?? null;
-  }, [data, graph.nodes]);
 
   function insertKennzahl(request: { label: string; dataset: MunicipalityDatasetRef }) {
     const operations = kennzahlDerivationOperations(
@@ -619,7 +624,7 @@ function AnalysisEditor({ analysis, analyses }: { analysis: AnalysisRecord; anal
           ))}
         </div>
         <p className="mt-4 text-[11px] leading-5 text-muted-foreground">{t("analysisUnitRule")}</p>
-        <KennzahlCatalog variant="sidebar" initialMunicipality={graphMunicipality} onOpen={insertKennzahl} />
+        <KennzahlCatalog variant="sidebar" onOpen={insertKennzahl} />
       </aside>
 
       <section className="relative min-h-[32rem] overflow-hidden rounded-2xl border bg-muted/20 shadow-sm">
@@ -630,6 +635,25 @@ function AnalysisEditor({ analysis, analyses }: { analysis: AnalysisRecord; anal
                 <span className="truncate font-semibold">{analysis.name}</span><Pencil className="size-3.5 text-muted-foreground" />
               </button>
             )}
+          </div>
+          {/* The graph is a formula; this is the municipality it is evaluated for. */}
+          <div className="flex shrink-0 items-center gap-2">
+            <MapPin className="size-3.5 text-muted-foreground" />
+            <span className="max-w-40 truncate text-xs font-medium" data-testid="analysis-subject">
+              {graph.subject?.municipalityName ?? t("analysisSubjectNone")}
+            </span>
+            <div className="w-40">
+              <MunicipalityPicker
+                compact
+                label={t("analysisSubject")}
+                placeholder={t("kennzahlMunicipalityPlaceholder")}
+                onPick={(item) => commitOperations([{
+                  version: ANALYSIS_OPERATION_VERSION,
+                  type: "set-subject",
+                  subject: { municipalityCode: item.municipalityCode, municipalityName: item.name },
+                }])}
+              />
+            </div>
           </div>
           <span className={cn("flex items-center gap-1 text-[11px]", saveState === "error" ? "text-destructive" : "text-muted-foreground")}>
             <Save className="size-3.5" />{t(saveState === "saving" ? "analysisSaving" : saveState === "error" ? "analysisSaveError" : "analysisSaved")}
@@ -684,7 +708,7 @@ function AnalysisEditor({ analysis, analyses }: { analysis: AnalysisRecord; anal
         <p className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">{t("resultPreview")}</p>
         <h2 className="mt-1 truncate font-semibold">{selectedTitle}</h2>
         {dataError ? <p className="mt-5 flex gap-2 text-sm text-destructive"><TriangleAlert className="size-4 shrink-0" />{t("analysisDataError")}</p>
-          : selectedSeries?.error ? <p className="mt-5 flex gap-2 text-sm text-destructive"><TriangleAlert className="size-4 shrink-0" />{t(selectedSeries.error === "missing-input" ? "analysisMissingInput" : "analysisIncompatibleUnits")}</p>
+          : selectedSeries?.error ? <p className="mt-5 flex gap-2 text-sm text-destructive"><TriangleAlert className="size-4 shrink-0" />{seriesErrorLabel(selectedSeries.error, t)}</p>
             : selectedSeries ? <div className="mt-4"><AnalysisSeriesChart series={selectedSeries} label={selectedTitle} trueLabel={t("booleanTrue")} falseLabel={t("booleanFalse")} />{selectedSeries.warnings.length > 0 && <p className="mt-3 text-xs text-amber-700 dark:text-amber-300">{t("analysisDivisionWarnings", { count: selectedSeries.warnings.length })}</p>}<Button variant="outline" className="mt-4 w-full" disabled={pending} onClick={saveSelectionAsMetric}><Bookmark className="size-4" />{t("saveAsKennzahl")}</Button></div>
               : <p className="mt-5 text-sm leading-6 text-muted-foreground">{t("analysisSelectResult")}</p>}
       </aside>
@@ -705,11 +729,11 @@ function AnalysisLanding({
   const [pending, startTransition] = useTransition();
 
   // No analysis is open here, so opening a derivation creates one for it.
-  function openAsAnalysis(request: { label: string; dataset: MunicipalityDatasetRef }, municipality: MunicipalityIndexItem) {
+  function openAsAnalysis(request: { label: string; dataset: MunicipalityDatasetRef }) {
     if (pending) return;
     startTransition(async () => {
       const created = await createMunicipalityAnalysis({
-        name: `${request.label} · ${municipality.name}`.slice(0, 120),
+        name: request.label.slice(0, 120),
         dataset: request.dataset,
       });
       router.push(`/municipalities/analysis?analysis=${encodeURIComponent(created.id)}`);

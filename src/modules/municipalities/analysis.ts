@@ -39,28 +39,43 @@ export const analysisOperatorIds = [
 export type AnalysisOperatorId = (typeof analysisOperatorIds)[number];
 
 const positionSchema = z.object({ x: z.number().finite(), y: z.number().finite() });
+export const analysisSubjectSchema = z.object({
+  municipalityCode: z.string().regex(/^\d{5}$/),
+  municipalityName: z.string().trim().min(1).max(160),
+});
+export type AnalysisSubject = z.infer<typeof analysisSubjectSchema>;
+/**
+ * A dataset node is either pinned to a municipality or left open, in which case it follows
+ * the graph's subject. A Kennzahl is the same formula everywhere, so open is the normal
+ * case; pinning is what makes comparing two municipalities in one graph possible.
+ */
+const pinnedMunicipality = {
+  municipalityCode: z.string().regex(/^\d{5}$/).optional(),
+  municipalityName: z.string().trim().min(1).max(160).optional(),
+};
+
 export const municipalityDatasetRefSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("population"), municipalityCode: z.string().regex(/^\d{5}$/), municipalityName: z.string().trim().min(1).max(160), view: z.enum(["count", "density", "foreign-share", "foreign-persons", "structure-population"]) }),
+  z.object({ kind: z.literal("population"), ...pinnedMunicipality, view: z.enum(["count", "density", "foreign-share", "foreign-persons", "structure-population"]) }),
   z.object({
-    kind: z.literal("age-group"), municipalityCode: z.string().regex(/^\d{5}$/), municipalityName: z.string().trim().min(1).max(160),
+    kind: z.literal("age-group"), ...pinnedMunicipality,
     ageGroup: z.enum(["0-5", "6-14", "15-24", "25-44", "45-64", "65-79", "80-plus", "total"]),
     measure: z.enum(["share", "persons"]), sex: z.enum(["all", "female", "male"]),
   }),
   z.object({
-    kind: z.literal("age-indicator"), municipalityCode: z.string().regex(/^\d{5}$/), municipalityName: z.string().trim().min(1).max(160),
+    kind: z.literal("age-indicator"), ...pinnedMunicipality,
     indicator: z.enum(["youth-share", "senior-share", "old-age-dependency", "child-dependency", "total-dependency", "aging-index", "average-age", "women-share", "women-per-100-men"]),
   }),
   z.object({
-    kind: z.literal("movement"), municipalityCode: z.string().regex(/^\d{5}$/), municipalityName: z.string().trim().min(1).max(160),
+    kind: z.literal("movement"), ...pinnedMunicipality,
     metric: z.enum(["population-change", "births", "deaths", "birth-rate", "death-rate", "birth-balance-rate", "arrivals", "departures", "migration-balance-rate", "international-migration-balance", "international-migration-balance-rate", "internal-migration-balance", "internal-migration-balance-rate", "statistical-correction", "international-arrivals", "international-departures", "internal-arrivals", "internal-departures"]),
   }),
   z.object({
-    kind: z.literal("cost-share"), municipalityCode: z.string().regex(/^\d{5}$/), municipalityName: z.string().trim().min(1).max(160),
+    kind: z.literal("cost-share"), ...pinnedMunicipality,
     category: z.enum(["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "total"]),
     measure: z.enum(["absolute", "share", "per-capita", "real-per-capita", "peer-deviation"]).optional(),
   }),
   z.object({
-    kind: z.literal("attribute"), municipalityCode: z.string().regex(/^\d{5}$/), municipalityName: z.string().trim().min(1).max(160),
+    kind: z.literal("attribute"), ...pinnedMunicipality,
     field: z.literal("area"),
   }),
   // Dimensionless scalar. Rates and shares are only expressible from Ausgangsdaten with
@@ -88,6 +103,9 @@ export const municipalityAnalysisGraphSchema = z.object({
   edges: z.array(analysisEdgeSchema).max(MAX_ANALYSIS_EDGES),
   viewport: z.object({ x: z.number().finite(), y: z.number().finite(), zoom: z.number().finite().min(0.1).max(4) }),
   selectedNodeId: z.string().max(100).nullable(),
+  // Which municipality the open nodes are about. Defaulted so graphs stored before the
+  // subject existed keep parsing — they are simply pinned throughout.
+  subject: analysisSubjectSchema.nullable().default(null),
 }).superRefine((graph, context) => {
   const nodeIds = new Set(graph.nodes.map(({ id }) => id));
   const nodesById = new Map(graph.nodes.map((node) => [node.id, node]));
@@ -122,12 +140,13 @@ export const municipalityAnalysisGraphOperationSchema = z.discriminatedUnion("ty
   // Like add-dataset, but for a Kennzahl: the graph decides how it lands, because only it
   // knows which Ausgangsdaten are already on the canvas and where there is room.
   z.object({ version: z.literal(ANALYSIS_OPERATION_VERSION), type: z.literal("add-kennzahl"), nodeId: z.string().min(1).max(100), dataset: municipalityDatasetRefSchema }),
+  z.object({ version: z.literal(ANALYSIS_OPERATION_VERSION), type: z.literal("set-subject"), subject: analysisSubjectSchema.nullable() }),
 ]);
 export const municipalityAnalysisGraphOperationsSchema = z.array(municipalityAnalysisGraphOperationSchema).min(1).max(200);
 export type MunicipalityAnalysisGraphOperation = z.infer<typeof municipalityAnalysisGraphOperationSchema>;
 
 export function emptyMunicipalityAnalysisGraph(): MunicipalityAnalysisGraph {
-  return { version: ANALYSIS_GRAPH_VERSION, nodes: [], edges: [], viewport: { x: 0, y: 0, zoom: 1 }, selectedNodeId: null };
+  return { version: ANALYSIS_GRAPH_VERSION, nodes: [], edges: [], viewport: { x: 0, y: 0, zoom: 1 }, selectedNodeId: null, subject: null };
 }
 
 export function serializeMunicipalityAnalysisGraph(graph: MunicipalityAnalysisGraph) {
@@ -221,6 +240,8 @@ export function applyMunicipalityAnalysisGraphOperations(
       next = { ...next, edges: next.edges.filter(({ id }) => id !== operation.edgeId) };
     } else if (operation.type === "set-viewport") {
       next = { ...next, viewport: operation.viewport };
+    } else if (operation.type === "set-subject") {
+      next = { ...next, subject: operation.subject };
     } else {
       next = {
         ...next,
@@ -251,7 +272,7 @@ export function wouldCreateAnalysisCycle(edges: MunicipalityAnalysisEdge[], sour
 export type AnalysisPoint = { year: number; value: number | boolean | null };
 export type AnalysisSeries = {
   unit: string; valueType: "number" | "boolean"; points: AnalysisPoint[];
-  error: "missing-input" | "incompatible-units" | null;
+  error: "missing-input" | "incompatible-units" | "missing-municipality" | null;
   warnings: Array<{ year: number; code: "division-by-zero" }>;
 };
 export type MunicipalityAnalysisData = {
@@ -293,40 +314,56 @@ export function analysisUnitLabel(unit: string, translate: (id: (typeof ANALYSIS
     .join("");
 }
 
-export function resolveMunicipalityDataset(dataset: MunicipalityDatasetRef, data: MunicipalityAnalysisData): AnalysisSeries {
+export function resolveMunicipalityDataset(
+  dataset: MunicipalityDatasetRef,
+  data: MunicipalityAnalysisData,
+  /** Which municipality open nodes are about; a pinned node ignores it. */
+  subject: AnalysisSubject | null = null,
+): AnalysisSeries {
   const points: AnalysisPoint[] = [];
   const firstYear = dataset.kind === "cost-share" ? (data.costs?.firstYear ?? 2010) : data.population.firstYear;
   const latestYear = dataset.kind === "cost-share" ? (data.costs?.latestYear ?? 2024) : data.population.latestYear;
-  // A constant carries no municipality; it spans the population years so it intersects
+
+  // A constant carries no municipality. It spans the population years so it intersects
   // with every other series an operator can pair it with.
-  const municipalityCode = dataset.kind === "constant" ? null : dataset.municipalityCode;
+  if (dataset.kind === "constant") {
+    for (let year = firstYear; year <= latestYear; year += 1) points.push({ year, value: dataset.value });
+    return { unit: datasetUnit(dataset), valueType: "number", points, error: null, warnings: [] };
+  }
+
+  // Pinned wins over the graph's subject; an open node without a subject has nothing to
+  // read yet, which is a state to report rather than a series of nulls.
+  const code = dataset.municipalityCode ?? subject?.municipalityCode ?? null;
+  if (code === null) {
+    return { unit: datasetUnit(dataset), valueType: "number", points: [], error: "missing-municipality", warnings: [] };
+  }
+
   for (let year = firstYear; year <= latestYear; year += 1) {
-    const population = municipalityCode === null ? 0 : data.population.years[String(year)].values[municipalityCode];
+    const population = data.population.years[String(year)].values[code];
     let value: number | null = null;
-    if (dataset.kind === "constant") value = dataset.value;
-    else if (dataset.kind === "attribute") {
-      const municipality = data.index.municipalities.find((item) => item.municipalityCode === municipalityCode);
+    if (dataset.kind === "attribute") {
+      const municipality = data.index.municipalities.find((item) => item.municipalityCode === code);
       value = municipality ? municipality.areaSquareKilometers : null;
     } else if (dataset.kind === "population") {
-      const municipality = data.index.municipalities.find(({ municipalityCode }) => municipalityCode === dataset.municipalityCode);
+      const municipality = data.index.municipalities.find(({ municipalityCode }) => municipalityCode === code);
       if (municipality) value = populationViewValue(
         dataset.view,
         population,
         municipality,
-        data.structure?.years[String(year)]?.values[dataset.municipalityCode] ?? null,
+        data.structure?.years[String(year)]?.values[code] ?? null,
       );
     }
     else if (dataset.kind === "age-group") {
-      const counts = data.demography?.years[String(year)]?.values[dataset.municipalityCode];
+      const counts = data.demography?.years[String(year)]?.values[code];
       if (counts) value = demographyMetricValue(counts, dataset.sex, dataset.ageGroup, dataset.measure);
     } else if (dataset.kind === "age-indicator") {
-      const counts = data.demography?.years[String(year)]?.values[dataset.municipalityCode];
+      const counts = data.demography?.years[String(year)]?.values[code];
       if (counts) value = demographicIndicatorValue(counts, dataset.indicator);
     } else if (dataset.kind === "movement") {
-      const counts = data.movement?.years[String(year)]?.values[dataset.municipalityCode];
+      const counts = data.movement?.years[String(year)]?.values[code];
       if (counts) value = movementTargetValue(counts, population, dataset.metric);
     } else {
-      const costs = data.costs?.years[String(year)]?.values[dataset.municipalityCode];
+      const costs = data.costs?.years[String(year)]?.values[code];
       const measure = dataset.measure ?? "share";
       if (costs && measure === "absolute") value = municipalityCostAbsolute(costs, dataset.category);
       else if (costs && measure === "share") value = municipalityCostShare(costs, dataset.category);
@@ -335,7 +372,7 @@ export function resolveMunicipalityDataset(dataset: MunicipalityDatasetRef, data
       } else if (costs && measure === "real-per-capita") {
         value = municipalityCostRealPerCapita(costs, dataset.category, population, year);
       } else if (costs) {
-        const selected = data.index.municipalities.find(({ municipalityCode }) => municipalityCode === dataset.municipalityCode);
+        const selected = data.index.municipalities.find(({ municipalityCode }) => municipalityCode === code);
         const selectedPerCapita = municipalityCostPerCapita(costs, dataset.category, population);
         if (selected && selectedPerCapita !== null) {
           const band = municipalityPopulationBand(population);
@@ -372,10 +409,19 @@ export function composeAnalysisUnit(operator: AnalysisOperatorId, left: string, 
 
 export function evaluateAnalysisOperator(operator: AnalysisOperatorId, left: AnalysisSeries | null, right: AnalysisSeries | null): AnalysisSeries {
   const comparison = comparisonOperators.has(operator);
-  if (!left || !right) return { unit: comparison ? "boolean" : "", valueType: comparison ? "boolean" : "number", points: [], error: "missing-input", warnings: [] };
+  const fail = (error: AnalysisSeries["error"]): AnalysisSeries => ({
+    unit: comparison ? "boolean" : "",
+    valueType: comparison ? "boolean" : "number",
+    points: [], error, warnings: [],
+  });
+  if (!left || !right) return fail("missing-input");
+  // An input that could not be computed is the reason this cannot be either — say so
+  // here rather than showing an empty chart with no explanation.
+  const inherited = left.error ?? right.error;
+  if (inherited) return fail(inherited);
   const requiresSameUnit = operator === "add" || operator === "subtract" || comparison;
   if (requiresSameUnit && (left.unit !== right.unit || left.valueType !== "number" || right.valueType !== "number")) {
-    return { unit: comparison ? "boolean" : "", valueType: comparison ? "boolean" : "number", points: [], error: "incompatible-units", warnings: [] };
+    return fail("incompatible-units");
   }
   const rightByYear = new Map(right.points.map((point) => [point.year, point.value]));
   const warnings: AnalysisSeries["warnings"] = [];
@@ -407,7 +453,7 @@ export function evaluateAnalysisGraph(graph: MunicipalityAnalysisGraph, data: Mu
     if (!node) return null;
     evaluating.add(id);
     let result: AnalysisSeries | null;
-    if (node.type === "dataset") result = resolveMunicipalityDataset(node.data.dataset, data);
+    if (node.type === "dataset") result = resolveMunicipalityDataset(node.data.dataset, data, graph.subject);
     else {
       const input = (handle: "a" | "b") => {
         const edge = graph.edges.find((item) => item.target === id && item.targetHandle === handle);

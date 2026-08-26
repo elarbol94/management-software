@@ -415,11 +415,9 @@
     "constantNode": "Konstante",
     "kennzahlCatalog": "Kennzahlen",
     "kennzahlCatalogHint": "Klicken fügt die Herleitung ein",
-    "kennzahlMunicipality": "Gemeinde",
     "kennzahlMunicipalityPlaceholder": "Gemeinde suchen",
     "kennzahlPrimary": "Primärberechnung – nicht aus anderen Ausgangsdaten ableitbar.",
     "kennzahlInserted": "Herleitung von {kennzahl} eingefügt.",
-    "kennzahlNeedsMunicipality": "Zuerst eine Gemeinde wählen.",
     "ageGroupTotal": "Gesamtbevölkerung (Altersstatistik)",
     "metricCustom": "Eigene Kennzahlen",
     "customView": "Eigene Kennzahl",
@@ -437,7 +435,10 @@
     "kennzahlCatalogTitle": "Kennzahlen und ihre Herleitung",
     "kennzahlCatalogDescription": "Jede Kennzahl mit der Formel, mit der sie aus den Ausgangsdaten berechnet wird.",
     "kennzahlOpenAsGraph": "Als Graph öffnen",
-    "kennzahlOwnSection": "Eigene Kennzahlen"
+    "kennzahlOwnSection": "Eigene Kennzahlen",
+    "analysisSubject": "Gemeinde des Graphen",
+    "analysisSubjectNone": "Keine Gemeinde gewählt",
+    "analysisMissingMunicipality": "Gemeinde wählen, um Werte zu sehen."
   },
   "municipalityInvestments": {
     "back": "Zur Gemeindeübersicht",

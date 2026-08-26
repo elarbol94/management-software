@@ -58,9 +58,7 @@ test("a Kennzahl derivation can be inspected, saved and used on the map", async 
   // A primary calculation is listed but cannot be opened as a graph.
   await expect(catalog.getByText("Primärberechnung", { exact: false }).first()).toBeVisible();
 
-  await catalog.getByLabel("Gemeinde").fill("Graz");
-  await catalog.getByRole("button", { name: /^Graz · 60101$/ }).click();
-  await expect(page.getByTestId("kennzahl-catalog-municipality")).toHaveText("Graz");
+  // A Kennzahl is the same formula everywhere, so opening it needs no municipality.
   await catalog.getByRole("button", { name: /^Geburtenrate/ }).click();
   await expect(page).toHaveURL(/analysis=/, { timeout: 30_000 });
 
@@ -70,6 +68,16 @@ test("a Kennzahl derivation can be inspected, saved and used on the map", async 
   const editor = page.getByTestId("municipality-analysis-editor");
   await expect(editor).toContainText("Lebendgeborene");
   await expect(editor).toContainText("Einwohnerzahl");
+
+  // Without a municipality the structure is there but the values are not, and the graph
+  // says so rather than showing empty charts.
+  await expect(page.getByTestId("analysis-subject")).toHaveText("Keine Gemeinde gewählt");
+  await expect(editor.getByText("Gemeinde wählen, um Werte zu sehen.").first()).toBeVisible();
+
+  await editor.getByLabel("Gemeinde des Graphen").fill("Graz");
+  await editor.getByRole("button", { name: /^Graz · 60101$/ }).click();
+  await expect(page.getByTestId("analysis-subject")).toHaveText("Graz");
+  await expect(editor.getByText("Gemeinde wählen, um Werte zu sehen.")).toHaveCount(0);
 
   // Saving reads the persisted graph, so reload to be sure nothing is still queued.
   await expect(editor.getByText("Gespeichert", { exact: true })).toBeVisible({ timeout: 30_000 });
