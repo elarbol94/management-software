@@ -3,18 +3,13 @@
 import { useRef, useState } from "react";
 import Link from "next/link";
 import { useTranslations } from "next-intl";
-import { BookOpen, FileText, LibraryBig, Loader2, Search, X } from "lucide-react";
+import { BookOpen, Highlighter, FileText, LibraryBig, Loader2, Search, X } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { searchResearch } from "../research-actions";
-import { parseSearchSnippet } from "../lib/search-snippet";
+import { SearchSnippet } from "./search-snippet";
 
 type Results = Awaited<ReturnType<typeof searchResearch>>;
 
-function Snippet({ value }: { value: string }) {
-  return parseSearchSnippet(value).map((part, index) => part.highlighted
-    ? <mark key={index} className="rounded-sm bg-amber-200 px-0.5 text-foreground dark:bg-amber-800/70">{part.text}</mark>
-    : <span key={index}>{part.text}</span>);
-}
 
 export function KnowledgeSearch() {
   const t = useTranslations("wiki");
@@ -43,7 +38,7 @@ export function KnowledgeSearch() {
     }, 180);
   }
 
-  const empty = results && !results.pages.length && !results.sources.length && !results.pdfPages.length;
+  const empty = results && results.results.length === 0;
 
   return (
     <div className="relative">
@@ -60,12 +55,18 @@ export function KnowledgeSearch() {
       {results && (
         <div className="absolute top-[calc(100%+0.5rem)] right-0 left-0 z-40 max-h-[32rem] overflow-y-auto rounded-xl border bg-popover p-2 shadow-xl">
           {empty && <p className="p-4 text-center text-sm text-muted-foreground">{t("noResults")}</p>}
-          {results.pages.length > 0 && <p className="px-2 py-1 text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">{t("documents")}</p>}
-          {results.pages.map((item) => <Link key={item.id} href={`/wiki/pages/${item.slug}`} className="flex gap-3 rounded-lg p-2.5 hover:bg-accent"><FileText className="mt-0.5 size-4 shrink-0 text-indigo-500" /><span className="min-w-0"><span className="block text-sm font-medium">{item.title}</span><span className="block truncate text-xs text-muted-foreground"><Snippet value={item.snippet} /></span></span></Link>)}
-          {results.pdfPages.length > 0 && <p className="mt-1 border-t px-2 pt-3 pb-1 text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">{t("pdfPages")}</p>}
-          {results.pdfPages.map((item) => <Link key={`${item.documentId}-${item.pageNumber}`} href={`/wiki/sources/${item.sourceId}/read/${item.documentId}?page=${item.pageNumber}`} className="flex gap-3 rounded-lg p-2.5 hover:bg-accent"><BookOpen className="mt-0.5 size-4 shrink-0 text-amber-600" /><span className="min-w-0"><span className="block text-sm font-medium">{item.sourceTitle} · {t("pageNumber", { page: item.pageNumber })}</span><span className="block truncate text-xs text-muted-foreground"><Snippet value={item.snippet} /></span></span></Link>)}
-          {results.sources.length > 0 && <p className="mt-1 border-t px-2 pt-3 pb-1 text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">{t("sources")}</p>}
-          {results.sources.map((item) => <Link key={item.id} href={item.documentId ? `/wiki/sources/${item.id}/read/${item.documentId}` : `/wiki/sources/${item.id}`} className="flex gap-3 rounded-lg p-2.5 hover:bg-accent"><LibraryBig className="mt-0.5 size-4 shrink-0 text-emerald-600" /><span className="min-w-0"><span className="block text-sm font-medium">{item.title}</span><span className="block text-xs text-muted-foreground">{t(`sourceTypes.${item.type}`)} · {item.issuedDate || "—"}</span></span></Link>)}
+          {/* One ranked list across pages, sources, PDF pages and annotations. */}
+          {results.results.map((item) => <Link key={item.key} href={item.href} className="flex gap-3 rounded-lg p-2.5 hover:bg-accent">
+            {item.kind === "page" ? <FileText className="mt-0.5 size-4 shrink-0 text-indigo-500" />
+              : item.kind === "source" ? <LibraryBig className="mt-0.5 size-4 shrink-0 text-emerald-600" />
+              : item.kind === "annotation" ? <Highlighter className="mt-0.5 size-4 shrink-0 text-fuchsia-600" />
+              : <BookOpen className="mt-0.5 size-4 shrink-0 text-amber-600" />}
+            <span className="min-w-0">
+              <span className="block text-sm font-medium">{item.title}{"pageNumber" in item ? ` · ${t("pageNumber", { page: item.pageNumber })}` : ""}</span>
+              <span className="block truncate text-xs text-muted-foreground"><SearchSnippet value={item.snippet} /></span>
+            </span>
+          </Link>)}
+          {results.results.length > 0 && <Link href={`/wiki/search?q=${encodeURIComponent(query)}`} className="mt-1 block border-t px-2 pt-3 pb-1 text-xs font-medium text-indigo-600 hover:underline dark:text-indigo-300">{t("showAllResults")}</Link>}
         </div>
       )}
     </div>

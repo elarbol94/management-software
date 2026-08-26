@@ -37,28 +37,10 @@ import {
 import { useFocusMode } from "@/components/focus-mode";
 import { cn } from "@/lib/utils";
 import { createQuickNote, searchResearch } from "../research-actions";
-import { parseSearchSnippet } from "../lib/search-snippet";
+import { SearchSnippet } from "./search-snippet";
 
 type SearchResults = Awaited<ReturnType<typeof searchResearch>>;
 
-function SearchSnippet({ value }: { value: string }) {
-  return (
-    <>
-      {parseSearchSnippet(value).map((segment, index) =>
-        segment.highlighted ? (
-          <mark
-            key={index}
-            className="rounded-sm bg-amber-200 px-0.5 text-foreground dark:bg-amber-800/70"
-          >
-            {segment.text}
-          </mark>
-        ) : (
-          <span key={index}>{segment.text}</span>
-        ),
-      )}
-    </>
-  );
-}
 
 function NavItem({
   href,
@@ -166,6 +148,16 @@ export function ResearchSidebar({
       if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === "n") {
         event.preventDefault();
         void createNote();
+        return;
+      }
+      // Ctrl/Cmd+K focuses search from anywhere, the one binding every tool has and
+      // this one lacked.
+      if ((event.ctrlKey || event.metaKey) && !event.shiftKey && event.key.toLowerCase() === "k") {
+        const target = desktopSearchRef.current ?? mobileSearchRef.current;
+        if (!target) return;
+        event.preventDefault();
+        target.focus();
+        target.select();
       }
     }
     window.addEventListener("keydown", shortcut);
@@ -276,28 +268,19 @@ export function ResearchSidebar({
         )}
         {!searching && !searchFailed && results && (
           <div className="absolute top-12 right-3 left-3 z-50 max-h-[28rem] overflow-y-auto rounded-lg border bg-popover p-1 shadow-xl">
-            {results.pages.length === 0 && results.sources.length === 0 && results.pdfPages.length === 0 && <p className="p-3 text-xs text-muted-foreground">{t("noResults")}</p>}
-            {results.pages.length > 0 && <p className="px-2 py-1 text-[10px] font-semibold tracking-wider text-muted-foreground uppercase">{t("documents")}</p>}
-            {results.pages.map((item) => (
-              <Link key={item.id} href={`/wiki/pages/${item.slug}`} onClick={() => closeSearch(onNavigate)} className="block rounded-md px-2 py-1.5 hover:bg-accent">
-                <span className="block text-xs font-medium">{item.title}</span>
-                <span className="block truncate text-[11px] text-muted-foreground"><SearchSnippet value={item.snippet} /></span>
+            {results.results.length === 0 && <p className="p-3 text-xs text-muted-foreground">{t("noResults")}</p>}
+            {/* One ranked list across all four kinds: capped per-type sections hid a
+                strong page hit behind weaker PDF hits. */}
+            {results.results.map((item) => (
+              <Link key={item.key} href={item.href} onClick={() => closeSearch(onNavigate)} className="block rounded-md px-2 py-1.5 hover:bg-accent">
+                <span className="flex items-center gap-1.5">
+                  <span className="rounded border px-1 text-[9px] tracking-wide text-muted-foreground uppercase">{t(`searchKinds.${item.kind}`)}</span>
+                  <span className="min-w-0 flex-1 truncate text-xs font-medium">{item.title}{"pageNumber" in item ? ` · ${t("pageNumber", { page: item.pageNumber })}` : ""}</span>
+                </span>
+                <span className="mt-0.5 block truncate text-[11px] text-muted-foreground"><SearchSnippet value={item.snippet} /></span>
               </Link>
             ))}
-            {results.pdfPages.length > 0 && <p className="mt-1 border-t px-2 pt-2 pb-1 text-[10px] font-semibold tracking-wider text-muted-foreground uppercase">{t("pdfPages")}</p>}
-            {results.pdfPages.map((item) => (
-              <Link key={`${item.sourceId}-${item.pageNumber}`} href={`/wiki/sources/${item.sourceId}/read/${item.documentId}?page=${item.pageNumber}`} onClick={() => closeSearch(onNavigate)} className="block rounded-md px-2 py-1.5 hover:bg-accent">
-                <span className="block text-xs font-medium">{item.sourceTitle} · {t("pageNumber", { page: item.pageNumber })}</span>
-                <span className="block truncate text-[11px] text-muted-foreground"><SearchSnippet value={item.snippet} /></span>
-              </Link>
-            ))}
-            {results.sources.length > 0 && <p className="mt-1 border-t px-2 pt-2 pb-1 text-[10px] font-semibold tracking-wider text-muted-foreground uppercase">{t("sources")}</p>}
-            {results.sources.map((item) => (
-              <Link key={item.id} href={`/wiki/sources/${item.id}`} onClick={() => closeSearch(onNavigate)} className="block rounded-md px-2 py-1.5 hover:bg-accent">
-                <span className="block text-xs font-medium">{item.title}</span>
-                <span className="block truncate text-[11px] text-muted-foreground">{item.type} · {item.issuedDate || "—"}</span>
-              </Link>
-            ))}
+            {results.results.length > 0 && <Link href={`/wiki/search?q=${encodeURIComponent(query)}`} onClick={() => closeSearch(onNavigate)} className="mt-1 block border-t px-2 pt-2 pb-1 text-[11px] font-medium text-indigo-600 hover:underline dark:text-indigo-300">{t("showAllResults")}</Link>}
           </div>
         )}
       </div>

@@ -2771,7 +2771,17 @@
     "reorderSameLevelOnly": "Seiten lassen sich nur innerhalb derselben Ebene sortieren.",
     "reorderFailed": "Die Reihenfolge konnte nicht gespeichert werden.",
     "compareWith": "Vergleichen mit",
-    "layoutChanges": "{count, plural, one {# Layoutänderung} other {# Layoutänderungen}}"
+    "layoutChanges": "{count, plural, one {# Layoutänderung} other {# Layoutänderungen}}",
+    "showAllResults": "Alle Ergebnisse anzeigen",
+    "searchResultsTitle": "Suchergebnisse",
+    "searchResultsEmptyQuery": "Gib einen Suchbegriff ein.",
+    "searchKindAll": "Alle",
+    "searchKinds": {
+      "page": "Seite",
+      "source": "Quelle",
+      "pdfPage": "PDF-Seite",
+      "annotation": "Markierung"
+    }
   },
   "settings": {
     "title": "Einstellungen",

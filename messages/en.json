@@ -2769,7 +2769,17 @@
     "reorderSameLevelOnly": "Pages can only be reordered within the same level.",
     "reorderFailed": "The new order could not be saved.",
     "compareWith": "Compare with",
-    "layoutChanges": "{count, plural, one {# layout change} other {# layout changes}}"
+    "layoutChanges": "{count, plural, one {# layout change} other {# layout changes}}",
+    "showAllResults": "Show all results",
+    "searchResultsTitle": "Search results",
+    "searchResultsEmptyQuery": "Enter a search term.",
+    "searchKindAll": "All",
+    "searchKinds": {
+      "page": "Page",
+      "source": "Source",
+      "pdfPage": "PDF page",
+      "annotation": "Annotation"
+    }
   },
   "settings": {
     "title": "Settings",
