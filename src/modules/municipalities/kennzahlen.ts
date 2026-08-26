@@ -2,10 +2,15 @@ import { createId } from "@paralleldrive/cuid2";
 import { z } from "zod";
 import {
   analysisBinaryOperatorIds,
+  analysisUnaryOperatorIds,
   ANALYSIS_OPERATOR_SYMBOLS,
+  DEFAULT_ANALYSIS_SHIFT_YEARS,
   isBooleanAnalysisOperator,
   isUnaryAnalysisOperator,
+  MAX_ANALYSIS_SHIFT_YEARS,
+  type AnalysisBinaryOperatorId,
   type AnalysisSubject,
+  type AnalysisUnaryOperatorId,
   municipalityDatasetRefSchema,
   ANALYSIS_OPERATION_VERSION,
   composeAnalysisUnit,
@@ -56,7 +61,9 @@ export type KennzahlInput = DistributiveOmit<
 export type KennzahlExpression =
   | { input: KennzahlInput }
   | { constant: number }
-  | { op: AnalysisOperatorId; a: KennzahlExpression; b: KennzahlExpression };
+  | { op: AnalysisBinaryOperatorId; a: KennzahlExpression; b: KennzahlExpression }
+  // A unary operator reads one side plus its year count; `b` is what tells the two apart.
+  | { op: AnalysisUnaryOperatorId; a: KennzahlExpression; years: number };
 
 export type KennzahlDefinition = {
   id: string;
@@ -99,7 +106,7 @@ export function datasetClass(input: KennzahlInput): DataKind {
 
 const inp = (input: KennzahlInput): KennzahlExpression => ({ input });
 const con = (constant: number): KennzahlExpression => ({ constant });
-const bin = (op: AnalysisOperatorId, a: KennzahlExpression, b: KennzahlExpression): KennzahlExpression => ({ op, a, b });
+const bin = (op: AnalysisBinaryOperatorId, a: KennzahlExpression, b: KennzahlExpression): KennzahlExpression => ({ op, a, b });
 const add = (a: KennzahlExpression, b: KennzahlExpression) => bin("add", a, b);
 const sub = (a: KennzahlExpression, b: KennzahlExpression) => bin("subtract", a, b);
 const mul = (a: KennzahlExpression, b: KennzahlExpression) => bin("multiply", a, b);
@@ -240,7 +247,8 @@ export const KENNZAHL_CATALOG: KennzahlDefinition[] = [
 const expressionKey = (expression: KennzahlExpression): string =>
   "input" in expression ? `i:${JSON.stringify(expression.input)}`
     : "constant" in expression ? `c:${expression.constant}`
-      : `o:${expression.op}(${expressionKey(expression.a)},${expressionKey(expression.b)})`;
+      : "b" in expression ? `o:${expression.op}(${expressionKey(expression.a)},${expressionKey(expression.b)})`
+        : `u:${expression.op}:${expression.years}(${expressionKey(expression.a)})`;
 
 /**
  * Lays the expression out as an analysis graph: inputs on the left, the result on the
@@ -262,12 +270,15 @@ export function buildKennzahlGraph(
   // An operator already fed by exactly these two inputs is this sub-expression, so reuse
   // it. Without this an insert would not be idempotent, and the persistence queue may
   // deliver the same operation twice after a retry.
-  const existingOperator = (operator: AnalysisOperatorId, a: string, b: string) => {
+  const existingOperator = (operator: AnalysisOperatorId, a: string, b: string | null, years?: number) => {
     for (const node of existingNodes) {
       if (node.type !== "operator" || node.data.operator !== operator) continue;
+      if (years !== undefined && (node.data.years ?? DEFAULT_ANALYSIS_SHIFT_YEARS) !== years) continue;
       const source = (handle: "a" | "b") =>
         existing.edges.find((edge) => edge.target === node.id && edge.targetHandle === handle)?.source;
-      if (source("a") === a && source("b") === b) return node.id;
+      // A unary operator matches only a node whose B is free, so it never reuses half of
+      // a binary one.
+      if (source("a") === a && (b === null ? !source("b") : source("b") === b)) return node.id;
     }
     return null;
   };
@@ -277,7 +288,7 @@ export function buildKennzahlGraph(
     depths.set(key, Math.max(depths.get(key) ?? 0, depth));
     if ("op" in node) {
       measure(node.a, depth + 1);
-      measure(node.b, depth + 1);
+      if ("b" in node) measure(node.b, depth + 1);
     }
   };
   measure(expression, 0);
@@ -310,6 +321,18 @@ export function buildKennzahlGraph(
 
     // Children first so their nodes exist before the edges reference them.
     const a = place(node.a);
+    if (!("b" in node)) {
+      const reusedUnary = existingOperator(node.op, a, null, node.years);
+      if (reusedUnary) {
+        idByKey.set(key, reusedUnary);
+        return reusedUnary;
+      }
+      const unaryId = createId();
+      idByKey.set(key, unaryId);
+      nodes.push({ id: unaryId, type: "operator", position: nextPosition(key), data: { operator: node.op, years: node.years } });
+      edges.push({ id: createId(), source: a, target: unaryId, sourceHandle: "output", targetHandle: "a" });
+      return unaryId;
+    }
     const b = place(node.b);
     const reusedOperator = existingOperator(node.op, a, b);
     if (reusedOperator) {
@@ -387,6 +410,9 @@ export function kennzahlFormulaText(
   const render = (node: KennzahlExpression, parenthesise: boolean): string => {
     if ("input" in node) return label(node.input);
     if ("constant" in node) return formatNumber(node.constant);
+    // `t−1` rather than a symbol: a shift reads as an offset on its input, not as an
+    // operation between two of them.
+    if (!("b" in node)) return `${render(node.a, true)} (t−${node.years})`;
     const text = `${render(node.a, true)} ${ANALYSIS_OPERATOR_SYMBOLS[node.op]} ${render(node.b, true)}`;
     return parenthesise ? `(${text})` : text;
   };
@@ -468,7 +494,7 @@ export const isDataKind = (value: string | null): value is DataKind =>
 
 export type KennzahlFromGraph =
   | { ok: true; expression: KennzahlExpression; municipality: AnalysisSubject | null }
-  | { ok: false; reason: "missing-input" | "mixed-municipalities" | "no-municipality-input" | "unsupported-operator" };
+  | { ok: false; reason: "missing-input" | "mixed-municipalities" | "no-municipality-input" };
 
 /**
  * Reads the sub-graph feeding `nodeId` back into a Kennzahl definition.
@@ -498,21 +524,26 @@ export function kennzahlFromGraph(
       }
       return { input: unbindKennzahlInput(dataset)! };
     }
-    if (isUnaryAnalysisOperator(node.data.operator)) {
-      failure ??= { ok: false, reason: "unsupported-operator" };
-      return null;
-    }
     const side = (handle: "a" | "b") => {
       const edge = graph.edges.find((item) => item.target === id && item.targetHandle === handle);
       return edge ? walk(edge.source) : null;
     };
+    const operator = node.data.operator;
+    if (isUnaryAnalysisOperator(operator)) {
+      const a = side("a");
+      if (!a) {
+        failure ??= { ok: false, reason: "missing-input" };
+        return null;
+      }
+      return { op: operator, a, years: node.data.years ?? DEFAULT_ANALYSIS_SHIFT_YEARS };
+    }
     const a = side("a");
     const b = side("b");
     if (!a || !b) {
       failure ??= { ok: false, reason: "missing-input" };
       return null;
     }
-    return { op: node.data.operator, a, b };
+    return { op: operator, a, b };
   };
 
   const expression = walk(nodeId);
@@ -531,13 +562,19 @@ export function kennzahlFromGraph(
 /** Every Ausgangsdatum a Kennzahl reads, for working out which data files it needs. */
 export function kennzahlExpressionInputs(expression: KennzahlExpression): KennzahlInput[] {
   if ("input" in expression) return [expression.input];
-  if ("op" in expression) return [...kennzahlExpressionInputs(expression.a), ...kennzahlExpressionInputs(expression.b)];
+  if ("op" in expression) {
+    return "b" in expression
+      ? [...kennzahlExpressionInputs(expression.a), ...kennzahlExpressionInputs(expression.b)]
+      : kennzahlExpressionInputs(expression.a);
+  }
   return [];
 }
 
 export function kennzahlExpressionUnit(expression: KennzahlExpression): string {
   if ("constant" in expression) return "";
   if ("input" in expression) return datasetUnit(expression.input as MunicipalityDatasetRef);
+  // A shift moves years, not units.
+  if (!("b" in expression)) return kennzahlExpressionUnit(expression.a);
   if (isBooleanAnalysisOperator(expression.op)) return "boolean";
   return composeAnalysisUnit(
     expression.op,
@@ -662,7 +699,7 @@ export function createKennzahlLookup(
       if (!readers.has(key)) readers.set(key, baseReader(node.input, data, peerMedianFor));
     } else if ("op" in node) {
       prepare(node.a);
-      prepare(node.b);
+      if ("b" in node) prepare(node.b);
     }
   };
   prepare(expression);
@@ -670,6 +707,9 @@ export function createKennzahlLookup(
   const evaluate = (node: KennzahlExpression, code: string, year: number): number | null => {
     if ("constant" in node) return node.constant;
     if ("input" in node) return readers.get(JSON.stringify(node.input))!(code, year);
+    // The map asks for one year at a time, so a shift is simply that question asked of an
+    // earlier year; years before the data start read as null, exactly like a gap.
+    if (!("b" in node)) return evaluate(node.a, code, year - node.years);
     const a = evaluate(node.a, code, year);
     const b = evaluate(node.b, code, year);
     if (a === null || b === null) return null;
@@ -687,8 +727,6 @@ export function createKennzahlLookup(
       case "not-equal": return a !== b ? 1 : 0;
       case "and": return a !== 0 && b !== 0 ? 1 : 0;
       case "or": return a !== 0 || b !== 0 ? 1 : 0;
-      // ponytail: unary operators have no place in a Kennzahl expression yet — the graph
-      // rejects them on extraction, so this is unreachable rather than a silent wrong answer.
       default: return null;
     }
   };
@@ -721,6 +759,10 @@ export const kennzahlExpressionSchema: z.ZodType<KennzahlExpression> = z.lazy(()
   z.object({ constant: z.number().finite() }),
   z.object({ input: kennzahlInputSchema }),
   z.object({ op: z.enum(analysisBinaryOperatorIds), a: kennzahlExpressionSchema, b: kennzahlExpressionSchema }),
+  z.object({
+    op: z.enum(analysisUnaryOperatorIds), a: kennzahlExpressionSchema,
+    years: z.number().int().min(1).max(MAX_ANALYSIS_SHIFT_YEARS),
+  }),
 ]));
 
 export function serializeKennzahlExpression(expression: KennzahlExpression) {

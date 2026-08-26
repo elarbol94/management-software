@@ -437,7 +437,6 @@
     "saveAsKennzahlMixedMunicipalities": "Diese Auswahl vergleicht mehrere Gemeinden. Eine Kennzahl muss sich auf eine einzige Gemeinde beziehen, damit sie auf alle anwendbar ist.",
     "saveAsKennzahlNoMunicipality": "Diese Auswahl besteht nur aus Konstanten und enthält kein Ausgangsdatum.",
     "saveAsKennzahlMissingInput": "Ein Operator hat noch einen offenen Eingang.",
-    "saveAsKennzahlUnsupportedOperator": "Der Zeitversatz lässt sich noch nicht als Kennzahl speichern.",
     "saveAsKennzahlPending": "Die Analyse wird noch gespeichert. Kurz warten und erneut versuchen.",
     "customDelete": "Kennzahl löschen",
     "customDeleteConfirm": "Kennzahl „{name}“ wirklich löschen?",

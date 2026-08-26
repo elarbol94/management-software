@@ -41,7 +41,9 @@ export const analysisBinaryOperatorIds = [
 export const analysisUnaryOperatorIds = ["shift"] as const;
 export const analysisOperatorIds = [...analysisBinaryOperatorIds, ...analysisUnaryOperatorIds] as const;
 export type AnalysisOperatorId = (typeof analysisOperatorIds)[number];
-export const isUnaryAnalysisOperator = (operator: AnalysisOperatorId): boolean =>
+export type AnalysisBinaryOperatorId = (typeof analysisBinaryOperatorIds)[number];
+export type AnalysisUnaryOperatorId = (typeof analysisUnaryOperatorIds)[number];
+export const isUnaryAnalysisOperator = (operator: AnalysisOperatorId): operator is AnalysisUnaryOperatorId =>
   (analysisUnaryOperatorIds as readonly string[]).includes(operator);
 
 export const ANALYSIS_OPERATOR_SYMBOLS: Record<AnalysisOperatorId, string> = {

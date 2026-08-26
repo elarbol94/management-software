@@ -437,7 +437,6 @@
     "saveAsKennzahlMixedMunicipalities": "This selection compares several municipalities. A metric has to be about a single one so it can be applied to all of them.",
     "saveAsKennzahlNoMunicipality": "This selection is made of constants only and reads no source data.",
     "saveAsKennzahlMissingInput": "An operator still has an unconnected input.",
-    "saveAsKennzahlUnsupportedOperator": "A time shift cannot be saved as a Kennzahl yet.",
     "saveAsKennzahlPending": "The analysis is still being saved. Wait a moment and try again.",
     "customDelete": "Delete metric",
     "customDeleteConfirm": "Really delete the metric “{name}”?",

@@ -20,7 +20,8 @@ async function login(page: Page) {
     await page.getByRole("button", { name: "Anmelden" }).click();
   }
   await page.goto("/");
-  await expect(page.getByText("Willkommen, E2E Admin!")).toBeVisible();
+  // The first page after signing in may still be compiling, so this is not a 5s wait.
+  await expect(page.getByText("Willkommen, E2E Admin!")).toBeVisible({ timeout: 30_000 });
 }
 
 test("municipality subpages route and transfer a dataset into a saved analysis", async ({ page }) => {

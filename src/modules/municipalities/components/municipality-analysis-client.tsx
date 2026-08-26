@@ -628,8 +628,7 @@ function AnalysisEditor({ analysis, analyses }: { analysis: AnalysisRecord; anal
       toast.error(t(
         result.reason === "mixed-municipalities" ? "saveAsKennzahlMixedMunicipalities"
           : result.reason === "no-municipality-input" ? "saveAsKennzahlNoMunicipality"
-            : result.reason === "unsupported-operator" ? "saveAsKennzahlUnsupportedOperator"
-              : "saveAsKennzahlMissingInput",
+            : "saveAsKennzahlMissingInput",
       ));
     });
   }

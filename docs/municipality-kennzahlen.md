@@ -28,7 +28,7 @@ Katalog als Primärberechnung ausgewiesen:
 | --- | --- |
 | Durchschnittsalter | Summe der Lebensjahre, kein sinnvolles Ausgangsdatum |
 | Real je Einwohner | VPI je Jahr, also eine jahresabhängige Referenzreihe |
-| Abweichung von Vergleichsgemeinden | Median über andere Gemeinden, kein binärer Operator |
+| Abweichung von Vergleichsgemeinden | Median über andere Gemeinden, kein Operator über Gemeinden |
 | Politik und Digitales | eigene Ausgangsdaten, noch nicht modelliert |
 
 ## Eine Kennzahl hinzufügen
@@ -51,6 +51,13 @@ einer eigenen Kennzahl (`municipality_metrics`). Die Gemeinde wird dabei abgestr
 zum Parameter — das geht nur, wenn der Teilgraph von einer einzigen Gemeinde handelt.
 Ein Graph, der zwei Gemeinden vergleicht, ist ein Vergleich und keine Kennzahl und wird
 abgelehnt statt stillschweigend umgedeutet.
+
+Der Ausdrucksbaum kennt neben den zweiseitigen Operatoren eine einseitige Form: der
+**Zeitversatz** trägt statt `b` eine Jahreszahl und liest seinen Eingang um so viele Jahre
+früher. Damit ist „Veränderung zum Vorjahr" als Kennzahl ausdrückbar —
+`Einwohnerzahl − Einwohnerzahl (t−1)`. Auf der Karte kostet das nichts: dort wird ohnehin
+pro Jahr gefragt, der Zeitversatz stellt dieselbe Frage für ein früheres Jahr. Jahre vor
+dem Beginn der Daten bleiben leer, wie jede andere Lücke auch.
 
 Auf der Karte werden diese Kennzahlen über `createKennzahlLookup` ausgewertet, nicht über
 `resolveMunicipalityDataset`: Letzteres sucht pro Jahr linear im Index und die

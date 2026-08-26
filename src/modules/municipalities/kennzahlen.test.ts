@@ -34,6 +34,9 @@ import {
   kennzahlExpressionUnit,
   kennzahlFromGraph,
   KENNZAHL_CATALOG,
+  parseKennzahlExpression,
+  serializeKennzahlExpression,
+  type KennzahlExpression,
   type DataKind,
   type KennzahlInput,
 } from "./kennzahlen";
@@ -308,6 +311,42 @@ describe("saving a graph as a Kennzahl", () => {
       ],
     };
     expect(kennzahlFromGraph(graph, "op")).toEqual({ ok: false, reason: "no-municipality-input" });
+  });
+
+  // A shift is the one operator that reads a different year than the one being asked
+  // about, so a Kennzahl built on it exercises the whole path: graph, expression, map.
+  describe("a derivation that looks back a year", () => {
+    const population: KennzahlInput = { kind: "population", view: "count" };
+    const changeToPreviousYear: KennzahlExpression = {
+      op: "subtract",
+      a: { input: population },
+      b: { op: "shift", a: { input: population }, years: 1 },
+    };
+
+    it("round-trips through the graph and through storage", () => {
+      const { nodes, edges, rootId } = buildKennzahlGraph(changeToPreviousYear, MUNICIPALITIES[0]);
+      // Both sides read the same Ausgangsdatum, so the shift hangs off the one node.
+      expect(nodes.filter((node) => node.type === "dataset")).toHaveLength(1);
+      const result = kennzahlFromGraph({ nodes, edges }, rootId);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.expression).toEqual(changeToPreviousYear);
+      expect(parseKennzahlExpression(serializeKennzahlExpression(changeToPreviousYear))).toEqual(changeToPreviousYear);
+    });
+
+    it("keeps the unit and names the offset in the formula", () => {
+      expect(kennzahlExpressionUnit(changeToPreviousYear)).toBe("persons");
+      expect(kennzahlFormulaText(changeToPreviousYear, () => "Einwohnerzahl")).toBe("Einwohnerzahl − Einwohnerzahl (t−1)");
+    });
+
+    it("reads the earlier year on the map and leaves the first year empty", () => {
+      const lookup = createKennzahlLookup(changeToPreviousYear, data);
+      const firstYear = data.population.firstYear;
+      const inhabitants = (year: number) => data.population.years[String(year)].values["60101"];
+      expect(lookup("60101", firstYear)).toBeNull();
+      expect(lookup("60101", firstYear + 1)).toBe(inhabitants(firstYear + 1) - inhabitants(firstYear));
+      expect(lookup("60101", 2024)).toBe(inhabitants(2024) - inhabitants(2023));
+    });
   });
 
   it("derives the unit from the Ausgangsdaten, ignoring dimensionless factors", () => {
