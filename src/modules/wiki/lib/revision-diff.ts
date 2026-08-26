@@ -88,3 +88,42 @@ export function buildRevisionDiff(oldText: string, currentText: string): Revisio
 
   return rows;
 }
+
+
+export type SettingsChange = { path: string; from: string; to: string };
+
+function flattenJson(value: unknown, prefix = "", out: Record<string, string> = {}) {
+  if (value === null || value === undefined) return out;
+  if (Array.isArray(value)) {
+    // Arrays compare as a whole: an index-wise diff of, say, header tokens reads worse
+    // than "header.left: Titel -> Projekt".
+    out[prefix] = JSON.stringify(value);
+    return out;
+  }
+  if (typeof value === "object") {
+    for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
+      flattenJson(item, prefix ? `${prefix}.${key}` : key, out);
+    }
+    return out;
+  }
+  out[prefix] = String(value);
+  return out;
+}
+
+/**
+ * Changes the text diff cannot show. extractText() drops layout, so page size, margins,
+ * indices and document mode all changed invisibly even though pageSnapshotHash counted
+ * them. Compares the parsed settings of two revisions and names each difference.
+ */
+export function diffDocumentSettings(oldJson: string, newJson: string): SettingsChange[] {
+  const parse = (json: string) => {
+    if (!json.trim()) return {};
+    try { return JSON.parse(json) as unknown; } catch { return {}; }
+  };
+  const before = flattenJson(parse(oldJson));
+  const after = flattenJson(parse(newJson));
+  const paths = [...new Set([...Object.keys(before), ...Object.keys(after)])].sort();
+  return paths
+    .filter((path) => (before[path] ?? "") !== (after[path] ?? ""))
+    .map((path) => ({ path, from: before[path] ?? "", to: after[path] ?? "" }));
+}

@@ -2764,7 +2764,12 @@
     "markVerified": "Mark as verified",
     "verifyAgain": "Verify again",
     "verifiedUntilLabel": "Verified until {date}.",
-    "verificationOverdue": "Verification overdue since {date}."
+    "verificationOverdue": "Verification overdue since {date}.",
+    "reorderPage": "Move “{title}”",
+    "reorderSameLevelOnly": "Pages can only be reordered within the same level.",
+    "reorderFailed": "The new order could not be saved.",
+    "compareWith": "Compare with",
+    "layoutChanges": "{count, plural, one {# layout change} other {# layout changes}}"
   },
   "settings": {
     "title": "Settings",

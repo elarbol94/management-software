@@ -168,6 +168,39 @@ export async function updatePageProofingLanguage(input: z.infer<typeof proofingL
   return result;
 }
 
+/**
+ * Persists sibling order. sortOrder had no writer at all, so the page tree always fell
+ * through to createdAt. Reordering is scoped to one parent: every id must already be a
+ * child of it, which keeps a stale client from silently reparenting pages.
+ */
+export async function reorderPages(input: { parentId: string | null; orderedIds: string[] }) {
+  const user = await requireUserOrThrow();
+  const data = z.object({
+    parentId: z.string().min(1).nullable(),
+    orderedIds: z.array(z.string().min(1)).min(1).max(500),
+  }).parse(input);
+
+  const siblings = db
+    .select({ id: wikiPages.id, parentId: wikiPages.parentId })
+    .from(wikiPages)
+    .where(and(inArray(wikiPages.id, data.orderedIds), isNull(wikiPages.deletedAt)))
+    .all();
+  if (siblings.length !== data.orderedIds.length) throw new Error("Page not found");
+  if (siblings.some((page) => (page.parentId ?? null) !== data.parentId)) {
+    throw new Error("Pages do not share the given parent");
+  }
+
+  db.transaction(() => {
+    data.orderedIds.forEach((id, index) => {
+      db.update(wikiPages)
+        .set({ sortOrder: index, updatedBy: user.id, updatedAt: new Date() })
+        .where(eq(wikiPages.id, id))
+        .run();
+    });
+  });
+  revalidatePath("/wiki", "layout");
+}
+
 export async function renamePage(id: string, title: string) {
   const user = await requireUserOrThrow();
   const cleanTitle = z.string().min(1).max(200).parse(title);

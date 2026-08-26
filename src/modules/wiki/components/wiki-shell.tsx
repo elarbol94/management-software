@@ -25,6 +25,7 @@ import type { StoredDocumentTemplate } from "../document-queries";
 import type { WikiTypographySettingsV1, WikiTypographyTemplate } from "../lib/wiki-typography";
 import { extractText, parseStoredDocument } from "../lib/tiptap";
 import { RevisionDiffView } from "./revision-diff-view";
+import { diffDocumentSettings } from "../lib/revision-diff";
 import type { ContextDeadlineMarker, ContextTaskMarker } from "@/modules/tasks/types";
 import type { ProposalWorkspaceData } from "../lib/proposal";
 import { ContextPanel } from "@/modules/context/components/context-panel";
@@ -55,7 +56,7 @@ function PageHeaderActions({ pageId, favorite, onNewSubpage, onToggleFavorite, o
 export function WikiShell({ page, backlinks, unlinkedMentions = [], allPages, sources, research, comments, currentUserId, users, attachments, documentTemplates, typography, editableTypography, typographyTemplates, tasks, deadlines, focusTaskId, focusDeadlineId, insertEvidenceId, proposalData, allTags, meta }: {
   page: { id: string; title: string; slug: string; contentJson: string; status: "inbox" | "working" | "evergreen"; citationLocale: string; citationStyle: CitationStyle; verifiedUntil: string | null; proofingLanguage: "de-DE" | "en-US"; version: number; contentVersion: number; documentMode: boolean; documentSettingsJson: string; createdBy: string };
   backlinks: PageRef[]; unlinkedMentions?: PageRef[]; allPages: PageRef[]; sources: SourceRef[];
-  research: { tags: Array<{ id: string; name: string; color: string }>; supportingSources: Array<{ id: string; title: string; issuedDate: string; relation: string }>; favorite: boolean; revisions: Array<{ id: string; version: number; contentVersion: number; contentHash: string; label: string | null; kind: string; createdAt: Date; createdByName: string; contentJson: string }> };
+  research: { tags: Array<{ id: string; name: string; color: string }>; supportingSources: Array<{ id: string; title: string; issuedDate: string; relation: string }>; favorite: boolean; revisions: Array<{ id: string; version: number; contentVersion: number; contentHash: string; label: string | null; kind: string; createdAt: Date; createdByName: string; contentJson: string; documentSettingsJson: string }> };
   comments: CommentThread[]; currentUserId: string; users: Array<{ id: string; name: string; markColor: UserMarkColor }>;
   attachments: Array<{ id: string; fileName: string; mimeType: string; sizeBytes: number }>;
   documentTemplates: StoredDocumentTemplate[];
@@ -102,8 +103,18 @@ export function WikiShell({ page, backlinks, unlinkedMentions = [], allPages, so
   const attachmentRef = useRef<AttachmentPanelHandle>(null); const supportingSourceSectionRef = useRef<HTMLElement>(null); const supportingSourceTriggerRef = useRef<HTMLButtonElement>(null);
   const selectedRevision = research.revisions.find((revision) => revision.id === selectedRevisionId) ?? research.revisions[0];
   const visibleRevisions = savedRevisionsOnly ? research.revisions.filter((revision) => revision.kind !== "autosave") : research.revisions;
-  const currentText = extractText(parseStoredDocument(page.contentJson));
+  // "current" is a sentinel for the live page, so any two revisions can be compared and
+  // not only a revision against current.
+  const [compareToId, setCompareToId] = useState("current");
+  const compareRevision = research.revisions.find((revision) => revision.id === compareToId);
+  const currentText = extractText(parseStoredDocument(compareRevision?.contentJson ?? page.contentJson));
   const revisionText = selectedRevision ? extractText(parseStoredDocument(selectedRevision.contentJson)) : "";
+  const settingsChanges = selectedRevision
+    ? diffDocumentSettings(
+        selectedRevision.documentSettingsJson ?? "",
+        compareRevision?.documentSettingsJson ?? page.documentSettingsJson,
+      )
+    : [];
 
   useEffect(() => {
     const frame = requestAnimationFrame(() => setDetailsOpen(localStorage.getItem("wiki:document-details-open") === "true"));
@@ -193,7 +204,31 @@ export function WikiShell({ page, backlinks, unlinkedMentions = [], allPages, so
             {visibleRevisions.length === 0 && <p className="px-2 py-3 text-xs text-muted-foreground">{t("noSavedVersions")}</p>}
             {visibleRevisions.map((revision) => <button key={revision.id} type="button" onClick={() => setSelectedRevisionId(revision.id)} className={`w-full rounded-md px-2 py-2 text-left text-xs ${selectedRevision?.id === revision.id ? "bg-accent" : "hover:bg-accent/60"}`}><span className="font-medium">v{revision.contentVersion}</span> · {revision.label || t(`revisionKinds.${revision.kind}`)}<span className="mt-0.5 block text-muted-foreground">{revision.createdByName} · {format.dateTime(new Date(revision.createdAt), { dateStyle: "medium", timeStyle: "short" })}</span></button>)}
           </nav>
-          <RevisionDiffView oldText={revisionText} currentText={currentText} oldTitle={t("selectedVersion", { version: selectedRevision?.version ?? 0 })} currentTitle={t("currentVersion")} />
+          <div className="flex min-h-0 flex-col gap-2">
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-muted-foreground">{t("compareWith")}</span>
+              <Select value={compareToId} onValueChange={(value) => { if (value) setCompareToId(value); }}>
+                <SelectTrigger aria-label={t("compareWith")} className="h-8 w-56"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="current">{t("currentVersion")}</SelectItem>
+                  {visibleRevisions.filter((revision) => revision.id !== selectedRevision?.id).map((revision) => (
+                    <SelectItem key={revision.id} value={revision.id}>v{revision.contentVersion} · {revision.label || t(`revisionKinds.${revision.kind}`)}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            {settingsChanges.length > 0 && <details className="rounded-md border bg-muted/30 px-3 py-2 text-xs">
+              <summary className="cursor-pointer font-medium">{t("layoutChanges", { count: settingsChanges.length })}</summary>
+              <ul className="mt-2 space-y-0.5 font-mono">
+                {settingsChanges.map((change) => <li key={change.path}>
+                  <span className="text-muted-foreground">{change.path}</span>{": "}
+                  <span className="text-red-700 dark:text-red-300">{change.from || "—"}</span>{" → "}
+                  <span className="text-green-700 dark:text-green-300">{change.to || "—"}</span>
+                </li>)}
+              </ul>
+            </details>}
+            <RevisionDiffView oldText={revisionText} currentText={currentText} oldTitle={t("selectedVersion", { version: selectedRevision?.version ?? 0 })} currentTitle={compareRevision ? t("selectedVersion", { version: compareRevision.version }) : t("currentVersion")} />
+          </div>
         </div> : <p className="py-12 text-center text-sm text-muted-foreground">{t("noHistory")}</p>}
         <DialogFooter><Button type="button" variant="outline" onClick={() => setHistoryOpen(false)}>{common("cancel")}</Button><Button type="button" disabled={!selectedRevision} onClick={async () => { if (!selectedRevision || !confirm(t("restoreRevisionConfirm"))) return; await restorePageRevision(selectedRevision.id); localStorage.removeItem(`wiki-draft:${page.id}`); location.reload(); }}>{t("restore")}</Button></DialogFooter>
       </DialogContent>

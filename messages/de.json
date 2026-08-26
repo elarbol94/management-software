@@ -2766,7 +2766,12 @@
     "markVerified": "Als geprüft markieren",
     "verifyAgain": "Erneut prüfen",
     "verifiedUntilLabel": "Geprüft bis {date}.",
-    "verificationOverdue": "Prüfung seit {date} fällig."
+    "verificationOverdue": "Prüfung seit {date} fällig.",
+    "reorderPage": "„{title}“ verschieben",
+    "reorderSameLevelOnly": "Seiten lassen sich nur innerhalb derselben Ebene sortieren.",
+    "reorderFailed": "Die Reihenfolge konnte nicht gespeichert werden.",
+    "compareWith": "Vergleichen mit",
+    "layoutChanges": "{count, plural, one {# Layoutänderung} other {# Layoutänderungen}}"
   },
   "settings": {
     "title": "Einstellungen",

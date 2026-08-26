@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildRevisionDiff } from "./revision-diff";
+import { buildRevisionDiff, diffDocumentSettings } from "./revision-diff";
 
 describe("buildRevisionDiff", () => {
   it("keeps identical lines aligned and numbered", () => {
@@ -36,5 +36,35 @@ describe("buildRevisionDiff", () => {
     const rows = buildRevisionDiff("one\n\ntwo", "one\n\ntwo");
     expect(rows).toHaveLength(3);
     expect(rows[1].old.text).toBe("");
+  });
+});
+
+describe("diffDocumentSettings", () => {
+  it("names each changed setting by path", () => {
+    const before = JSON.stringify({ page: { size: "A4", margins: { top: 20 } }, bibliography: { enabled: true } });
+    const after = JSON.stringify({ page: { size: "Letter", margins: { top: 25 } }, bibliography: { enabled: true } });
+    expect(diffDocumentSettings(before, after)).toEqual([
+      { path: "page.margins.top", from: "20", to: "25" },
+      { path: "page.size", from: "A4", to: "Letter" },
+    ]);
+  });
+
+  it("reports added and removed settings", () => {
+    expect(diffDocumentSettings("{}", JSON.stringify({ cover: { enabled: true } })))
+      .toEqual([{ path: "cover.enabled", from: "", to: "true" }]);
+    expect(diffDocumentSettings(JSON.stringify({ cover: { enabled: true } }), "{}"))
+      .toEqual([{ path: "cover.enabled", from: "true", to: "" }]);
+  });
+
+  it("compares arrays whole rather than per index", () => {
+    const changes = diffDocumentSettings(JSON.stringify({ header: ["a", "b"] }), JSON.stringify({ header: ["a", "c"] }));
+    expect(changes).toEqual([{ path: "header", from: '["a","b"]', to: '["a","c"]' }]);
+  });
+
+  it("returns nothing for identical or unparseable settings", () => {
+    expect(diffDocumentSettings("", "")).toEqual([]);
+    expect(diffDocumentSettings("not json", "not json")).toEqual([]);
+    const same = JSON.stringify({ page: { size: "A4" } });
+    expect(diffDocumentSettings(same, same)).toEqual([]);
   });
 });
