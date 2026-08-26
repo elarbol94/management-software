@@ -27,6 +27,11 @@ ENV BETTER_AUTH_SECRET=build-only-secret-not-for-runtime
 # Build-time DB path so the build never touches a real database.
 ENV DATABASE_PATH=/tmp/build.db
 RUN --mount=type=cache,target=/app/.next/cache npm run build
+# The runtime image carries no dev dependencies, so operational scripts are bundled to
+# plain JS here rather than being run through tsx in production.
+RUN npx esbuild scripts/backfill-embeddings.ts --bundle --platform=node --format=esm \
+      --target=node22 --external:better-sqlite3 --external:sqlite-vec \
+      --external:@huggingface/transformers --outfile=dist-scripts/backfill-embeddings.mjs
 
 FROM node:22-bookworm-slim AS runtime
 WORKDIR /app
@@ -55,6 +60,13 @@ COPY --from=build --chown=app:app /app/.next/static ./.next/static
 COPY --from=build --chown=app:app /app/public ./public
 # Drizzle migrations are applied on boot by src/instrumentation.ts
 COPY --from=build --chown=app:app /app/drizzle ./drizzle
+COPY --from=build --chown=app:app /app/dist-scripts ./dist-scripts
+# Next's file tracing copies .node bindings but not the shared libraries they dlopen, so
+# onnxruntime and sqlite-vec arrive incomplete and both silently disable themselves.
+# Only the CPU runtime is copied: the CUDA and TensorRT providers are 300MB of no use here.
+COPY --from=deps --chown=app:app /app/node_modules/onnxruntime-node/bin/napi-v6/linux/x64/libonnxruntime.so.1 ./node_modules/onnxruntime-node/bin/napi-v6/linux/x64/
+COPY --from=deps --chown=app:app /app/node_modules/onnxruntime-node/bin/napi-v6/linux/x64/libonnxruntime_providers_shared.so ./node_modules/onnxruntime-node/bin/napi-v6/linux/x64/
+COPY --from=deps --chown=app:app /app/node_modules/sqlite-vec-linux-x64 ./node_modules/sqlite-vec-linux-x64
 USER app
 EXPOSE 3000
 VOLUME /data

@@ -1,8 +1,7 @@
 import "server-only";
 
-import path from "node:path";
 
-import { EMBEDDING_MODEL, withPrefix } from "./embedding-config";
+import { EMBEDDING_MODEL, modelCacheDir, withPrefix } from "./embedding-config";
 
 export { EMBEDDING_DIMENSIONS, EMBEDDING_MODEL } from "./embedding-config";
 
@@ -22,11 +21,7 @@ async function getEmbedder(): Promise<Embedder | null> {
   embedderPromise ??= (async () => {
     try {
       const { pipeline, env } = await import("@huggingface/transformers");
-      // Cache the weights beside the database rather than in node_modules, which is
-      // rebuilt with the image: otherwise every deploy re-downloads ~120MB on the first
-      // search. DATABASE_PATH points at the mounted volume in the container.
-      const dataDir = path.dirname(process.env.DATABASE_PATH ?? path.join(process.cwd(), "data", "app.db"));
-      env.cacheDir = path.join(dataDir, "models");
+      env.cacheDir = modelCacheDir();
       // Quantised weights: roughly a quarter of the memory, no measurable quality loss
       // at this model size, and it keeps the container image reasonable.
       return await pipeline("feature-extraction", EMBEDDING_MODEL, { dtype: "q8" }) as unknown as Embedder;

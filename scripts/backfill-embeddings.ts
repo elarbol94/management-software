@@ -10,11 +10,11 @@ import { createRequire } from "node:module";
 import { createHash } from "node:crypto";
 import path from "node:path";
 import Database from "better-sqlite3";
-import { pipeline } from "@huggingface/transformers";
+import { pipeline, env } from "@huggingface/transformers";
 // The same chunking the application uses. A second copy here silently drifted once
 // already, so the script imports it rather than restating it.
 import { chunkText } from "../src/modules/wiki/lib/chunking";
-import { EMBEDDING_DIMENSIONS, EMBEDDING_MODEL, withPrefix } from "../src/modules/wiki/lib/embedding-config";
+import { EMBEDDING_DIMENSIONS, EMBEDDING_MODEL, modelCacheDir, withPrefix } from "../src/modules/wiki/lib/embedding-config";
 
 const require = createRequire(import.meta.url);
 const sqliteVec = require("sqlite-vec") as { load: (db: unknown) => void };
@@ -30,6 +30,8 @@ db.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS wiki_embedding_vectors USING vec0(em
 // tsx compiles this as CJS, where top-level await is unavailable.
 async function main() {
   type Embedder = (texts: string[], options: { pooling: "mean"; normalize: boolean }) => Promise<{ tolist(): number[][] }>;
+  // Same cache the app uses, so the weights are downloaded once.
+  env.cacheDir = modelCacheDir();
   const embed = await pipeline("feature-extraction", EMBEDDING_MODEL, { dtype: "q8" }) as unknown as Embedder;
 
   const hash = (text: string) => createHash("sha256").update(text).digest("hex").slice(0, 32);
