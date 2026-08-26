@@ -76,7 +76,8 @@ export function MunicipalityMetricChart({
   minimizeLabel: string;
   expandLabel: string;
   restoreLabel: string;
-  dataset: MunicipalityDatasetRef;
+  /** null for a user-defined Kennzahl: it is an expression, not one dataset to drag. */
+  dataset: MunicipalityDatasetRef | null;
   addToAnalysisLabel: string;
   dragToAnalysisLabel: string;
   changeLabels?: { previousYear: string; sinceFirstYear: string };
@@ -129,24 +130,24 @@ export function MunicipalityMetricChart({
       data-testid="municipality-metric-chart"
     >
       <div
-        className="flex cursor-grab items-center justify-between gap-2 px-3 py-2 active:cursor-grabbing"
-        draggable
-        title={dragToAnalysisLabel}
-        onDragStart={(event) => writeMunicipalityDatasetDrag(event, dataset)}
+        className={`flex items-center justify-between gap-2 px-3 py-2 ${dataset ? "cursor-grab active:cursor-grabbing" : ""}`}
+        draggable={Boolean(dataset)}
+        title={dataset ? dragToAnalysisLabel : undefined}
+        onDragStart={(event) => { if (dataset) writeMunicipalityDatasetDrag(event, dataset); }}
       >
-        <GripVertical className="size-3.5 shrink-0 text-muted-foreground" />
+        {dataset ? <GripVertical className="size-3.5 shrink-0 text-muted-foreground" /> : null}
         <div className="min-w-0">
           <h3 className="truncate text-xs font-semibold">{metricLabel}</h3>
           {!minimized && <p className="truncate text-[10px] text-muted-foreground">{municipalityName}</p>}
         </div>
         <div className="flex shrink-0 items-center gap-1">
-          <button
+          {dataset ? <button
             type="button"
             className="grid size-7 place-items-center rounded-md hover:bg-accent"
             aria-label={addToAnalysisLabel}
             title={addToAnalysisLabel}
             onClick={() => requestMunicipalityDatasetTransfer(dataset)}
-          ><BarChart3 className="size-3.5" /></button>
+          ><BarChart3 className="size-3.5" /></button> : null}
           {!embedded && <button type="button" className="grid size-7 place-items-center rounded-md hover:bg-accent" aria-label={expanded ? minimizeLabel : expandLabel} title={expanded ? minimizeLabel : expandLabel} onClick={() => setExpanded((value) => !value)}>{expanded ? <Minimize2 className="size-3.5" /> : <Maximize2 className="size-3.5" />}</button>}
           {!embedded && <button
             type="button"

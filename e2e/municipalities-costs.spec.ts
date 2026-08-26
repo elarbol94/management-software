@@ -35,6 +35,7 @@ test("cost overview is shareable, sourced, gap-safe and charted", async ({ page 
 
   await page.getByRole("combobox", { name: "Gemeinde suchen" }).fill("Graz");
   await page.getByRole("option").filter({ hasText: "60101" }).click();
+  await page.getByLabel("Datenart").selectOption("derived");
   await page.getByLabel("Kennzahl").selectOption("costs");
   await expect(page).toHaveURL(/metric=costs/);
   await expect(page.getByRole("slider", { name: "Jahr" })).toHaveValue("2024");

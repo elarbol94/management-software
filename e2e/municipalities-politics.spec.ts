@@ -29,6 +29,7 @@ test("politics map, URL state, complete current profiles and historical gaps rem
   await expect(view).toHaveValue("leading-list");
   await expect(page.getByTestId("population-legend")).toContainText("ÖVP");
 
+  await page.getByLabel("Datenart").selectOption("derived");
   await view.selectOption("party-share");
   await page.getByLabel("Partei").selectOption("spoe");
   await expect(page).toHaveURL(/politicsView=party-share/);
@@ -39,6 +40,7 @@ test("politics map, URL state, complete current profiles and historical gaps rem
   await page.getByRole("slider", { name: "Jahr" }).fill("2021");
   await expect(page).toHaveURL(/politicsYear=2021/);
 
+  await page.getByLabel("Datenart").selectOption("base");
   await view.selectOption("leading-list");
   await expect(page).not.toHaveURL(/politicsView=/);
   await page.getByRole("slider", { name: "Jahr" }).fill("2022");

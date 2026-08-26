@@ -10,6 +10,10 @@ export const POPULATION_VIEWS = [
   { id: "density", unit: "per-square-kilometer" },
   { id: "foreign-share", unit: "share" },
   { id: "foreign-persons", unit: "persons" },
+  // The citizenship statistics count on 31 October, the Einwohnerzeitreihe on 1 January —
+  // they disagree for all but ~50 municipalities. Der Ausländeranteil teilt durch diese
+  // Zahl, also muss sie als eigenes Ausgangsdatum wählbar sein.
+  { id: "structure-population", unit: "persons" },
 ] as const;
 
 export type PopulationViewId = (typeof POPULATION_VIEWS)[number]["id"];
@@ -43,6 +47,7 @@ export function populationViewValue(
   if (view === "density") return municipality.areaSquareKilometers > 0 ? population / municipality.areaSquareKilometers : null;
   if (!citizenship) return null;
   if (view === "foreign-persons") return citizenship[1];
+  if (view === "structure-population") return citizenship[0];
   return citizenship[0] > 0 ? citizenship[1] / citizenship[0] : null;
 }
 

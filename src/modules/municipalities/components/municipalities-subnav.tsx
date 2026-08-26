@@ -1,6 +1,5 @@
 "use client";
 
-import { createId } from "@paralleldrive/cuid2";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useTranslations } from "next-intl";
@@ -18,13 +17,14 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
+import { useMunicipalityAnalysisPersistence } from "./municipality-analysis-persistence-provider";
+import { createId } from "@paralleldrive/cuid2";
 import {
   createMunicipalityAnalysis,
   listMyMunicipalityAnalyses,
 } from "../actions";
-import { ANALYSIS_OPERATION_VERSION, municipalityDatasetRefSchema, type MunicipalityDatasetRef } from "../analysis";
+import { ANALYSIS_OPERATION_VERSION, datasetMunicipalityName, municipalityDatasetRefSchema, type MunicipalityDatasetRef } from "../analysis";
 import type { MunicipalityAnalysisSummary } from "../queries";
-import { useMunicipalityAnalysisPersistence } from "./municipality-analysis-persistence-provider";
 import {
   MUNICIPALITY_DATASET_DRAG_TYPE,
   MUNICIPALITY_DATASET_TRANSFER_EVENT,
@@ -63,21 +63,30 @@ export function MunicipalitiesSubnav() {
     toast.success(t("analysisSaved"));
   }
 
-  function addToExisting(analysisId: string) {
-    if (!dataset) return;
+  // Queued rather than awaited: the queue lives in the layout and survives the navigation
+  // that usually follows straight after, and the graph decides whether the Kennzahl lands
+  // as one node or as its whole derivation.
+  function queueTransfer(analysisId: string, value: MunicipalityDatasetRef) {
     enqueue(analysisId, [{
       version: ANALYSIS_OPERATION_VERSION,
-      type: "add-dataset",
+      type: "add-kennzahl",
       nodeId: createId(),
-      dataset,
+      dataset: value,
     }]);
+  }
+
+  function addToExisting(analysisId: string) {
+    if (!dataset) return;
+    queueTransfer(analysisId, dataset);
     finishTransfer(analysisId);
   }
 
   function createAnalysis() {
     if (!dataset || !name.trim()) return;
+    const value = dataset;
     startTransition(async () => {
-      const result = await createMunicipalityAnalysis({ name, dataset });
+      const result = await createMunicipalityAnalysis({ name });
+      queueTransfer(result.id, value);
       finishTransfer(result.id);
     });
   }
@@ -141,7 +150,7 @@ export function MunicipalitiesSubnav() {
         <DialogContent className="sm:max-w-lg" data-testid="municipality-analysis-picker">
           <DialogHeader>
             <DialogTitle>{t("chooseAnalysisTitle")}</DialogTitle>
-            <DialogDescription>{t("chooseAnalysisDescription", { municipality: dataset?.municipalityName ?? "" })}</DialogDescription>
+            <DialogDescription>{t("chooseAnalysisDescription", { municipality: (dataset && datasetMunicipalityName(dataset)) ?? "" })}</DialogDescription>
           </DialogHeader>
           <div className="grid max-h-56 gap-2 overflow-y-auto">
             {analyses.length ? analyses.map((analysis) => (

@@ -60,6 +60,7 @@ SQLite database. Stop the normal development server before running it.
 - `ACCOUNTING_INTEGRATION_CONTRACT.md`: accounting/migration invariants.
 - `docs/cloudflare-access.md`: Cloudflare Tunnel/Access deployment.
 - `docs/graphics-sidecar.md`: wiki graphics sidecars and sync.
+- `docs/municipality-kennzahlen.md`: Ausgangsdaten vs. Kennzahlen, and how to add one.
 
 ## Development and deployment workflow
 

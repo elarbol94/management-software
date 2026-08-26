@@ -12,7 +12,7 @@ import type {
 } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import type { MunicipalityDatasetRef } from "../analysis";
-import type { CostCategoryId, CostMeasureId } from "../costs";
+import type { CostMeasureId, CostTargetId } from "../costs";
 import {
   DIGITAL_PLATFORM_PROVIDER_CATEGORIES,
   DIGITAL_PLATFORM_PROVIDER_CODES,
@@ -21,7 +21,6 @@ import {
 } from "../digital-platforms";
 import type {
   AgeGroupId,
-  AgeMeasure,
   AgeViewId,
   DemographicIndicatorId,
   MapMetric,
@@ -32,7 +31,8 @@ import type {
   MunicipalityIndexItem,
   MunicipalityProperties,
 } from "../data";
-import type { MovementMetricId, MovementPalette } from "../movement";
+import type { MovementPalette, MovementTargetId } from "../movement";
+import type { DataKind } from "../kennzahlen";
 import { CANONICAL_PARTIES, type CanonicalPartyId, type PoliticsView } from "../politics";
 import type { PopulationViewId } from "../structure";
 import {
@@ -282,14 +282,15 @@ type Labels = {
   previousYear: string;
   nextYear: string;
   metric: string;
-  populationMetric: string;
-  ageMetric: string;
-  movementMetric: string;
-  costsMetric: string;
-  politicsMetric: string;
-  digitalMetric: string;
+  dataKind: string;
+  dataKinds: Record<DataKind, string>;
+  metrics: Partial<Record<MapMetric, string>>;
   digitalView: string;
-  digitalViews: Record<DigitalPlatformViewId, string>;
+  digitalViews: Partial<Record<DigitalPlatformViewId, string>>;
+  customView: string;
+  customViews: Record<string, string>;
+  customDelete: string;
+  customDeleteConfirm: string;
   digitalProviderLabels: Record<DigitalPlatformProviderCategory, string>;
   digitalDefinition: string;
   digitalNoneFound: string;
@@ -299,25 +300,24 @@ type Labels = {
   digitalLegendFiveToSeven: string;
   digitalLegendEightPlus: string;
   politicsView: string;
-  politicsViews: Record<PoliticsView, string>;
+  politicsViews: Partial<Record<PoliticsView, string>>;
   politicsParty: string;
   politicsParties: Record<CanonicalPartyId, string>;
   politicsTie: string;
   populationView: string;
-  populationViews: Record<PopulationViewId, string>;
+  populationViews: Partial<Record<PopulationViewId, string>>;
   ageView: string;
   movementView: string;
   ageGroupsHeading: string;
   indicatorsHeading: string;
-  ageGroups: Record<AgeGroupId, string>;
-  indicators: Record<DemographicIndicatorId, string>;
-  measures: Record<AgeMeasure, string>;
+  ageGroups: Partial<Record<AgeGroupId, string>>;
+  indicators: Partial<Record<DemographicIndicatorId, string>>;
   sexes: Record<SexFilter, string>;
-  movements: Record<MovementMetricId, string>;
+  movements: Partial<Record<MovementTargetId, string>>;
   costView: string;
-  costCategories: Record<CostCategoryId, string>;
+  costCategories: Partial<Record<CostTargetId, string>>;
   costMeasure: string;
-  costMeasures: Record<CostMeasureId, string>;
+  costMeasures: Partial<Record<CostMeasureId, string>>;
   costDefinition: string;
   minimizeChart: string;
   expandChart: string;
@@ -362,7 +362,7 @@ export function MunicipalityMap({
   firstYear,
   latestYear,
   ageView,
-  ageMeasure,
+  dataKind,
   sex,
   movementView,
   costCategory,
@@ -370,6 +370,7 @@ export function MunicipalityMap({
   politicsView,
   politicsParty,
   digitalView,
+  customView,
   peerMunicipalityCodes,
   peerGroupLabel,
   movementDefinition,
@@ -391,7 +392,7 @@ export function MunicipalityMap({
   onMetricChange,
   onPopulationViewChange,
   onAgeViewChange,
-  onAgeMeasureChange,
+  onDataKindChange,
   onSexChange,
   onMovementViewChange,
   onCostCategoryChange,
@@ -399,6 +400,8 @@ export function MunicipalityMap({
   onPoliticsViewChange,
   onPoliticsPartyChange,
   onDigitalViewChange,
+  onCustomViewChange,
+  onCustomDelete,
   onSelect,
   onReset,
   onOpenDetails,
@@ -410,6 +413,7 @@ export function MunicipalityMap({
   chartUnitLabel,
   chartChangeLabels,
   analysisDataset,
+  showMetricChart,
 }: {
   austriaBounds: MunicipalityBounds;
   selected: MunicipalityIndexItem | null;
@@ -425,14 +429,15 @@ export function MunicipalityMap({
   firstYear: number;
   latestYear: number;
   ageView: AgeViewId;
-  ageMeasure: AgeMeasure;
+  dataKind: DataKind;
   sex: SexFilter;
-  movementView: MovementMetricId;
-  costCategory: CostCategoryId;
+  movementView: MovementTargetId;
+  costCategory: CostTargetId;
   costMeasure: CostMeasureId;
   politicsView: PoliticsView;
   politicsParty: CanonicalPartyId;
   digitalView: DigitalPlatformViewId;
+  customView: string;
   peerMunicipalityCodes: string[] | null;
   peerGroupLabel: string | null;
   movementDefinition: string | null;
@@ -454,14 +459,16 @@ export function MunicipalityMap({
   onMetricChange: (metric: MapMetric) => void;
   onPopulationViewChange: (view: PopulationViewId) => void;
   onAgeViewChange: (view: AgeViewId) => void;
-  onAgeMeasureChange: (measure: AgeMeasure) => void;
+  onDataKindChange: (kind: DataKind) => void;
   onSexChange: (sex: SexFilter) => void;
-  onMovementViewChange: (view: MovementMetricId) => void;
-  onCostCategoryChange: (category: CostCategoryId) => void;
+  onMovementViewChange: (view: MovementTargetId) => void;
+  onCostCategoryChange: (category: CostTargetId) => void;
   onCostMeasureChange: (measure: CostMeasureId) => void;
   onPoliticsViewChange: (view: PoliticsView) => void;
   onPoliticsPartyChange: (party: CanonicalPartyId) => void;
   onDigitalViewChange: (view: DigitalPlatformViewId) => void;
+  onCustomViewChange: (id: string) => void;
+  onCustomDelete: (id: string) => void;
   onSelect: (code: string) => void;
   onReset: () => void;
   onOpenDetails: () => void;
@@ -473,6 +480,7 @@ export function MunicipalityMap({
   chartUnitLabel: string;
   chartChangeLabels?: { previousYear: string; sinceFirstYear: string };
   analysisDataset: MunicipalityDatasetRef | null;
+  showMetricChart: boolean;
 }) {
   const locale = useLocale();
   const personsFormatter = useMemo(
@@ -786,7 +794,7 @@ export function MunicipalityMap({
           {labels.reset}
         </button>
       </div>
-      {selected && selectedMetricHistory && analysisDataset && (
+      {selected && selectedMetricHistory && showMetricChart && (
         <div className="hidden lg:block">
         <MunicipalityMetricChart
           metricLabel={metricLabel}
@@ -811,6 +819,20 @@ export function MunicipalityMap({
         data-testid="metric-control"
       >
         <div className="grid grid-cols-[5.5rem_1fr] items-center gap-2">
+          <label htmlFor="municipality-data-kind" className="text-xs font-semibold">
+            {labels.dataKind}
+          </label>
+          <select
+            id="municipality-data-kind"
+            value={dataKind}
+            className="h-8 min-w-0 rounded-md border bg-background px-2 text-xs"
+            onChange={(event) => onDataKindChange(event.target.value as DataKind)}
+          >
+            <option value="base">{labels.dataKinds.base}</option>
+            <option value="derived">{labels.dataKinds.derived}</option>
+          </select>
+        </div>
+        <div className="mt-2 grid grid-cols-[5.5rem_1fr] items-center gap-2">
           <label
             htmlFor="municipality-metric"
             className="text-xs font-semibold"
@@ -825,12 +847,7 @@ export function MunicipalityMap({
               onMetricChange(event.target.value as MapMetric)
             }
           >
-            <option value="population">{labels.populationMetric}</option>
-            <option value="age">{labels.ageMetric}</option>
-            <option value="movement">{labels.movementMetric}</option>
-            <option value="costs">{labels.costsMetric}</option>
-            <option value="politics">{labels.politicsMetric}</option>
-            <option value="digital">{labels.digitalMetric}</option>
+            {Object.entries(labels.metrics).map(([id, label]) => <option key={id} value={id}>{label}</option>)}
           </select>
         </div>
         {metric === "population" && (
@@ -887,30 +904,19 @@ export function MunicipalityMap({
                     </option>
                   ))}
                 </optgroup>
-                <optgroup label={labels.indicatorsHeading}>
-                  {Object.entries(labels.indicators).map(([id, label]) => (
-                    <option key={id} value={id}>
-                      {label}
-                    </option>
-                  ))}
-                </optgroup>
+                {Object.keys(labels.indicators).length > 0 && (
+                  <optgroup label={labels.indicatorsHeading}>
+                    {Object.entries(labels.indicators).map(([id, label]) => (
+                      <option key={id} value={id}>
+                        {label}
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
               </select>
             </div>
             {showAgeFilters ? (
               <div className="flex flex-wrap gap-1">
-                <div className="flex rounded-lg border bg-background p-0.5">
-                  {(["share", "persons"] as const).map((item) => (
-                    <button
-                      key={item}
-                      type="button"
-                      className={controlButton}
-                      aria-pressed={ageMeasure === item}
-                      onClick={() => onAgeMeasureChange(item)}
-                    >
-                      {labels.measures[item]}
-                    </button>
-                  ))}
-                </div>
                 <div className="flex rounded-lg border bg-background p-0.5">
                   {(["all", "female", "male"] as const).map((item) => (
                     <button
@@ -959,7 +965,7 @@ export function MunicipalityMap({
                 value={movementView}
                 className="h-8 min-w-0 rounded-md border bg-background px-2 text-[10px]"
                 onChange={(event) =>
-                  onMovementViewChange(event.target.value as MovementMetricId)
+                  onMovementViewChange(event.target.value as MovementTargetId)
                 }
               >
                 {Object.entries(labels.movements).map(([id, label]) => (
@@ -1007,6 +1013,30 @@ export function MunicipalityMap({
             {politicsError ? <p className="text-[10px] text-destructive" role="alert">{labels.politicsError}</p> : null}
           </div>
         )}
+        {metric === "custom" && (
+          <div className="mt-2 space-y-2 border-t pt-2" data-testid="custom-metric-control">
+            <div className="grid grid-cols-[5.5rem_1fr] items-center gap-2">
+              <label htmlFor="municipality-custom-view" className="text-[10px] font-semibold">{labels.customView}</label>
+              <select
+                id="municipality-custom-view"
+                value={customView}
+                className="h-8 min-w-0 rounded-md border bg-background px-2 text-[10px]"
+                onChange={(event) => onCustomViewChange(event.target.value)}
+              >
+                {Object.entries(labels.customViews).map(([id, label]) => <option key={id} value={id}>{label}</option>)}
+              </select>
+            </div>
+            <button
+              type="button"
+              className="text-[10px] text-muted-foreground underline underline-offset-2 hover:text-destructive"
+              onClick={() => {
+                if (customView && window.confirm(labels.customDeleteConfirm)) onCustomDelete(customView);
+              }}
+            >
+              {labels.customDelete}
+            </button>
+          </div>
+        )}
         {metric === "digital" && (
           <div className="mt-2 space-y-2 border-t pt-2">
             <div className="grid grid-cols-[5.5rem_1fr] items-center gap-2">
@@ -1043,7 +1073,7 @@ export function MunicipalityMap({
                 id="municipality-cost-view"
                 value={costCategory}
                 className="h-8 min-w-0 rounded-md border bg-background px-2 text-[10px]"
-                onChange={(event) => onCostCategoryChange(event.target.value as CostCategoryId)}
+                onChange={(event) => onCostCategoryChange(event.target.value as CostTargetId)}
               >
                 {Object.entries(labels.costCategories).map(([id, label]) => (
                   <option key={id} value={id}>{id} · {label}</option>
@@ -1242,6 +1272,19 @@ export function MunicipalityMap({
       >
         <div className="space-y-5" data-testid="mobile-metric-control">
           <div className="space-y-2">
+            <label htmlFor="municipality-data-kind-mobile" className="text-sm font-semibold">{labels.dataKind}</label>
+            <select
+              id="municipality-data-kind-mobile"
+              value={dataKind}
+              className="h-11 w-full rounded-md border bg-background px-3 text-sm"
+              onChange={(event) => onDataKindChange(event.target.value as DataKind)}
+            >
+              <option value="base">{labels.dataKinds.base}</option>
+              <option value="derived">{labels.dataKinds.derived}</option>
+            </select>
+          </div>
+
+          <div className="space-y-2 border-t pt-4">
             <label htmlFor="municipality-metric-mobile" className="text-sm font-semibold">{labels.metric}</label>
             <select
               id="municipality-metric-mobile"
@@ -1249,12 +1292,7 @@ export function MunicipalityMap({
               className="h-11 w-full rounded-md border bg-background px-3 text-sm"
               onChange={(event) => onMetricChange(event.target.value as MapMetric)}
             >
-              <option value="population">{labels.populationMetric}</option>
-              <option value="age">{labels.ageMetric}</option>
-              <option value="movement">{labels.movementMetric}</option>
-              <option value="costs">{labels.costsMetric}</option>
-              <option value="politics">{labels.politicsMetric}</option>
-              <option value="digital">{labels.digitalMetric}</option>
+              {Object.entries(labels.metrics).map(([id, label]) => <option key={id} value={id}>{label}</option>)}
             </select>
           </div>
 
@@ -1287,17 +1325,14 @@ export function MunicipalityMap({
                 <optgroup label={labels.ageGroupsHeading}>
                   {Object.entries(labels.ageGroups).map(([id, label]) => <option key={id} value={id}>{label}</option>)}
                 </optgroup>
-                <optgroup label={labels.indicatorsHeading}>
-                  {Object.entries(labels.indicators).map(([id, label]) => <option key={id} value={id}>{label}</option>)}
-                </optgroup>
+                {Object.keys(labels.indicators).length > 0 ? (
+                  <optgroup label={labels.indicatorsHeading}>
+                    {Object.entries(labels.indicators).map(([id, label]) => <option key={id} value={id}>{label}</option>)}
+                  </optgroup>
+                ) : null}
               </select>
               {showAgeFilters ? (
                 <div className="space-y-2">
-                  <div className="grid grid-cols-2 overflow-hidden rounded-lg border">
-                    {(["share", "persons"] as const).map((item) => (
-                      <button key={item} type="button" className="min-h-11 px-3 text-sm font-medium aria-pressed:bg-teal-700 aria-pressed:text-white" aria-pressed={ageMeasure === item} onClick={() => onAgeMeasureChange(item)}>{labels.measures[item]}</button>
-                    ))}
-                  </div>
                   <div className="grid grid-cols-3 overflow-hidden rounded-lg border">
                     {(["all", "female", "male"] as const).map((item) => (
                       <button key={item} type="button" className="min-h-11 px-2 text-sm font-medium aria-pressed:bg-teal-700 aria-pressed:text-white" aria-pressed={sex === item} onClick={() => onSexChange(item)}>{labels.sexes[item]}</button>
@@ -1317,7 +1352,7 @@ export function MunicipalityMap({
                 id="municipality-movement-view-mobile"
                 value={movementView}
                 className="h-11 w-full rounded-md border bg-background px-3 text-sm"
-                onChange={(event) => onMovementViewChange(event.target.value as MovementMetricId)}
+                onChange={(event) => onMovementViewChange(event.target.value as MovementTargetId)}
               >
                 {Object.entries(labels.movements).map(([id, label]) => <option key={id} value={id}>{label}</option>)}
               </select>
@@ -1339,6 +1374,15 @@ export function MunicipalityMap({
                 </select></div> : null}
               {politicsLoading ? <p className="text-xs text-muted-foreground">{labels.loadingPolitics}</p> : null}
               {politicsError ? <p className="text-xs text-destructive" role="alert">{labels.politicsError}</p> : null}
+            </div>
+          ) : null}
+
+          {metric === "custom" ? (
+            <div className="space-y-2 border-t pt-4">
+              <label htmlFor="municipality-custom-view-mobile" className="text-sm font-semibold">{labels.customView}</label>
+              <select id="municipality-custom-view-mobile" value={customView} className="h-11 w-full rounded-md border bg-background px-3 text-sm" onChange={(event) => onCustomViewChange(event.target.value)}>
+                {Object.entries(labels.customViews).map(([id, label]) => <option key={id} value={id}>{label}</option>)}
+              </select>
             </div>
           ) : null}
 
@@ -1364,7 +1408,7 @@ export function MunicipalityMap({
               </div>
               <div className="space-y-2">
                 <label htmlFor="municipality-cost-view-mobile" className="text-sm font-semibold">{labels.costView}</label>
-                <select id="municipality-cost-view-mobile" value={costCategory} className="h-11 w-full rounded-md border bg-background px-3 text-sm" onChange={(event) => onCostCategoryChange(event.target.value as CostCategoryId)}>
+                <select id="municipality-cost-view-mobile" value={costCategory} className="h-11 w-full rounded-md border bg-background px-3 text-sm" onChange={(event) => onCostCategoryChange(event.target.value as CostTargetId)}>
                   {Object.entries(labels.costCategories).map(([id, label]) => <option key={id} value={id}>{id} · {label}</option>)}
                 </select>
               </div>

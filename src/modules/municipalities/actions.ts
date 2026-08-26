@@ -17,8 +17,14 @@ import {
   parseMunicipalityAnalysisGraph,
   serializeMunicipalityAnalysisGraph,
 } from "./analysis";
-import { listMunicipalityAnalysesForUser } from "./queries";
-import { municipalityAnalyses } from "./schema";
+import {
+  expandKennzahlIntoGraph,
+  kennzahlExpressionUnit,
+  kennzahlFromGraph,
+  serializeKennzahlExpression,
+} from "./kennzahlen";
+import { listMunicipalityAnalysesForUser, listMunicipalityMetricsForUser } from "./queries";
+import { municipalityAnalyses, municipalityMetrics } from "./schema";
 
 const idSchema = z.string().min(1).max(100);
 const nameSchema = z.string().trim().min(1).max(120);
@@ -144,6 +150,7 @@ export async function applyMunicipalityAnalysisOperations(input: {
     const result = applyMunicipalityAnalysisGraphOperations(
       parseMunicipalityAnalysisGraph(row.graphJson),
       parsed.operations,
+      expandKennzahlIntoGraph,
     );
     transaction.update(municipalityAnalyses)
       .set({ graphJson: serializeMunicipalityAnalysisGraph(result.graph), updatedAt: new Date() })
@@ -181,5 +188,61 @@ export async function deleteMunicipalityAnalysis(analysisIdInput: string) {
     .where(and(eq(municipalityAnalyses.id, analysisId), eq(municipalityAnalyses.ownerId, user.id)))
     .run();
   revalidateAnalyses();
+  return { deleted: true };
+}
+
+
+// --- user-defined Kennzahlen ------------------------------------------------
+
+function revalidateMetrics() {
+  revalidatePath("/municipalities/overview");
+  revalidatePath("/municipalities/analysis");
+}
+
+export async function listMyMunicipalityMetrics() {
+  const user = await requireUserOrThrow();
+  return listMunicipalityMetricsForUser(user.id);
+}
+
+/**
+ * Saves the sub-graph feeding one node as a reusable Kennzahl.
+ *
+ * The municipality is stripped so the Kennzahl applies to any of them, which is only
+ * meaningful when the sub-graph is about a single municipality — otherwise it is a
+ * comparison of two places and gets rejected rather than quietly reinterpreted.
+ */
+export async function saveMunicipalityAnalysisNodeAsMetric(input: {
+  analysisId: string;
+  nodeId: string;
+  name: string;
+}) {
+  const user = await requireUserOrThrow();
+  const parsed = z.object({ analysisId: idSchema, nodeId: idSchema, name: nameSchema }).parse(input);
+  const row = requireOwnedAnalysis(parsed.analysisId, user.id);
+  const graph = parseMunicipalityAnalysisGraph(row.graphJson);
+
+  const result = kennzahlFromGraph(graph, parsed.nodeId);
+  if (!result.ok) return { ok: false as const, reason: result.reason };
+
+  const id = createId();
+  db.insert(municipalityMetrics).values({
+    id,
+    ownerId: user.id,
+    name: parsed.name,
+    expressionJson: serializeKennzahlExpression(result.expression),
+    unit: kennzahlExpressionUnit(result.expression),
+  }).run();
+  revalidateMetrics();
+  return { ok: true as const, id, name: parsed.name };
+}
+
+export async function deleteMunicipalityMetric(metricIdInput: string) {
+  const user = await requireUserOrThrow();
+  const metricId = idSchema.parse(metricIdInput);
+  const deleted = db.delete(municipalityMetrics)
+    .where(and(eq(municipalityMetrics.id, metricId), eq(municipalityMetrics.ownerId, user.id)))
+    .run();
+  if (!deleted.changes) throw new Error("Municipality metric not found");
+  revalidateMetrics();
   return { deleted: true };
 }

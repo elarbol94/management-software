@@ -1,11 +1,11 @@
 import { z } from "zod";
 import {
+  municipalityCostAbsolute,
   municipalityCostShare,
   median,
   municipalityCostPerCapita,
   municipalityCostRealPerCapita,
   municipalityPopulationBand,
-  type CostCategoryId,
   type MunicipalityCostSeries,
 } from "./costs";
 import type { MunicipalityIndex } from "./data";
@@ -16,8 +16,8 @@ import {
   type MunicipalityDemographySeries,
 } from "./demography";
 import {
-  movementMetricUnit,
-  movementMetricValue,
+  movementTargetUnit,
+  movementTargetValue,
   type MunicipalityMovementSeries,
 } from "./movement";
 import type { MunicipalityPopulationSeries } from "./population";
@@ -40,10 +40,10 @@ export type AnalysisOperatorId = (typeof analysisOperatorIds)[number];
 
 const positionSchema = z.object({ x: z.number().finite(), y: z.number().finite() });
 export const municipalityDatasetRefSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("population"), municipalityCode: z.string().regex(/^\d{5}$/), municipalityName: z.string().trim().min(1).max(160), view: z.enum(["count", "density", "foreign-share", "foreign-persons"]) }),
+  z.object({ kind: z.literal("population"), municipalityCode: z.string().regex(/^\d{5}$/), municipalityName: z.string().trim().min(1).max(160), view: z.enum(["count", "density", "foreign-share", "foreign-persons", "structure-population"]) }),
   z.object({
     kind: z.literal("age-group"), municipalityCode: z.string().regex(/^\d{5}$/), municipalityName: z.string().trim().min(1).max(160),
-    ageGroup: z.enum(["0-5", "6-14", "15-24", "25-44", "45-64", "65-79", "80-plus"]),
+    ageGroup: z.enum(["0-5", "6-14", "15-24", "25-44", "45-64", "65-79", "80-plus", "total"]),
     measure: z.enum(["share", "persons"]), sex: z.enum(["all", "female", "male"]),
   }),
   z.object({
@@ -52,13 +52,20 @@ export const municipalityDatasetRefSchema = z.discriminatedUnion("kind", [
   }),
   z.object({
     kind: z.literal("movement"), municipalityCode: z.string().regex(/^\d{5}$/), municipalityName: z.string().trim().min(1).max(160),
-    metric: z.enum(["population-change", "births", "deaths", "birth-rate", "death-rate", "birth-balance-rate", "arrivals", "departures", "migration-balance-rate", "international-migration-balance", "international-migration-balance-rate", "internal-migration-balance", "internal-migration-balance-rate", "statistical-correction"]),
+    metric: z.enum(["population-change", "births", "deaths", "birth-rate", "death-rate", "birth-balance-rate", "arrivals", "departures", "migration-balance-rate", "international-migration-balance", "international-migration-balance-rate", "internal-migration-balance", "internal-migration-balance-rate", "statistical-correction", "international-arrivals", "international-departures", "internal-arrivals", "internal-departures"]),
   }),
   z.object({
     kind: z.literal("cost-share"), municipalityCode: z.string().regex(/^\d{5}$/), municipalityName: z.string().trim().min(1).max(160),
-    category: z.enum(["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"]),
-    measure: z.enum(["share", "per-capita", "real-per-capita", "peer-deviation"]).optional(),
+    category: z.enum(["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "total"]),
+    measure: z.enum(["absolute", "share", "per-capita", "real-per-capita", "peer-deviation"]).optional(),
   }),
+  z.object({
+    kind: z.literal("attribute"), municipalityCode: z.string().regex(/^\d{5}$/), municipalityName: z.string().trim().min(1).max(160),
+    field: z.literal("area"),
+  }),
+  // Dimensionless scalar. Rates and shares are only expressible from Ausgangsdaten with
+  // one — Geburtenrate is births / population * 1000 — so it carries no municipality.
+  z.object({ kind: z.literal("constant"), value: z.number().finite() }),
 ]);
 export type MunicipalityDatasetRef = z.infer<typeof municipalityDatasetRefSchema>;
 
@@ -112,6 +119,9 @@ export const municipalityAnalysisGraphOperationSchema = z.discriminatedUnion("ty
   z.object({ version: z.literal(ANALYSIS_OPERATION_VERSION), type: z.literal("set-viewport"), viewport: municipalityAnalysisGraphSchema.shape.viewport }),
   z.object({ version: z.literal(ANALYSIS_OPERATION_VERSION), type: z.literal("set-selected-node"), nodeId: z.string().max(100).nullable() }),
   z.object({ version: z.literal(ANALYSIS_OPERATION_VERSION), type: z.literal("add-dataset"), nodeId: z.string().min(1).max(100), dataset: municipalityDatasetRefSchema }),
+  // Like add-dataset, but for a Kennzahl: the graph decides how it lands, because only it
+  // knows which Ausgangsdaten are already on the canvas and where there is room.
+  z.object({ version: z.literal(ANALYSIS_OPERATION_VERSION), type: z.literal("add-kennzahl"), nodeId: z.string().min(1).max(100), dataset: municipalityDatasetRefSchema }),
 ]);
 export const municipalityAnalysisGraphOperationsSchema = z.array(municipalityAnalysisGraphOperationSchema).min(1).max(200);
 export type MunicipalityAnalysisGraphOperation = z.infer<typeof municipalityAnalysisGraphOperationSchema>;
@@ -131,7 +141,15 @@ export function parseMunicipalityAnalysisGraph(json: string) {
   return municipalityAnalysisGraphSchema.parse(JSON.parse(json));
 }
 
-export const datasetRefKey = (dataset: MunicipalityDatasetRef) => JSON.stringify(dataset);
+// Key order is not part of a dataset's identity: the same reference built by the map and
+// by a Kennzahl derivation lists its fields in a different order, and comparing the raw
+// JSON would treat them as two different datasets.
+export const datasetRefKey = (dataset: MunicipalityDatasetRef) =>
+  JSON.stringify(Object.entries(dataset).sort(([left], [right]) => left.localeCompare(right)));
+
+/** Constants carry no municipality, so every caller reading the name goes through here. */
+export const datasetMunicipalityName = (dataset: MunicipalityDatasetRef) =>
+  "municipalityName" in dataset ? dataset.municipalityName : null;
 
 export function addDatasetToGraph(graph: MunicipalityAnalysisGraph, dataset: MunicipalityDatasetRef, id: string) {
   const existing = graph.nodes.find((node) => node.type === "dataset" && datasetRefKey(node.data.dataset) === datasetRefKey(dataset));
@@ -143,16 +161,42 @@ export function addDatasetToGraph(graph: MunicipalityAnalysisGraph, dataset: Mun
   return { graph: municipalityAnalysisGraphSchema.parse({ ...graph, nodes: [...graph.nodes, node], selectedNodeId: id }), nodeId: id, duplicate: false };
 }
 
+/**
+ * Expands a Kennzahl into the operations that draw its derivation.
+ *
+ * Injected rather than imported so this module stays free of the Kennzahl registry —
+ * `kennzahlen.ts` builds on the graph types defined here, and importing it back would
+ * close the loop.
+ */
+export type KennzahlExpander = (
+  dataset: MunicipalityDatasetRef,
+  graph: MunicipalityAnalysisGraph,
+) => MunicipalityAnalysisGraphOperation[] | null;
+
 export function applyMunicipalityAnalysisGraphOperations(
   graph: MunicipalityAnalysisGraph,
   operations: MunicipalityAnalysisGraphOperation[],
+  expandKennzahl?: KennzahlExpander,
 ) {
   const parsedOperations = municipalityAnalysisGraphOperationsSchema.parse(operations);
   let next = graph;
   let duplicateCount = 0;
   let lastDatasetNodeId: string | null = null;
   for (const operation of parsedOperations) {
-    if (operation.type === "add-dataset") {
+    if (operation.type === "add-kennzahl") {
+      const expanded = expandKennzahl?.(operation.dataset, next);
+      // An empty array means the derivation is already fully on the canvas — that is a
+      // successful no-op, not a missing derivation.
+      if (expanded) {
+        if (expanded.length) next = applyMunicipalityAnalysisGraphOperations(next, expanded, expandKennzahl).graph;
+      } else {
+        // No derivation (an Ausgangsdatum, or a primary calculation): one node, as before.
+        const added = addDatasetToGraph(next, operation.dataset, operation.nodeId);
+        next = added.graph;
+        lastDatasetNodeId = added.nodeId;
+        if (added.duplicate) duplicateCount += 1;
+      }
+    } else if (operation.type === "add-dataset") {
       const added = addDatasetToGraph(next, operation.dataset, operation.nodeId);
       next = added.graph;
       lastDatasetNodeId = added.nodeId;
@@ -223,8 +267,11 @@ export function datasetUnit(dataset: MunicipalityDatasetRef) {
   if (dataset.kind === "population") return populationViewUnit(dataset.view);
   if (dataset.kind === "age-group") return dataset.measure;
   if (dataset.kind === "age-indicator") return demographicIndicatorUnit(dataset.indicator);
-  if (dataset.kind === "movement") return movementMetricUnit(dataset.metric);
+  if (dataset.kind === "movement") return movementTargetUnit(dataset.metric);
+  if (dataset.kind === "attribute") return "square-kilometers";
+  if (dataset.kind === "constant") return "";
   const measure = dataset.measure ?? "share";
+  if (measure === "absolute") return "currency";
   return measure === "per-capita" || measure === "real-per-capita"
     ? "currency-per-person" : "share";
 }
@@ -233,6 +280,7 @@ export function datasetUnit(dataset: MunicipalityDatasetRef) {
 // compatibility; only the rendered label is translated.
 export const ANALYSIS_UNIT_IDS = [
   "persons", "per-square-kilometer", "share", "per-100", "per-1000", "years", "currency-per-person",
+  "currency", "square-kilometers",
 ] as const;
 
 export function analysisUnitLabel(unit: string, translate: (id: (typeof ANALYSIS_UNIT_IDS)[number]) => string) {
@@ -249,10 +297,17 @@ export function resolveMunicipalityDataset(dataset: MunicipalityDatasetRef, data
   const points: AnalysisPoint[] = [];
   const firstYear = dataset.kind === "cost-share" ? (data.costs?.firstYear ?? 2010) : data.population.firstYear;
   const latestYear = dataset.kind === "cost-share" ? (data.costs?.latestYear ?? 2024) : data.population.latestYear;
+  // A constant carries no municipality; it spans the population years so it intersects
+  // with every other series an operator can pair it with.
+  const municipalityCode = dataset.kind === "constant" ? null : dataset.municipalityCode;
   for (let year = firstYear; year <= latestYear; year += 1) {
-    const population = data.population.years[String(year)].values[dataset.municipalityCode];
+    const population = municipalityCode === null ? 0 : data.population.years[String(year)].values[municipalityCode];
     let value: number | null = null;
-    if (dataset.kind === "population") {
+    if (dataset.kind === "constant") value = dataset.value;
+    else if (dataset.kind === "attribute") {
+      const municipality = data.index.municipalities.find((item) => item.municipalityCode === municipalityCode);
+      value = municipality ? municipality.areaSquareKilometers : null;
+    } else if (dataset.kind === "population") {
       const municipality = data.index.municipalities.find(({ municipalityCode }) => municipalityCode === dataset.municipalityCode);
       if (municipality) value = populationViewValue(
         dataset.view,
@@ -269,25 +324,26 @@ export function resolveMunicipalityDataset(dataset: MunicipalityDatasetRef, data
       if (counts) value = demographicIndicatorValue(counts, dataset.indicator);
     } else if (dataset.kind === "movement") {
       const counts = data.movement?.years[String(year)]?.values[dataset.municipalityCode];
-      if (counts) value = movementMetricValue(counts, population, dataset.metric);
+      if (counts) value = movementTargetValue(counts, population, dataset.metric);
     } else {
       const costs = data.costs?.years[String(year)]?.values[dataset.municipalityCode];
       const measure = dataset.measure ?? "share";
-      if (costs && measure === "share") value = municipalityCostShare(costs, dataset.category as CostCategoryId);
+      if (costs && measure === "absolute") value = municipalityCostAbsolute(costs, dataset.category);
+      else if (costs && measure === "share") value = municipalityCostShare(costs, dataset.category);
       else if (costs && measure === "per-capita") {
-        value = municipalityCostPerCapita(costs, dataset.category as CostCategoryId, population);
+        value = municipalityCostPerCapita(costs, dataset.category, population);
       } else if (costs && measure === "real-per-capita") {
-        value = municipalityCostRealPerCapita(costs, dataset.category as CostCategoryId, population, year);
+        value = municipalityCostRealPerCapita(costs, dataset.category, population, year);
       } else if (costs) {
         const selected = data.index.municipalities.find(({ municipalityCode }) => municipalityCode === dataset.municipalityCode);
-        const selectedPerCapita = municipalityCostPerCapita(costs, dataset.category as CostCategoryId, population);
+        const selectedPerCapita = municipalityCostPerCapita(costs, dataset.category, population);
         if (selected && selectedPerCapita !== null) {
           const band = municipalityPopulationBand(population);
           const peers = data.index.municipalities.flatMap((municipality) => {
             const peerPopulation = data.population.years[String(year)].values[municipality.municipalityCode];
             const peerCosts = data.costs?.years[String(year)]?.values[municipality.municipalityCode];
             if (municipalityPopulationBand(peerPopulation) !== band || !peerCosts) return [];
-            const peerValue = municipalityCostPerCapita(peerCosts, dataset.category as CostCategoryId, peerPopulation);
+            const peerValue = municipalityCostPerCapita(peerCosts, dataset.category, peerPopulation);
             return peerValue === null ? [] : [{ state: municipality.state, value: peerValue }];
           });
           const regionalPeers = peers.filter(({ state }) => state === selected.state);
@@ -303,6 +359,16 @@ export function resolveMunicipalityDataset(dataset: MunicipalityDatasetRef, data
 }
 
 const comparisonOperators = new Set<AnalysisOperatorId>(["greater-than", "greater-or-equal", "less-than", "less-or-equal", "equal"]);
+
+/**
+ * The unit an operator produces. A dimensionless side contributes nothing, so scaling a
+ * rate by 1.000 stays "persons/persons" instead of picking up a dangling separator.
+ */
+export function composeAnalysisUnit(operator: AnalysisOperatorId, left: string, right: string) {
+  if (operator === "multiply") return !right ? left : !left ? right : `${left}·${right}`;
+  if (operator === "divide") return !right ? left : `${left}/${right}`;
+  return left || right;
+}
 
 export function evaluateAnalysisOperator(operator: AnalysisOperatorId, left: AnalysisSeries | null, right: AnalysisSeries | null): AnalysisSeries {
   const comparison = comparisonOperators.has(operator);
@@ -325,7 +391,7 @@ export function evaluateAnalysisOperator(operator: AnalysisOperatorId, left: Ana
     return [{ year: point.year, value }];
   });
   const valueType = comparison ? "boolean" as const : "number" as const;
-  const unit = comparison ? "boolean" : operator === "multiply" ? `${left.unit}·${right.unit}` : operator === "divide" ? `${left.unit}/${right.unit}` : left.unit;
+  const unit = comparison ? "boolean" : composeAnalysisUnit(operator, left.unit, right.unit);
   return { unit, valueType, points, error: null, warnings };
 }
 

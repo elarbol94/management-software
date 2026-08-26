@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
   addDatasetToGraph,
   analysisUnitLabel,
+  datasetRefKey,
   applyMunicipalityAnalysisGraphOperations,
   emptyMunicipalityAnalysisGraph,
   evaluateAnalysisOperator,
@@ -35,6 +36,14 @@ describe("municipality analysis graph", () => {
     expect(second.duplicate).toBe(true);
     expect(second.nodeId).toBe("node-1");
     expect(second.graph.nodes).toHaveLength(1);
+  });
+
+  it("treats the same dataset as one regardless of field order", () => {
+    const fromMap = { kind: "population" as const, municipalityCode: "60101", municipalityName: "Graz", view: "count" as const };
+    const fromDerivation = { kind: "population" as const, view: "count" as const, municipalityCode: "60101", municipalityName: "Graz" };
+    expect(datasetRefKey(fromMap)).toBe(datasetRefKey(fromDerivation));
+    const first = addDatasetToGraph(emptyMunicipalityAnalysisGraph(), fromMap, "node-1");
+    expect(addDatasetToGraph(first.graph, fromDerivation, "node-2").duplicate).toBe(true);
   });
 
   it("rejects duplicate operator inputs", () => {

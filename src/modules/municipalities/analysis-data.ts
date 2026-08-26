@@ -30,7 +30,8 @@ export async function loadMunicipalityAnalysisData(graph: MunicipalityAnalysisGr
   const needsDemography = datasets.some(({ kind }) => kind === "age-group" || kind === "age-indicator");
   const needsMovement = datasets.some(({ kind }) => kind === "movement");
   const needsCosts = datasets.some(({ kind }) => kind === "cost-share");
-  const needsStructure = datasets.some((dataset) => dataset.kind === "population" && (dataset.view === "foreign-share" || dataset.view === "foreign-persons"));
+  const needsStructure = datasets.some((dataset) => dataset.kind === "population"
+    && (dataset.view === "foreign-share" || dataset.view === "foreign-persons" || dataset.view === "structure-population"));
   const [rawDemography, rawMovement, rawStructure, rawCosts] = await Promise.all([
     needsDemography ? fetchJson<MunicipalityDemographySeries>("/data/municipality-demography-2002-2025.json") : null,
     needsMovement ? fetchJson<MunicipalityMovementSeries>("/data/municipality-movement-2002-2025.json") : null,

@@ -80,6 +80,7 @@ test("municipality subpages route and transfer a dataset into a saved analysis",
 
   await page.getByRole("combobox", { name: "Gemeinde suchen" }).fill("Graz");
   await page.getByRole("option").filter({ hasText: "60101" }).click();
+  await page.getByLabel("Datenart").selectOption("derived");
   await page.getByLabel("Kennzahl").selectOption("population");
   await expect(page).not.toHaveURL(/metric=/);
   await page.getByLabel("Ansicht").selectOption("density");
@@ -89,14 +90,17 @@ test("municipality subpages route and transfer a dataset into a saved analysis",
   await picker.getByRole("button", { name: /Graz und Wien/ }).first().click();
 
   await page.getByRole("link", { name: "Analyse" }).click();
+  // Bevölkerungsdichte is a Kennzahl, so it arrives as its derivation: the Einwohnerzahl
+  // node already on the canvas is reused, Katasterfläche is added, and they meet in a ÷.
   await expect(page.locator(".react-flow__node-dataset")).toHaveCount(4);
-  await expect(page.locator(".react-flow__node-operator")).toHaveCount(1);
+  await expect(page.locator(".react-flow__node-operator")).toHaveCount(2);
+  await expect(page.getByTestId("municipality-analysis-editor")).toContainText("Katasterfläche");
 
   await expect(page.getByTestId("municipality-analysis-editor").getByText("Gespeichert", { exact: true })).toBeVisible({ timeout: 30_000 });
   await page.reload();
   await expect(page.getByTestId("municipality-analysis-editor")).toBeVisible();
   await expect(page.locator(".react-flow__node-dataset")).toHaveCount(4);
-  await expect(page.locator(".react-flow__node-operator")).toHaveCount(1);
+  await expect(page.locator(".react-flow__node-operator")).toHaveCount(2);
 
   await page.setViewportSize({ width: 390, height: 844 });
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);

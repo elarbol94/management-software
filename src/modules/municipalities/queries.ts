@@ -1,7 +1,8 @@
 import { and, desc, eq } from "drizzle-orm";
 import { db } from "@/db";
-import { municipalityAnalyses } from "./schema";
+import { municipalityAnalyses, municipalityMetrics } from "./schema";
 import { parseMunicipalityAnalysisGraph } from "./analysis";
+import { parseKennzahlExpression, type KennzahlExpression } from "./kennzahlen";
 
 export type MunicipalityAnalysisSummary = {
   id: string;
@@ -32,4 +33,28 @@ export function getMunicipalityAnalysisForUser(id: string, ownerId: string) {
     graph: parseMunicipalityAnalysisGraph(row.graphJson),
     updatedAt: row.updatedAt.getTime(),
   };
+}
+
+export type MunicipalityMetricRecord = {
+  id: string;
+  name: string;
+  unit: string;
+  expression: KennzahlExpression;
+  updatedAt: number;
+};
+
+export function listMunicipalityMetricsForUser(ownerId: string): MunicipalityMetricRecord[] {
+  return db
+    .select()
+    .from(municipalityMetrics)
+    .where(eq(municipalityMetrics.ownerId, ownerId))
+    .orderBy(desc(municipalityMetrics.updatedAt))
+    .all()
+    .map((row) => ({
+      id: row.id,
+      name: row.name,
+      unit: row.unit,
+      expression: parseKennzahlExpression(row.expressionJson),
+      updatedAt: row.updatedAt.getTime(),
+    }));
 }

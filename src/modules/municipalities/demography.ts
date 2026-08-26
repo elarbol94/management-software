@@ -26,12 +26,17 @@ export const DEMOGRAPHIC_INDICATORS = [
 ] as const;
 
 export type AgeGroupId = (typeof AGE_GROUPS)[number]["id"];
+// `AGE_GROUPS` mirrors the data file's grouping and is compared against it during
+// validation. "total" is the sum across all groups — a selectable target, not a grouping.
+export const AGE_TARGETS = [...AGE_GROUPS.map(({ id }) => id), "total"] as const;
+export type AgeTargetId = (typeof AGE_TARGETS)[number];
 export type DemographicIndicatorId = (typeof DEMOGRAPHIC_INDICATORS)[number]["id"];
 export type DemographicIndicatorUnit = (typeof DEMOGRAPHIC_INDICATORS)[number]["unit"];
 export type AgeViewId = AgeGroupId | DemographicIndicatorId;
 export type SexFilter = "all" | "female" | "male";
 export type AgeMeasure = "share" | "persons";
-export type MapMetric = "population" | "age" | "movement" | "costs" | "politics" | "digital";
+// "custom" is a user-defined Kennzahl; its views are the ones that user saved.
+export type MapMetric = "population" | "age" | "movement" | "costs" | "politics" | "digital" | "custom";
 export type AgeCounts = [number, number, number, number, number, number, number];
 export type MunicipalitySexAgeCounts = { m: AgeCounts; f: AgeCounts; a: [male: number, female: number] };
 export type DemographyScale = Record<AgeGroupId, [number, number]>;
@@ -81,7 +86,8 @@ export function ageGroupIndexForSourceCode(code: string) {
   return AGE_GROUPS.findIndex(({ minimum, maximum }) => age >= minimum && (maximum === null || age <= maximum));
 }
 
-export function demographyValue(counts: MunicipalitySexAgeCounts, sex: SexFilter, group: AgeGroupId) {
+export function demographyValue(counts: MunicipalitySexAgeCounts, sex: SexFilter, group: AgeTargetId) {
+  if (group === "total") return demographyPopulation(counts, sex);
   const index = ageGroupIndex(group);
   if (sex === "male") return counts.m[index];
   if (sex === "female") return counts.f[index];
@@ -94,7 +100,7 @@ export function demographyPopulation(counts: MunicipalitySexAgeCounts, sex: SexF
   return counts.m.reduce((sum, value) => sum + value, 0) + counts.f.reduce((sum, value) => sum + value, 0);
 }
 
-export function demographyMetricValue(counts: MunicipalitySexAgeCounts, sex: SexFilter, group: AgeGroupId, measure: AgeMeasure) {
+export function demographyMetricValue(counts: MunicipalitySexAgeCounts, sex: SexFilter, group: AgeTargetId, measure: AgeMeasure) {
   const persons = demographyValue(counts, sex, group);
   if (measure === "persons") return persons;
   const population = demographyPopulation(counts, sex);

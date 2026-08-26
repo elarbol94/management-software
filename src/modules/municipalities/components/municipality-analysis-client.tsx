@@ -20,7 +20,7 @@ import {
   type Viewport,
   useReactFlow,
 } from "@xyflow/react";
-import { BarChart3, Database, GripVertical, Pencil, Plus, Save, Trash2, TriangleAlert } from "lucide-react";
+import { BarChart3, Bookmark, Database, GripVertical, Pencil, Plus, Save, Sigma, Trash2, TriangleAlert } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -29,11 +29,13 @@ import {
   createMunicipalityAnalysisAndRedirect,
   deleteMunicipalityAnalysis,
   renameMunicipalityAnalysis,
+  saveMunicipalityAnalysisNodeAsMetric,
 } from "../actions";
 import {
   ANALYSIS_OPERATION_VERSION,
   analysisOperatorIds,
   applyMunicipalityAnalysisGraphOperations,
+  datasetMunicipalityName,
   evaluateAnalysisGraph,
   wouldCreateAnalysisCycle,
   type AnalysisOperatorId,
@@ -44,6 +46,20 @@ import {
   type MunicipalityDatasetRef,
 } from "../analysis";
 import { loadMunicipalityAnalysisData } from "../analysis-data";
+import { searchMunicipalities, type MunicipalityIndexItem } from "../data";
+import type { MovementTargetId } from "../movement";
+import type { PopulationViewId } from "../structure";
+import {
+  bindKennzahlInput,
+  expandKennzahlIntoGraph,
+  kennzahlDerivationOperations,
+  kennzahlExpressionFor,
+  kennzahlFormulaText,
+  KENNZAHL_CATALOG,
+  nextGraphOrigin,
+  type KennzahlDefinition,
+  type KennzahlInput,
+} from "../kennzahlen";
 import type { MunicipalityAnalysisSummary } from "../queries";
 import { AnalysisSeriesChart } from "./analysis-series-chart";
 import { useMunicipalityAnalysisPersistence } from "./municipality-analysis-persistence-provider";
@@ -108,25 +124,130 @@ function AnalysisNodeCard({ data, selected }: NodeProps<DisplayNode>) {
 
 const nodeTypes = { dataset: AnalysisNodeCard, operator: AnalysisNodeCard };
 
-function datasetTitle(dataset: MunicipalityDatasetRef, t: ReturnType<typeof useTranslations>) {
+// Exhaustive maps rather than ternary chains: a new Ausgangsdatum then fails to compile
+// instead of silently borrowing the label of whatever the chain fell through to.
+const POPULATION_VIEW_KEYS: Record<PopulationViewId, string> = {
+  count: "populationCount", density: "populationDensity", "foreign-share": "populationForeignShare",
+  "foreign-persons": "populationForeignPersons", "structure-population": "populationStructurePopulation",
+};
+const MOVEMENT_KEYS: Record<MovementTargetId, string> = {
+  "population-change": "movementPopulationChange", births: "movementBirths", deaths: "movementDeaths",
+  "birth-rate": "movementBirthRate", "death-rate": "movementDeathRate", "birth-balance-rate": "movementBirthBalanceRate",
+  arrivals: "movementArrivals", departures: "movementDepartures",
+  "migration-balance-rate": "movementMigrationBalanceRate",
+  "international-migration-balance": "movementInternationalBalance",
+  "international-migration-balance-rate": "movementInternationalBalanceRate",
+  "internal-migration-balance": "movementInternalBalance",
+  "internal-migration-balance-rate": "movementInternalBalanceRate",
+  "statistical-correction": "movementStatisticalCorrection",
+  "international-arrivals": "movementInternationalArrivals",
+  "international-departures": "movementInternationalDepartures",
+  "internal-arrivals": "movementInternalArrivals",
+  "internal-departures": "movementInternalDepartures",
+};
+
+function datasetTitle(dataset: MunicipalityDatasetRef | KennzahlInput, t: ReturnType<typeof useTranslations>) {
+  if (dataset.kind === "constant") return String(dataset.value);
+  if (dataset.kind === "attribute") return t("attributeArea");
   if (dataset.kind === "cost-share") {
     const measure = dataset.measure ?? "share";
-    const measureKey = measure === "share" ? "costMeasureShare" : measure === "per-capita" ? "costMeasurePerCapita" : measure === "real-per-capita" ? "costMeasureRealPerCapita" : "costMeasurePeerDeviation";
-    return `${t("metricCosts")} · ${t(`costCategory${dataset.category}` as "costCategory0")} · ${t(measureKey)}`;
+    const measureKey = measure === "absolute" ? "costMeasureAbsolute" : measure === "share" ? "costMeasureShare" : measure === "per-capita" ? "costMeasurePerCapita" : measure === "real-per-capita" ? "costMeasureRealPerCapita" : "costMeasurePeerDeviation";
+    const categoryLabel = dataset.category === "total" ? t("costCategoryTotal") : t(`costCategory${dataset.category}` as "costCategory0");
+    return `${t("metricCosts")} · ${categoryLabel} · ${t(measureKey)}`;
   }
-  if (dataset.kind === "population") {
-    return t(dataset.view === "count" ? "populationCount" : dataset.view === "density" ? "populationDensity" : dataset.view === "foreign-share" ? "populationForeignShare" : "populationForeignPersons");
-  }
-  if (dataset.kind === "movement") {
-    const key = dataset.metric === "population-change" ? "movementPopulationChange" : dataset.metric === "births" ? "movementBirths" : dataset.metric === "deaths" ? "movementDeaths" : dataset.metric === "birth-rate" ? "movementBirthRate" : dataset.metric === "death-rate" ? "movementDeathRate" : dataset.metric === "birth-balance-rate" ? "movementBirthBalanceRate" : dataset.metric === "arrivals" ? "movementArrivals" : dataset.metric === "departures" ? "movementDepartures" : dataset.metric === "migration-balance-rate" ? "movementMigrationBalanceRate" : dataset.metric === "international-migration-balance" ? "movementInternationalBalance" : dataset.metric === "international-migration-balance-rate" ? "movementInternationalBalanceRate" : dataset.metric === "internal-migration-balance" ? "movementInternalBalance" : dataset.metric === "internal-migration-balance-rate" ? "movementInternalBalanceRate" : "movementStatisticalCorrection";
-    return t(key);
-  }
+  if (dataset.kind === "population") return t(POPULATION_VIEW_KEYS[dataset.view] as "populationCount");
+  if (dataset.kind === "movement") return t(MOVEMENT_KEYS[dataset.metric] as "movementBirths");
   if (dataset.kind === "age-group") {
-    const groupKey = `ageGroup${dataset.ageGroup}` as "ageGroup0-5";
-    return `${t(groupKey)} · ${t(dataset.measure === "share" ? "ageMeasureShare" : "ageMeasurePersons")}`;
+    const groupLabel = dataset.ageGroup === "total"
+      ? t("ageGroupTotal")
+      : t(`ageGroup${dataset.ageGroup}` as "ageGroup0-5");
+    return `${groupLabel} · ${t(dataset.measure === "share" ? "ageMeasureShare" : "ageMeasurePersons")}`;
   }
   const key = dataset.indicator === "youth-share" ? "indicatorYouthShare" : dataset.indicator === "senior-share" ? "indicatorSeniorShare" : dataset.indicator === "old-age-dependency" ? "indicatorOldAgeDependency" : dataset.indicator === "child-dependency" ? "indicatorChildDependency" : dataset.indicator === "total-dependency" ? "indicatorTotalDependency" : dataset.indicator === "aging-index" ? "indicatorAgingIndex" : dataset.indicator === "average-age" ? "indicatorAverageAge" : dataset.indicator === "women-share" ? "indicatorWomenShare" : "indicatorWomenPer100Men";
   return t(key);
+}
+
+/**
+ * Every Kennzahl the app computes, with the formula it is built from. Picking one drops
+ * that derivation onto the canvas as real Ausgangsdaten and operator nodes, so the way a
+ * Kennzahl is calculated is something you can look at and edit rather than take on trust.
+ */
+function KennzahlCatalog({
+  municipalities,
+  initialMunicipality,
+  onInsert,
+}: {
+  municipalities: MunicipalityIndexItem[];
+  initialMunicipality: MunicipalityIndexItem | null;
+  onInsert: (definition: KennzahlDefinition, municipality: MunicipalityIndexItem) => void;
+}) {
+  const t = useTranslations("municipalities");
+  const format = useFormatter();
+  const [municipality, setMunicipality] = useState(initialMunicipality);
+  const [query, setQuery] = useState("");
+  const results = useMemo(
+    () => (query.trim() ? searchMunicipalities(municipalities, query).slice(0, 6) : []),
+    [municipalities, query],
+  );
+
+  return (
+    <div className="mt-5 border-t pt-4" data-testid="kennzahl-catalog">
+      <div className="flex items-center justify-between gap-2">
+        <h2 className="text-xs font-semibold tracking-wide uppercase">{t("kennzahlCatalog")}</h2>
+        <span className="text-[10px] text-muted-foreground">{t("kennzahlCatalogHint")}</span>
+      </div>
+      <Input
+        className="mt-2 h-8 text-xs"
+        value={query}
+        maxLength={80}
+        aria-label={t("kennzahlMunicipality")}
+        placeholder={t("kennzahlMunicipalityPlaceholder")}
+        onValueChange={(value) => setQuery(value)}
+      />
+      {results.length > 0 && (
+        <div className="mt-1 grid gap-0.5">
+          {results.map((item) => (
+            <button
+              key={item.municipalityCode}
+              type="button"
+              className="truncate rounded-md px-2 py-1 text-left text-[11px] hover:bg-accent"
+              onClick={() => { setMunicipality(item); setQuery(""); }}
+            >
+              {item.name} · {item.municipalityCode}
+            </button>
+          ))}
+        </div>
+      )}
+      <p className="mt-1 truncate text-[11px] font-medium" data-testid="kennzahl-catalog-municipality">
+        {municipality ? municipality.name : t("kennzahlNeedsMunicipality")}
+      </p>
+      <div className="mt-2 grid max-h-80 gap-1 overflow-y-auto pr-1">
+        {KENNZAHL_CATALOG.map((definition) => {
+          const expression = kennzahlExpressionFor(definition.output);
+          const label = t(definition.labelKey as "populationDensity");
+          const formula = expression
+            ? kennzahlFormulaText(expression, (input) => datasetTitle(input, t), (value) => format.number(value))
+            : t("kennzahlPrimary");
+          return (
+            <button
+              key={definition.id}
+              type="button"
+              disabled={!expression || !municipality}
+              title={formula}
+              className="rounded-lg border bg-background px-2 py-1.5 text-left hover:border-teal-600 hover:bg-teal-50 disabled:opacity-55 disabled:hover:border-border disabled:hover:bg-background dark:hover:bg-teal-950"
+              onClick={() => { if (municipality) onInsert(definition, municipality); }}
+            >
+              <span className="flex items-center gap-1.5">
+                <Sigma className="size-3 shrink-0 text-teal-700 dark:text-teal-300" />
+                <span className="truncate text-[11px] font-medium">{label}</span>
+              </span>
+              <span className="mt-0.5 block truncate text-[10px] text-muted-foreground">{formula}</span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
 }
 
 function AnalysisEditor({ analysis, analyses }: { analysis: AnalysisRecord; analyses: MunicipalityAnalysisSummary[] }) {
@@ -137,7 +258,7 @@ function AnalysisEditor({ analysis, analyses }: { analysis: AnalysisRecord; anal
   const optimisticOperations = getPendingOperations(analysis.id);
   const [graph, setGraph] = useState(() => {
     return optimisticOperations.length
-      ? applyMunicipalityAnalysisGraphOperations(analysis.graph, optimisticOperations).graph
+      ? applyMunicipalityAnalysisGraphOperations(analysis.graph, optimisticOperations, expandKennzahlIntoGraph).graph
       : analysis.graph;
   });
   const graphRef = useRef(graph);
@@ -160,7 +281,7 @@ function AnalysisEditor({ analysis, analyses }: { analysis: AnalysisRecord; anal
 
   useEffect(() => {
     if (!optimisticOperations.length) return;
-    const next = applyMunicipalityAnalysisGraphOperations(graphRef.current, optimisticOperations).graph;
+    const next = applyMunicipalityAnalysisGraphOperations(graphRef.current, optimisticOperations, expandKennzahlIntoGraph).graph;
     graphRef.current = next;
     setGraph(next);
     // The signature changes only when the layout-level operation journal changes.
@@ -172,7 +293,7 @@ function AnalysisEditor({ analysis, analyses }: { analysis: AnalysisRecord; anal
     options?: { debounceKey?: string; delay?: number },
   ) => {
     try {
-      const next = applyMunicipalityAnalysisGraphOperations(graphRef.current, operations).graph;
+      const next = applyMunicipalityAnalysisGraphOperations(graphRef.current, operations, expandKennzahlIntoGraph).graph;
       graphRef.current = next;
       setGraph(next);
       enqueue(analysis.id, operations, options);
@@ -194,7 +315,7 @@ function AnalysisEditor({ analysis, analyses }: { analysis: AnalysisRecord; anal
       selected: graph.selectedNodeId === node.id,
       dragHandle: ".drag-handle",
       data: node.type === "dataset" ? {
-        kind: "dataset", title: datasetTitle(node.data.dataset, t), subtitle: node.data.dataset.municipalityName, series,
+        kind: "dataset", title: datasetTitle(node.data.dataset, t), subtitle: datasetMunicipalityName(node.data.dataset) ?? t("constantNode"), series,
         errorLabel, warningLabel: series?.warnings.length ? t("analysisDivisionWarnings", { count: series.warnings.length }) : null,
       } : {
         kind: "operator", title: t(`operator_${node.data.operator}`), subtitle: t("operatorNode"), symbol: OPERATOR_SYMBOLS[node.data.operator], series,
@@ -273,6 +394,57 @@ function AnalysisEditor({ analysis, analyses }: { analysis: AnalysisRecord; anal
     }]);
   }
 
+  // Reuses the municipality already on the canvas, so the catalogue opens on whatever the
+  // analysis is about instead of asking again.
+  const graphMunicipality = useMemo(() => {
+    if (!data) return null;
+    const node = graph.nodes.find((item) => item.type === "dataset" && item.data.dataset.kind !== "constant");
+    const code = node && node.type === "dataset" ? datasetMunicipalityName(node.data.dataset) && node.data.dataset : null;
+    const municipalityCode = code && "municipalityCode" in code ? code.municipalityCode : null;
+    return data.index.municipalities.find((item) => item.municipalityCode === municipalityCode) ?? null;
+  }, [data, graph.nodes]);
+
+  function insertKennzahl(definition: KennzahlDefinition, municipality: MunicipalityIndexItem) {
+    const operations = kennzahlDerivationOperations(
+      bindKennzahlInput(definition.output, municipality.municipalityCode, municipality.name),
+      nextGraphOrigin(graphRef.current.nodes),
+      graphRef.current,
+    );
+    if (!operations) return;
+    if (commitOperations(operations)) {
+      toast.success(t("kennzahlInserted", { kennzahl: t(definition.labelKey as "populationDensity") }));
+    }
+  }
+
+  /**
+   * Turns the selected node into a reusable Kennzahl. The server reads the persisted
+   * graph, so anything still queued has to land first — otherwise it would save a
+   * half-built formula.
+   */
+  function saveSelectionAsMetric() {
+    if (!selectedNode) return;
+    if (saveState === "saving" || getPendingOperations(analysis.id).length) {
+      toast.error(t("saveAsKennzahlPending"));
+      return;
+    }
+    const name = window.prompt(t("saveAsKennzahlPrompt"), selectedTitle);
+    if (!name?.trim()) return;
+    startTransition(async () => {
+      const result = await saveMunicipalityAnalysisNodeAsMetric({
+        analysisId: analysis.id, nodeId: selectedNode.id, name,
+      });
+      if (result.ok) {
+        toast.success(t("saveAsKennzahlSaved", { name: result.name }));
+        return;
+      }
+      toast.error(t(
+        result.reason === "mixed-municipalities" ? "saveAsKennzahlMixedMunicipalities"
+          : result.reason === "no-municipality-input" ? "saveAsKennzahlNoMunicipality"
+            : "saveAsKennzahlMissingInput",
+      ));
+    });
+  }
+
   function commitRename() {
     if (!name.trim() || name.trim() === analysis.name) { setName(analysis.name); setRenaming(false); return; }
     startTransition(async () => {
@@ -292,7 +464,7 @@ function AnalysisEditor({ analysis, analyses }: { analysis: AnalysisRecord; anal
   }
 
   return (
-    <div className="grid min-h-[42rem] gap-3 xl:grid-cols-[12rem_minmax(0,1fr)_20rem]" data-testid="municipality-analysis-editor">
+    <div className="grid min-h-[42rem] gap-3 xl:grid-cols-[16rem_minmax(0,1fr)_20rem]" data-testid="municipality-analysis-editor">
       <aside className="rounded-2xl border bg-card p-3 shadow-sm">
         <label htmlFor="analysis-switcher" className="text-xs font-semibold text-muted-foreground">{t("savedAnalyses")}</label>
         <select id="analysis-switcher" className="mt-1 h-8 w-full rounded-lg border bg-background px-2 text-xs" value={analysis.id} onChange={(event) => router.push(`/municipalities/analysis?analysis=${encodeURIComponent(event.target.value)}`)}>
@@ -317,6 +489,13 @@ function AnalysisEditor({ analysis, analyses }: { analysis: AnalysisRecord; anal
           ))}
         </div>
         <p className="mt-4 text-[11px] leading-5 text-muted-foreground">{t("analysisUnitRule")}</p>
+        {data ? (
+          <KennzahlCatalog
+            municipalities={data.index.municipalities}
+            initialMunicipality={graphMunicipality}
+            onInsert={insertKennzahl}
+          />
+        ) : null}
       </aside>
 
       <section className="relative min-h-[32rem] overflow-hidden rounded-2xl border bg-muted/20 shadow-sm">
@@ -382,7 +561,7 @@ function AnalysisEditor({ analysis, analyses }: { analysis: AnalysisRecord; anal
         <h2 className="mt-1 truncate font-semibold">{selectedTitle}</h2>
         {dataError ? <p className="mt-5 flex gap-2 text-sm text-destructive"><TriangleAlert className="size-4 shrink-0" />{t("analysisDataError")}</p>
           : selectedSeries?.error ? <p className="mt-5 flex gap-2 text-sm text-destructive"><TriangleAlert className="size-4 shrink-0" />{t(selectedSeries.error === "missing-input" ? "analysisMissingInput" : "analysisIncompatibleUnits")}</p>
-            : selectedSeries ? <div className="mt-4"><AnalysisSeriesChart series={selectedSeries} label={selectedTitle} trueLabel={t("booleanTrue")} falseLabel={t("booleanFalse")} />{selectedSeries.warnings.length > 0 && <p className="mt-3 text-xs text-amber-700 dark:text-amber-300">{t("analysisDivisionWarnings", { count: selectedSeries.warnings.length })}</p>}</div>
+            : selectedSeries ? <div className="mt-4"><AnalysisSeriesChart series={selectedSeries} label={selectedTitle} trueLabel={t("booleanTrue")} falseLabel={t("booleanFalse")} />{selectedSeries.warnings.length > 0 && <p className="mt-3 text-xs text-amber-700 dark:text-amber-300">{t("analysisDivisionWarnings", { count: selectedSeries.warnings.length })}</p>}<Button variant="outline" className="mt-4 w-full" disabled={pending} onClick={saveSelectionAsMetric}><Bookmark className="size-4" />{t("saveAsKennzahl")}</Button></div>
               : <p className="mt-5 text-sm leading-6 text-muted-foreground">{t("analysisSelectResult")}</p>}
       </aside>
     </div>

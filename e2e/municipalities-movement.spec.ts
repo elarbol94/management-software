@@ -55,6 +55,7 @@ test("population movement is compact, shareable and charted", async ({
     details.getByText("Statistische Korrektur", { exact: true }),
   ).toBeVisible();
 
+  await page.getByLabel("Datenart").selectOption("derived");
   await page.getByLabel("Komponente").selectOption("birth-balance-rate");
   await expect(page.getByTestId("movement-definition")).toContainText(
     "Lebendgeborene minus Gestorbene",

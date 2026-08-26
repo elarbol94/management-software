@@ -15,11 +15,11 @@ import { MunicipalityPoliticsPanel } from "./municipality-politics-panel";
 import type { MunicipalityDatasetRef } from "../analysis";
 import {
   COST_CATEGORIES,
+  COST_TARGETS,
+  isCostTargetId,
   MUNICIPALITY_COSTS_FIRST_YEAR,
   MUNICIPALITY_COSTS_LATEST_YEAR,
-  isCostCategoryId,
   isCostMeasureId,
-  median,
   municipalityCostPerCapita,
   municipalityCostRealPerCapita,
   municipalityPopulationBand,
@@ -27,6 +27,7 @@ import {
   validateMunicipalityCostSeries,
   type CostCategoryId,
   type CostMeasureId,
+  type CostTargetId,
   type MunicipalityCostSeries,
 } from "../costs";
 import {
@@ -36,6 +37,9 @@ import {
   type MunicipalityIndexItem,
 } from "../data";
 import type { MunicipalityInvestmentIndex } from "../investments";
+import type { MunicipalityMetricRecord } from "../queries";
+import { deleteMunicipalityMetric } from "../actions";
+import { analysisUnitLabel } from "../analysis";
 import {
   digitalPlatformCostEstimate,
   digitalPlatformMetricValue,
@@ -67,14 +71,30 @@ import {
   type SexFilter,
 } from "../demography";
 import {
-  isMovementMetricId,
-  movementMetricPalette,
-  movementMetricUnit,
-  movementMetricValue,
+  isMovementTargetId,
+  movementTargetPalette,
+  movementTargetUnit,
+  movementTargetValue,
   validateMunicipalityMovementSeries,
-  type MovementMetricId,
+  type MovementTargetId,
   type MunicipalityMovementSeries,
 } from "../movement";
+import {
+  ageMeasureFor,
+  AGE_VIEWS_BY_KIND,
+  COST_MEASURES_BY_KIND,
+  DIGITAL_VIEWS_BY_KIND,
+  createKennzahlLookup,
+  createPeerMedianIndex,
+  kennzahlExpressionInputs,
+  isDataKind,
+  MAP_METRICS_BY_KIND,
+  MOVEMENT_VIEWS_BY_KIND,
+  POLITICS_VIEWS_BY_KIND,
+  POPULATION_VIEWS_BY_KIND,
+  type DataKind,
+  type KennzahlExpression,
+} from "../kennzahlen";
 import {
   CANONICAL_PARTIES,
   POLITICS_FIRST_YEAR,
@@ -136,15 +156,21 @@ function populationBandRange(population: number, formatter: Intl.NumberFormat) {
   return formatter.format(minimum) + "–" + formatter.format(maximum - 1);
 }
 
+const COST_CATEGORY_IDS: readonly CostTargetId[] = COST_CATEGORIES.map(({ id }) => id);
+/** Keeps a URL parameter inside the list its Datenart allows, falling back to the first. */
+const allow = <T extends string>(value: string, allowed: readonly T[]): T =>
+  (allowed as readonly string[]).includes(value) ? value as T : allowed[0];
+
 type DatasetSelection = {
   metric: MapMetric;
   populationView: PopulationViewId;
   ageView: AgeViewId;
   ageMeasure: AgeMeasure;
   sex: SexFilter;
-  movementView: MovementMetricId;
-  costCategory: CostCategoryId;
+  movementView: MovementTargetId;
+  costCategory: CostTargetId;
   costMeasure: CostMeasureId;
+  customExpression: KennzahlExpression | null;
 };
 type DatasetSeries = {
   index: MunicipalityIndex;
@@ -161,47 +187,23 @@ type DatasetSeries = {
  * domain can never be computed from a different definition than the map paints.
  */
 function createDatasetLookup(selection: DatasetSelection, data: DatasetSeries) {
-  const { metric, populationView, ageView, ageMeasure, sex, movementView, costCategory, costMeasure } = selection;
+  const { metric, populationView, ageView, ageMeasure, sex, movementView, costCategory, costMeasure, customExpression } = selection;
   const { index, population, structure, demography, movement, costs } = data;
   const byCode = new Map(index.municipalities.map((item) => [item.municipalityCode, item]));
   const indicator = isDemographicIndicatorId(ageView) ? ageView : null;
   const ageGroup = indicator ? "0-5" as AgeGroupId : ageView as AgeGroupId;
-  const peerMedians = new Map<number, Map<string, number | null>>();
+  // One shared implementation of the peer comparison, also used to evaluate user-defined
+  // Kennzahlen — see createPeerMedianIndex.
+  const peerMedianIndex = createPeerMedianIndex({ index, population, structure, demography, movement, costs });
+  const peerMedianFor = (code: string, year: number) => peerMedianIndex(code, year, costCategory);
 
-  const peerMedianFor = (code: string, year: number) => {
-    let medians = peerMedians.get(year);
-    if (!medians) {
-      const groups = new Map<string, number[]>();
-      const yearCosts = costs?.years[String(year)]?.values ?? {};
-      const populations = population.years[String(year)]?.values ?? {};
-      for (const municipality of index.municipalities) {
-        const inhabitants = populations[municipality.municipalityCode];
-        const tuple = yearCosts[municipality.municipalityCode];
-        if (!tuple || !inhabitants) continue;
-        const value = municipalityCostPerCapita(tuple, costCategory, inhabitants);
-        if (value === null) continue;
-        const band = municipalityPopulationBand(inhabitants);
-        for (const key of [municipality.state + "|" + band, "*|" + band]) {
-          const group = groups.get(key);
-          if (group) group.push(value);
-          else groups.set(key, [value]);
-        }
-      }
-      medians = new Map();
-      for (const municipality of index.municipalities) {
-        const inhabitants = populations[municipality.municipalityCode];
-        const band = municipalityPopulationBand(inhabitants);
-        const regional = groups.get(municipality.state + "|" + band);
-        const comparison = regional && regional.length >= 5 ? regional : groups.get("*|" + band) ?? [];
-        medians.set(municipality.municipalityCode, median(comparison));
-      }
-      peerMedians.set(year, medians);
-    }
-    return medians.get(code) ?? null;
-  };
+  const customLookup = customExpression
+    ? createKennzahlLookup(customExpression, { index, population, structure, demography, movement, costs }, peerMedianIndex)
+    : null;
 
   const valueFor = (code: string, year: number): number | null => {
     const key = String(year);
+    if (metric === "custom") return customLookup ? customLookup(code, year) : null;
     if (metric === "population") {
       const municipality = byCode.get(code);
       const inhabitants = population.years[key]?.values[code];
@@ -219,7 +221,7 @@ function createDatasetLookup(selection: DatasetSelection, data: DatasetSeries) {
       const counts = movement?.years[key]?.values[code];
       const inhabitants = population.years[key]?.values[code];
       if (!counts || inhabitants === undefined) return null;
-      return movementMetricValue(counts, inhabitants, movementView);
+      return movementTargetValue(counts, inhabitants, movementView);
     }
     const tuple = costs?.years[key]?.values[code];
     if (!tuple) return null;
@@ -237,14 +239,17 @@ function createDatasetLookup(selection: DatasetSelection, data: DatasetSeries) {
 
   /** The years the selected dataset actually covers. */
   const years = () => {
-    const series = metric === "age" ? demography : metric === "movement" ? movement : metric === "costs" ? costs : population;
+    const usesCosts = metric === "custom"
+      ? (customExpression ? kennzahlExpressionInputs(customExpression).some(({ kind }) => kind === "cost-share") : false)
+      : metric === "costs";
+    const series = usesCosts ? costs : metric === "age" ? demography : metric === "movement" ? movement : population;
     return series ? Object.keys(series.years).map(Number) : [];
   };
 
   return { valueFor, peerMedianFor, years };
 }
 
-export function MunicipalitiesWorkspace() {
+export function MunicipalitiesWorkspace({ metrics = [] }: { metrics?: MunicipalityMetricRecord[] }) {
   const t = useTranslations("municipalities");
   const locale = useLocale();
   const router = useRouter();
@@ -335,47 +340,59 @@ export function MunicipalitiesWorkspace() {
   const [activeResult, setActiveResult] = useState(0);
   const [detailsOpen, setDetailsOpen] = useState(false);
 
-  const populationViewParameter = searchParams.get("populationView") ?? "count";
-  const populationView: PopulationViewId = isPopulationViewId(populationViewParameter)
-    ? populationViewParameter
-    : "count";
-  const metricParameter = searchParams.get("metric");
-  const metric: MapMetric =
-    metricParameter === "age" || metricParameter === "movement" || metricParameter === "costs" || metricParameter === "politics" || metricParameter === "digital"
-      ? metricParameter
-      : "population";
-  const ageGroupParameter = searchParams.get("ageGroup") ?? "0-5";
-  const ageGroup: AgeGroupId = isAgeGroupId(ageGroupParameter)
-    ? ageGroupParameter
-    : "0-5";
-  const indicatorParameter = searchParams.get("ageIndicator") ?? "";
-  const indicator: DemographicIndicatorId | null = isDemographicIndicatorId(
-    indicatorParameter,
-  )
-    ? indicatorParameter
-    : null;
-  const ageView: AgeViewId = indicator ?? ageGroup;
-  const ageMeasure: AgeMeasure =
-    searchParams.get("ageMeasure") === "persons" ? "persons" : "share";
+  // Datenart first: it decides which categories and which views the other two dropdowns
+  // offer, so every selection below is coerced into the list its Datenart allows.
+  const dataKind: DataKind = isDataKind(searchParams.get("dataKind")) ? searchParams.get("dataKind") as DataKind : "base";
+  // "custom" is only on offer once the user has saved a Kennzahl of their own.
+  const availableMetrics = MAP_METRICS_BY_KIND[dataKind].filter((item) => item !== "custom" || metrics.length > 0);
+  const metric: MapMetric = allow(searchParams.get("metric") ?? "population", availableMetrics);
+  const customMetricParameter = searchParams.get("customMetric") ?? "";
+  const customMetric = metrics.find(({ id }) => id === customMetricParameter) ?? metrics[0] ?? null;
+  const populationViewParameter = searchParams.get("populationView") ?? "";
+  const populationView: PopulationViewId = allow(
+    isPopulationViewId(populationViewParameter) ? populationViewParameter : "",
+    POPULATION_VIEWS_BY_KIND[dataKind],
+  );
+  const ageViewParameter = searchParams.get("ageIndicator") || searchParams.get("ageGroup") || "";
+  const ageView: AgeViewId = allow(ageViewParameter, AGE_VIEWS_BY_KIND[dataKind]);
+  const indicator: DemographicIndicatorId | null = isDemographicIndicatorId(ageView) ? ageView : null;
+  const ageGroup: AgeGroupId = isAgeGroupId(ageView) ? ageView : "0-5";
+  const ageMeasure: AgeMeasure = ageMeasureFor(dataKind);
   const sexParameter = searchParams.get("sex");
   const sex: SexFilter =
     sexParameter === "female" || sexParameter === "male" ? sexParameter : "all";
-  const movementParameter =
-    searchParams.get("movementMetric") ?? "population-change";
-  const movementView: MovementMetricId = isMovementMetricId(movementParameter)
-    ? movementParameter
-    : "population-change";
+  const movementParameter = searchParams.get("movementMetric") ?? "";
+  const movementView: MovementTargetId = allow(
+    isMovementTargetId(movementParameter) ? movementParameter : "",
+    MOVEMENT_VIEWS_BY_KIND[dataKind],
+  );
+  const costMeasureParameter = searchParams.get("costMeasure") ?? "";
+  const costMeasure: CostMeasureId = allow(
+    isCostMeasureId(costMeasureParameter) ? costMeasureParameter : "",
+    COST_MEASURES_BY_KIND[dataKind],
+  );
+  // The summary column is only meaningful as a raw amount — as a share it is always 100 %.
+  const costCategoryOptions: readonly CostTargetId[] = costMeasure === "absolute"
+    ? COST_TARGETS
+    : COST_CATEGORY_IDS;
   const costCategoryParameter = searchParams.get("costCategory") ?? "0";
-  const costCategory: CostCategoryId = isCostCategoryId(costCategoryParameter) ? costCategoryParameter : "0";
-  const costMeasureParameter = searchParams.get("costMeasure") ?? "share";
-  const costMeasure: CostMeasureId = isCostMeasureId(costMeasureParameter)
-    ? costMeasureParameter : "share";
-  const politicsViewParameter = searchParams.get("politicsView") ?? "leading-list";
-  const politicsView: PoliticsView = isPoliticsView(politicsViewParameter) ? politicsViewParameter : "leading-list";
+  const costCategory: CostTargetId = allow(
+    isCostTargetId(costCategoryParameter) ? costCategoryParameter : "0",
+    costCategoryOptions,
+  );
+  const politicsViewParameter = searchParams.get("politicsView") ?? "";
+  const politicsView: PoliticsView = allow(
+    isPoliticsView(politicsViewParameter) ? politicsViewParameter : "",
+    POLITICS_VIEWS_BY_KIND[dataKind],
+  );
   const politicsPartyParameter = searchParams.get("politicsParty") ?? "oevp";
   const politicsParty: CanonicalPartyId = isCanonicalPartyId(politicsPartyParameter) ? politicsPartyParameter : "oevp";
-  const digitalViewParameter = searchParams.get("digitalView") ?? "overview";
-  const digitalView: DigitalPlatformViewId = isDigitalPlatformViewId(digitalViewParameter) ? digitalViewParameter : "overview";
+  const digitalViewParameter = searchParams.get("digitalView") ?? "";
+  const digitalViewOptions = DIGITAL_VIEWS_BY_KIND[dataKind].length ? DIGITAL_VIEWS_BY_KIND[dataKind] : DIGITAL_VIEWS_BY_KIND.base;
+  const digitalView: DigitalPlatformViewId = allow(
+    isDigitalPlatformViewId(digitalViewParameter) ? digitalViewParameter : "",
+    digitalViewOptions,
+  );
   const selectedCode = searchParams.get("municipality") ?? "";
   const selected = useMemo(
     () =>
@@ -385,16 +402,29 @@ export function MunicipalitiesWorkspace() {
     [index, selectedCode],
   );
   const usesCitizenship = metric === "population" && (populationView === "foreign-share" || populationView === "foreign-persons");
+  // A user Kennzahl can reach into any data file, so what to fetch follows its
+  // Ausgangsdaten rather than the selected category.
+  const customInputs = metric === "custom" && customMetric ? kennzahlExpressionInputs(customMetric.expression) : [];
+  const needsDemography = metric === "age" || customInputs.some(({ kind }) => kind === "age-group" || kind === "age-indicator");
+  const needsMovement = metric === "movement" || customInputs.some(({ kind }) => kind === "movement");
+  const needsCosts = metric === "costs" || customInputs.some(({ kind }) => kind === "cost-share");
+  const needsStructure = usesCitizenship || customInputs.some((input) => input.kind === "population"
+    && (input.view === "foreign-share" || input.view === "foreign-persons" || input.view === "structure-population"));
   const selectedProfile = selected ? (profiles?.profiles[selected.municipalityCode] ?? null) : null;
   const selectedCurrentPolitics = selected ? (currentPolitics?.municipalities[selected.municipalityCode] ?? null) : null;
   const selectedElectionHistory = selected ? (electionHistory?.municipalities[selected.municipalityCode]?.events ?? null) : null;
   const selectedDigitalPlatforms = selected ? (digitalPlatforms?.municipalities[selected.municipalityCode] ?? null) : null;
-  const availableFirstYear = metric === "digital" ? 2026
+  const customUsesCosts = customMetric
+    ? kennzahlExpressionInputs(customMetric.expression).some(({ kind }) => kind === "cost-share")
+    : false;
+  const availableFirstYear = metric === "custom" ? (customUsesCosts ? MUNICIPALITY_COSTS_FIRST_YEAR : populationSeries?.firstYear)
+    : metric === "digital" ? 2026
     : metric === "politics" ? POLITICS_FIRST_YEAR
     : metric === "costs"
     ? MUNICIPALITY_COSTS_FIRST_YEAR
     : usesCitizenship ? MUNICIPALITY_STRUCTURE_FIRST_YEAR : populationSeries?.firstYear;
-  const availableLatestYear = metric === "digital" ? 2026
+  const availableLatestYear = metric === "custom" ? (customUsesCosts ? MUNICIPALITY_COSTS_LATEST_YEAR : populationSeries?.latestYear)
+    : metric === "digital" ? 2026
     : metric === "politics" ? POLITICS_LATEST_YEAR
     : metric === "costs"
     ? MUNICIPALITY_COSTS_LATEST_YEAR
@@ -423,11 +453,13 @@ export function MunicipalitiesWorkspace() {
     density: t("populationDensity"),
     "foreign-share": t("populationForeignShare"),
     "foreign-persons": t("populationForeignPersons"),
+    "structure-population": t("populationStructurePopulation"),
   };
   const populationViewDefinitions: Partial<Record<PopulationViewId, string>> = {
     density: t("populationDensityDefinition"),
     "foreign-share": t("populationForeignShareDefinition"),
     "foreign-persons": t("populationForeignPersonsDefinition"),
+    "structure-population": t("populationStructurePopulationDefinition"),
   };
   const indicatorLabels: Record<DemographicIndicatorId, string> = {
     "youth-share": t("indicatorYouthShare"),
@@ -451,7 +483,19 @@ export function MunicipalitiesWorkspace() {
     "women-share": t("indicatorWomenShareDefinition"),
     "women-per-100-men": t("indicatorWomenPer100MenDefinition"),
   };
-  const movementLabels: Record<MovementMetricId, string> = {
+  const metricLabels: Record<MapMetric, string> = {
+    custom: t("metricCustom"),
+    population: t("metricPopulation"),
+    age: t("metricAge"),
+    movement: t("metricMovement"),
+    costs: t("metricCosts"),
+    politics: t("metricPolitics"),
+    digital: t("metricDigital"),
+  };
+  /** Narrows a full label record to the entries the current Datenart offers. */
+  const pick = <K extends string>(labels: Record<K, string>, ids: readonly K[]): Partial<Record<K, string>> =>
+    Object.fromEntries(ids.map((id) => [id, labels[id]])) as Partial<Record<K, string>>;
+  const movementLabels: Record<MovementTargetId, string> = {
     "population-change": t("movementPopulationChange"),
     births: t("movementBirths"),
     deaths: t("movementDeaths"),
@@ -466,8 +510,12 @@ export function MunicipalitiesWorkspace() {
     "internal-migration-balance": t("movementInternalBalance"),
     "internal-migration-balance-rate": t("movementInternalBalanceRate"),
     "statistical-correction": t("movementStatisticalCorrection"),
+    "international-arrivals": t("movementInternationalArrivals"),
+    "international-departures": t("movementInternationalDepartures"),
+    "internal-arrivals": t("movementInternalArrivals"),
+    "internal-departures": t("movementInternalDepartures"),
   };
-  const movementDefinitions: Partial<Record<MovementMetricId, string>> = {
+  const movementDefinitions: Partial<Record<MovementTargetId, string>> = {
     "population-change": t("movementPopulationChangeDefinition"),
     "birth-rate": t("movementBirthRateDefinition"),
     "death-rate": t("movementDeathRateDefinition"),
@@ -478,11 +526,19 @@ export function MunicipalitiesWorkspace() {
     "internal-migration-balance": t("movementInternalBalanceDefinition"),
     "internal-migration-balance-rate": t("movementInternalBalanceRateDefinition"),
     "statistical-correction": t("movementStatisticalCorrectionDefinition"),
+    "international-arrivals": t("movementInternationalArrivalsDefinition"),
+    "international-departures": t("movementInternationalDeparturesDefinition"),
+    "internal-arrivals": t("movementInternalArrivalsDefinition"),
+    "internal-departures": t("movementInternalDeparturesDefinition"),
   };
-  const costCategoryLabels: Record<CostCategoryId, string> = Object.fromEntries(
-    COST_CATEGORIES.map(({ id }) => [id, t(`costCategory${id}` as "costCategory0")]),
-  ) as Record<CostCategoryId, string>;
+  const costCategoryLabels: Record<CostTargetId, string> = {
+    ...Object.fromEntries(
+      COST_CATEGORIES.map(({ id }) => [id, t(`costCategory${id}` as "costCategory0")]),
+    ) as Record<CostCategoryId, string>,
+    total: t("costCategoryTotal"),
+  };
   const costMeasureLabels: Record<CostMeasureId, string> = {
+    absolute: t("costMeasureAbsolute"),
     share: t("costMeasureShare"),
     "per-capita": t("costMeasurePerCapita"),
     "real-per-capita": t("costMeasureRealPerCapita"),
@@ -556,6 +612,7 @@ export function MunicipalitiesWorkspace() {
     </p>
   );
   const costMeasureDefinitions: Record<CostMeasureId, string> = {
+    absolute: t("costMeasureAbsoluteDefinition"),
     share: t("costMeasureShareDefinition"),
     "per-capita": t("costMeasurePerCapitaDefinition"),
     "real-per-capita": t("costMeasureRealPerCapitaDefinition"),
@@ -579,7 +636,7 @@ export function MunicipalitiesWorkspace() {
       return { valueFor, peerMedianFor: () => null, years: () => Array.from({ length: POLITICS_LATEST_YEAR - POLITICS_FIRST_YEAR + 1 }, (_, offset) => POLITICS_FIRST_YEAR + offset), domain: politicsView === "leading-list" ? null : [0, 1] as [number, number] };
     }
     const lookup = createDatasetLookup(
-      { metric, populationView, ageView, ageMeasure, sex, movementView, costCategory, costMeasure },
+      { metric, populationView, ageView, ageMeasure, sex, movementView, costCategory, costMeasure, customExpression: metric === "custom" ? customMetric?.expression ?? null : null },
       {
         index,
         population: populationSeries,
@@ -601,11 +658,11 @@ export function MunicipalitiesWorkspace() {
       }
     }
     const collected = values.subarray(0, count);
-    const diverging = (metric === "movement" && movementMetricPalette(movementView) === "diverging")
+    const diverging = (metric === "movement" && movementTargetPalette(movementView) === "diverging")
       || (metric === "costs" && costMeasure === "peer-deviation");
     return { ...lookup, domain: diverging ? symmetricDomain(collected) : datasetDomain(collected) };
   }, [
-    ageMeasure, ageView, costCategory, costMeasure, costSeries, demographySeries, index,
+    ageMeasure, ageView, costCategory, costMeasure, costSeries, customMetric, demographySeries, index,
     digitalPlatforms, digitalView, electionHistory, metric, movementSeries, movementView, politicsParty, politicsView, populationSeries, populationView, sex, structureSeries,
   ]);
 
@@ -676,7 +733,7 @@ export function MunicipalitiesWorkspace() {
   }, [electionHistory, index, metric, politicsError, politicsHistoryRequested]);
   useEffect(() => {
     if (
-      metric !== "age" ||
+      !needsDemography ||
       demographySeries ||
       demographyError ||
       !index ||
@@ -704,10 +761,10 @@ export function MunicipalitiesWorkspace() {
           setDemographyError(true);
       });
     return () => controller.abort();
-  }, [demographyError, demographySeries, index, metric, populationSeries]);
+  }, [demographyError, demographySeries, index, needsDemography, populationSeries]);
   useEffect(() => {
     if (
-      metric !== "movement" ||
+      !needsMovement ||
       movementSeries ||
       movementError ||
       !index ||
@@ -735,10 +792,10 @@ export function MunicipalitiesWorkspace() {
           setMovementError(true);
       });
     return () => controller.abort();
-  }, [index, metric, movementError, movementSeries, populationSeries]);
+  }, [index, movementError, movementSeries, needsMovement, populationSeries]);
 
   useEffect(() => {
-    if (!usesCitizenship || structureSeries || structureError || !index || !populationSeries) return;
+    if (!needsStructure || structureSeries || structureError || !index || !populationSeries) return;
     const controller = new AbortController();
     fetchJson<MunicipalityStructureSeries>(
       "/data/municipality-structure-2022-2024.json",
@@ -757,10 +814,10 @@ export function MunicipalitiesWorkspace() {
         if (!(error instanceof DOMException && error.name === "AbortError")) setStructureError(true);
       });
     return () => controller.abort();
-  }, [index, populationSeries, structureError, structureSeries, usesCitizenship]);
+  }, [index, needsStructure, populationSeries, structureError, structureSeries]);
 
   useEffect(() => {
-    if (metric !== "costs" || costSeries || costError || !index) return;
+    if (!needsCosts || costSeries || costError || !index) return;
     const controller = new AbortController();
     fetchJson<MunicipalityCostSeries>(
       "/data/municipality-cost-shares-2010-2024.json",
@@ -774,7 +831,7 @@ export function MunicipalitiesWorkspace() {
         if (!(error instanceof DOMException && error.name === "AbortError")) setCostError(true);
       });
     return () => controller.abort();
-  }, [costError, costSeries, index, metric]);
+  }, [costError, costSeries, index, needsCosts]);
 
   useEffect(() => {
     if (metric !== "digital" || digitalPlatforms || digitalPlatformsError || !index) return;
@@ -826,6 +883,18 @@ export function MunicipalitiesWorkspace() {
       next.set("ageGroup", view);
       next.delete("ageIndicator");
     }
+    replace(next);
+  }
+  function updateDataKind(kind: DataKind) {
+    const next = new URLSearchParams(paramsRef.current);
+    if (kind === "base") next.delete("dataKind");
+    else next.set("dataKind", kind);
+    // The view parameters name Ausgangsdaten or Kennzahlen, never both, so they are
+    // dropped and each category falls back to the first view of the new Datenart.
+    for (const name of ["populationView", "ageGroup", "ageIndicator", "ageMeasure", "movementMetric", "costMeasure", "costCategory", "politicsView", "digitalView"]) {
+      next.delete(name);
+    }
+    if (!MAP_METRICS_BY_KIND[kind].includes(metric)) next.delete("metric");
     replace(next);
   }
   function updateMetric(value: MapMetric) {
@@ -896,7 +965,7 @@ export function MunicipalitiesWorkspace() {
     populationUnit === "persons" ? personsFormatter : populationUnit === "share" ? shareFormatter : ratioFormatter;
   const populationUnitLabel =
     populationUnit === "persons" ? t("populationUnit") : populationUnit === "share" ? "" : t("populationDensityUnit");
-  const movementUnit = movementMetricUnit(movementView);
+  const movementUnit = movementTargetUnit(movementView);
   const movementFormatter =
     movementUnit === "persons" ? personsFormatter : ratioFormatter;
   const movementUnitLabel =
@@ -1062,7 +1131,10 @@ export function MunicipalitiesWorkspace() {
     (metric === "population" && (!usesCitizenship || structureSeries)) ||
     (metric === "age" && demographySeries) ||
     (metric === "movement" && movementSeries) ||
-    (metric === "costs" && costSeries);
+    (metric === "costs" && costSeries) ||
+    (metric === "custom"
+      && (!needsDemography || demographySeries) && (!needsMovement || movementSeries)
+      && (!needsCosts || costSeries) && (!needsStructure || structureSeries));
   const history =
     selected && historyAvailable
       ? Array.from({ length: availableLatestYear! - availableFirstYear! + 1 }, (_, offset) => availableFirstYear! + offset).map((historyYear) => ({
@@ -1071,7 +1143,8 @@ export function MunicipalitiesWorkspace() {
         }))
       : null;
   const chartFormatter =
-    metric === "digital" ? personsFormatter
+    metric === "custom" ? ratioFormatter
+    : metric === "digital" ? personsFormatter
     : metric === "politics" ? shareFormatter
     : metric === "costs"
       ? costMeasure === "share" || costMeasure === "peer-deviation"
@@ -1087,7 +1160,8 @@ export function MunicipalitiesWorkspace() {
           ? ratioFormatter
           : shareFormatter;
   const chartUnit =
-    metric === "digital" ? (digitalView === "providers" ? "" : digitalView === "overview" ? t("digitalAreasUnit", { count: activeValue ?? 0 }) : t("digitalPlatformsUnit", { count: activeValue ?? 0 }))
+    metric === "custom" ? analysisUnitLabel(customMetric?.unit ?? "", (id) => t(`units.${id}` as "units.persons"))
+    : metric === "digital" ? (digitalView === "providers" ? "" : digitalView === "overview" ? t("digitalAreasUnit", { count: activeValue ?? 0 }) : t("digitalPlatformsUnit", { count: activeValue ?? 0 }))
     : metric === "politics" ? ""
     : metric === "costs"
       ? costMeasure === "per-capita" || costMeasure === "real-per-capita"
@@ -1105,7 +1179,8 @@ export function MunicipalitiesWorkspace() {
             ? t("yearsUnit")
             : "";
   const metricLabel =
-    metric === "digital" ? digitalViewLabels[digitalView]
+    metric === "custom" ? customMetric?.name ?? t("metricCustom")
+    : metric === "digital" ? digitalViewLabels[digitalView]
     : metric === "politics" ? politicsView === "party-share" ? `${politicsViewLabels[politicsView]} · ${politicsPartyLabels[politicsParty]}` : politicsViewLabels[politicsView]
     : metric === "costs"
       ? costCategoryLabels[costCategory] + " · " + costMeasureLabels[costMeasure]
@@ -1129,7 +1204,8 @@ export function MunicipalitiesWorkspace() {
                   : "sexAll",
             );
   const metricChartLabel = selected
-    ? metric === "digital" ? ""
+    ? metric === "custom" ? t("customChartLabel", { municipality: selected.name, kennzahl: metricLabel })
+      : metric === "digital" ? ""
       : metric === "politics" ? ""
       : metric === "costs"
       ? t("costChartLabel", { municipality: selected.name, category: metricLabel })
@@ -1141,7 +1217,7 @@ export function MunicipalitiesWorkspace() {
           ? t("movementChartLabel", { municipality: selected.name, metric: metricLabel })
           : t("ageChartLabel", { municipality: selected.name, ageGroup: metricLabel })
     : "";
-  const analysisDataset: MunicipalityDatasetRef | null = !selected || metric === "politics" || metric === "digital"
+  const analysisDataset: MunicipalityDatasetRef | null = !selected || metric === "politics" || metric === "digital" || metric === "custom"
     ? null
     : metric === "costs"
       ? { kind: "cost-share", municipalityCode: selected.municipalityCode, municipalityName: selected.name, category: costCategory, measure: costMeasure }
@@ -1196,6 +1272,55 @@ export function MunicipalitiesWorkspace() {
           1 / (year - populationSeries.firstYear),
         ) - 1
       : null;
+
+  /**
+   * The selected municipality's facts, split the same way the map's Datenart dropdown
+   * splits them: what the sources report, and what is computed from it. One definition
+   * feeds both the desktop sidebar and the mobile sheet, which used to hold near-verbatim
+   * copies of the same list.
+   */
+  const derivedValueRow = activeValue !== null && metric !== "politics"
+    && !(metric === "digital" && digitalView === "providers")
+    && !(metric === "population" && populationView === "count");
+  const showsDigitalCosts = metric === "digital" && digitalView === "providers";
+  const hasDerivedFacts = derivedValueRow || showsDigitalCosts
+    || previousValue !== null || averageAnnualPopulationChange !== null;
+  const detailFacts = selected ? (
+    <div className="grid gap-4">
+      <section>
+        <h3 className="text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">{t("dataKindBase")}</h3>
+        <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-2 text-sm">
+          <dt className="text-muted-foreground">{t("municipalityCode")}</dt><dd className="font-mono font-medium">{selected.municipalityCode}</dd>
+          <dt className="text-muted-foreground">{t("state")}</dt><dd className="font-medium">{selected.state}</dd>
+          <dt className="text-muted-foreground">{t("district")}</dt><dd className="font-medium">{selectedProfile?.district ?? t("profileDataUnavailable")}</dd>
+          <dt className="text-muted-foreground">{t("population")}</dt><dd className="font-semibold tabular-nums">{personsFormatter.format(selectedPopulation)}</dd>
+          {metric === "population" && populationView === "density" ? <><dt className="text-muted-foreground">{t("municipalityArea")}</dt><dd className="font-medium tabular-nums">{ratioFormatter.format(selected.areaSquareKilometers)} {t("areaUnit")}</dd></> : null}
+          {showsDigitalCosts ? <><dt className="text-muted-foreground">{metricLabel}</dt><dd className="font-semibold">{digitalProviderDescription(selectedDigitalPlatforms ?? undefined)}</dd></> : null}
+          <dt className="text-muted-foreground">{t("officialWebsite")}</dt>
+          <dd className="min-w-0 font-medium">
+            {selectedProfile?.officialWebsite ? (
+              <a className="break-all text-teal-700 underline underline-offset-2 hover:text-teal-800" href={selectedProfile.officialWebsite} target="_blank" rel="noreferrer">{t("openWebsite")}</a>
+            ) : t("profileDataUnavailable")}
+          </dd>
+        </dl>
+      </section>
+      {hasDerivedFacts ? (
+        <section>
+          <h3 className="text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">{t("dataKindDerived")}</h3>
+          <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-2 text-sm">
+            {showsDigitalCosts ? <>
+              <dt className="text-muted-foreground">{t("digitalCostAnnualLabel")}</dt><dd className="font-semibold tabular-nums" data-testid="digital-cost-annual">{selectedDigitalCostEstimate ? formatDigitalCostRange(selectedDigitalCostEstimate.annualEuros) : t("digitalCostUnavailable")}</dd>
+              <dt className="text-muted-foreground">{t("digitalCostSetupLabel")}</dt><dd className="font-medium tabular-nums">{selectedDigitalCostEstimate ? formatDigitalCostRange(selectedDigitalCostEstimate.setupEuros) : t("digitalCostUnavailable")}</dd>
+              {selectedDigitalCostEstimate ? <><dt className="text-muted-foreground">{t("digitalCostConfidenceLabel")}</dt><dd className="font-medium">{t(selectedDigitalCostEstimate.confidence === "medium" ? "digitalCostConfidenceMedium" : "digitalCostConfidenceLow")}</dd></> : null}
+            </> : null}
+            {derivedValueRow ? <><dt className="text-muted-foreground">{metricLabel}</dt><dd className="font-semibold tabular-nums">{chartFormatter.format(activeValue!)}{chartUnit ? ` ${chartUnit}` : ""}</dd></> : null}
+            {previousValue !== null ? <><dt className="text-muted-foreground">{metric === "population" ? t("populationChangePreviousYear") : metric === "movement" ? t("movementChangePreviousYear") : metric === "age" ? t("ageChangePreviousYear") : t("costChangePreviousYear")}</dt><dd className="font-medium tabular-nums">{formatMetricChange(activeValue, previousValue)}</dd></> : null}
+            {averageAnnualPopulationChange !== null ? <><dt className="text-muted-foreground">{t("populationAverageAnnualChange", { year: populationSeries.firstYear })}</dt><dd className="font-medium tabular-nums">{signedShareFormatter.format(averageAnnualPopulationChange)}</dd></> : null}
+          </dl>
+        </section>
+      ) : null}
+    </div>
+  ) : null;
 
   return (
     <div
@@ -1289,13 +1414,12 @@ export function MunicipalitiesWorkspace() {
           tooltipValues={tooltipValues}
           scaleDomain={scaleDomain}
           movementPalette={
-            metric === "movement" ? movementMetricPalette(movementView) : null
+            metric === "movement" ? movementTargetPalette(movementView) : null
           }
           year={year}
           firstYear={availableFirstYear!}
           latestYear={availableLatestYear!}
           ageView={ageView}
-          ageMeasure={ageMeasure}
           sex={sex}
           movementView={movementView}
           costCategory={costCategory}
@@ -1303,6 +1427,7 @@ export function MunicipalitiesWorkspace() {
           politicsView={politicsView}
           politicsParty={politicsParty}
           digitalView={digitalView}
+          customView={customMetric?.id ?? ""}
           peerMunicipalityCodes={selectedPeerGroup?.municipalityCodes ?? null}
           peerGroupLabel={selectedPeerGroup?.label ?? null}
           movementDefinition={movementDefinitions[movementView] ?? null}
@@ -1310,27 +1435,28 @@ export function MunicipalitiesWorkspace() {
           indicatorDefinition={
             indicator ? indicatorDefinitions[indicator] : null
           }
-          ageLoading={metric === "age" && !demographySeries && !demographyError}
+          ageLoading={needsDemography && !demographySeries && !demographyError}
           ageError={demographyError}
           movementLoading={
-            metric === "movement" && !movementSeries && !movementError
+            needsMovement && !movementSeries && !movementError
           }
           movementError={movementError}
-          costsLoading={metric === "costs" && !costSeries && !costError}
+          costsLoading={needsCosts && !costSeries && !costError}
           costsError={costError}
           politicsLoading={metric === "politics" && !electionHistory && !politicsError}
           politicsError={politicsError}
           digitalLoading={metric === "digital" && !digitalPlatforms && !digitalPlatformsError}
           digitalError={digitalPlatformsError}
-          structureLoading={usesCitizenship && !structureSeries && !structureError}
+          structureLoading={needsStructure && !structureSeries && !structureError}
           structureError={structureError}
           onYearChange={(value) =>
             setParameter(metric === "politics" ? "politicsYear" : "populationYear", String(value))
           }
+          dataKind={dataKind}
+          onDataKindChange={updateDataKind}
           onMetricChange={updateMetric}
           onPopulationViewChange={updatePopulationView}
           onAgeViewChange={updateAgeView}
-          onAgeMeasureChange={(value) => setParameter("ageMeasure", value)}
           onSexChange={(value) => setParameter("sex", value)}
           onMovementViewChange={(value) =>
             setParameter("movementMetric", value)
@@ -1340,6 +1466,13 @@ export function MunicipalitiesWorkspace() {
           onPoliticsViewChange={(value) => setParameter("politicsView", value === "leading-list" ? null : value)}
           onPoliticsPartyChange={(value) => setParameter("politicsParty", value === "oevp" ? null : value)}
           onDigitalViewChange={(value) => setParameter("digitalView", value === "overview" ? null : value)}
+          onCustomViewChange={(value) => setParameter("customMetric", value)}
+          onCustomDelete={(id) => {
+            void deleteMunicipalityMetric(id).then(() => {
+              setParameter("customMetric", null);
+              router.refresh();
+            });
+          }}
           onSelect={selectByCode}
           onReset={() => updateSelection(null)}
           onOpenDetails={() => setDetailsOpen(true)}
@@ -1351,7 +1484,8 @@ export function MunicipalitiesWorkspace() {
             municipalityCode: t("municipalityCode"),
             population: t("population"),
             reference:
-              metric === "digital" ? t("digitalReference", { date: digitalReferenceDate })
+              metric === "custom" ? t("customReference", { year })
+              : metric === "digital" ? t("digitalReference", { date: digitalReferenceDate })
               : metric === "politics" ? t("politicsReference", { year })
               : metric === "costs"
                 ? t("costReference", { year })
@@ -1364,14 +1498,15 @@ export function MunicipalitiesWorkspace() {
             previousYear: t("previousPopulationYear"),
             nextYear: t("nextPopulationYear"),
             metric: t("metric"),
-            populationMetric: t("metricPopulation"),
-            ageMetric: t("metricAge"),
-            movementMetric: t("metricMovement"),
-            costsMetric: t("metricCosts"),
-            politicsMetric: t("metricPolitics"),
-            digitalMetric: t("metricDigital"),
+            dataKind: t("dataKind"),
+            dataKinds: { base: t("dataKindBase"), derived: t("dataKindDerived") },
+            metrics: pick(metricLabels, MAP_METRICS_BY_KIND[dataKind]),
             digitalView: t("digitalView"),
-            digitalViews: digitalViewLabels,
+            digitalViews: pick(digitalViewLabels, digitalViewOptions),
+            customView: t("customView"),
+            customViews: Object.fromEntries(metrics.map(({ id, name }) => [id, name])),
+            customDelete: t("customDelete"),
+            customDeleteConfirm: t("customDeleteConfirm", { name: customMetric?.name ?? "" }),
             digitalProviderLabels,
             digitalDefinition: t(digitalView === "providers" ? "digitalProviderDefinition" : "digitalDefinition"),
             digitalNoneFound: t("digitalNoneFound"),
@@ -1381,27 +1516,23 @@ export function MunicipalitiesWorkspace() {
             digitalLegendFiveToSeven: t("digitalLegendFiveToSeven"),
             digitalLegendEightPlus: t("digitalLegendEightPlus"),
             politicsView: t("politicsView"),
-            politicsViews: politicsViewLabels,
+            politicsViews: pick(politicsViewLabels, POLITICS_VIEWS_BY_KIND[dataKind]),
             politicsParty: t("politicsParty"),
             politicsParties: politicsPartyLabels,
             politicsTie: t("politicsTie"),
             populationView: t("populationView"),
-            populationViews: populationViewLabels,
+            populationViews: pick(populationViewLabels, POPULATION_VIEWS_BY_KIND[dataKind]),
             ageView: t("ageView"),
             movementView: t("movementView"),
             ageGroupsHeading: t("ageGroupsHeading"),
             indicatorsHeading: t("indicatorsHeading"),
-            ageGroups: ageGroupLabels,
-            indicators: indicatorLabels,
-            measures: {
-              share: t("ageMeasureShare"),
-              persons: t("ageMeasurePersons"),
-            },
-            movements: movementLabels,
+            ageGroups: pick(ageGroupLabels, AGE_VIEWS_BY_KIND[dataKind].filter(isAgeGroupId)),
+            indicators: pick(indicatorLabels, AGE_VIEWS_BY_KIND[dataKind].filter(isDemographicIndicatorId)),
+            movements: pick(movementLabels, MOVEMENT_VIEWS_BY_KIND[dataKind]),
             costView: t("costView"),
-            costCategories: costCategoryLabels,
+            costCategories: pick(costCategoryLabels, costCategoryOptions),
             costMeasure: t("costMeasure"),
-            costMeasures: costMeasureLabels,
+            costMeasures: pick(costMeasureLabels, COST_MEASURES_BY_KIND[dataKind]),
             costDefinition: costMeasureDefinitions[costMeasure],
             sexes: {
               all: t("sexAll"),
@@ -1442,6 +1573,7 @@ export function MunicipalitiesWorkspace() {
           chartUnitLabel={chartUnit}
           chartChangeLabels={metric === "population" && populationView === "count" ? { previousYear: t("populationChangePreviousYear"), sinceFirstYear: t("populationChangeSinceFirstYear", { year: populationSeries.firstYear }) } : undefined}
           analysisDataset={analysisDataset}
+          showMetricChart={Boolean(analysisDataset) || metric === "custom"}
         />
       </section>
       <aside
@@ -1461,23 +1593,7 @@ export function MunicipalitiesWorkspace() {
               <h2 className="mt-1 text-2xl font-semibold tracking-tight">
                 {selected.name}
               </h2>
-              <dl className="mt-5 grid grid-cols-[auto_1fr] gap-x-3 gap-y-2 text-sm">
-                <dt className="text-muted-foreground">{t("municipalityCode")}</dt><dd className="font-mono font-medium">{selected.municipalityCode}</dd>
-                <dt className="text-muted-foreground">{t("state")}</dt><dd className="font-medium">{selected.state}</dd>
-                <dt className="text-muted-foreground">{t("district")}</dt><dd className="font-medium">{selectedProfile?.district ?? t("profileDataUnavailable")}</dd>
-                <dt className="text-muted-foreground">{t("population")}</dt><dd className="font-semibold tabular-nums">{personsFormatter.format(selectedPopulation)}</dd>
-                {metric === "population" && populationView === "density" ? <><dt className="text-muted-foreground">{t("municipalityArea")}</dt><dd className="font-medium tabular-nums">{ratioFormatter.format(selected.areaSquareKilometers)} {t("areaUnit")}</dd></> : null}
-                {metric === "digital" && digitalView === "providers" ? <><dt className="text-muted-foreground">{metricLabel}</dt><dd className="font-semibold">{digitalProviderDescription(selectedDigitalPlatforms ?? undefined)}</dd></> : null}
-                {metric === "digital" && digitalView === "providers" ? <>
-                  <dt className="text-muted-foreground">{t("digitalCostAnnualLabel")}</dt><dd className="font-semibold tabular-nums" data-testid="digital-cost-annual">{selectedDigitalCostEstimate ? formatDigitalCostRange(selectedDigitalCostEstimate.annualEuros) : t("digitalCostUnavailable")}</dd>
-                  <dt className="text-muted-foreground">{t("digitalCostSetupLabel")}</dt><dd className="font-medium tabular-nums">{selectedDigitalCostEstimate ? formatDigitalCostRange(selectedDigitalCostEstimate.setupEuros) : t("digitalCostUnavailable")}</dd>
-                  {selectedDigitalCostEstimate ? <><dt className="text-muted-foreground">{t("digitalCostConfidenceLabel")}</dt><dd className="font-medium">{t(selectedDigitalCostEstimate.confidence === "medium" ? "digitalCostConfidenceMedium" : "digitalCostConfidenceLow")}</dd></> : null}
-                </> : null}
-                {activeValue !== null && metric !== "politics" && !(metric === "digital" && digitalView === "providers") && !(metric === "population" && populationView === "count") ? <><dt className="text-muted-foreground">{metricLabel}</dt><dd className="font-semibold tabular-nums">{chartFormatter.format(activeValue)}{chartUnit ? ` ${chartUnit}` : ""}</dd></> : null}
-                {previousValue !== null ? <><dt className="text-muted-foreground">{metric === "population" ? t("populationChangePreviousYear") : metric === "movement" ? t("movementChangePreviousYear") : metric === "age" ? t("ageChangePreviousYear") : t("costChangePreviousYear")}</dt><dd className="font-medium tabular-nums">{formatMetricChange(activeValue, previousValue)}</dd></> : null}
-                {averageAnnualPopulationChange !== null ? <><dt className="text-muted-foreground">{t("populationAverageAnnualChange", { year: populationSeries.firstYear })}</dt><dd className="font-medium tabular-nums">{signedShareFormatter.format(averageAnnualPopulationChange)}</dd></> : null}
-                <dt className="text-muted-foreground">{t("officialWebsite")}</dt><dd className="min-w-0 font-medium">{selectedProfile?.officialWebsite ? <a className="break-all text-teal-700 underline underline-offset-2 hover:text-teal-800" href={selectedProfile.officialWebsite} target="_blank" rel="noreferrer">{t("openWebsite")}</a> : t("profileDataUnavailable")}</dd>
-              </dl>
+              <div className="mt-5">{detailFacts}</div>
               {metric === "digital" && digitalView === "providers" ? renderDigitalCostMethodology() : null}
               {metric === "digital" && selectedDigitalPlatforms && digitalPlatforms ? (
                 <div className="mt-5">
@@ -1643,28 +1759,7 @@ export function MunicipalitiesWorkspace() {
           {selected ? (
             <>
               <div className="rounded-xl border bg-card p-4">
-                <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-3 text-sm">
-                  <dt className="text-muted-foreground">{t("municipalityCode")}</dt><dd className="font-mono font-medium">{selected.municipalityCode}</dd>
-                  <dt className="text-muted-foreground">{t("state")}</dt><dd className="font-medium">{selected.state}</dd>
-                  <dt className="text-muted-foreground">{t("district")}</dt><dd className="font-medium">{selectedProfile?.district ?? t("profileDataUnavailable")}</dd>
-                  <dt className="text-muted-foreground">{t("population")}</dt><dd className="font-semibold tabular-nums">{personsFormatter.format(selectedPopulation)}</dd>
-                  {metric === "population" && populationView === "density" ? <><dt className="text-muted-foreground">{t("municipalityArea")}</dt><dd className="font-medium tabular-nums">{ratioFormatter.format(selected.areaSquareKilometers)} {t("areaUnit")}</dd></> : null}
-                  {metric === "digital" && digitalView === "providers" ? <><dt className="text-muted-foreground">{metricLabel}</dt><dd className="font-semibold">{digitalProviderDescription(selectedDigitalPlatforms ?? undefined)}</dd></> : null}
-                {metric === "digital" && digitalView === "providers" ? <>
-                  <dt className="text-muted-foreground">{t("digitalCostAnnualLabel")}</dt><dd className="font-semibold tabular-nums" data-testid="digital-cost-annual">{selectedDigitalCostEstimate ? formatDigitalCostRange(selectedDigitalCostEstimate.annualEuros) : t("digitalCostUnavailable")}</dd>
-                  <dt className="text-muted-foreground">{t("digitalCostSetupLabel")}</dt><dd className="font-medium tabular-nums">{selectedDigitalCostEstimate ? formatDigitalCostRange(selectedDigitalCostEstimate.setupEuros) : t("digitalCostUnavailable")}</dd>
-                  {selectedDigitalCostEstimate ? <><dt className="text-muted-foreground">{t("digitalCostConfidenceLabel")}</dt><dd className="font-medium">{t(selectedDigitalCostEstimate.confidence === "medium" ? "digitalCostConfidenceMedium" : "digitalCostConfidenceLow")}</dd></> : null}
-                </> : null}
-                  {activeValue !== null && metric !== "politics" && !(metric === "digital" && digitalView === "providers") && !(metric === "population" && populationView === "count") ? <><dt className="text-muted-foreground">{metricLabel}</dt><dd className="font-semibold tabular-nums">{chartFormatter.format(activeValue)}{chartUnit ? ` ${chartUnit}` : ""}</dd></> : null}
-                  {previousValue !== null ? <><dt className="text-muted-foreground">{metric === "population" ? t("populationChangePreviousYear") : metric === "movement" ? t("movementChangePreviousYear") : metric === "age" ? t("ageChangePreviousYear") : t("costChangePreviousYear")}</dt><dd className="font-medium tabular-nums">{formatMetricChange(activeValue, previousValue)}</dd></> : null}
-                  {averageAnnualPopulationChange !== null ? <><dt className="text-muted-foreground">{t("populationAverageAnnualChange", { year: populationSeries.firstYear })}</dt><dd className="font-medium tabular-nums">{signedShareFormatter.format(averageAnnualPopulationChange)}</dd></> : null}
-                  <dt className="text-muted-foreground">{t("officialWebsite")}</dt>
-                  <dd className="min-w-0 font-medium">
-                    {selectedProfile?.officialWebsite ? (
-                      <a className="break-all text-teal-700 underline underline-offset-2" href={selectedProfile.officialWebsite} target="_blank" rel="noreferrer">{t("openWebsite")}</a>
-                    ) : t("profileDataUnavailable")}
-                  </dd>
-                </dl>
+                {detailFacts}
                 {metric === "digital" && digitalView === "providers" ? renderDigitalCostMethodology() : null}
                 {metric === "digital" && selectedDigitalPlatforms && digitalPlatforms ? (
                   <div className="mt-5">
@@ -1698,7 +1793,7 @@ export function MunicipalitiesWorkspace() {
                 </p>
               </div>
 
-              {history && analysisDataset ? (
+              {history && (analysisDataset || metric === "custom") ? (
                 <MunicipalityMetricChart
                   embedded
                   metricLabel={metricLabel}

@@ -85,6 +85,8 @@ test("population structure views are compact, sourced and shareable", async ({ p
   await page.getByRole("option").filter({ hasText: "20622" }).click();
 
   const view = page.getByLabel("Ansicht");
+  // Dichte and Ausländeranteil are Kennzahlen; the head counts stay under Ausgangsdaten.
+  await page.getByLabel("Datenart").selectOption("derived");
   await view.selectOption("density");
   await expect(page.getByTestId("population-definition")).toContainText("geteilt durch die Gemeindefläche");
   await expect(page.getByTestId("municipality-details").getByText("Gemeindefläche", { exact: true })).toBeVisible();
@@ -98,6 +100,7 @@ test("population structure views are compact, sourced and shareable", async ({ p
   await chart.getByTestId("municipality-metric-chart-point-2024").hover();
   await expect(chart.getByTestId("municipality-metric-chart-tooltip")).toHaveText("2024: 4,4 %");
 
+  await page.getByLabel("Datenart").selectOption("base");
   await view.selectOption("foreign-persons");
   await expect(page.getByTestId("population-definition")).toContainText("näherungsweise berechnet");
   await expect(page.getByTestId("municipality-details").getByText("36 Personen", { exact: true })).toBeVisible();

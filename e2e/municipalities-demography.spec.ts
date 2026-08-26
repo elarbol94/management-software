@@ -24,37 +24,41 @@ test("age structure state, details and chart are shareable and interactive", asy
   await page.getByLabel("Kennzahl").selectOption("age");
   await expect(page).toHaveURL(/metric=age/);
   await expect(page.getByLabel("Ansicht")).toHaveValue("0-5");
-  await expect(page.getByRole("button", { name: "Anteil", exact: true })).toHaveAttribute("aria-pressed", "true");
   const year = page.getByRole("slider", { name: "Jahr" });
   await year.fill("2013");
   await expect(page).toHaveURL(/populationYear=2013/);
   const details = page.getByTestId("municipality-details");
   await expect(details.getByText("796", { exact: true })).toBeVisible();
+  // Ausgangsdaten give the head count, Kennzahlen the share of the same age group.
   await expect(details.getByText("40 Personen", { exact: true })).toBeVisible();
+  await page.getByLabel("Datenart").selectOption("derived");
+  await expect(page.getByLabel("Ansicht")).toHaveValue("0-5");
   await expect(details.getByText("5,0 %", { exact: true })).toBeVisible();
   const chart = page.getByTestId("municipality-metric-chart");
   await chart.getByTestId("municipality-metric-chart-point-2013").hover();
   await expect(chart.getByTestId("municipality-metric-chart-tooltip")).toHaveText("2013: 5,0 %");
 
+  await page.getByLabel("Datenart").selectOption("base");
   await page.getByLabel("Ansicht").selectOption("65-79");
-  await page.getByRole("button", { name: "Personen", exact: true }).click();
   await page.getByRole("button", { name: "Frauen", exact: true }).click();
   await expect(page).toHaveURL(/ageGroup=65-79/);
-  await expect(page).toHaveURL(/ageMeasure=persons/);
   await expect(page).toHaveURL(/sex=female/);
   await expect(details.getByText("55 Personen", { exact: true })).toBeVisible();
   await chart.getByTestId("municipality-metric-chart-point-2013").hover();
   await expect(chart.getByTestId("municipality-metric-chart-tooltip")).toHaveText("2013: 55 Personen");
 
   await page.reload();
+  await expect(page.getByLabel("Datenart")).toHaveValue("base");
   await expect(page.getByLabel("Ansicht")).toHaveValue("65-79");
   await expect(page.getByRole("button", { name: "Frauen", exact: true })).toHaveAttribute("aria-pressed", "true");
   await expect(details.getByText("55 Personen", { exact: true })).toBeVisible({ timeout: 15_000 });
 
+  await page.getByLabel("Datenart").selectOption("derived");
   await page.getByLabel("Ansicht").selectOption("old-age-dependency");
   await expect(page).toHaveURL(/ageIndicator=old-age-dependency/);
   await expect(page.getByTestId("indicator-definition")).toContainText("je 100 Personen von 15 bis 64");
-  await expect(page.getByRole("button", { name: "Anteil", exact: true })).toHaveCount(0);
+  // An indicator covers the whole population, so the sex filter does not apply.
+  await expect(page.getByRole("button", { name: "Frauen", exact: true })).toHaveCount(0);
   await expect(details.getByText("21,8 je 100 Personen", { exact: true })).toBeVisible();
   await chart.getByTestId("municipality-metric-chart-point-2013").hover();
   await expect(chart.getByTestId("municipality-metric-chart-tooltip")).toHaveText("2013: 21,8 je 100 Personen");

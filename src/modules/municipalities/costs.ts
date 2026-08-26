@@ -8,7 +8,13 @@ export const COST_CATEGORIES = [
 ] as const;
 
 export type CostCategoryId = (typeof COST_CATEGORIES)[number]["id"];
-export const COST_MEASURES = ["share", "per-capita", "real-per-capita", "peer-deviation"] as const;
+
+// `COST_CATEGORIES` mirrors how the data file is structured, so it must stay at the ten
+// Aufgabengruppen — the validation compares it against `series.categories` and `scales`.
+// "total" is the tuple's sum column: selectable, but not a division of the file.
+export const COST_TARGETS = [...COST_CATEGORIES.map(({ id }) => id), "total"] as const;
+export type CostTargetId = (typeof COST_TARGETS)[number];
+export const COST_MEASURES = ["absolute", "share", "per-capita", "real-per-capita", "peer-deviation"] as const;
 export type CostMeasureId = (typeof COST_MEASURES)[number];
 
 // Statistik Austria, verketteter Verbraucherpreisindex (Jahresdurchschnitt).
@@ -51,6 +57,10 @@ export function isCostCategoryId(value: string): value is CostCategoryId {
   return COST_CATEGORIES.some(({ id }) => id === value);
 }
 
+export function isCostTargetId(value: string): value is CostTargetId {
+  return (COST_TARGETS as readonly string[]).includes(value);
+}
+
 export function isCostMeasureId(value: string): value is CostMeasureId {
   return COST_MEASURES.some((measure) => measure === value);
 }
@@ -62,17 +72,22 @@ export function municipalityCostYears() {
   );
 }
 
-export function municipalityCostCategoryCents(value: MunicipalityCostTuple, category: CostCategoryId) {
-  return value[Number(category) + 1];
+export function municipalityCostCategoryCents(value: MunicipalityCostTuple, category: CostTargetId) {
+  return category === "total" ? value[0] : value[Number(category) + 1];
 }
 
-export function municipalityCostShare(value: MunicipalityCostTuple, category: CostCategoryId) {
+/** The raw expenditure in euro — the Ausgangsdatum every cost Kennzahl is built from. */
+export function municipalityCostAbsolute(value: MunicipalityCostTuple, category: CostTargetId) {
+  return municipalityCostCategoryCents(value, category) / 100;
+}
+
+export function municipalityCostShare(value: MunicipalityCostTuple, category: CostTargetId) {
   return value[0] > 0 ? municipalityCostCategoryCents(value, category) / value[0] : null;
 }
 
 export function municipalityCostPerCapita(
   value: MunicipalityCostTuple,
-  category: CostCategoryId,
+  category: CostTargetId,
   population: number,
 ) {
   return population > 0 ? municipalityCostCategoryCents(value, category) / 100 / population : null;
@@ -80,7 +95,7 @@ export function municipalityCostPerCapita(
 
 export function municipalityCostRealPerCapita(
   value: MunicipalityCostTuple,
-  category: CostCategoryId,
+  category: CostTargetId,
   population: number,
   year: number,
 ) {

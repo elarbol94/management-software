@@ -20,6 +20,15 @@ export const MOVEMENT_METRICS = [
   { id: "statistical-correction", unit: "persons", palette: "diverging" },
 ] as const;
 
+// `MOVEMENT_METRICS` is compared against the data file's colour scales during validation,
+// so it cannot grow. These are the raw tuple components the balances are built from.
+export const MOVEMENT_RAW_TARGETS = [
+  "international-arrivals", "international-departures", "internal-arrivals", "internal-departures",
+] as const;
+export const MOVEMENT_TARGETS = [...MOVEMENT_METRICS.map(({ id }) => id), ...MOVEMENT_RAW_TARGETS] as const;
+export type MovementRawTargetId = (typeof MOVEMENT_RAW_TARGETS)[number];
+export type MovementTargetId = (typeof MOVEMENT_TARGETS)[number];
+
 export type MovementMetricId = (typeof MOVEMENT_METRICS)[number]["id"];
 export type MovementUnit = (typeof MOVEMENT_METRICS)[number]["unit"];
 export type MovementPalette = (typeof MOVEMENT_METRICS)[number]["palette"];
@@ -54,6 +63,31 @@ export function movementMetricUnit(id: MovementMetricId): MovementUnit {
 
 export function movementMetricPalette(id: MovementMetricId): MovementPalette {
   return MOVEMENT_METRICS.find((metric) => metric.id === id)!.palette;
+}
+
+export function isMovementTargetId(value: string): value is MovementTargetId {
+  return (MOVEMENT_TARGETS as readonly string[]).includes(value);
+}
+
+const RAW_TARGET_INDEX: Record<MovementRawTargetId, 5 | 6 | 7 | 8> = {
+  "international-arrivals": 5, "international-departures": 6,
+  "internal-arrivals": 7, "internal-departures": 8,
+};
+
+function isRawTarget(target: MovementTargetId): target is MovementRawTargetId {
+  return target in RAW_TARGET_INDEX;
+}
+
+export function movementTargetValue(counts: MovementCounts, population: number, target: MovementTargetId) {
+  return isRawTarget(target) ? counts[RAW_TARGET_INDEX[target]] : movementMetricValue(counts, population, target);
+}
+
+export function movementTargetUnit(target: MovementTargetId) {
+  return isRawTarget(target) ? "persons" as const : movementMetricUnit(target);
+}
+
+export function movementTargetPalette(target: MovementTargetId) {
+  return isRawTarget(target) ? "sequential" as const : movementMetricPalette(target);
 }
 
 export function movementMetricValue(counts: MovementCounts, population: number, metric: MovementMetricId) {
