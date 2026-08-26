@@ -12,6 +12,7 @@ import {
   serializeDocumentSettings,
 } from "./lib/document-settings";
 import { extractText, parseStoredDocument, type TiptapNode } from "./lib/tiptap";
+import { parseDocumentForExport } from "./lib/suggestions";
 
 function stripPageSpecificContent(doc: TiptapNode): TiptapNode {
   function clean(node: TiptapNode, preserveText = false): TiptapNode | null {
@@ -46,7 +47,7 @@ export async function savePageAsDocumentTemplate(input: z.infer<typeof saveTempl
   const settings = normalizeDocumentSettings(
     page.documentSettingsJson ? JSON.parse(page.documentSettingsJson) : null,
   );
-  const document = parseStoredDocument(page.contentJson);
+  const document = parseDocumentForExport(page.contentJson);
   const content = data.includeContent ? document : stripPageSpecificContent(document);
   const row = db.insert(wikiDocumentTemplates).values({
     name: data.name,

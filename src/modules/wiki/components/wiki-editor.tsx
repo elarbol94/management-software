@@ -38,6 +38,8 @@ import { looksLikeMarkdown, parseMarkdownDocument } from "../lib/markdown-import
 import { calculateWritingStats, type WritingStats } from "../lib/editor-writing";
 import { userMarkColorStyle, type UserMarkColor } from "@/lib/user-mark-colors";
 import { MermaidDiagram, MERMAID_PLACEHOLDER } from "./mermaid-extension";
+import { SuggestionDelete, SuggestionInsert, SuggestionMode } from "./suggestion-extension";
+import { acceptSuggestions, countSuggestions, rejectSuggestions } from "../lib/suggestions";
 import { DocumentExtensions, getDocumentPaginationBreaks, samePaginationBreaks, setDocumentPaginationBreaks, type DocumentPaginationBreak } from "./document-extension";
 import { DocumentLayoutPanel } from "./document-layout-panel";
 import { WikiTypographyDialog, type WikiEditorPreferences } from "./wiki-typography-dialog";
@@ -792,6 +794,8 @@ export function WikiEditor({
   const [imageInFigureIndexDraft, setImageInFigureIndexDraft] = useState(true);
   const [spellcheckIssue, setSpellcheckIssue] = useState<{ issue: SpellcheckIssue; rect: DOMRect } | null>(null);
   const [proofingLanguage, setProofingLanguage] = useState<ProofingLanguage>(initialProofingLanguage);
+  const [suggesting, setSuggesting] = useState(false);
+  const [suggestionCounts, setSuggestionCounts] = useState({ inserted: 0, deleted: 0 });
   const [proofingStatus, setProofingStatus] = useState<"ready" | "checking" | "error">("checking");
   const [proofingSaving, setProofingSaving] = useState(false);
   const proofingCache = useRef(new Map<string, CachedSpellcheckMatch[]>());
@@ -824,6 +828,7 @@ export function WikiEditor({
   }
 
   function updateDerivedState(currentEditor: Editor) {
+    setSuggestionCounts(countSuggestions(currentEditor.getJSON() as never));
     const items: OutlineItem[] = [];
     const captions: FigureCaption[] = [];
     const tables: TableCaption[] = [];
@@ -1105,7 +1110,7 @@ export function WikiEditor({
   ];
   const slashExtension = createSlashCommandExtension({ commands: slashCommands, ariaLabel: t("slash.ariaLabel"), emptyLabel: t("slash.empty") });
 
-  const editor = useEditor({ immediatelyRender: false, editable: false, enableInputRules: ["blockquote", "bulletList", "codeBlock", "heading", "orderedList", "taskItem"], extensions: [StarterKit.configure({ bold: false, code: false, heading: false, listItem: false, italic: false, link: { openOnClick: false }, strike: false }), CollapsibleHeading.configure({ levels: [1, 2, 3] }), HeadingListItem, ...MarkdownShortcutMarks, ...MarkdownDocumentExtensions, ...DocumentExtensions, TaskList, TaskItem.configure({ nested: true }), Citation, PdfEvidence, TaskReference, DeadlineReference, CommentableImage, MermaidDiagram, CommentMark, Highlight, Placeholder.configure({ placeholder: ({ node }) => node.type.name === "heading" ? t("editor.placeholder.heading") : t("editor.placeholder.empty") }), EditorSearchExtension, createSpellcheckExtension((issue, target) => setSpellcheckIssue({ issue, rect: target.getBoundingClientRect() })), MarkdownShortcuts, slashExtension], content,
+  const editor = useEditor({ immediatelyRender: false, editable: false, enableInputRules: ["blockquote", "bulletList", "codeBlock", "heading", "orderedList", "taskItem"], extensions: [StarterKit.configure({ bold: false, code: false, heading: false, listItem: false, italic: false, link: { openOnClick: false }, strike: false }), CollapsibleHeading.configure({ levels: [1, 2, 3] }), HeadingListItem, ...MarkdownShortcutMarks, ...MarkdownDocumentExtensions, ...DocumentExtensions, TaskList, TaskItem.configure({ nested: true }), Citation, PdfEvidence, TaskReference, DeadlineReference, CommentableImage, MermaidDiagram, CommentMark, SuggestionInsert, SuggestionDelete, SuggestionMode, Highlight, Placeholder.configure({ placeholder: ({ node }) => node.type.name === "heading" ? t("editor.placeholder.heading") : t("editor.placeholder.empty") }), EditorSearchExtension, createSpellcheckExtension((issue, target) => setSpellcheckIssue({ issue, rect: target.getBoundingClientRect() })), MarkdownShortcuts, slashExtension], content,
     editorProps: {
       attributes: { class: "prose prose-neutral dark:prose-invert max-w-none min-h-[28rem] focus:outline-none", spellcheck: "false" },
       handlePaste(view, event) {
@@ -1786,6 +1791,15 @@ export function WikiEditor({
 
   const insertedEvidence = useRef<string | null>(null);
   useEffect(() => {
+    if (!editor) return;
+    // The mode is read through a closure in the plugin, so updating the option is
+    // enough — no extension teardown or editor rebuild.
+    editor.extensionManager.extensions
+      .filter((extension) => extension.name === "wikiSuggestionMode")
+      .forEach((extension) => { extension.options.enabled = suggesting; extension.options.author = currentUserId; });
+  }, [currentUserId, editor, suggesting]);
+
+  useEffect(() => {
     if (!editor || !insertEvidenceId) return;
     // Inserting is a mutation, not a focus like the effects below, so it must happen
     // exactly once: the ref guards a re-render and the URL is stripped immediately so
@@ -1946,6 +1960,13 @@ export function WikiEditor({
     setDocumentMode(enabled);
     scheduleDocumentSave();
   }
+  function resolveSuggestions(accept: boolean) {
+    if (!editor) return;
+    const resolved = (accept ? acceptSuggestions : rejectSuggestions)(editor.getJSON() as never);
+    editor.commands.setContent(resolved as never, { emitUpdate: true });
+    setSuggestionCounts({ inserted: 0, deleted: 0 });
+  }
+
   const layoutVisible = documentMode && documentLayoutVisible;
   const figureIndexVisible = documentMode && documentSettings.figures.enabled && figureCaptions.length > 0;
   const tableIndexVisible = documentMode && documentSettings.tables.enabled && tableCaptions.length > 0;
@@ -2267,6 +2288,11 @@ export function WikiEditor({
       <DropdownMenuGroup>
         <DropdownMenuLabel>{t("editor.toolbar.groups.review")}</DropdownMenuLabel>
         <DropdownMenuItem className="xl:hidden" title={proofingButtonTitle} disabled={proofingSaving} onClick={() => void toggleProofingLanguage()}><Languages />{proofingLanguageLabel}<span className="ml-auto text-xs text-muted-foreground">{proofingLanguage === "de-DE" ? "DE → EN" : "EN → DE"}</span></DropdownMenuItem>
+        <DropdownMenuItem onClick={() => setSuggesting((value) => !value)}><ScissorsLineDashed />{suggesting ? t("suggestions.leaveMode") : t("suggestions.enterMode")}</DropdownMenuItem>
+        {(suggestionCounts.inserted > 0 || suggestionCounts.deleted > 0) && <>
+          <DropdownMenuItem onClick={() => resolveSuggestions(true)}><Check />{t("suggestions.acceptAll", { count: suggestionCounts.inserted + suggestionCounts.deleted })}</DropdownMenuItem>
+          <DropdownMenuItem onClick={() => resolveSuggestions(false)}><RotateCcw />{t("suggestions.rejectAll")}</DropdownMenuItem>
+        </>}
         <DropdownMenuItem onClick={() => changeSearchOpen(!searchOpen)}><Search />{t("editor.search.title")}</DropdownMenuItem>
         <DropdownMenuItem className="xl:hidden" onClick={() => setOutlineOpen(true)}><ListTree />{t("editor.outline.title")}</DropdownMenuItem>
         <DropdownMenuItem onClick={prepareComment}><MessageSquareText />{t("inlineComment")}</DropdownMenuItem>

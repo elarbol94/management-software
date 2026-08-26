@@ -2812,6 +2812,12 @@
       "moveTo": "Move to",
       "deleteConfirm": "Delete this point and all sub-points? The evidence itself is kept.",
       "actionFailed": "The change could not be saved."
+    },
+    "suggestions": {
+      "enterMode": "Suggest changes",
+      "leaveMode": "Edit directly",
+      "acceptAll": "{count, plural, one {Accept # suggestion} other {Accept # suggestions}}",
+      "rejectAll": "Reject suggestions"
     }
   },
   "settings": {

@@ -2814,6 +2814,12 @@
       "moveTo": "Verschieben nach",
       "deleteConfirm": "Diesen Punkt und alle Unterpunkte löschen? Die Belege selbst bleiben erhalten.",
       "actionFailed": "Die Änderung konnte nicht gespeichert werden."
+    },
+    "suggestions": {
+      "enterMode": "Änderungen vorschlagen",
+      "leaveMode": "Direkt bearbeiten",
+      "acceptAll": "{count, plural, one {# Vorschlag übernehmen} other {# Vorschläge übernehmen}}",
+      "rejectAll": "Vorschläge verwerfen"
     }
   },
   "settings": {

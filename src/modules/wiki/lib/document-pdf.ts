@@ -6,7 +6,8 @@ import { getAttachment, getAttachmentAbsolutePath } from "@/lib/files";
 import { formatBibliography } from "./citations";
 import { localizeDocumentSettings, parseDocumentSettings } from "./document-settings";
 import { renderDocumentHtml, type RenderedDocument } from "./document-renderer";
-import { parseStoredDocument } from "./tiptap";
+
+import { parseDocumentForExport } from "./suggestions";
 import { getCitationSourcesForPage } from "../research-queries";
 import { renderDocumentPdfBytes } from "./document-pdf-engine";
 import type { WikiTypographySettingsV1 } from "./wiki-typography";
@@ -46,7 +47,7 @@ export async function renderStoredWikiDocument(pageId: string, typography: WikiT
     parseDocumentSettings(page.documentSettingsJson),
     page.citationLocale,
   );
-  const doc = parseStoredDocument(page.contentJson);
+  const doc = parseDocumentForExport(page.contentJson);
   const references = formatBibliography(
     getCitationSourcesForPage(page.id, page.citationLocale, page.citationStyle),
     page.citationLocale,

@@ -2,7 +2,8 @@ import { getSession } from "@/lib/auth";
 import { generateWikiDocumentPdf, renderStoredWikiDocument } from "@/modules/wiki/lib/document-pdf";
 import { parseDocumentSettings } from "@/modules/wiki/lib/document-settings";
 import { renderDocumentMarkdown } from "@/modules/wiki/lib/document-renderer";
-import { parseStoredDocument } from "@/modules/wiki/lib/tiptap";
+
+import { parseDocumentForExport } from "@/modules/wiki/lib/suggestions";
 import { generateDocumentDocx } from "@/modules/wiki/lib/document-docx";
 import { getWikiTypographyForUser } from "@/modules/wiki/lib/wiki-typography.server";
 
@@ -39,7 +40,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
 
     const { page, rendered } = await renderStoredWikiDocument(id, typography);
     if (format === "docx") {
-      const bytes = await generateDocumentDocx(page.title, parseStoredDocument(page.contentJson), parseDocumentSettings(page.documentSettingsJson));
+      const bytes = await generateDocumentDocx(page.title, parseDocumentForExport(page.contentJson), parseDocumentSettings(page.documentSettingsJson));
       return new Response(new Uint8Array(bytes), { headers: { "Content-Type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "Content-Disposition": disposition(page.slug, "docx", inline), "Cache-Control": "no-store" } });
     }
     if (format === "html") {
@@ -51,7 +52,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
       });
     }
     const markdown = `# ${page.title}\n\n${renderDocumentMarkdown(
-      parseStoredDocument(page.contentJson),
+      parseDocumentForExport(page.contentJson),
       parseDocumentSettings(page.documentSettingsJson),
       url.origin,
     )}`;
