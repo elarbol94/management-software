@@ -484,16 +484,26 @@ export type SearchHit =
   | { kind: "pdfPage"; key: string; title: string; snippet: string; href: string; pageNumber: number }
   | { kind: "annotation"; key: string; title: string; snippet: string; href: string; pageNumber: number };
 
-export async function searchResearch(query: string, limit = 40) {
+export async function searchResearch(query: string, options: { limit?: number; tagId?: string } = {}) {
   await requireUserOrThrow();
   const clean = z.string().max(200).parse(query);
+  const { limit = 40, tagId } = z.object({
+    limit: z.number().int().min(1).max(500).optional(),
+    tagId: z.string().min(1).optional(),
+  }).parse(options);
   const fts = buildFtsQuery(clean);
   if (!fts) return { results: [] as SearchHit[] };
+
+  // A tag narrows pages and sources directly, and PDF pages and annotations through
+  // the source they belong to, so one chip filters every kind consistently.
+  const pageTagClause = tagId ? "AND EXISTS (SELECT 1 FROM wiki_page_tags pt WHERE pt.page_id = p.id AND pt.tag_id = ?)" : "";
+  const sourceTagClause = tagId ? "AND EXISTS (SELECT 1 FROM wiki_source_tags st WHERE st.source_id = s.id AND st.tag_id = ?)" : "";
+  const tagParams = tagId ? [tagId] : [];
 
   const pages = sqlite.prepare(`SELECT p.id, p.title, p.slug, p.status,
     snippet(wiki_pages_fts, 2, '<mark>', '</mark>', '…', 12) AS snippet
     FROM wiki_pages_fts f JOIN wiki_pages p ON p.id = f.page_id
-    WHERE wiki_pages_fts MATCH ? AND p.deleted_at IS NULL ORDER BY rank LIMIT 20`).all(fts) as Array<{ id: string; title: string; slug: string; status: string; snippet: string }>;
+    WHERE wiki_pages_fts MATCH ? AND p.deleted_at IS NULL ${pageTagClause} ORDER BY rank LIMIT 20`).all(fts, ...tagParams) as Array<{ id: string; title: string; slug: string; status: string; snippet: string }>;
 
   const sources = sqlite.prepare(`SELECT s.id, s.title, s.type, s.issued_date AS issuedDate,
     snippet(wiki_sources_fts, 4, '<mark>', '</mark>', '…', 12) AS snippet,
@@ -502,9 +512,9 @@ export async function searchResearch(query: string, limit = 40) {
      ORDER BY CASE WHEN d.role = 'primary' THEN 0 ELSE 1 END, d.created_at ASC
      LIMIT 1) AS documentId
     FROM wiki_sources_fts f JOIN wiki_sources s ON s.id = f.source_id
-    WHERE wiki_sources_fts MATCH ? AND s.deleted_at IS NULL ORDER BY rank LIMIT 20`).all(fts) as Array<{ id: string; title: string; type: string; issuedDate: string; snippet: string; documentId: string | null }>;
+    WHERE wiki_sources_fts MATCH ? AND s.deleted_at IS NULL ${sourceTagClause} ORDER BY rank LIMIT 20`).all(fts, ...tagParams) as Array<{ id: string; title: string; type: string; issuedDate: string; snippet: string; documentId: string | null }>;
 
-  const pdfPages = searchPdfPageText(clean, 20);
+  const pdfPages = searchPdfPageText(clean, 20, tagId);
 
   // Annotations were only reachable from inside the evidence picker, so your own
   // highlights could not be found from the search bar at all. No FTS index covers
@@ -514,8 +524,8 @@ export async function searchResearch(query: string, limit = 40) {
     a.page_number AS pageNumber, a.selected_text AS selectedText, a.note, a.label, s.title AS sourceTitle
     FROM wiki_pdf_annotations a JOIN wiki_sources s ON s.id = a.source_id
     WHERE a.deleted_at IS NULL AND s.deleted_at IS NULL
-      AND (a.selected_text LIKE ? OR a.note LIKE ? OR a.label LIKE ?)
-    ORDER BY a.updated_at DESC LIMIT 20`).all(like, like, like) as Array<{ id: string; sourceId: string; documentId: string; pageNumber: number; selectedText: string; note: string; label: string; sourceTitle: string }>;
+      AND (a.selected_text LIKE ? OR a.note LIKE ? OR a.label LIKE ?) ${sourceTagClause}
+    ORDER BY a.updated_at DESC LIMIT 20`).all(like, like, like, ...tagParams) as Array<{ id: string; sourceId: string; documentId: string; pageNumber: number; selectedText: string; note: string; label: string; sourceTitle: string }>;
 
   const pageHits: SearchHit[] = pages.map((row) => ({
     kind: "page", key: `page:${row.id}`, title: row.title, snippet: row.snippet,

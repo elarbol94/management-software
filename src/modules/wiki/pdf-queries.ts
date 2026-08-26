@@ -220,17 +220,20 @@ export function searchEvidenceAnnotations(query = "", limit = 100) {
   }>;
 }
 
-export function searchPdfPageText(query: string, limit = 20) {
+export function searchPdfPageText(query: string, limit = 20, tagId?: string) {
   const words = query.trim().replace(/["'*]/g, " ").split(/\s+/).filter(Boolean).slice(0, 8);
   if (!words.length) return [];
   const fts = words.map((word) => `"${word}"*`).join(" AND ");
+  // A PDF page inherits its source's tags, so a tag chip narrows page hits too.
+  const tagClause = tagId ? "AND EXISTS (SELECT 1 FROM wiki_source_tags st WHERE st.source_id = s.id AND st.tag_id = ?)" : "";
+  const params: Array<string | number> = tagId ? [fts, tagId, limit] : [fts, limit];
   return sqlite.prepare(`
     SELECT f.document_id AS documentId, f.source_id AS sourceId,
            CAST(f.page_number AS integer) AS pageNumber, s.title AS sourceTitle,
            snippet(wiki_pdf_pages_fts, 3, '<mark>', '</mark>', ' … ', 18) AS snippet
     FROM wiki_pdf_pages_fts f
     JOIN wiki_sources s ON s.id = f.source_id
-    WHERE wiki_pdf_pages_fts MATCH ? AND s.deleted_at IS NULL
+    WHERE wiki_pdf_pages_fts MATCH ? AND s.deleted_at IS NULL ${tagClause}
     ORDER BY bm25(wiki_pdf_pages_fts) LIMIT ?
-  `).all(fts, limit) as Array<{ documentId: string; sourceId: string; pageNumber: number; sourceTitle: string; snippet: string }>;
+  `).all(...params) as Array<{ documentId: string; sourceId: string; pageNumber: number; sourceTitle: string; snippet: string }>;
 }

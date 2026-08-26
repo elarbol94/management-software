@@ -19,19 +19,22 @@ function KindIcon({ kind }: { kind: SearchHit["kind"] }) {
   return <BookOpen className="mt-0.5 size-4 shrink-0 text-amber-600" />;
 }
 
-export function SearchResultsView({ query, kind, results }: {
+export function SearchResultsView({ query, kind, tagId, tags, results }: {
   query: string;
   kind: string;
+  tagId: string;
+  tags: Array<{ id: string; name: string }>;
   results: SearchHit[];
 }) {
   const t = useTranslations("wiki");
   const router = useRouter();
   const [draft, setDraft] = useState(query);
 
-  function go(nextQuery: string, nextKind: string) {
+  function go(nextQuery: string, nextKind: string, nextTag = tagId) {
     const params = new URLSearchParams();
     if (nextQuery.trim()) params.set("q", nextQuery.trim());
     if (nextKind !== "all") params.set("kind", nextKind);
+    if (nextTag) params.set("tag", nextTag);
     router.push(`/wiki/search?${params.toString()}`);
   }
 
@@ -76,6 +79,24 @@ export function SearchResultsView({ query, kind, results }: {
           );
         })}
       </div>
+
+      {tags.length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          <span className="self-center text-xs text-muted-foreground">{t("tags")}</span>
+          {tags.map((tag) => (
+            <Button
+              key={tag.id}
+              type="button"
+              size="xs"
+              variant={tagId === tag.id ? "secondary" : "ghost"}
+              aria-pressed={tagId === tag.id}
+              onClick={() => go(query, kind, tagId === tag.id ? "" : tag.id)}
+            >
+              {tag.name}
+            </Button>
+          ))}
+        </div>
+      )}
 
       {!query ? (
         <p className="rounded-xl border border-dashed p-8 text-center text-sm text-muted-foreground">{t("searchResultsEmptyQuery")}</p>
