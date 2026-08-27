@@ -66,8 +66,10 @@ test("a Kennzahl derivation can be inspected, saved and used on the map", async 
   await expect(page.locator(".react-flow__node-dataset")).toHaveCount(3);
   await expect(page.locator(".react-flow__node-operator")).toHaveCount(2);
   const editor = page.getByTestId("municipality-analysis-editor");
-  await expect(editor).toContainText("Lebendgeborene");
-  await expect(editor).toContainText("Einwohnerzahl");
+  // Asserted on the nodes: the sidebar catalog lists every Ausgangsdatum by name, so both
+  // labels are on screen whether or not the derivation reached the canvas.
+  await expect(page.locator(".react-flow__node-dataset").filter({ hasText: "Lebendgeborene" })).toHaveCount(1);
+  await expect(page.locator(".react-flow__node-dataset").filter({ hasText: "Einwohnerzahl" })).toHaveCount(1);
 
   // Without a municipality the structure is there but the values are not, and the graph
   // says so rather than showing empty charts.
@@ -83,8 +85,11 @@ test("a Kennzahl derivation can be inspected, saved and used on the map", async 
   await expect(editor.getByText("Gespeichert", { exact: true })).toBeVisible({ timeout: 30_000 });
   await page.reload();
   await expect(page.locator(".react-flow__node-operator")).toHaveCount(2);
-  page.once("dialog", (dialog) => dialog.accept("Meine Geburtenrate"));
   await page.getByRole("button", { name: "Als Kennzahl speichern" }).click();
+  const saveDialog = page.getByTestId("save-kennzahl-dialog");
+  await expect(saveDialog).toBeVisible();
+  await saveDialog.getByLabel("Name der Kennzahl").fill("Meine Geburtenrate");
+  await saveDialog.getByRole("button", { name: "Speichern" }).click();
   await expect(page.getByText(/Meine Geburtenrate/)).toBeVisible({ timeout: 30_000 });
 
   // It is now selectable on the map and reproduces the built-in number.

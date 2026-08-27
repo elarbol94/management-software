@@ -9,7 +9,22 @@ export default async function MunicipalitiesLayout({ children }: { children: Rea
   const t = await getTranslations("municipalities");
   return (
     <MunicipalityAnalysisPersistenceProvider>
-    <div className="mx-auto flex w-full max-w-[100rem] flex-col gap-2 sm:gap-4">
+    {/* The analysis editor is a canvas, not a document: from lg on it takes the rest of
+        the viewport instead of sitting in a fixed box the page scrolls past. Expressed the
+        same way the app shell handles project focus mode — a :has() rule — so the overview
+        and the analysis landing page keep their normal flow height. */}
+    <style>{`
+      @media (min-width: 1024px) {
+        [data-municipalities-shell]:has([data-analysis-editor]) {
+          height: calc(100dvh - 3rem);
+        }
+        [data-municipalities-shell]:has([data-analysis-editor]) > [data-municipalities-body] {
+          flex: 1;
+          min-height: 0;
+        }
+      }
+    `}</style>
+    <div className="mx-auto flex w-full max-w-[100rem] flex-col gap-2 sm:gap-4" data-municipalities-shell>
       <header className="flex items-center justify-between gap-3 xl:items-end">
         <div className="flex items-start gap-3">
           <div className="mt-1 hidden size-11 shrink-0 items-center justify-center rounded-2xl bg-teal-100 text-teal-700 sm:flex dark:bg-teal-950 dark:text-teal-300">
@@ -23,7 +38,7 @@ export default async function MunicipalitiesLayout({ children }: { children: Rea
         </div>
         <MunicipalitiesSubnav />
       </header>
-      {children}
+      <div className="min-w-0" data-municipalities-body>{children}</div>
     </div>
     </MunicipalityAnalysisPersistenceProvider>
   );

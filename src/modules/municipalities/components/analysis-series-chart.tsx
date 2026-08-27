@@ -77,7 +77,12 @@ export function AnalysisSeriesChart({ series, label, compact = false, trueLabel,
           <text x={chart.plotRight} y="160" textAnchor="end" className="fill-muted-foreground text-[10px]">{chart.maxYear}</text>
         </>}
       </svg>
-      {!compact && <p className="text-xs text-muted-foreground" role="status">{active.year}: <span className="font-semibold text-foreground">{displayValue}</span>{unitLabel && !["share", "currency-per-person"].includes(series.unit) ? ` · ${unitLabel}` : ""}</p>}
+      {/* Also on a node: a sparkline with no number is a shape, not a reading. Hovering a
+          point moves it; without a hover it names the latest year. */}
+      <p className={compact ? "truncate text-[10px] text-muted-foreground" : "text-xs text-muted-foreground"} role={compact ? undefined : "status"}>
+        {active.year}: <span className="font-semibold text-foreground">{displayValue}</span>
+        {!compact && unitLabel && !["share", "currency-per-person"].includes(series.unit) ? ` · ${unitLabel}` : ""}
+      </p>
     </div>
   );
 }

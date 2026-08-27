@@ -30,10 +30,11 @@ import {
   municipalityCostRealPerCapita,
   municipalityCostShare,
   municipalityPopulationBand,
+  COST_TARGETS,
   type CostMeasureId,
   type CostTargetId,
 } from "./costs";
-import { AGE_GROUPS, DEMOGRAPHIC_INDICATORS, demographicIndicatorValue, demographyMetricValue, type AgeMeasure, type AgeTargetId, type AgeViewId, type MapMetric, type SexFilter } from "./demography";
+import { AGE_GROUPS, AGE_TARGETS, DEMOGRAPHIC_INDICATORS, demographicIndicatorValue, demographyMetricValue, type AgeMeasure, type AgeTargetId, type AgeViewId, type MapMetric, type SexFilter } from "./demography";
 import { DIGITAL_PLATFORM_VIEWS, type DigitalPlatformViewId } from "./digital-platforms";
 import { MOVEMENT_METRICS, MOVEMENT_RAW_TARGETS, movementTargetValue, type MovementTargetId } from "./movement";
 import type { PoliticsView } from "./politics";
@@ -467,6 +468,35 @@ export const DIGITAL_VIEWS_BY_KIND: Record<DataKind, readonly DigitalPlatformVie
   base: DIGITAL_PLATFORM_VIEWS.map(({ id }) => id),
   derived: [],
 };
+
+/**
+ * Every Ausgangsdatum the analysis can read, so a graph can be built without going to the
+ * map and dragging one back. Assembled from the same `*_BY_KIND` lists the map's dropdowns
+ * use, which keeps the two offers from drifting apart.
+ *
+ * No `labelKey`: `datasetTitle` already names any dataset reference, and it is the one
+ * that stays right when a view is added. Age groups are listed for both sexes together
+ * because that is the only distinction the title does not spell out.
+ */
+export type AusgangsdatumDefinition = { id: string; category: MapMetric; output: KennzahlInput };
+
+export const AUSGANGSDATEN_CATALOG: AusgangsdatumDefinition[] = [
+  ...POPULATION_VIEWS_BY_KIND.base.map((view): AusgangsdatumDefinition => ({
+    id: `population-${view}`, category: "population", output: { kind: "population", view },
+  })),
+  { id: "attribute-area", category: "population", output: { kind: "attribute", field: "area" } },
+  ...AGE_TARGETS.map((ageGroup): AusgangsdatumDefinition => ({
+    id: `age-${ageGroup}`, category: "age",
+    output: { kind: "age-group", ageGroup, measure: "persons", sex: "all" },
+  })),
+  ...MOVEMENT_VIEWS_BY_KIND.base.map((metric): AusgangsdatumDefinition => ({
+    id: `movement-${metric}`, category: "movement", output: { kind: "movement", metric },
+  })),
+  ...COST_TARGETS.map((category): AusgangsdatumDefinition => ({
+    id: `cost-${category}`, category: "costs",
+    output: { kind: "cost-share", category, measure: "absolute" },
+  })),
+];
 
 const ALL_METRICS: readonly MapMetric[] = ["population", "age", "movement", "costs", "politics", "digital", "custom"];
 const VIEW_COUNT: Record<MapMetric, Record<DataKind, number>> = {

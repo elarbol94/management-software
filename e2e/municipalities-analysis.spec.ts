@@ -70,9 +70,11 @@ test("municipality subpages route and transfer a dataset into a saved analysis",
 
   await page.getByRole("link", { name: "Analyse" }).click();
   await expect(page).toHaveURL(/\/municipalities\/analysis/);
-  await expect(page.getByTestId("municipality-analysis-editor")).toContainText("Graz");
+  // Asserted on the nodes, not the editor: the sidebar catalog lists every Ausgangsdatum
+  // by name, so "Dienstleistungen" is on screen whether or not it reached the canvas.
+  await expect(page.locator(".react-flow__node-dataset").first()).toContainText("Graz");
   await expect(page.locator(".react-flow__node-dataset")).toHaveCount(3);
-  await expect(page.getByTestId("municipality-analysis-editor")).toContainText("Dienstleistungen");
+  await expect(page.locator(".react-flow__node-dataset").filter({ hasText: "Dienstleistungen" })).toHaveCount(1);
 
 
   await page.getByRole("button", { name: "Operator Addieren hinzufügen" }).click();
@@ -95,7 +97,7 @@ test("municipality subpages route and transfer a dataset into a saved analysis",
   // node already on the canvas is reused, Katasterfläche is added, and they meet in a ÷.
   await expect(page.locator(".react-flow__node-dataset")).toHaveCount(4);
   await expect(page.locator(".react-flow__node-operator")).toHaveCount(2);
-  await expect(page.getByTestId("municipality-analysis-editor")).toContainText("Katasterfläche");
+  await expect(page.locator(".react-flow__node-dataset").filter({ hasText: "Katasterfläche" })).toHaveCount(1);
 
   await expect(page.getByTestId("municipality-analysis-editor").getByText("Gespeichert", { exact: true })).toBeVisible({ timeout: 30_000 });
   await page.reload();

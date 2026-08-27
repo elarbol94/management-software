@@ -20,6 +20,7 @@ import type { MunicipalityStructureSeries } from "./structure";
 import {
   ageMeasureFor,
   AGE_VIEWS_BY_KIND,
+  AUSGANGSDATEN_CATALOG,
   bindKennzahlInput,
   buildKennzahlGraph,
   COST_MEASURES_BY_KIND,
@@ -148,6 +149,17 @@ describe("Kennzahl catalogue and classification", () => {
   it("only lists derived outputs and keeps ids unique", () => {
     expect(KENNZAHL_CATALOG.every(({ output }) => datasetClass(output) === "derived")).toBe(true);
     expect(new Set(KENNZAHL_CATALOG.map(({ id }) => id)).size).toBe(KENNZAHL_CATALOG.length);
+  });
+
+  it("offers only Ausgangsdaten in the Ausgangsdaten catalog, with unique ids", () => {
+    expect(AUSGANGSDATEN_CATALOG.every(({ output }) => datasetClass(output) === "base")).toBe(true);
+    expect(new Set(AUSGANGSDATEN_CATALOG.map(({ id }) => id)).size).toBe(AUSGANGSDATEN_CATALOG.length);
+    // An Ausgangsdatum is read straight out of a data file, so its expression is the bare
+    // input — that is what makes the catalog insert it as a single node.
+    expect(AUSGANGSDATEN_CATALOG.every(({ output }) => {
+      const expression = kennzahlExpressionFor(output);
+      return expression !== null && "input" in expression;
+    })).toBe(true);
   });
 
   it("reuses one node when the same Ausgangsdatum appears twice", () => {

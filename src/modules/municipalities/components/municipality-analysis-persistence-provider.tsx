@@ -9,6 +9,15 @@ export type MunicipalityAnalysisSaveState = "saved" | "saving" | "error";
 type EnqueueOptions = { debounceKey?: string; delay?: number };
 type DelayedOperation = { operation: MunicipalityAnalysisGraphOperation; timer: number };
 type AnalysisQueue = {
+  /**
+   * Operations that are already in the reader's copy of the graph. They stay in the queue
+   * until the server confirms them — dropping them early would lose an edit whenever a
+   * navigation renders a server graph saved before the operation landed — but they are
+   * handed out for replay only once. Replaying an operation twice stays harmless only
+   * while every one of them is idempotent, and editing a node's dataset is not: a Kennzahl
+   * whose input has since been unpinned no longer matches, and expands a second time.
+   */
+  applied: WeakSet<MunicipalityAnalysisGraphOperation>;
   ready: MunicipalityAnalysisGraphOperation[];
   inFlight: MunicipalityAnalysisGraphOperation[];
   optimistic: Array<{ operation: MunicipalityAnalysisGraphOperation; debounceKey?: string }>;
@@ -16,14 +25,24 @@ type AnalysisQueue = {
   running: boolean;
   retryTimer: number | null;
   failures: number;
+  /** Resolved once the queue is empty, so a server action can read the persisted graph. */
+  waiters: Array<(drained: boolean) => void>;
 };
 type PersistenceContextValue = {
   enqueue: (analysisId: string, operations: MunicipalityAnalysisGraphOperation[], options?: EnqueueOptions) => void;
   getPendingOperations: (analysisId: string) => MunicipalityAnalysisGraphOperation[];
   getSaveState: (analysisId: string) => MunicipalityAnalysisSaveState;
+  /** Sends everything still queued now and resolves false if it could not be saved. */
+  flush: (analysisId: string) => Promise<boolean>;
+  markApplied: (analysisId: string, operations: MunicipalityAnalysisGraphOperation[]) => void;
 };
 
 const PersistenceContext = createContext<PersistenceContextValue | null>(null);
+
+function settle(queue: AnalysisQueue, drained: boolean) {
+  const waiters = queue.waiters.splice(0);
+  for (const resolve of waiters) resolve(drained);
+}
 
 export function MunicipalityAnalysisPersistenceProvider({ children }: { children: React.ReactNode }) {
   const queues = useRef(new Map<string, AnalysisQueue>());
@@ -38,7 +57,7 @@ export function MunicipalityAnalysisPersistenceProvider({ children }: { children
   const getQueue = useCallback((analysisId: string) => {
     let queue = queues.current.get(analysisId);
     if (!queue) {
-      queue = { ready: [], inFlight: [], optimistic: [], delayed: new Map(), running: false, retryTimer: null, failures: 0 };
+      queue = { applied: new WeakSet(), ready: [], inFlight: [], optimistic: [], delayed: new Map(), running: false, retryTimer: null, failures: 0, waiters: [] };
       queues.current.set(analysisId, queue);
     }
     return queue;
@@ -56,7 +75,7 @@ export function MunicipalityAnalysisPersistenceProvider({ children }: { children
       queue.running = false;
       queue.failures = 0;
       if (queue.ready.length > 0) void run(analysisId);
-      else if (queue.delayed.size === 0) publish(analysisId, "saved");
+      else if (queue.delayed.size === 0) { publish(analysisId, "saved"); settle(queue, true); }
       else publish(analysisId, "saving");
     } catch {
       queue.ready.unshift(...queue.inFlight);
@@ -64,6 +83,7 @@ export function MunicipalityAnalysisPersistenceProvider({ children }: { children
       queue.running = false;
       queue.failures += 1;
       publish(analysisId, "error");
+      settle(queue, false);
       const delay = Math.min(5_000, 1_000 * 2 ** Math.min(queue.failures - 1, 3));
       queue.retryTimer = window.setTimeout(() => {
         queue.retryTimer = null;
@@ -100,22 +120,52 @@ export function MunicipalityAnalysisPersistenceProvider({ children }: { children
     void pump(analysisId);
   }, [getQueue, publish, pump]);
 
+  /** Records that these operations are now in the caller's graph and need no replay. */
+  const markApplied = useCallback((analysisId: string, operations: MunicipalityAnalysisGraphOperation[]) => {
+    const queue = getQueue(analysisId);
+    for (const operation of operations) queue.applied.add(operation);
+  }, [getQueue]);
+
   const getPendingOperations = useCallback((analysisId: string) => {
     const queue = queues.current.get(analysisId);
     if (!queue) return [];
-    return queue.optimistic.map(({ operation }) => operation);
+    return queue.optimistic.flatMap(({ operation }) => queue.applied.has(operation) ? [] : [operation]);
   }, []);
 
   const getSaveState = useCallback((analysisId: string) => states.current.get(analysisId) ?? "saved", []);
 
-  useEffect(() => () => {
-    for (const queue of queues.current.values()) {
-      if (queue.retryTimer !== null) window.clearTimeout(queue.retryTimer);
-      for (const delayed of queue.delayed.values()) window.clearTimeout(delayed.timer);
+  /**
+   * Saving a node as a Kennzahl reads the graph on the server, so anything still sitting
+   * in a debounce timer has to land first. Rather than refusing and asking the reader to
+   * try again, promote the delayed operations and wait for the queue to run dry.
+   */
+  const flush = useCallback((analysisId: string) => {
+    const queue = getQueue(analysisId);
+    for (const delayed of queue.delayed.values()) {
+      window.clearTimeout(delayed.timer);
+      queue.ready.push(delayed.operation);
     }
+    queue.delayed.clear();
+    if (queue.retryTimer !== null) { window.clearTimeout(queue.retryTimer); queue.retryTimer = null; }
+    if (!queue.ready.length && !queue.inFlight.length && !queue.running) return Promise.resolve(true);
+    const settled = new Promise<boolean>((resolve) => { queue.waiters.push(resolve); });
+    publish(analysisId, "saving");
+    void pump(analysisId);
+    return settled;
+  }, [getQueue, publish, pump]);
+
+  useEffect(() => {
+    const active = queues.current;
+    return () => {
+      for (const queue of active.values()) {
+        if (queue.retryTimer !== null) window.clearTimeout(queue.retryTimer);
+        for (const delayed of queue.delayed.values()) window.clearTimeout(delayed.timer);
+        settle(queue, false);
+      }
+    };
   }, []);
 
-  const value = { enqueue, getPendingOperations, getSaveState };
+  const value = { enqueue, getPendingOperations, getSaveState, flush, markApplied };
   return <PersistenceContext.Provider value={value}>{children}</PersistenceContext.Provider>;
 }
 

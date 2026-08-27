@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   addDatasetToGraph,
+  analysisSeriesToCsv,
   analysisUnitLabel,
   datasetRefKey,
   applyMunicipalityAnalysisGraphOperations,
@@ -286,5 +287,67 @@ describe("analysisUnitLabel", () => {
 
   it("leaves unknown atoms untouched instead of failing the lookup", () => {
     expect(analysisUnitLabel("persons/unknown-unit", translate)).toBe("Personen/unknown-unit");
+  });
+});
+
+describe("addDatasetToGraph", () => {
+  it("treats a repeated node id as the node already there, whatever its dataset now is", () => {
+    const first = addDatasetToGraph(emptyMunicipalityAnalysisGraph(), { kind: "population", view: "count" }, "node-1");
+    const edited = applyMunicipalityAnalysisGraphOperations(first.graph, [
+      { version: 1, type: "set-node-municipality", nodeId: "node-1", municipality: { municipalityCode: "70301", municipalityName: "Steeg" } },
+    ] as never).graph;
+    // Replaying the insert must not add a second node under the same id.
+    const replayed = addDatasetToGraph(edited, { kind: "population", view: "count" }, "node-1");
+    expect(replayed.duplicate).toBe(true);
+    expect(replayed.graph.nodes).toHaveLength(1);
+  });
+});
+
+describe("set-node-municipality", () => {
+  const pinned = { kind: "population" as const, view: "count" as const, municipalityCode: "70301", municipalityName: "Steeg" };
+  const graphWith = (dataset: unknown) => municipalityAnalysisGraphSchema.parse({
+    version: 1, nodes: [{ id: "n1", type: "dataset", position: { x: 0, y: 0 }, data: { dataset } }],
+    edges: [], viewport: { x: 0, y: 0, zoom: 1 }, selectedNodeId: null, subject: null,
+  });
+  const setMunicipality = (graph: ReturnType<typeof graphWith>, municipality: unknown) =>
+    applyMunicipalityAnalysisGraphOperations(graph, [
+      { version: 1, type: "set-node-municipality", nodeId: "n1", municipality },
+    ] as never).graph.nodes[0];
+
+  it("releases a pinned node so it follows the graph's subject", () => {
+    const node = setMunicipality(graphWith(pinned), null);
+    expect(node.type === "dataset" && node.data.dataset).toEqual({ kind: "population", view: "count" });
+  });
+
+  it("pins an open node without disturbing the rest of the reference", () => {
+    const node = setMunicipality(graphWith({ kind: "population", view: "density" }), { municipalityCode: "70301", municipalityName: "Steeg" });
+    expect(node.type === "dataset" && node.data.dataset)
+      .toEqual({ kind: "population", view: "density", municipalityCode: "70301", municipalityName: "Steeg" });
+  });
+
+  it("leaves a constant alone — it carries no municipality", () => {
+    const node = setMunicipality(graphWith({ kind: "constant", value: 1000 }), { municipalityCode: "70301", municipalityName: "Steeg" });
+    expect(node.type === "dataset" && node.data.dataset).toEqual({ kind: "constant", value: 1000 });
+  });
+});
+
+describe("analysisSeriesToCsv", () => {
+  const series = (points: Array<{ year: number; value: number | boolean | null }>) =>
+    ({ unit: "persons", valueType: "number" as const, points, error: null, warnings: [] });
+
+  it("keeps a gap as an empty cell and writes a decimal comma", () => {
+    expect(analysisSeriesToCsv(series([
+      { year: 2023, value: 1234.5 },
+      { year: 2024, value: null },
+      { year: 2025, value: 1240 },
+    ]), { year: "Jahr", value: "Einwohnerzahl" })).toBe(
+      "Jahr;Einwohnerzahl\n2023;1234,5\n2024;\n2025;1240",
+    );
+  });
+
+  it("quotes a header carrying the separator and writes booleans as 0/1", () => {
+    expect(analysisSeriesToCsv(series([{ year: 2025, value: true }, { year: 2024, value: false }]),
+      { year: "Jahr", value: 'Anteil; "roh"' }))
+      .toBe('Jahr;"Anteil; ""roh"""\n2025;1\n2024;0');
   });
 });

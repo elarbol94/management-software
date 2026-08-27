@@ -20,9 +20,17 @@ import {
   type Viewport,
   useReactFlow,
 } from "@xyflow/react";
-import { BarChart3, Bookmark, ChevronDown, Database, MapPin, Pencil, Pin, Plus, Save, Sigma, Trash2, TriangleAlert } from "lucide-react";
+import { BarChart3, Bookmark, ChevronDown, Copy, Database, Loader2, MapPin, Pencil, Pin, PinOff, Plus, Save, Search, Sigma, Trash2, TriangleAlert } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import {
@@ -30,12 +38,14 @@ import {
   createMunicipalityAnalysisAndRedirect,
   deleteMunicipalityAnalysis,
   renameMunicipalityAnalysis,
+  saveMunicipalityAnalysisGraph,
   saveMunicipalityAnalysisNodeAsMetric,
 } from "../actions";
 import {
   ANALYSIS_OPERATION_VERSION,
   ANALYSIS_OPERATOR_SYMBOLS,
   analysisOperatorIds,
+  analysisSeriesToCsv,
   isUnaryAnalysisOperator,
   MAX_ANALYSIS_SHIFT_YEARS,
   applyMunicipalityAnalysisGraphOperations,
@@ -50,19 +60,17 @@ import {
   type MunicipalityDatasetRef,
 } from "../analysis";
 import { loadMunicipalityAnalysisData, loadMunicipalityIndex } from "../analysis-data";
-import { searchMunicipalities, type MunicipalityIndexItem } from "../data";
+import { normalizeMunicipalitySearch, searchMunicipalities, type MunicipalityIndexItem } from "../data";
 import type { MapMetric } from "../demography";
 import type { MovementTargetId } from "../movement";
 import type { PopulationViewId } from "../structure";
 import {
+  AUSGANGSDATEN_CATALOG,
   bindKennzahlInput,
   expandKennzahlIntoGraph,
-  kennzahlDerivationOperations,
   kennzahlExpressionFor,
   kennzahlFormulaText,
   KENNZAHL_CATALOG,
-  nextGraphOrigin,
-  type KennzahlDefinition,
   type KennzahlExpression,
   type KennzahlInput,
 } from "../kennzahlen";
@@ -80,6 +88,18 @@ type AnalysisRecord = {
 const OPERATOR_DRAG_TYPE = "application/x-municipality-analysis-operator";
 /** Dragged like an operator, but drops a constant node. */
 const CONSTANT_DRAG_VALUE = "constant";
+/** How many edits back undo reaches. Each entry is a whole graph, capped at 100 nodes. */
+const UNDO_DEPTH = 50;
+// The node card is w-52 and roughly this tall — enough to tell whether a restored
+// viewport still shows anything, which is all these are used for.
+const NODE_WIDTH = 208;
+const NODE_HEIGHT = 150;
+
+/** "Bevölkerungsdichte · Steinfeld · 7 Knoten" — enough to tell two same-named ones apart. */
+function analysisOptionLabel(analysis: MunicipalityAnalysisSummary, t: ReturnType<typeof useTranslations>) {
+  return [analysis.name, analysis.municipalityName, t("analysisNodeCount", { count: analysis.nodeCount })]
+    .filter(Boolean).join(" · ");
+}
 
 function seriesErrorLabel(error: AnalysisSeries["error"], t: ReturnType<typeof useTranslations>) {
   if (!error) return null;
@@ -94,6 +114,8 @@ type DisplayNodeData = {
   title: string;
   subtitle: string;
   pinned?: boolean;
+  /** Present on a dataset node: releases the pin, or pins it to the graph's subject. */
+  togglePin?: { label: string; apply: () => void };
   symbol?: string;
   /** Constants and unary operators carry a number the reader edits on the node itself. */
   editor?: { value: number; label: string; min?: number; max?: number; step: number; commit: (value: number) => void };
@@ -123,7 +145,19 @@ function AnalysisNodeCard({ data, selected }: NodeProps<DisplayNode>) {
         <div className="min-w-0 flex-1">
           <p className="truncate text-xs font-semibold">{data.title}</p>
           <p className={cn("flex items-center gap-1 truncate text-[10px]", data.pinned ? "text-foreground" : "text-muted-foreground")}>
-            {data.pinned && <Pin className="size-2.5 shrink-0" />}
+            {/* The pin is the control, not a badge: a node that arrived from the map is
+                pinned, and releasing it here is what makes it follow the graph's subject. */}
+            {data.togglePin ? (
+              <button
+                type="button"
+                className="nodrag grid size-4 shrink-0 place-items-center rounded hover:bg-accent"
+                aria-label={data.togglePin.label}
+                title={data.togglePin.label}
+                onClick={(event) => { event.stopPropagation(); data.togglePin?.apply(); }}
+              >
+                {data.pinned ? <Pin className="size-2.5" /> : <PinOff className="size-2.5" />}
+              </button>
+            ) : data.pinned && <Pin className="size-2.5 shrink-0" />}
             <span className="truncate">{data.subtitle}</span>
           </p>
         </div>
@@ -203,53 +237,6 @@ function datasetTitle(dataset: MunicipalityDatasetRef | KennzahlInput, t: Return
   return t(key);
 }
 
-/** One row: what the Kennzahl is called, and the formula it is actually computed from. */
-function KennzahlRow({
-  label,
-  formula,
-  derivable,
-  variant,
-  openLabel,
-  onOpen,
-}: {
-  label: string;
-  formula: string;
-  derivable: boolean;
-  variant: CatalogVariant;
-  openLabel: string;
-  onOpen: () => void;
-}) {
-  const page = variant === "page";
-  if (!derivable) {
-    return (
-      <div className={cn("rounded-lg border border-dashed bg-muted/20 px-2 py-1.5", page && "px-3 py-2")}>
-        <p className={cn("font-medium", page ? "text-sm" : "text-[11px]")}>{label}</p>
-        <p className={cn("mt-0.5 text-muted-foreground", page ? "text-xs" : "text-[10px]")}>{formula}</p>
-      </div>
-    );
-  }
-  return (
-    <button
-      type="button"
-      aria-label={`${label} — ${openLabel}`}
-      className={cn(
-        "rounded-lg border bg-background text-left hover:border-teal-600 hover:bg-teal-50 disabled:opacity-55 disabled:hover:border-border disabled:hover:bg-background dark:hover:bg-teal-950",
-        page ? "px-3 py-2" : "px-2 py-1.5",
-      )}
-      onClick={onOpen}
-    >
-      <span className="flex items-center gap-1.5">
-        <Sigma className={cn("shrink-0 text-teal-700 dark:text-teal-300", page ? "size-4" : "size-3")} />
-        <span className={cn("font-medium", page ? "text-sm" : "text-[11px]")}>{label}</span>
-      </span>
-      {/* Never truncated: a formula cut off after three terms is not a derivation. */}
-      <span className={cn("mt-1 block break-words text-muted-foreground", page ? "text-xs leading-5" : "text-[10px] leading-4")}>
-        {formula}
-      </span>
-    </button>
-  );
-}
-
 /** Search-and-pick over the municipality index, used wherever one has to be chosen. */
 function MunicipalityPicker({
   label,
@@ -308,14 +295,76 @@ function MunicipalityPicker({
 
 type CatalogVariant = "sidebar" | "page";
 
+/** One line of either catalog: what it is called, and what it is made of. */
+type CatalogEntry = {
+  id: string;
+  category: MapMetric;
+  label: string;
+  /** The derivation, or null for an Ausgangsdatum, which is read straight from a file. */
+  formula: string | null;
+  dataset: MunicipalityDatasetRef;
+  /** False for a Kennzahl the app computes directly: it is listed, but cannot be opened. */
+  derivable: boolean;
+};
+
+function CatalogRow({
+  entry,
+  variant,
+  openLabel,
+  onOpen,
+}: {
+  entry: CatalogEntry;
+  variant: CatalogVariant;
+  openLabel: string;
+  onOpen: () => void;
+}) {
+  const page = variant === "page";
+  return (
+    <button
+      type="button"
+      aria-label={`${entry.label} — ${openLabel}`}
+      className={cn(
+        "rounded-lg border bg-background text-left hover:border-teal-600 hover:bg-teal-50 dark:hover:bg-teal-950",
+        page ? "px-3 py-2" : "px-2 py-1.5",
+      )}
+      onClick={onOpen}
+    >
+      <span className="flex items-center gap-1.5">
+        {entry.formula === null
+          ? <Database className={cn("shrink-0 text-teal-700 dark:text-teal-300", page ? "size-4" : "size-3")} />
+          : <Sigma className={cn("shrink-0 text-teal-700 dark:text-teal-300", page ? "size-4" : "size-3")} />}
+        <span className={cn("font-medium", page ? "text-sm" : "text-[11px]")}>{entry.label}</span>
+      </span>
+      {/* Never truncated: a formula cut off after three terms is not a derivation. */}
+      {entry.formula !== null && (
+        <span className={cn("mt-1 block break-words text-muted-foreground", page ? "text-xs leading-5" : "text-[10px] leading-4")}>
+          {entry.formula}
+        </span>
+      )}
+    </button>
+  );
+}
+
+/** A Kennzahl the app cannot derive — shown so the reader knows it exists, not clickable. */
+function CatalogNote({ label, note, variant }: { label: string; note: string; variant: CatalogVariant }) {
+  const page = variant === "page";
+  return (
+    <div className={cn("rounded-lg border border-dashed bg-muted/20 px-2 py-1.5", page && "px-3 py-2")}>
+      <p className={cn("font-medium", page ? "text-sm" : "text-[11px]")}>{label}</p>
+      <p className={cn("mt-0.5 text-muted-foreground", page ? "text-xs" : "text-[10px]")}>{note}</p>
+    </div>
+  );
+}
+
 /**
- * Every Kennzahl the app computes, with the formula it is built from. Opening one puts
- * that derivation on a canvas as real Ausgangsdaten and operator nodes, so the way a
- * Kennzahl is calculated is something you can read and edit rather than take on trust.
+ * Everything the analysis can read: the Ausgangsdaten straight out of the data files, and
+ * the Kennzahlen with the formula they are built from. Clicking an entry puts it on the
+ * canvas — an Ausgangsdatum as one node, a Kennzahl as its whole derivation in real nodes,
+ * so the way it is calculated is something you can read and edit rather than take on trust.
  *
- * The formulas need no municipality — only turning one into a graph does.
+ * Neither list needs a municipality; only putting one on a canvas does.
  */
-function KennzahlCatalog({
+function DatasetCatalog({
   variant,
   ownMetrics = [],
   onOpen,
@@ -327,17 +376,41 @@ function KennzahlCatalog({
   const t = useTranslations("municipalities");
   const format = useFormatter();
   const page = variant === "page";
-  const describe = (expression: KennzahlExpression | null) => (expression
-    ? kennzahlFormulaText(expression, (input) => datasetTitle(input, t), (value) => format.number(value))
-    : t("kennzahlPrimary"));
+  const [query, setQuery] = useState("");
 
-  const groups = useMemo(() => {
-    const byCategory = new Map<MapMetric, KennzahlDefinition[]>();
-    for (const definition of KENNZAHL_CATALOG) {
-      byCategory.set(definition.category, [...(byCategory.get(definition.category) ?? []), definition]);
-    }
-    return [...byCategory];
-  }, []);
+  const describe = useCallback((expression: KennzahlExpression) =>
+    kennzahlFormulaText(expression, (input) => datasetTitle(input, t), (value) => format.number(value)), [format, t]);
+
+  const sections = useMemo(() => {
+    const group = (entries: CatalogEntry[]) => {
+      const byCategory = new Map<MapMetric, CatalogEntry[]>();
+      for (const entry of entries) byCategory.set(entry.category, [...(byCategory.get(entry.category) ?? []), entry]);
+      return [...byCategory];
+    };
+    return {
+      ausgangsdaten: group(AUSGANGSDATEN_CATALOG.map(({ id, category, output }) => ({
+        id, category, label: datasetTitle(output, t), formula: null,
+        dataset: bindKennzahlInput(output), derivable: true,
+      }))),
+      kennzahlen: group(KENNZAHL_CATALOG.map(({ id, category, labelKey, output }) => {
+        const expression = kennzahlExpressionFor(output);
+        return {
+          id, category,
+          label: t(labelKey as "populationDensity"),
+          formula: expression ? describe(expression) : null,
+          dataset: bindKennzahlInput(output),
+          derivable: expression !== null,
+        };
+      })),
+    };
+  }, [describe, t]);
+
+  const needle = normalizeMunicipalitySearch(query);
+  const matches = (entry: CatalogEntry) => !needle
+    || normalizeMunicipalitySearch(`${entry.label} ${entry.formula ?? ""}`).includes(needle);
+  const filter = (groups: ReadonlyArray<readonly [MapMetric, CatalogEntry[]]>) => groups
+    .map(([category, entries]) => [category, entries.filter(matches)] as const)
+    .filter(([, entries]) => entries.length > 0);
 
   const categoryLabel = (category: MapMetric) => t(
     (category === "population" ? "metricPopulation"
@@ -348,52 +421,86 @@ function KennzahlCatalog({
               : category === "digital" ? "metricDigital" : "metricCustom") as "metricPopulation",
   );
 
+  const visibleAusgangsdaten = filter(sections.ausgangsdaten);
+  const visibleKennzahlen = filter(sections.kennzahlen);
+  const visibleOwn = ownMetrics.filter(({ name, expression }) =>
+    !needle || normalizeMunicipalitySearch(`${name} ${describe(expression)}`).includes(needle));
+  const empty = !visibleAusgangsdaten.length && !visibleKennzahlen.length && !visibleOwn.length;
+
+  const renderGroups = (groups: ReturnType<typeof filter>) => groups.map(([category, entries]) => (
+    <div key={category}>
+      <h3 className={cn("font-semibold text-muted-foreground", page ? "text-xs tracking-wide uppercase" : "text-[10px] uppercase")}>
+        {categoryLabel(category)}
+      </h3>
+      <div className={cn("mt-1.5 grid gap-1.5", page && "sm:grid-cols-2 xl:grid-cols-3")}>
+        {entries.map((entry) => !entry.derivable
+          ? <CatalogNote key={entry.id} label={entry.label} note={t("kennzahlPrimary")} variant={variant} />
+          : (
+            <CatalogRow
+              key={entry.id}
+              entry={entry}
+              variant={variant}
+              openLabel={t("kennzahlOpenAsGraph")}
+              // Open, not pinned: the derivation is the same everywhere, and which
+              // municipality it is read for is the graph's business.
+              onOpen={() => onOpen({ label: entry.label, dataset: entry.dataset })}
+            />
+          ))}
+      </div>
+    </div>
+  ));
+
   return (
     <section className={cn(page ? "" : "mt-3 border-t pt-3")} data-testid="kennzahl-catalog">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <h2 className={cn("font-semibold", page ? "text-xl" : "text-xs tracking-wide uppercase")}>
-          {page ? t("kennzahlCatalogTitle") : t("kennzahlCatalog")}
+          {page ? t("catalogTitle") : t("catalog")}
         </h2>
         <span className={cn("text-muted-foreground", page ? "text-sm" : "text-[10px]")}>
-          {page ? t("kennzahlCatalogDescription") : t("kennzahlCatalogHint")}
+          {page ? t("catalogDescription") : t("kennzahlCatalogHint")}
         </span>
       </div>
 
-      <div className={cn("mt-3", page ? "grid gap-5" : "grid max-h-56 gap-2.5 overflow-y-auto pr-1")}>
-        {groups.map(([category, definitions]) => (
-          <div key={category}>
-            <h3 className={cn("font-semibold text-muted-foreground", page ? "text-xs tracking-wide uppercase" : "text-[10px] uppercase")}>
-              {categoryLabel(category)}
-            </h3>
-            <div className={cn("mt-1.5 grid gap-1.5", page && "sm:grid-cols-2 xl:grid-cols-3")}>
-              {definitions.map((definition) => {
-                const expression = kennzahlExpressionFor(definition.output);
-                const label = t(definition.labelKey as "populationDensity");
-                return (
-                  <KennzahlRow
-                    key={definition.id}
-                    label={label}
-                    formula={describe(expression)}
-                    derivable={Boolean(expression)}
-                    variant={variant}
-                    openLabel={t("kennzahlOpenAsGraph")}
-                    // Open, not pinned: the derivation is the same everywhere, and which
-                    // municipality it is read for is the graph's business.
-                    onOpen={() => onOpen({ label, dataset: bindKennzahlInput(definition.output) })}
-                  />
-                );
-              })}
-            </div>
-          </div>
-        ))}
+      <div className="relative mt-2">
+        <Search className="pointer-events-none absolute top-1/2 left-2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+        <Input
+          className={cn("pl-7", page ? "max-w-sm" : "h-8 text-xs")}
+          value={query}
+          maxLength={80}
+          aria-label={t("catalogSearch")}
+          placeholder={t("catalogSearch")}
+          onValueChange={(value) => setQuery(value)}
+        />
+      </div>
 
-        {ownMetrics.length > 0 && (
+      <div className={cn("mt-3 grid", page ? "gap-5" : "gap-2.5")}>
+        {empty && <p className={cn("text-muted-foreground", page ? "text-sm" : "text-[10px]")}>{t("catalogNoMatches")}</p>}
+
+        {visibleAusgangsdaten.length > 0 && (
+          <div className={page ? "grid gap-5" : "grid gap-2.5"}>
+            <h3 className={cn("font-semibold", page ? "text-sm tracking-wide uppercase" : "text-[10px] tracking-wide uppercase")}>
+              {t("dataKindBase")}
+            </h3>
+            {renderGroups(visibleAusgangsdaten)}
+          </div>
+        )}
+
+        {visibleKennzahlen.length > 0 && (
+          <div className={page ? "grid gap-5" : "grid gap-2.5"}>
+            <h3 className={cn("font-semibold", page ? "text-sm tracking-wide uppercase" : "text-[10px] tracking-wide uppercase")}>
+              {t("dataKindDerived")}
+            </h3>
+            {renderGroups(visibleKennzahlen)}
+          </div>
+        )}
+
+        {visibleOwn.length > 0 && (
           <div>
             <h3 className={cn("font-semibold text-muted-foreground", page ? "text-xs tracking-wide uppercase" : "text-[10px] uppercase")}>
               {t("kennzahlOwnSection")}
             </h3>
             <div className={cn("mt-1.5 grid gap-1.5", page && "sm:grid-cols-2 xl:grid-cols-3")}>
-              {ownMetrics.map((metric) => (
+              {visibleOwn.map((metric) => (
                 <div key={metric.id} className={cn("rounded-lg border bg-background", page ? "px-3 py-2" : "px-2 py-1.5")}>
                   <p className={cn("font-medium", page ? "text-sm" : "text-[11px]")}>{metric.name}</p>
                   <p className={cn("mt-1 break-words text-muted-foreground", page ? "text-xs leading-5" : "text-[10px] leading-4")}>
@@ -424,15 +531,12 @@ function useWideViewport() {
 
 function AnalysisEditor({ analysis, analyses }: { analysis: AnalysisRecord; analyses: MunicipalityAnalysisSummary[] }) {
   const t = useTranslations("municipalities");
+  const format = useFormatter();
   const router = useRouter();
   const reactFlow = useReactFlow<DisplayNode, Edge>();
-  const { enqueue, getPendingOperations, getSaveState } = useMunicipalityAnalysisPersistence();
+  const { enqueue, flush, getPendingOperations, getSaveState, markApplied } = useMunicipalityAnalysisPersistence();
   const optimisticOperations = getPendingOperations(analysis.id);
-  const [graph, setGraph] = useState(() => {
-    return optimisticOperations.length
-      ? applyMunicipalityAnalysisGraphOperations(analysis.graph, optimisticOperations, expandKennzahlIntoGraph).graph
-      : analysis.graph;
-  });
+  const [graph, setGraph] = useState(analysis.graph);
   const graphRef = useRef(graph);
   const [data, setData] = useState<MunicipalityAnalysisData | null>(null);
   const [dataError, setDataError] = useState(false);
@@ -444,6 +548,14 @@ function AnalysisEditor({ analysis, analyses }: { analysis: AnalysisRecord; anal
   const [dragPositions, setDragPositions] = useState<Record<string, { x: number; y: number }> | null>(null);
   const wide = useWideViewport();
   const [pending, startTransition] = useTransition();
+  const [savingMetric, setSavingMetric] = useState(false);
+  const [metricName, setMetricName] = useState("");
+  const [deleting, setDeleting] = useState(false);
+  const flowRef = useRef<HTMLDivElement>(null);
+  // Undo restores a whole earlier graph rather than inverting operations, so this is a
+  // bounded stack of snapshots. Selection and viewport are excluded: they would fill it
+  // with entries that look like nothing happened.
+  const undoStack = useRef<MunicipalityAnalysisGraph[]>([]);
   const datasetSignature = useMemo(() => JSON.stringify(graph.nodes.flatMap((node) => node.type === "dataset" ? [node.data.dataset] : [])), [graph.nodes]);
   const optimisticSignature = JSON.stringify(optimisticOperations);
 
@@ -455,30 +567,67 @@ function AnalysisEditor({ analysis, analyses }: { analysis: AnalysisRecord; anal
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [datasetSignature]);
 
+  /**
+   * Operations can also be enqueued from outside this editor: dropping a dataset on the
+   * analysis tab queues it and then navigates here. Applying whatever is still unconfirmed
+   * shows it immediately instead of waiting for the next server round trip.
+   */
   useEffect(() => {
     if (!optimisticOperations.length) return;
     const next = applyMunicipalityAnalysisGraphOperations(graphRef.current, optimisticOperations, expandKennzahlIntoGraph).graph;
     graphRef.current = next;
     setGraph(next);
-    // The signature changes only when the layout-level operation journal changes.
+    markApplied(analysis.id, optimisticOperations);
+    // The signature changes only when the operation journal does.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [optimisticSignature]);
+
+  /**
+   * A stored viewport can end up pointing at empty canvas — nodes were moved, or the
+   * window is a different size than when it was saved. React Flow only fits the view for
+   * an empty graph, which would leave a graph that does have nodes looking like it has
+   * none, with nothing on screen to say otherwise.
+   */
+  useEffect(() => {
+    // After paint: before it the canvas has no size, and a zero-sized viewport contains no
+    // node — which would discard a perfectly good stored viewport on every load.
+    const frame = requestAnimationFrame(() => {
+      const container = flowRef.current;
+      const { nodes, viewport } = graphRef.current;
+      if (!container?.clientWidth || !container.clientHeight || !nodes.length) return;
+      const left = -viewport.x / viewport.zoom;
+      const top = -viewport.y / viewport.zoom;
+      const right = left + container.clientWidth / viewport.zoom;
+      const bottom = top + container.clientHeight / viewport.zoom;
+      const anyVisible = nodes.some(({ position }) => position.x < right && position.x + NODE_WIDTH > left
+        && position.y < bottom && position.y + NODE_HEIGHT > top);
+      if (!anyVisible) void reactFlow.fitView();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [reactFlow]);
 
   const commitOperations = useCallback((
     operations: MunicipalityAnalysisGraphOperation[],
     options?: { debounceKey?: string; delay?: number },
   ) => {
     try {
-      const next = applyMunicipalityAnalysisGraphOperations(graphRef.current, operations, expandKennzahlIntoGraph).graph;
+      const before = graphRef.current;
+      const next = applyMunicipalityAnalysisGraphOperations(before, operations, expandKennzahlIntoGraph).graph;
+      if (operations.some(({ type }) => type !== "set-selected-node" && type !== "set-viewport")) {
+        undoStack.current = [...undoStack.current, before].slice(-UNDO_DEPTH);
+      }
       graphRef.current = next;
       setGraph(next);
       enqueue(analysis.id, operations, options);
+      // Applied right here, so the queue never hands them back for a replay on top of
+      // themselves — see `markApplied`.
+      markApplied(analysis.id, operations);
       return true;
     } catch {
       toast.error(t("analysisNodeLimit"));
       return false;
     }
-  }, [analysis.id, enqueue, t]);
+  }, [analysis.id, enqueue, markApplied, setGraph, t]);
 
   // Debounced: editing a constant is typing, and each keystroke should not become its own
   // entry in the operation journal.
@@ -489,6 +638,55 @@ function AnalysisEditor({ analysis, analyses }: { analysis: AnalysisRecord; anal
       { debounceKey: `node-value:${nodeId}`, delay: 400 },
     );
   }, [commitOperations]);
+
+  /**
+   * Undo restores the graph as it stood before the last edit and writes that whole graph,
+   * rather than trying to invert each operation. The queue is drained first so a delayed
+   * move cannot land on top of the restored state.
+   */
+  const undoLastEdit = useCallback(() => {
+    const previous = undoStack.current.pop();
+    if (!previous) return;
+    graphRef.current = previous;
+    setGraph(previous);
+    setDragPositions(null);
+    startTransition(async () => {
+      await flush(analysis.id);
+      await saveMunicipalityAnalysisGraph({ analysisId: analysis.id, graph: previous });
+      toast(t("analysisUndone"));
+      router.refresh();
+    });
+  }, [analysis.id, flush, router, setDragPositions, setGraph, startTransition, t]);
+
+  // Ctrl/Cmd+Z anywhere on the page, except while typing into a field — a node's constant
+  // and the analysis name both live in inputs with their own undo.
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key.toLowerCase() !== "z" || !(event.metaKey || event.ctrlKey) || event.shiftKey) return;
+      const target = event.target as HTMLElement | null;
+      if (target?.closest("input, textarea, select, [contenteditable='true']")) return;
+      event.preventDefault();
+      undoLastEdit();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [undoLastEdit]);
+
+  /**
+   * Pins the node to the graph's subject, or releases a pinned one. A node that arrived
+   * from the map carries the municipality that was selected there; without this the
+   * header can say "no municipality" while every node is about one.
+   */
+  const togglePin = useCallback((nodeId: string) => {
+    const node = graphRef.current.nodes.find(({ id }) => id === nodeId);
+    if (!node || node.type !== "dataset" || node.data.dataset.kind === "constant") return;
+    const pinned = Boolean(datasetMunicipalityName(node.data.dataset));
+    if (!pinned && !graphRef.current.subject) { toast.error(t("pinNodeNoSubject")); return; }
+    commitOperations([{
+      version: ANALYSIS_OPERATION_VERSION, type: "set-node-municipality", nodeId,
+      municipality: pinned ? null : graphRef.current.subject,
+    }]);
+  }, [commitOperations, t]);
 
   const results = useMemo(() => data ? evaluateAnalysisGraph(graph, data) : new Map<string, AnalysisSeries>(), [data, graph]);
   const displayNodes = useMemo<DisplayNode[]>(() => graph.nodes.map((node) => {
@@ -510,6 +708,10 @@ function AnalysisEditor({ analysis, analyses }: { analysis: AnalysisRecord; anal
             ?? graph.subject?.municipalityName
             ?? t("analysisSubjectNone"),
         pinned: Boolean(datasetMunicipalityName(node.data.dataset)),
+        togglePin: node.data.dataset.kind === "constant" ? undefined : {
+          label: datasetMunicipalityName(node.data.dataset) ? t("unpinNode") : t("pinNode"),
+          apply: () => togglePin(node.id),
+        },
         editor: node.data.dataset.kind === "constant"
           ? { value: node.data.dataset.value, label: t("constantValue"), step: 1, commit: (value: number) => setNodeValue(node.id, value) }
           : undefined,
@@ -524,7 +726,7 @@ function AnalysisEditor({ analysis, analyses }: { analysis: AnalysisRecord; anal
         errorLabel, warningLabel: series?.warnings.length ? t("analysisDivisionWarnings", { count: series.warnings.length }) : null,
       },
     };
-  }), [graph.nodes, graph.selectedNodeId, graph.subject, results, setNodeValue, t]);
+  }), [graph.nodes, graph.selectedNodeId, graph.subject, results, setNodeValue, togglePin, t]);
   const positionedNodes = useMemo<DisplayNode[]>(() => (dragPositions
     ? displayNodes.map((node) => (dragPositions[node.id] ? { ...node, position: dragPositions[node.id] } : node))
     : displayNodes), [displayNodes, dragPositions]);
@@ -578,7 +780,7 @@ function AnalysisEditor({ analysis, analyses }: { analysis: AnalysisRecord; anal
         }
       }
     }
-  }, [commitOperations, t]);
+  }, [commitOperations, setDragPositions, t]);
 
   const connect = useCallback((connection: Connection) => {
     if (!connection.source || !connection.target || (connection.targetHandle !== "a" && connection.targetHandle !== "b")) return;
@@ -616,35 +818,37 @@ function AnalysisEditor({ analysis, analyses }: { analysis: AnalysisRecord; anal
     }]);
   }
 
-  function insertKennzahl(request: { label: string; dataset: MunicipalityDatasetRef }) {
-    const operations = kennzahlDerivationOperations(
-      request.dataset,
-      nextGraphOrigin(graphRef.current.nodes),
-      graphRef.current,
-    );
-    if (!operations) return;
-    if (commitOperations(operations)) toast.success(t("kennzahlInserted", { kennzahl: request.label }));
+  /**
+   * Puts a catalog entry on the canvas. One operation for both catalogs: `add-kennzahl`
+   * expands a derivation into real nodes and falls back to a single node for an
+   * Ausgangsdatum, which is exactly the difference between the two lists.
+   */
+  function insertDataset(request: { label: string; dataset: MunicipalityDatasetRef }) {
+    const inserted = commitOperations([{
+      version: ANALYSIS_OPERATION_VERSION, type: "add-kennzahl", nodeId: createId(), dataset: request.dataset,
+    }]);
+    if (inserted) toast.success(t("kennzahlInserted", { kennzahl: request.label }));
   }
 
   /**
    * Turns the selected node into a reusable Kennzahl. The server reads the persisted
-   * graph, so anything still queued has to land first — otherwise it would save a
-   * half-built formula.
+   * graph, so anything still queued is sent first — otherwise it would save a half-built
+   * formula.
    */
-  function saveSelectionAsMetric() {
-    if (!selectedNode) return;
-    if (saveState === "saving" || getPendingOperations(analysis.id).length) {
-      toast.error(t("saveAsKennzahlPending"));
-      return;
-    }
-    const name = window.prompt(t("saveAsKennzahlPrompt"), selectedTitle);
-    if (!name?.trim()) return;
+  function saveSelectionAsMetric(metricName: string) {
+    if (!selectedNode || !metricName.trim()) return;
+    setSavingMetric(false);
     startTransition(async () => {
+      if (!await flush(analysis.id)) {
+        toast.error(t("saveAsKennzahlPending"));
+        return;
+      }
       const result = await saveMunicipalityAnalysisNodeAsMetric({
-        analysisId: analysis.id, nodeId: selectedNode.id, name,
+        analysisId: analysis.id, nodeId: selectedNode.id, name: metricName,
       });
       if (result.ok) {
         toast.success(t("saveAsKennzahlSaved", { name: result.name }));
+        router.refresh();
         return;
       }
       toast.error(t(
@@ -653,6 +857,16 @@ function AnalysisEditor({ analysis, analyses }: { analysis: AnalysisRecord; anal
             : "saveAsKennzahlMissingInput",
       ));
     });
+  }
+
+  async function copySeriesAsCsv() {
+    if (!selectedSeries) return;
+    try {
+      await navigator.clipboard.writeText(analysisSeriesToCsv(selectedSeries, { year: t("csvYearHeader"), value: selectedTitle }));
+      toast.success(t("copiedCsv"));
+    } catch {
+      toast.error(t("copyCsvFailed"));
+    }
   }
 
   function commitRename() {
@@ -665,7 +879,7 @@ function AnalysisEditor({ analysis, analyses }: { analysis: AnalysisRecord; anal
   }
 
   function removeAnalysis() {
-    if (!window.confirm(t("deleteAnalysisConfirm", { name: analysis.name }))) return;
+    setDeleting(false);
     startTransition(async () => {
       await deleteMunicipalityAnalysis(analysis.id);
       router.push("/municipalities/analysis");
@@ -673,17 +887,26 @@ function AnalysisEditor({ analysis, analyses }: { analysis: AnalysisRecord; anal
     });
   }
 
+
+  // The grid row is an explicit 1fr rather than auto: the catalog and the year table are
+  // taller than the screen, and an auto row would grow to fit them instead of letting them
+  // scroll inside their own panel.
   return (
-    <div className="grid gap-2 lg:min-h-[34rem] lg:grid-cols-[13rem_minmax(0,1fr)_16rem]" data-testid="municipality-analysis-editor">
+    <div className="grid gap-2 lg:h-full lg:min-h-[34rem] lg:grid-cols-[13rem_minmax(0,1fr)_16rem] lg:grid-rows-[minmax(0,1fr)]" data-analysis-editor data-testid="municipality-analysis-editor">
       {/* Native <details>: the side panels fold away on a phone and are permanently
           open from lg on, where the summary is hidden. */}
-      <details className="group rounded-2xl border bg-card px-3 py-2 shadow-sm lg:[&>summary]:hidden" open={wide}>
+      {/* The panel itself scrolls rather than a box inside it: Chrome wraps a <details>
+          element's children in ::details-content, so `flex` on the element does not make
+          them flex items and a nested `flex-1` scroll area never gets a height. */}
+      <details className="group rounded-2xl border bg-card px-3 py-2 shadow-sm lg:min-h-0 lg:overflow-y-auto lg:[&>summary]:hidden" open={wide}>
         <summary className="flex cursor-pointer list-none items-center justify-between py-1 text-xs font-semibold tracking-wide uppercase [&::-webkit-details-marker]:hidden">
           {t("operators")}<ChevronDown className="size-4 transition-transform group-open:rotate-180" />
         </summary>
         <label htmlFor="analysis-switcher" className="mt-2 block text-[11px] font-semibold text-muted-foreground">{t("savedAnalyses")}</label>
         <select id="analysis-switcher" className="mt-1 h-8 w-full rounded-lg border bg-background px-2 text-xs" value={analysis.id} onChange={(event) => router.push(`/municipalities/analysis?analysis=${encodeURIComponent(event.target.value)}`)}>
-          {analyses.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+          {/* Two analyses may share a name; the municipality and the size are what tell
+              them apart in a flat list. */}
+          {analyses.map((item) => <option key={item.id} value={item.id}>{analysisOptionLabel(item, t)}</option>)}
         </select>
         <div className="mt-3 flex items-baseline justify-between gap-2">
           <h2 className="text-[11px] font-semibold tracking-wide uppercase">{t("operators")}</h2>
@@ -713,7 +936,7 @@ function AnalysisEditor({ analysis, analyses }: { analysis: AnalysisRecord; anal
           >123</button>
         </div>
         <p className="mt-2 text-[10px] leading-4 text-muted-foreground">{t("analysisUnitRule")}</p>
-        <KennzahlCatalog variant="sidebar" onOpen={insertKennzahl} />
+        <DatasetCatalog variant="sidebar" onOpen={insertDataset} />
       </details>
 
       <section className="flex min-h-[65vh] flex-col overflow-hidden rounded-2xl border bg-muted/20 shadow-sm lg:min-h-0">
@@ -729,7 +952,7 @@ function AnalysisEditor({ analysis, analyses }: { analysis: AnalysisRecord; anal
             <Save className="size-3.5 shrink-0" />
             <span className="hidden sm:inline">{t(saveState === "saving" ? "analysisSaving" : saveState === "error" ? "analysisSaveError" : "analysisSaved")}</span>
           </span>
-          <Button variant="ghost" size="icon-sm" className="text-destructive" disabled={pending} aria-label={t("deleteAnalysis")} onClick={removeAnalysis}><Trash2 className="size-3.5" /></Button>
+          <Button variant="ghost" size="icon-sm" className="text-destructive" disabled={pending} aria-label={t("deleteAnalysis")} onClick={() => setDeleting(true)}><Trash2 className="size-3.5" /></Button>
           {/* The graph is a formula; this is the municipality it is evaluated for. */}
           <div className="flex w-full items-center gap-1.5 lg:w-auto">
             <MapPin className="size-3.5 shrink-0 text-muted-foreground" />
@@ -750,7 +973,7 @@ function AnalysisEditor({ analysis, analyses }: { analysis: AnalysisRecord; anal
             </div>
           </div>
         </div>
-        <div className="relative min-h-0 flex-1">
+        <div className="relative min-h-0 flex-1" ref={flowRef}>
           <ReactFlow
             nodes={positionedNodes}
             edges={displayEdges}
@@ -795,10 +1018,20 @@ function AnalysisEditor({ analysis, analyses }: { analysis: AnalysisRecord; anal
             <Controls position="bottom-left" showInteractive={false} />
           </ReactFlow>
           {!graph.nodes.length && <div className="pointer-events-none absolute inset-0 grid place-items-center p-6 text-center"><div><BarChart3 className="mx-auto size-8 text-muted-foreground" /><p className="mt-2 text-sm font-semibold">{t("emptyAnalysisTitle")}</p><p className="mt-1 max-w-xs text-xs text-muted-foreground">{t("emptyAnalysisDescription")}</p></div></div>}
+          {/* The data files are megabytes of national statistics. Until they arrive the
+              nodes are on the canvas but every chart is blank, which looks like a broken
+              graph rather than one that is still loading. */}
+          {!data && !dataError && graph.nodes.length > 0 && (
+            <div className="pointer-events-none absolute inset-x-0 top-2 grid place-items-center" role="status">
+              <span className="flex items-center gap-2 rounded-full border bg-background/95 px-3 py-1 text-xs shadow-sm backdrop-blur">
+                <Loader2 className="size-3.5 animate-spin" />{t("analysisDataLoading")}
+              </span>
+            </div>
+          )}
         </div>
       </section>
 
-      <details className="group rounded-2xl border bg-card px-3 py-2 shadow-sm lg:[&>summary]:hidden" open={wide} aria-live="polite">
+      <details className="group rounded-2xl border bg-card px-3 py-2 shadow-sm lg:min-h-0 lg:overflow-y-auto lg:[&>summary]:hidden" open={wide} aria-live="polite">
         <summary className="flex cursor-pointer list-none items-center justify-between gap-2 py-1 [&::-webkit-details-marker]:hidden">
           <span className="min-w-0 truncate text-xs font-semibold tracking-wide uppercase">{t("resultPreview")}</span>
           <ChevronDown className="size-4 shrink-0 transition-transform group-open:rotate-180" />
@@ -806,9 +1039,74 @@ function AnalysisEditor({ analysis, analyses }: { analysis: AnalysisRecord; anal
         <h2 className="mt-1 truncate text-sm font-semibold">{selectedTitle}</h2>
         {dataError ? <p className="mt-3 flex gap-2 text-xs text-destructive"><TriangleAlert className="size-4 shrink-0" />{t("analysisDataError")}</p>
           : selectedSeries?.error ? <p className="mt-3 flex gap-2 text-xs text-destructive"><TriangleAlert className="size-4 shrink-0" />{seriesErrorLabel(selectedSeries.error, t)}</p>
-            : selectedSeries ? <div className="mt-2"><AnalysisSeriesChart series={selectedSeries} label={selectedTitle} trueLabel={t("booleanTrue")} falseLabel={t("booleanFalse")} />{selectedSeries.warnings.length > 0 && <p className="mt-2 text-[11px] text-amber-700 dark:text-amber-300">{t("analysisDivisionWarnings", { count: selectedSeries.warnings.length })}</p>}<Button variant="outline" size="sm" className="mt-3 w-full" disabled={pending} onClick={saveSelectionAsMetric}><Bookmark className="size-4" />{t("saveAsKennzahl")}</Button></div>
-              : <p className="mt-3 text-xs leading-5 text-muted-foreground">{t("analysisSelectResult")}</p>}
+            : selectedSeries ? (
+              <div className="mt-2">
+                <AnalysisSeriesChart series={selectedSeries} label={selectedTitle} trueLabel={t("booleanTrue")} falseLabel={t("booleanFalse")} />
+                {selectedSeries.warnings.length > 0 && <p className="mt-2 text-[11px] text-amber-700 dark:text-amber-300">{t("analysisDivisionWarnings", { count: selectedSeries.warnings.length })}</p>}
+                <div className="mt-3 grid gap-2">
+                  <Button variant="outline" size="sm" disabled={pending} onClick={() => { setMetricName(selectedTitle); setSavingMetric(true); }}>
+                    <Bookmark className="size-4" />{t("saveAsKennzahl")}
+                  </Button>
+                  <Button variant="outline" size="sm" onClick={copySeriesAsCsv}>
+                    <Copy className="size-4" />{t("copyCsv")}
+                  </Button>
+                </div>
+                {/* The chart shows the shape; only the table lets a year be read off and
+                    checked against the source. */}
+                <div className="mt-3 rounded-lg border">
+                  <table className="w-full text-[11px]">
+                    <thead className="sticky top-0 bg-muted/60 text-muted-foreground">
+                      <tr><th scope="col" className="px-2 py-1 text-left font-medium">{t("csvYearHeader")}</th><th scope="col" className="px-2 py-1 text-right font-medium">{t("analysisValueHeader")}</th></tr>
+                    </thead>
+                    <tbody>
+                      {[...selectedSeries.points].reverse().map(({ year, value }) => (
+                        <tr key={year} className="border-t">
+                          <td className="px-2 py-1">{year}</td>
+                          <td className="px-2 py-1 text-right tabular-nums">
+                            {value === null ? "—" : typeof value === "boolean" ? (value ? t("booleanTrue") : t("booleanFalse")) : format.number(value, { maximumFractionDigits: 2 })}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            ) : <p className="mt-3 text-xs leading-5 text-muted-foreground">{t("analysisSelectResult")}</p>}
       </details>
+
+      <Dialog open={savingMetric} onOpenChange={setSavingMetric}>
+        <DialogContent className="sm:max-w-md" data-testid="save-kennzahl-dialog">
+          <DialogHeader>
+            <DialogTitle>{t("saveAsKennzahl")}</DialogTitle>
+            <DialogDescription>{t("saveAsKennzahlPrompt")}</DialogDescription>
+          </DialogHeader>
+          <Input
+            autoFocus
+            value={metricName}
+            maxLength={120}
+            aria-label={t("saveAsKennzahlPrompt")}
+            onValueChange={(value) => setMetricName(value)}
+            onKeyDown={(event) => { if (event.key === "Enter") saveSelectionAsMetric(metricName); }}
+          />
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setSavingMetric(false)}>{t("cancel")}</Button>
+            <Button disabled={!metricName.trim() || pending} onClick={() => saveSelectionAsMetric(metricName)}>{t("save")}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={deleting} onOpenChange={setDeleting}>
+        <DialogContent className="sm:max-w-md" data-testid="delete-analysis-dialog">
+          <DialogHeader>
+            <DialogTitle>{t("deleteAnalysis")}</DialogTitle>
+            <DialogDescription>{t("deleteAnalysisConfirm", { name: analysis.name })}</DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleting(false)}>{t("cancel")}</Button>
+            <Button variant="destructive" disabled={pending} onClick={removeAnalysis}>{t("delete")}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -848,6 +1146,10 @@ function AnalysisLanding({
             <BarChart3 className="size-4 shrink-0" />
             <span className="min-w-0 text-left">
               <span className="block truncate">{analysis.name}</span>
+              {/* Names repeat; the municipality and the size are what tell two apart. */}
+              <span className="block truncate text-xs font-normal text-muted-foreground">
+                {[analysis.municipalityName, t("analysisNodeCount", { count: analysis.nodeCount })].filter(Boolean).join(" · ")}
+              </span>
               <span className="block truncate text-xs font-normal text-muted-foreground">{t("analysisUpdatedAt", { date: format.dateTime(analysis.updatedAt, { dateStyle: "medium", timeStyle: "short" }) })}</span>
             </span>
           </Button>)}
@@ -865,7 +1167,7 @@ function AnalysisLanding({
       </div>
 
       <section className="rounded-2xl border bg-card p-5 shadow-sm">
-        <KennzahlCatalog variant="page" ownMetrics={metrics} onOpen={openAsAnalysis} />
+        <DatasetCatalog variant="page" ownMetrics={metrics} onOpen={openAsAnalysis} />
       </section>
     </div>
   );

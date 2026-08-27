@@ -165,6 +165,8 @@ export const municipalityAnalysisGraphOperationSchema = z.discriminatedUnion("ty
   z.object({ version: z.literal(ANALYSIS_OPERATION_VERSION), type: z.literal("set-subject"), subject: analysisSubjectSchema.nullable() }),
   // The number typed into a node: a constant's value, or a unary operator's year count.
   z.object({ version: z.literal(ANALYSIS_OPERATION_VERSION), type: z.literal("set-node-value"), nodeId: z.string().min(1).max(100), value: z.number().finite() }),
+  // Pins one dataset node to a municipality, or releases it so it follows the subject.
+  z.object({ version: z.literal(ANALYSIS_OPERATION_VERSION), type: z.literal("set-node-municipality"), nodeId: z.string().min(1).max(100), municipality: analysisSubjectSchema.nullable() }),
 ]);
 export const municipalityAnalysisGraphOperationsSchema = z.array(municipalityAnalysisGraphOperationSchema).min(1).max(200);
 export type MunicipalityAnalysisGraphOperation = z.infer<typeof municipalityAnalysisGraphOperationSchema>;
@@ -184,6 +186,20 @@ export function parseMunicipalityAnalysisGraph(json: string) {
   return municipalityAnalysisGraphSchema.parse(JSON.parse(json));
 }
 
+/**
+ * Checks a graph the reducer just built and hands back the very same object.
+ *
+ * Zod rebuilds every node and edge it validates, so returning its output would give each
+ * untouched node a new identity — and selecting a node or panning the canvas would then
+ * re-render every card on it. The reducer only ever assembles already-validated pieces,
+ * so the parse is here for the invariants (unique ids, no cycles, edge targets), not to
+ * coerce anything.
+ */
+function validateAnalysisGraph(graph: MunicipalityAnalysisGraph) {
+  municipalityAnalysisGraphSchema.parse(graph);
+  return graph;
+}
+
 // Key order is not part of a dataset's identity: the same reference built by the map and
 // by a Kennzahl derivation lists its fields in a different order, and comparing the raw
 // JSON would treat them as two different datasets.
@@ -195,13 +211,20 @@ export const datasetMunicipalityName = (dataset: MunicipalityDatasetRef) =>
   "municipalityName" in dataset ? dataset.municipalityName : null;
 
 export function addDatasetToGraph(graph: MunicipalityAnalysisGraph, dataset: MunicipalityDatasetRef, id: string) {
+  // The same operation can arrive twice — a retry after a failed save, or the client
+  // replaying what it has not seen confirmed yet. Matching on the id first keeps that a
+  // no-op even once the node's dataset has been edited and no longer matches by value.
+  if (graph.nodes.some((node) => node.id === id)) {
+    return { graph: { ...graph, selectedNodeId: id }, nodeId: id, duplicate: true };
+  }
   const existing = graph.nodes.find((node) => node.type === "dataset" && datasetRefKey(node.data.dataset) === datasetRefKey(dataset));
   if (existing) return { graph: { ...graph, selectedNodeId: existing.id }, nodeId: existing.id, duplicate: true };
   const index = graph.nodes.length;
   const node: MunicipalityAnalysisNode = {
     id, type: "dataset", position: { x: 80 + (index % 3) * 270, y: 80 + Math.floor(index / 3) * 190 }, data: { dataset },
   };
-  return { graph: municipalityAnalysisGraphSchema.parse({ ...graph, nodes: [...graph.nodes, node], selectedNodeId: id }), nodeId: id, duplicate: false };
+  const next = { ...graph, nodes: [...graph.nodes, node], selectedNodeId: id };
+  return { graph: validateAnalysisGraph(next), nodeId: id, duplicate: false };
 }
 
 /**
@@ -282,13 +305,30 @@ export function applyMunicipalityAnalysisGraphOperations(
             : node;
         }),
       };
+    } else if (operation.type === "set-node-municipality") {
+      next = {
+        ...next,
+        nodes: next.nodes.map((node) => {
+          if (node.id !== operation.nodeId || node.type !== "dataset") return node;
+          const { dataset } = node.data;
+          // A constant is the same number everywhere, so it has no municipality to set.
+          if (dataset.kind === "constant") return node;
+          const open = Object.fromEntries(
+            Object.entries(dataset).filter(([key]) => key !== "municipalityCode" && key !== "municipalityName"),
+          );
+          return {
+            ...node,
+            data: { dataset: (operation.municipality ? { ...open, ...operation.municipality } : open) as MunicipalityDatasetRef },
+          };
+        }),
+      };
     } else {
       next = {
         ...next,
         selectedNodeId: operation.nodeId && next.nodes.some(({ id }) => id === operation.nodeId) ? operation.nodeId : null,
       };
     }
-    next = municipalityAnalysisGraphSchema.parse(next);
+    next = validateAnalysisGraph(next);
   }
   return { graph: next, duplicateCount, lastDatasetNodeId };
 }
@@ -352,6 +392,24 @@ export function analysisUnitLabel(unit: string, translate: (id: (typeof ANALYSIS
       ? translate(part as (typeof ANALYSIS_UNIT_IDS)[number])
       : part)
     .join("");
+}
+
+/**
+ * The series as CSV, semicolon-separated with a decimal comma — what Excel opens without
+ * an import wizard in a de-AT locale. Missing years stay as empty cells rather than being
+ * dropped, so the column still lines up with a second export next to it.
+ */
+export function analysisSeriesToCsv(series: AnalysisSeries, headers: { year: string; value: string }) {
+  const cell = (value: number | boolean | null) => {
+    if (value === null) return "";
+    if (typeof value === "boolean") return value ? "1" : "0";
+    return String(value).replace(".", ",");
+  };
+  const escape = (value: string) => (/[";\n]/.test(value) ? `"${value.replaceAll('"', '""')}"` : value);
+  return [
+    `${escape(headers.year)};${escape(headers.value)}`,
+    ...series.points.map(({ year, value }) => `${year};${cell(value)}`),
+  ].join("\n");
 }
 
 export function resolveMunicipalityDataset(
