@@ -17,6 +17,15 @@ const nextConfig: NextConfig = {
   turbopack: { root: process.cwd() },
   // The local ChatGPT browser proxies the dev server through loopback.
   allowedDevOrigins: ["localhost", "127.0.0.1"],
+  // The files under public/data are content-versioned by name (schema version plus the
+  // year range they cover), so a changed dataset is a changed URL. Without this they are
+  // served no-store and every page load re-fetches ~10 MB of national statistics.
+  async headers() {
+    return [{
+      source: "/data/:path*",
+      headers: [{ key: "Cache-Control", value: "public, max-age=31536000, immutable" }],
+    }];
+  },
   experimental: {
     instantNavigationDevToolsToggle: true,
     // On Windows this project's persistent Turbopack cache grew past 4 GB,
