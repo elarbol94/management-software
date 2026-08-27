@@ -20,6 +20,7 @@ import {
   type MunicipalityAnalysisData,
 } from "./analysis";
 import { arrangeAnalysisNodes, autoLayoutAnalysisGraph } from "./analysis-layout";
+import { analysisEdgePath, routeAnalysisEdge } from "./analysis-edge-routing";
 import type { MunicipalityCostSeries } from "./costs";
 import type { MunicipalityIndex } from "./data";
 import type { MunicipalityPopulationSeries } from "./population";
@@ -208,6 +209,33 @@ describe("municipality analysis graph", () => {
 
     const aligned = arrangeAnalysisNodes(graph, ["a", "b"], "align-left");
     expect(aligned.a!.x).toBe(aligned.b!.x);
+  });
+
+  it("routes connections around intervening node cards", () => {
+    const blockingCard = { x: 300, y: 80, width: 240, height: 176 };
+    const route = routeAnalysisEdge(
+      { x: 200, y: 168 },
+      { x: 680, y: 147 },
+      [
+        { x: -40, y: 80, width: 240, height: 176 },
+        blockingCard,
+        { x: 680, y: 80, width: 240, height: 176 },
+      ],
+    );
+    const crossesBlockingCard = route.slice(1).some((point, index) => {
+      const previous = route[index]!;
+      if (previous.x === point.x) {
+        return previous.x > blockingCard.x && previous.x < blockingCard.x + blockingCard.width
+          && Math.max(previous.y, point.y) > blockingCard.y
+          && Math.min(previous.y, point.y) < blockingCard.y + blockingCard.height;
+      }
+      return previous.y > blockingCard.y && previous.y < blockingCard.y + blockingCard.height
+        && Math.max(previous.x, point.x) > blockingCard.x
+        && Math.min(previous.x, point.x) < blockingCard.x + blockingCard.width;
+    });
+    expect(crossesBlockingCard).toBe(false);
+    expect(route.length).toBeGreaterThan(4);
+    expect(analysisEdgePath(route)).toMatch(/^M .* Q /);
   });
 });
 

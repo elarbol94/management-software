@@ -7,6 +7,7 @@ import { useFormatter, useTranslations } from "next-intl";
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import {
   Background,
+  BaseEdge,
   MiniMap,
   NodeResizer,
   Controls,
@@ -16,6 +17,7 @@ import {
   ReactFlowProvider,
   type Connection,
   type Edge,
+  type EdgeProps,
   type Node,
   type NodeChange,
   type NodeProps,
@@ -83,6 +85,7 @@ import {
   type MunicipalityDatasetRef,
 } from "../analysis";
 import { arrangeAnalysisNodes, autoLayoutAnalysisGraph, type AnalysisArrangeAction } from "../analysis-layout";
+import { analysisEdgePath, routeAnalysisEdge } from "../analysis-edge-routing";
 import { loadMunicipalityAnalysisData, loadMunicipalityIndex } from "../analysis-data";
 import { normalizeMunicipalitySearch, searchMunicipalities, type MunicipalityIndexItem } from "../data";
 import type { MapMetric } from "../demography";
@@ -153,6 +156,8 @@ type DisplayNodeData = {
   annotation?: { text: string; color: AnalysisAnnotationColor; commit: (text: string, color: AnalysisAnnotationColor) => void };
 };
 type DisplayNode = Node<DisplayNodeData, "dataset" | "operator" | "annotation">;
+type AnalysisEdgeData = { path: string; [key: string]: unknown };
+type AnalysisDisplayEdge = Edge<AnalysisEdgeData, "analysis">;
 
 const NOTE_STYLES: Record<AnalysisAnnotationColor, string> = {
   gray: "border-slate-300 bg-slate-50 text-slate-950 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-50",
@@ -280,6 +285,20 @@ function AnalysisNodeCard({ data, selected }: NodeProps<DisplayNode>) {
 }
 
 const nodeTypes = { dataset: AnalysisNodeCard, operator: AnalysisNodeCard, annotation: AnalysisNodeCard };
+
+function ObstacleAvoidingEdge({ data, sourceX, sourceY, targetX, targetY, style, markerEnd, markerStart, interactionWidth }: EdgeProps<AnalysisDisplayEdge>) {
+  return (
+    <BaseEdge
+      path={data?.path ?? `M ${sourceX} ${sourceY} L ${targetX} ${targetY}`}
+      style={style}
+      markerStart={markerStart}
+      markerEnd={markerEnd}
+      interactionWidth={interactionWidth}
+    />
+  );
+}
+
+const edgeTypes = { analysis: ObstacleAvoidingEdge };
 
 // Exhaustive maps rather than ternary chains: a new Ausgangsdatum then fails to compile
 // instead of silently borrowing the label of whatever the chain fell through to.
@@ -993,10 +1012,30 @@ function AnalysisEditor({ analysis, analyses, metrics }: { analysis: AnalysisRec
     const height = resize?.height ?? node.height;
     return { ...node, position, width, height, style: { width, height } };
   }), [displayNodes, dragPositions, resizeDrafts]);
-  const displayEdges = useMemo<Edge[]>(() => graph.edges.map((edge) => {
+  const displayEdges = useMemo<AnalysisDisplayEdge[]>(() => graph.edges.map((edge) => {
     const highlighted = selectedNodeIds.includes(edge.source) || selectedNodeIds.includes(edge.target);
-    return { ...edge, type: "smoothstep", animated: false, style: highlighted ? { strokeWidth: 2.5, stroke: "var(--color-teal-600)" } : undefined };
-  }), [graph.edges, selectedNodeIds]);
+    const source = positionedNodes.find((node) => node.id === edge.source);
+    const target = positionedNodes.find((node) => node.id === edge.target);
+    const targetGraphNode = graph.nodes.find((node) => node.id === edge.target);
+    const targetRatio = targetGraphNode?.type === "operator" && isUnaryAnalysisOperator(targetGraphNode.data.operator)
+      ? 0.5
+      : edge.targetHandle === "a" ? 0.38 : 0.72;
+    const sourcePoint = { x: (source?.position.x ?? 0) + (source?.width ?? 0), y: (source?.position.y ?? 0) + (source?.height ?? 0) / 2 };
+    const targetPoint = { x: target?.position.x ?? 0, y: (target?.position.y ?? 0) + (target?.height ?? 0) * targetRatio };
+    const bounds = positionedNodes.map((node) => ({
+      x: node.position.x,
+      y: node.position.y,
+      width: node.width ?? 0,
+      height: node.height ?? 0,
+    }));
+    return {
+      ...edge,
+      type: "analysis",
+      animated: false,
+      data: { path: analysisEdgePath(routeAnalysisEdge(sourcePoint, targetPoint, bounds)) },
+      style: highlighted ? { strokeWidth: 2.5, stroke: "var(--color-teal-600)" } : undefined,
+    };
+  }), [graph.edges, graph.nodes, positionedNodes, selectedNodeIds]);
   const selectedNode = selectedNodeIds.length === 1 ? graph.nodes.find(({ id }) => id === selectedNodeIds[0]) ?? null : null;
   const selectedSeries = selectedNode ? results.get(selectedNode.id) ?? null : null;
   const selectedTechnicalTitle = selectedNode?.type === "dataset" ? datasetTitle(selectedNode.data.dataset, t)
@@ -1502,6 +1541,7 @@ function AnalysisEditor({ analysis, analyses, metrics }: { analysis: AnalysisRec
               nodes={positionedNodes}
               edges={displayEdges}
               nodeTypes={nodeTypes}
+              edgeTypes={edgeTypes}
               onNodesChange={onNodesChange}
               onEdgesChange={(changes) => { for (const change of changes) if (change.type === "remove") commitOperations([{ version: ANALYSIS_OPERATION_VERSION, type: "remove-edge", edgeId: change.id }]); }}
               onConnect={connect}
