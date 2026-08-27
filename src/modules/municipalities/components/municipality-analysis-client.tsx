@@ -20,7 +20,7 @@ import {
   type Viewport,
   useReactFlow,
 } from "@xyflow/react";
-import { BarChart3, Bookmark, Database, GripVertical, MapPin, Pencil, Pin, Plus, Save, Sigma, Trash2, TriangleAlert } from "lucide-react";
+import { BarChart3, Bookmark, ChevronDown, Database, MapPin, Pencil, Pin, Plus, Save, Sigma, Trash2, TriangleAlert } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -108,7 +108,7 @@ type DisplayNode = Node<DisplayNodeData, "dataset" | "operator">;
 function AnalysisNodeCard({ data, selected }: NodeProps<DisplayNode>) {
   return (
     <div className={cn(
-      "w-60 rounded-xl border bg-card shadow-md transition-shadow",
+      "w-52 cursor-grab rounded-xl border bg-card shadow-md transition-shadow active:cursor-grabbing",
       selected && "border-teal-600 ring-2 ring-teal-600/20",
       data.errorLabel && "border-destructive/60",
     )}>
@@ -118,9 +118,8 @@ function AnalysisNodeCard({ data, selected }: NodeProps<DisplayNode>) {
           {!data.singleInput && <Handle type="target" id="b" position={Position.Left} style={{ top: "72%" }} />}
         </>
       )}
-      <div className="drag-handle flex cursor-grab items-center gap-2 border-b px-3 py-2 active:cursor-grabbing">
-        <GripVertical className="size-3.5 text-muted-foreground" />
-        {data.kind === "dataset" ? <Database className="size-4 text-teal-700 dark:text-teal-300" /> : <span className="grid size-6 place-items-center rounded-md bg-violet-100 font-semibold text-violet-700 dark:bg-violet-950 dark:text-violet-300">{data.symbol}</span>}
+      <div className="flex items-center gap-1.5 border-b px-2.5 py-1.5">
+        {data.kind === "dataset" ? <Database className="size-4 shrink-0 text-teal-700 dark:text-teal-300" /> : <span className="grid size-5 shrink-0 place-items-center rounded-md bg-violet-100 text-[11px] font-semibold text-violet-700 dark:bg-violet-950 dark:text-violet-300">{data.symbol}</span>}
         <div className="min-w-0 flex-1">
           <p className="truncate text-xs font-semibold">{data.title}</p>
           <p className={cn("flex items-center gap-1 truncate text-[10px]", data.pinned ? "text-foreground" : "text-muted-foreground")}>
@@ -129,11 +128,11 @@ function AnalysisNodeCard({ data, selected }: NodeProps<DisplayNode>) {
           </p>
         </div>
       </div>
-      <div className="px-3 py-2">
+      <div className="px-2.5 py-2">
         {data.editor && (
           <input
             type="number"
-            className="mb-2 h-8 w-full rounded-lg border bg-background px-2 text-xs"
+            className="nodrag mb-2 h-8 w-full cursor-text rounded-lg border bg-background px-2 text-xs"
             aria-label={data.editor.label}
             min={data.editor.min}
             max={data.editor.max}
@@ -148,7 +147,7 @@ function AnalysisNodeCard({ data, selected }: NodeProps<DisplayNode>) {
           />
         )}
         {data.errorLabel ? (
-          <p className="flex min-h-14 items-center gap-2 text-xs text-destructive"><TriangleAlert className="size-4 shrink-0" />{data.errorLabel}</p>
+          <p className="flex min-h-14 items-center gap-1.5 text-[11px] text-destructive"><TriangleAlert className="size-4 shrink-0" />{data.errorLabel}</p>
         ) : data.series ? (
           <AnalysisSeriesChart series={data.series} label={data.title} compact trueLabel="1" falseLabel="0" />
         ) : <div className="h-14 animate-pulse rounded-md bg-muted" />}
@@ -350,7 +349,7 @@ function KennzahlCatalog({
   );
 
   return (
-    <section className={cn(page ? "" : "mt-5 border-t pt-4")} data-testid="kennzahl-catalog">
+    <section className={cn(page ? "" : "mt-3 border-t pt-3")} data-testid="kennzahl-catalog">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <h2 className={cn("font-semibold", page ? "text-xl" : "text-xs tracking-wide uppercase")}>
           {page ? t("kennzahlCatalogTitle") : t("kennzahlCatalog")}
@@ -360,7 +359,7 @@ function KennzahlCatalog({
         </span>
       </div>
 
-      <div className={cn("mt-3", page ? "grid gap-5" : "grid max-h-80 gap-3 overflow-y-auto pr-1")}>
+      <div className={cn("mt-3", page ? "grid gap-5" : "grid max-h-56 gap-2.5 overflow-y-auto pr-1")}>
         {groups.map(([category, definitions]) => (
           <div key={category}>
             <h3 className={cn("font-semibold text-muted-foreground", page ? "text-xs tracking-wide uppercase" : "text-[10px] uppercase")}>
@@ -410,6 +409,19 @@ function KennzahlCatalog({
   );
 }
 
+/** Drives the `open` attribute of the side panels: folded on a phone, always open from lg on. */
+function useWideViewport() {
+  const [wide, setWide] = useState(true);
+  useEffect(() => {
+    const query = window.matchMedia("(min-width: 1024px)");
+    const sync = () => setWide(query.matches);
+    sync();
+    query.addEventListener("change", sync);
+    return () => query.removeEventListener("change", sync);
+  }, []);
+  return wide;
+}
+
 function AnalysisEditor({ analysis, analyses }: { analysis: AnalysisRecord; analyses: MunicipalityAnalysisSummary[] }) {
   const t = useTranslations("municipalities");
   const router = useRouter();
@@ -427,6 +439,10 @@ function AnalysisEditor({ analysis, analyses }: { analysis: AnalysisRecord; anal
   const saveState = getSaveState(analysis.id);
   const [name, setName] = useState(analysis.name);
   const [renaming, setRenaming] = useState(false);
+  // A drag streams a position per frame. Committing each one would clone the graph and
+  // re-evaluate every series mid-drag, so the live positions stay local until the drop.
+  const [dragPositions, setDragPositions] = useState<Record<string, { x: number; y: number }> | null>(null);
+  const wide = useWideViewport();
   const [pending, startTransition] = useTransition();
   const datasetSignature = useMemo(() => JSON.stringify(graph.nodes.flatMap((node) => node.type === "dataset" ? [node.data.dataset] : [])), [graph.nodes]);
   const optimisticSignature = JSON.stringify(optimisticOperations);
@@ -483,7 +499,6 @@ function AnalysisEditor({ analysis, analyses }: { analysis: AnalysisRecord; anal
       type: node.type,
       position: node.position,
       selected: graph.selectedNodeId === node.id,
-      dragHandle: ".drag-handle",
       data: node.type === "dataset" ? {
         kind: "dataset",
         title: datasetTitle(node.data.dataset, t),
@@ -510,6 +525,9 @@ function AnalysisEditor({ analysis, analyses }: { analysis: AnalysisRecord; anal
       },
     };
   }), [graph.nodes, graph.selectedNodeId, graph.subject, results, setNodeValue, t]);
+  const positionedNodes = useMemo<DisplayNode[]>(() => (dragPositions
+    ? displayNodes.map((node) => (dragPositions[node.id] ? { ...node, position: dragPositions[node.id] } : node))
+    : displayNodes), [displayNodes, dragPositions]);
   const displayEdges = useMemo<Edge[]>(() => graph.edges.map((edge) => ({ ...edge, type: "smoothstep", animated: false })), [graph.edges]);
   const selectedNode = graph.selectedNodeId ? graph.nodes.find(({ id }) => id === graph.selectedNodeId) : null;
   const selectedSeries = selectedNode ? results.get(selectedNode.id) ?? null : null;
@@ -541,13 +559,17 @@ function AnalysisEditor({ analysis, analyses }: { analysis: AnalysisRecord; anal
           });
         }
       } else if (change.type === "position" && change.position) {
-        const current = graphRef.current.nodes.find(({ id }) => id === change.id);
-        if (current?.position.x === change.position.x && current.position.y === change.position.y) continue;
+        const { id, position } = change;
+        if (change.dragging) {
+          setDragPositions((current) => ({ ...current, [id]: position }));
+          continue;
+        }
+        setDragPositions(null);
+        const current = graphRef.current.nodes.find((node) => node.id === id);
+        if (current?.position.x === position.x && current.position.y === position.y) continue;
         commitOperations(
-          [{
-            version: ANALYSIS_OPERATION_VERSION, type: "move-node", nodeId: change.id, position: change.position,
-          }],
-          { debounceKey: `node-position:${change.id}`, delay: 500 },
+          [{ version: ANALYSIS_OPERATION_VERSION, type: "move-node", nodeId: id, position }],
+          { debounceKey: `node-position:${id}`, delay: 500 },
         );
       } else if (change.type === "select") {
         const selectedNodeId = change.selected ? change.id : graphRef.current.selectedNodeId === change.id ? null : graphRef.current.selectedNodeId;
@@ -652,23 +674,28 @@ function AnalysisEditor({ analysis, analyses }: { analysis: AnalysisRecord; anal
   }
 
   return (
-    <div className="grid min-h-[42rem] gap-3 xl:grid-cols-[16rem_minmax(0,1fr)_20rem]" data-testid="municipality-analysis-editor">
-      <aside className="rounded-2xl border bg-card p-3 shadow-sm">
-        <label htmlFor="analysis-switcher" className="text-xs font-semibold text-muted-foreground">{t("savedAnalyses")}</label>
+    <div className="grid gap-2 lg:min-h-[34rem] lg:grid-cols-[13rem_minmax(0,1fr)_16rem]" data-testid="municipality-analysis-editor">
+      {/* Native <details>: the side panels fold away on a phone and are permanently
+          open from lg on, where the summary is hidden. */}
+      <details className="group rounded-2xl border bg-card px-3 py-2 shadow-sm lg:[&>summary]:hidden" open={wide}>
+        <summary className="flex cursor-pointer list-none items-center justify-between py-1 text-xs font-semibold tracking-wide uppercase [&::-webkit-details-marker]:hidden">
+          {t("operators")}<ChevronDown className="size-4 transition-transform group-open:rotate-180" />
+        </summary>
+        <label htmlFor="analysis-switcher" className="mt-2 block text-[11px] font-semibold text-muted-foreground">{t("savedAnalyses")}</label>
         <select id="analysis-switcher" className="mt-1 h-8 w-full rounded-lg border bg-background px-2 text-xs" value={analysis.id} onChange={(event) => router.push(`/municipalities/analysis?analysis=${encodeURIComponent(event.target.value)}`)}>
           {analyses.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
         </select>
-        <div className="mt-4 flex items-center justify-between">
-          <h2 className="text-xs font-semibold tracking-wide uppercase">{t("operators")}</h2>
-          <span className="text-[10px] text-muted-foreground">{t("dragHint")}</span>
+        <div className="mt-3 flex items-baseline justify-between gap-2">
+          <h2 className="text-[11px] font-semibold tracking-wide uppercase">{t("operators")}</h2>
+          <span className="truncate text-[10px] text-muted-foreground">{t("dragHint")}</span>
         </div>
-        <div className="mt-2 grid grid-cols-3 gap-1.5">
+        <div className="mt-1.5 grid grid-cols-6 gap-1 sm:grid-cols-8 lg:grid-cols-3">
           {analysisOperatorIds.map((operator) => (
             <button
               key={operator}
               type="button"
               draggable
-              className="grid h-10 place-items-center rounded-lg border bg-background text-lg font-semibold hover:border-teal-600 hover:bg-teal-50 dark:hover:bg-teal-950"
+              className="grid h-9 place-items-center rounded-lg border bg-background font-semibold hover:border-teal-600 hover:bg-teal-50 dark:hover:bg-teal-950"
               title={t(`operator_${operator}`)}
               aria-label={t("addOperator", { operator: t(`operator_${operator}`) })}
               onClick={() => addOperator(operator)}
@@ -678,33 +705,38 @@ function AnalysisEditor({ analysis, analyses }: { analysis: AnalysisRecord; anal
           <button
             type="button"
             draggable
-            className="grid h-10 place-items-center rounded-lg border bg-background text-xs font-semibold hover:border-teal-600 hover:bg-teal-50 dark:hover:bg-teal-950"
+            className="grid h-9 place-items-center rounded-lg border bg-background text-xs font-semibold hover:border-teal-600 hover:bg-teal-50 dark:hover:bg-teal-950"
             title={t("constantNode")}
             aria-label={t("addConstant")}
             onClick={() => addConstant()}
             onDragStart={(event) => { event.dataTransfer.effectAllowed = "copy"; event.dataTransfer.setData(OPERATOR_DRAG_TYPE, CONSTANT_DRAG_VALUE); }}
           >123</button>
         </div>
-        <p className="mt-4 text-[11px] leading-5 text-muted-foreground">{t("analysisUnitRule")}</p>
+        <p className="mt-2 text-[10px] leading-4 text-muted-foreground">{t("analysisUnitRule")}</p>
         <KennzahlCatalog variant="sidebar" onOpen={insertKennzahl} />
-      </aside>
+      </details>
 
-      <section className="relative min-h-[32rem] overflow-hidden rounded-2xl border bg-muted/20 shadow-sm">
-        <div className="absolute top-3 right-3 left-3 z-10 flex items-center justify-between gap-3 rounded-xl border bg-background/95 px-3 py-2 shadow-sm backdrop-blur">
+      <section className="flex min-h-[65vh] flex-col overflow-hidden rounded-2xl border bg-muted/20 shadow-sm lg:min-h-0">
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 border-b bg-background px-2 py-1.5">
           <div className="min-w-0 flex-1">
-            {renaming ? <Input className="max-w-xs" value={name} maxLength={120} autoFocus onValueChange={(value) => setName(value)} onBlur={commitRename} onKeyDown={(event) => { if (event.key === "Enter") commitRename(); if (event.key === "Escape") { setName(analysis.name); setRenaming(false); } }} /> : (
-              <button className="flex max-w-full items-center gap-2 text-left" onClick={() => setRenaming(true)}>
-                <span className="truncate font-semibold">{analysis.name}</span><Pencil className="size-3.5 text-muted-foreground" />
+            {renaming ? <Input className="h-8 max-w-xs text-sm" value={name} maxLength={120} autoFocus onValueChange={(value) => setName(value)} onBlur={commitRename} onKeyDown={(event) => { if (event.key === "Enter") commitRename(); if (event.key === "Escape") { setName(analysis.name); setRenaming(false); } }} /> : (
+              <button className="flex max-w-full items-center gap-1.5 text-left" onClick={() => setRenaming(true)}>
+                <span className="truncate text-sm font-semibold">{analysis.name}</span><Pencil className="size-3 shrink-0 text-muted-foreground" />
               </button>
             )}
           </div>
+          <span className={cn("flex items-center gap-1 text-[11px]", saveState === "error" ? "text-destructive" : "text-muted-foreground")}>
+            <Save className="size-3.5 shrink-0" />
+            <span className="hidden sm:inline">{t(saveState === "saving" ? "analysisSaving" : saveState === "error" ? "analysisSaveError" : "analysisSaved")}</span>
+          </span>
+          <Button variant="ghost" size="icon-sm" className="text-destructive" disabled={pending} aria-label={t("deleteAnalysis")} onClick={removeAnalysis}><Trash2 className="size-3.5" /></Button>
           {/* The graph is a formula; this is the municipality it is evaluated for. */}
-          <div className="flex shrink-0 items-center gap-2">
-            <MapPin className="size-3.5 text-muted-foreground" />
-            <span className="max-w-40 truncate text-xs font-medium" data-testid="analysis-subject">
+          <div className="flex w-full items-center gap-1.5 lg:w-auto">
+            <MapPin className="size-3.5 shrink-0 text-muted-foreground" />
+            <span className="max-w-32 truncate text-[11px] font-medium" data-testid="analysis-subject">
               {graph.subject?.municipalityName ?? t("analysisSubjectNone")}
             </span>
-            <div className="w-40">
+            <div className="min-w-0 flex-1 lg:w-36 lg:flex-none">
               <MunicipalityPicker
                 compact
                 label={t("analysisSubject")}
@@ -717,65 +749,66 @@ function AnalysisEditor({ analysis, analyses }: { analysis: AnalysisRecord; anal
               />
             </div>
           </div>
-          <span className={cn("flex items-center gap-1 text-[11px]", saveState === "error" ? "text-destructive" : "text-muted-foreground")}>
-            <Save className="size-3.5" />{t(saveState === "saving" ? "analysisSaving" : saveState === "error" ? "analysisSaveError" : "analysisSaved")}
-          </span>
-          <Button variant="destructive" size="icon-sm" disabled={pending} aria-label={t("deleteAnalysis")} onClick={removeAnalysis}><Trash2 className="size-3.5" /></Button>
         </div>
-        <ReactFlow
-          nodes={displayNodes}
-          edges={displayEdges}
-          nodeTypes={nodeTypes}
-          onNodesChange={onNodesChange}
-          onEdgesChange={(changes) => {
-            for (const change of changes) {
-              if (change.type === "remove") {
-                commitOperations([{ version: ANALYSIS_OPERATION_VERSION, type: "remove-edge", edgeId: change.id }]);
+        <div className="relative min-h-0 flex-1">
+          <ReactFlow
+            nodes={positionedNodes}
+            edges={displayEdges}
+            nodeTypes={nodeTypes}
+            onNodesChange={onNodesChange}
+            onEdgesChange={(changes) => {
+              for (const change of changes) {
+                if (change.type === "remove") {
+                  commitOperations([{ version: ANALYSIS_OPERATION_VERSION, type: "remove-edge", edgeId: change.id }]);
+                }
               }
-            }
-          }}
-          onConnect={connect}
-          onMoveEnd={(_, viewport: Viewport) => {
-            const current = graphRef.current.viewport;
-            if (current.x === viewport.x && current.y === viewport.y && current.zoom === viewport.zoom) return;
-            commitOperations(
-              [{ version: ANALYSIS_OPERATION_VERSION, type: "set-viewport", viewport }],
-              { debounceKey: "viewport", delay: 500 },
-            );
-          }}
-          defaultViewport={graph.viewport}
-          minZoom={0.25}
-          maxZoom={2}
-          fitView={!graph.nodes.length}
-          deleteKeyCode={["Backspace", "Delete"]}
-          onPaneClick={() => {
-            if (graphRef.current.selectedNodeId) {
-              commitOperations([{ version: ANALYSIS_OPERATION_VERSION, type: "set-selected-node", nodeId: null }]);
-            }
-          }}
-          onDragOver={(event) => { if (event.dataTransfer.types.includes(OPERATOR_DRAG_TYPE)) { event.preventDefault(); event.dataTransfer.dropEffect = "copy"; } }}
-          onDrop={(event) => {
-            event.preventDefault();
-            const payload = event.dataTransfer.getData(OPERATOR_DRAG_TYPE);
-            const position = reactFlow.screenToFlowPosition({ x: event.clientX, y: event.clientY });
-            if (payload === CONSTANT_DRAG_VALUE) addConstant(position);
-            else if (analysisOperatorIds.includes(payload as AnalysisOperatorId)) addOperator(payload as AnalysisOperatorId, position);
-          }}
-        >
-          <Background gap={22} size={1} />
-          <Controls position="bottom-left" />
-        </ReactFlow>
-        {!graph.nodes.length && <div className="pointer-events-none absolute inset-0 grid place-items-center p-8 text-center"><div><BarChart3 className="mx-auto size-10 text-muted-foreground" /><p className="mt-3 font-semibold">{t("emptyAnalysisTitle")}</p><p className="mt-1 max-w-sm text-sm text-muted-foreground">{t("emptyAnalysisDescription")}</p></div></div>}
+            }}
+            onConnect={connect}
+            onMoveEnd={(_, viewport: Viewport) => {
+              const current = graphRef.current.viewport;
+              if (current.x === viewport.x && current.y === viewport.y && current.zoom === viewport.zoom) return;
+              commitOperations(
+                [{ version: ANALYSIS_OPERATION_VERSION, type: "set-viewport", viewport }],
+                { debounceKey: "viewport", delay: 500 },
+              );
+            }}
+            defaultViewport={graph.viewport}
+            minZoom={0.2}
+            maxZoom={2}
+            fitView={!graph.nodes.length}
+            deleteKeyCode={["Backspace", "Delete"]}
+            onPaneClick={() => {
+              if (graphRef.current.selectedNodeId) {
+                commitOperations([{ version: ANALYSIS_OPERATION_VERSION, type: "set-selected-node", nodeId: null }]);
+              }
+            }}
+            onDragOver={(event) => { if (event.dataTransfer.types.includes(OPERATOR_DRAG_TYPE)) { event.preventDefault(); event.dataTransfer.dropEffect = "copy"; } }}
+            onDrop={(event) => {
+              event.preventDefault();
+              const payload = event.dataTransfer.getData(OPERATOR_DRAG_TYPE);
+              const position = reactFlow.screenToFlowPosition({ x: event.clientX, y: event.clientY });
+              if (payload === CONSTANT_DRAG_VALUE) addConstant(position);
+              else if (analysisOperatorIds.includes(payload as AnalysisOperatorId)) addOperator(payload as AnalysisOperatorId, position);
+            }}
+          >
+            <Background gap={20} size={1} />
+            <Controls position="bottom-left" showInteractive={false} />
+          </ReactFlow>
+          {!graph.nodes.length && <div className="pointer-events-none absolute inset-0 grid place-items-center p-6 text-center"><div><BarChart3 className="mx-auto size-8 text-muted-foreground" /><p className="mt-2 text-sm font-semibold">{t("emptyAnalysisTitle")}</p><p className="mt-1 max-w-xs text-xs text-muted-foreground">{t("emptyAnalysisDescription")}</p></div></div>}
+        </div>
       </section>
 
-      <aside className="rounded-2xl border bg-card p-4 shadow-sm" aria-live="polite">
-        <p className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">{t("resultPreview")}</p>
-        <h2 className="mt-1 truncate font-semibold">{selectedTitle}</h2>
-        {dataError ? <p className="mt-5 flex gap-2 text-sm text-destructive"><TriangleAlert className="size-4 shrink-0" />{t("analysisDataError")}</p>
-          : selectedSeries?.error ? <p className="mt-5 flex gap-2 text-sm text-destructive"><TriangleAlert className="size-4 shrink-0" />{seriesErrorLabel(selectedSeries.error, t)}</p>
-            : selectedSeries ? <div className="mt-4"><AnalysisSeriesChart series={selectedSeries} label={selectedTitle} trueLabel={t("booleanTrue")} falseLabel={t("booleanFalse")} />{selectedSeries.warnings.length > 0 && <p className="mt-3 text-xs text-amber-700 dark:text-amber-300">{t("analysisDivisionWarnings", { count: selectedSeries.warnings.length })}</p>}<Button variant="outline" className="mt-4 w-full" disabled={pending} onClick={saveSelectionAsMetric}><Bookmark className="size-4" />{t("saveAsKennzahl")}</Button></div>
-              : <p className="mt-5 text-sm leading-6 text-muted-foreground">{t("analysisSelectResult")}</p>}
-      </aside>
+      <details className="group rounded-2xl border bg-card px-3 py-2 shadow-sm lg:[&>summary]:hidden" open={wide} aria-live="polite">
+        <summary className="flex cursor-pointer list-none items-center justify-between gap-2 py-1 [&::-webkit-details-marker]:hidden">
+          <span className="min-w-0 truncate text-xs font-semibold tracking-wide uppercase">{t("resultPreview")}</span>
+          <ChevronDown className="size-4 shrink-0 transition-transform group-open:rotate-180" />
+        </summary>
+        <h2 className="mt-1 truncate text-sm font-semibold">{selectedTitle}</h2>
+        {dataError ? <p className="mt-3 flex gap-2 text-xs text-destructive"><TriangleAlert className="size-4 shrink-0" />{t("analysisDataError")}</p>
+          : selectedSeries?.error ? <p className="mt-3 flex gap-2 text-xs text-destructive"><TriangleAlert className="size-4 shrink-0" />{seriesErrorLabel(selectedSeries.error, t)}</p>
+            : selectedSeries ? <div className="mt-2"><AnalysisSeriesChart series={selectedSeries} label={selectedTitle} trueLabel={t("booleanTrue")} falseLabel={t("booleanFalse")} />{selectedSeries.warnings.length > 0 && <p className="mt-2 text-[11px] text-amber-700 dark:text-amber-300">{t("analysisDivisionWarnings", { count: selectedSeries.warnings.length })}</p>}<Button variant="outline" size="sm" className="mt-3 w-full" disabled={pending} onClick={saveSelectionAsMetric}><Bookmark className="size-4" />{t("saveAsKennzahl")}</Button></div>
+              : <p className="mt-3 text-xs leading-5 text-muted-foreground">{t("analysisSelectResult")}</p>}
+      </details>
     </div>
   );
 }
