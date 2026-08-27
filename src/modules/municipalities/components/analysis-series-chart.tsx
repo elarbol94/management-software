@@ -50,7 +50,7 @@ export function AnalysisSeriesChart({ series, label, compact = false, trueLabel,
       zeroY: minimum < 0 && maximum > 0 ? y(0) : null,
     };
   }, [compact, series]);
-  if (!chart) return <div className={compact ? "h-14" : "grid h-44 place-items-center text-sm text-muted-foreground"}>—</div>;
+  if (!chart) return <div className={compact ? "grid min-h-14 flex-1 place-items-center" : "grid h-44 place-items-center text-sm text-muted-foreground"}>—</div>;
   const active = chart.points.find(({ year }) => year === hoveredYear) ?? chart.points.at(-1)!;
   const activePoint = series.points.find(({ year }) => year === active.year)!;
   const displayValue = typeof activePoint.value === "boolean"
@@ -58,8 +58,8 @@ export function AnalysisSeriesChart({ series, label, compact = false, trueLabel,
     : valueFormat.format(activePoint.value ?? 0);
   const unitLabel = analysisUnitLabel(series.unit, (id) => t(`units.${id}`));
   return (
-    <div>
-      <svg viewBox={`0 0 320 ${compact ? 64 : 170}`} className={compact ? "h-14 w-full" : "h-44 w-full"} role="img" aria-label={label}>
+    <div className={compact ? "flex min-h-0 flex-1 flex-col" : undefined}>
+      <svg viewBox={`0 0 320 ${compact ? 64 : 170}`} preserveAspectRatio="none" className={compact ? "min-h-14 w-full flex-1" : "h-44 w-full"} role="img" aria-label={label}>
         {chart.ticks.map((tick) => (
           <g key={tick} data-testid="analysis-chart-tick">
             <line x1={chart.plotLeft} x2={chart.plotRight} y1={chart.y(tick)} y2={chart.y(tick)} stroke="currentColor" strokeOpacity="0.16" strokeDasharray="3 4" />

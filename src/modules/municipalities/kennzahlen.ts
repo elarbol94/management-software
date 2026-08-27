@@ -554,6 +554,7 @@ export function kennzahlFromGraph(
       }
       return { input: unbindKennzahlInput(dataset)! };
     }
+    if (node.type !== "operator") return null;
     const side = (handle: "a" | "b") => {
       const edge = graph.edges.find((item) => item.target === id && item.targetHandle === handle);
       return edge ? walk(edge.source) : null;

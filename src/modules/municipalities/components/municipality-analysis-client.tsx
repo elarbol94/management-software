@@ -7,6 +7,8 @@ import { useFormatter, useTranslations } from "next-intl";
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import {
   Background,
+  MiniMap,
+  NodeResizer,
   Controls,
   Handle,
   Position,
@@ -17,10 +19,18 @@ import {
   type Node,
   type NodeChange,
   type NodeProps,
+  SelectionMode,
   type Viewport,
   useReactFlow,
 } from "@xyflow/react";
-import { BarChart3, Bookmark, ChevronDown, Copy, Database, Loader2, MapPin, Pencil, Pin, PinOff, Plus, Save, Search, Sigma, Trash2, TriangleAlert } from "lucide-react";
+import {
+  AlignCenterHorizontal, AlignCenterVertical, AlignEndHorizontal, AlignEndVertical, AlignStartHorizontal,
+  AlignStartVertical, BarChart3, Bookmark, ChartLine,
+  Columns3, Copy, Database, Loader2, MapPin, Maximize2, Menu,
+  PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Pencil, Pin, PinOff, Plus,
+  Redo2, Rows3, Save, Search, Sigma, SlidersHorizontal, StickyNote, Trash2, TriangleAlert, Undo2,
+  WandSparkles,
+} from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
@@ -32,6 +42,9 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import {
   createMunicipalityAnalysis,
@@ -44,21 +57,32 @@ import {
 import {
   ANALYSIS_OPERATION_VERSION,
   ANALYSIS_OPERATOR_SYMBOLS,
+  analysisAnnotationColors,
+  analysisNodeHeight,
+  analysisNodeWidth,
   analysisOperatorIds,
   analysisSeriesToCsv,
   isUnaryAnalysisOperator,
   MAX_ANALYSIS_SHIFT_YEARS,
+  MAX_ANALYSIS_NODE_HEIGHT,
+  MAX_ANALYSIS_NODE_WIDTH,
+  MIN_ANALYSIS_NODE_HEIGHT,
+  MIN_ANALYSIS_NODE_WIDTH,
+  MIN_ANALYSIS_NOTE_HEIGHT,
+  MIN_ANALYSIS_NOTE_WIDTH,
   applyMunicipalityAnalysisGraphOperations,
   datasetMunicipalityName,
   evaluateAnalysisGraph,
   wouldCreateAnalysisCycle,
   type AnalysisOperatorId,
+  type AnalysisAnnotationColor,
   type AnalysisSeries,
   type MunicipalityAnalysisData,
   type MunicipalityAnalysisGraph,
   type MunicipalityAnalysisGraphOperation,
   type MunicipalityDatasetRef,
 } from "../analysis";
+import { arrangeAnalysisNodes, autoLayoutAnalysisGraph, type AnalysisArrangeAction } from "../analysis-layout";
 import { loadMunicipalityAnalysisData, loadMunicipalityIndex } from "../analysis-data";
 import { normalizeMunicipalitySearch, searchMunicipalities, type MunicipalityIndexItem } from "../data";
 import type { MapMetric } from "../demography";
@@ -110,9 +134,10 @@ function seriesErrorLabel(error: AnalysisSeries["error"], t: ReturnType<typeof u
 }
 
 type DisplayNodeData = {
-  kind: "dataset" | "operator";
+  kind: "dataset" | "operator" | "annotation";
   title: string;
-  subtitle: string;
+  technicalTitle: string;
+  subtitle?: string;
   pinned?: boolean;
   /** Present on a dataset node: releases the pin, or pins it to the graph's subject. */
   togglePin?: { label: string; apply: () => void };
@@ -124,26 +149,88 @@ type DisplayNodeData = {
   series: AnalysisSeries | null;
   errorLabel: string | null;
   warningLabel: string | null;
+  rename?: (title: string | null) => void;
+  annotation?: { text: string; color: AnalysisAnnotationColor; commit: (text: string, color: AnalysisAnnotationColor) => void };
 };
-type DisplayNode = Node<DisplayNodeData, "dataset" | "operator">;
+type DisplayNode = Node<DisplayNodeData, "dataset" | "operator" | "annotation">;
+
+const NOTE_STYLES: Record<AnalysisAnnotationColor, string> = {
+  gray: "border-slate-300 bg-slate-50 text-slate-950 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-50",
+  sand: "border-amber-300 bg-amber-50 text-amber-950 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-50",
+  blue: "border-sky-300 bg-sky-50 text-sky-950 dark:border-sky-800 dark:bg-sky-950 dark:text-sky-50",
+  green: "border-emerald-300 bg-emerald-50 text-emerald-950 dark:border-emerald-800 dark:bg-emerald-950 dark:text-emerald-50",
+};
 
 function AnalysisNodeCard({ data, selected }: NodeProps<DisplayNode>) {
+  const [editingTitle, setEditingTitle] = useState(false);
+  const [draftTitle, setDraftTitle] = useState(data.title);
+
+  const finishTitle = () => {
+    const value = draftTitle.trim();
+    data.rename?.(value && value !== data.technicalTitle ? value : null);
+    setEditingTitle(false);
+  };
+
+  if (data.kind === "annotation" && data.annotation) {
+    return (
+      <div className={cn("h-full w-full cursor-grab rounded-xl border shadow-sm active:cursor-grabbing", NOTE_STYLES[data.annotation.color], selected && "ring-2 ring-teal-600/35")}>
+        <NodeResizer isVisible={selected} minWidth={MIN_ANALYSIS_NOTE_WIDTH} minHeight={MIN_ANALYSIS_NOTE_HEIGHT} maxWidth={MAX_ANALYSIS_NODE_WIDTH} maxHeight={MAX_ANALYSIS_NODE_HEIGHT} color="var(--color-teal-600)" />
+        <div className="flex h-full min-h-0 flex-col p-3">
+          <div className="flex items-center gap-2 text-xs font-semibold"><StickyNote className="size-3.5" />{data.technicalTitle}</div>
+          <Textarea
+            key={data.annotation.text}
+            className="nodrag mt-2 min-h-0 flex-1 resize-none border-0 bg-transparent p-0 text-sm leading-5 shadow-none focus-visible:ring-0"
+            defaultValue={data.annotation.text}
+            maxLength={2_000}
+            aria-label={data.technicalTitle}
+            onBlur={(event) => data.annotation?.commit(event.currentTarget.value, data.annotation.color)}
+          />
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className={cn(
-      "w-52 cursor-grab rounded-xl border bg-card shadow-md transition-shadow active:cursor-grabbing",
+      "flex h-full w-full cursor-grab flex-col rounded-xl border bg-card shadow-sm transition-shadow active:cursor-grabbing",
+      data.kind === "operator" ? "border-violet-200 dark:border-violet-900" : "border-teal-200 dark:border-teal-900",
       selected && "border-teal-600 ring-2 ring-teal-600/20",
-      data.errorLabel && "border-destructive/60",
     )}>
+      <NodeResizer isVisible={selected} minWidth={MIN_ANALYSIS_NODE_WIDTH} minHeight={MIN_ANALYSIS_NODE_HEIGHT} maxWidth={MAX_ANALYSIS_NODE_WIDTH} maxHeight={MAX_ANALYSIS_NODE_HEIGHT} color="var(--color-teal-600)" />
       {data.kind === "operator" && (
         <>
           <Handle type="target" id="a" position={Position.Left} style={{ top: data.singleInput ? "50%" : "38%" }} />
           {!data.singleInput && <Handle type="target" id="b" position={Position.Left} style={{ top: "72%" }} />}
+          <span className="pointer-events-none absolute left-2 top-[32%] text-[9px] font-bold text-violet-700 dark:text-violet-300">A</span>
+          {!data.singleInput && <span className="pointer-events-none absolute left-2 top-[66%] text-[9px] font-bold text-violet-700 dark:text-violet-300">B</span>}
         </>
       )}
       <div className="flex items-center gap-1.5 border-b px-2.5 py-1.5">
         {data.kind === "dataset" ? <Database className="size-4 shrink-0 text-teal-700 dark:text-teal-300" /> : <span className="grid size-5 shrink-0 place-items-center rounded-md bg-violet-100 text-[11px] font-semibold text-violet-700 dark:bg-violet-950 dark:text-violet-300">{data.symbol}</span>}
         <div className="min-w-0 flex-1">
-          <p className="truncate text-xs font-semibold">{data.title}</p>
+          {editingTitle ? (
+            <input
+              autoFocus
+              className="nodrag h-6 w-full rounded border bg-background px-1.5 text-xs font-semibold"
+              value={draftTitle}
+              maxLength={120}
+              aria-label={data.technicalTitle}
+              onChange={(event) => setDraftTitle(event.target.value)}
+              onBlur={finishTitle}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") event.currentTarget.blur();
+                if (event.key === "Escape") { setDraftTitle(data.title); setEditingTitle(false); }
+              }}
+            />
+          ) : (
+            <button
+              type="button"
+              className="nodrag block max-w-full truncate text-left text-xs font-semibold"
+              onDoubleClick={() => { setDraftTitle(data.title); setEditingTitle(true); }}
+              onKeyDown={(event) => { if (event.key === "Enter") { setDraftTitle(data.title); setEditingTitle(true); } }}
+              title={data.title}
+            >{data.title}</button>
+          )}
           <p className={cn("flex items-center gap-1 truncate text-[10px]", data.pinned ? "text-foreground" : "text-muted-foreground")}>
             {/* The pin is the control, not a badge: a node that arrived from the map is
                 pinned, and releasing it here is what makes it follow the graph's subject. */}
@@ -158,11 +245,11 @@ function AnalysisNodeCard({ data, selected }: NodeProps<DisplayNode>) {
                 {data.pinned ? <Pin className="size-2.5" /> : <PinOff className="size-2.5" />}
               </button>
             ) : data.pinned && <Pin className="size-2.5 shrink-0" />}
-            <span className="truncate">{data.subtitle}</span>
+            <span className="truncate">{data.title !== data.technicalTitle ? data.technicalTitle : data.subtitle}</span>
           </p>
         </div>
       </div>
-      <div className="px-2.5 py-2">
+      <div className="flex min-h-0 flex-1 flex-col px-2.5 py-2">
         {data.editor && (
           <input
             type="number"
@@ -183,7 +270,7 @@ function AnalysisNodeCard({ data, selected }: NodeProps<DisplayNode>) {
         {data.errorLabel ? (
           <p className="flex min-h-14 items-center gap-1.5 text-[11px] text-destructive"><TriangleAlert className="size-4 shrink-0" />{data.errorLabel}</p>
         ) : data.series ? (
-          <AnalysisSeriesChart series={data.series} label={data.title} compact trueLabel="1" falseLabel="0" />
+          <div className="min-h-14 flex-1"><AnalysisSeriesChart series={data.series} label={data.title} compact trueLabel="1" falseLabel="0" /></div>
         ) : <div className="h-14 animate-pulse rounded-md bg-muted" />}
         {data.warningLabel && <p className="mt-1 truncate text-[10px] text-amber-700 dark:text-amber-300">{data.warningLabel}</p>}
       </div>
@@ -192,7 +279,7 @@ function AnalysisNodeCard({ data, selected }: NodeProps<DisplayNode>) {
   );
 }
 
-const nodeTypes = { dataset: AnalysisNodeCard, operator: AnalysisNodeCard };
+const nodeTypes = { dataset: AnalysisNodeCard, operator: AnalysisNodeCard, annotation: AnalysisNodeCard };
 
 // Exhaustive maps rather than ternary chains: a new Ausgangsdatum then fails to compile
 // instead of silently borrowing the label of whatever the chain fell through to.
@@ -516,20 +603,75 @@ function DatasetCatalog({
   );
 }
 
-/** Drives the `open` attribute of the side panels: folded on a phone, always open from lg on. */
-function useWideViewport() {
-  const [wide, setWide] = useState(true);
-  useEffect(() => {
-    const query = window.matchMedia("(min-width: 1024px)");
-    const sync = () => setWide(query.matches);
-    sync();
-    query.addEventListener("change", sync);
-    return () => query.removeEventListener("change", sync);
-  }, []);
-  return wide;
+const OPERATOR_GROUPS: Array<{ key: "arithmetic" | "comparison" | "logic" | "utility"; operators: AnalysisOperatorId[] }> = [
+  { key: "arithmetic", operators: ["add", "subtract", "multiply", "divide"] },
+  { key: "comparison", operators: ["greater-than", "greater-or-equal", "less-than", "less-or-equal", "equal", "not-equal"] },
+  { key: "logic", operators: ["and", "or"] },
+  { key: "utility", operators: ["shift"] },
+];
+
+function StudioPalette({
+  metrics,
+  onOperator,
+  onConstant,
+  onAnnotation,
+  onDataset,
+}: {
+  metrics: MunicipalityMetricRecord[];
+  onOperator: (operator: AnalysisOperatorId) => void;
+  onConstant: () => void;
+  onAnnotation: () => void;
+  onDataset: (request: { label: string; dataset: MunicipalityDatasetRef }) => void;
+}) {
+  const t = useTranslations("municipalities");
+  return (
+    <Tabs defaultValue="data" className="min-h-0 flex-1">
+      <TabsList className="grid h-9 w-full grid-cols-2">
+        <TabsTrigger value="data"><Database className="size-3.5" />{t("studioData")}</TabsTrigger>
+        <TabsTrigger value="blocks"><Sigma className="size-3.5" />{t("studioBlocks")}</TabsTrigger>
+      </TabsList>
+      <TabsContent value="data" className="min-h-0 overflow-y-auto pr-1">
+        <DatasetCatalog variant="sidebar" ownMetrics={metrics} onOpen={onDataset} />
+      </TabsContent>
+      <TabsContent value="blocks" className="min-h-0 overflow-y-auto pr-1">
+        <div className="grid gap-4 py-3">
+          {OPERATOR_GROUPS.map((group) => (
+            <section key={group.key}>
+              <h3 className="text-[10px] font-semibold tracking-wide text-muted-foreground uppercase">{t(`studioOperatorGroup_${group.key}`)}</h3>
+              <div className="mt-1.5 grid grid-cols-2 gap-1.5">
+                {group.operators.map((operator) => (
+                  <button
+                    key={operator}
+                    type="button"
+                    draggable
+                    className="flex h-9 items-center gap-2 rounded-lg border bg-background px-2 text-left text-xs font-medium hover:border-violet-500 hover:bg-violet-50 dark:hover:bg-violet-950"
+                    title={t(`operator_${operator}`)}
+                    aria-label={t("addOperator", { operator: t(`operator_${operator}`) })}
+                    onClick={() => onOperator(operator)}
+                    onDragStart={(event) => { event.dataTransfer.effectAllowed = "copy"; event.dataTransfer.setData(OPERATOR_DRAG_TYPE, operator); }}
+                  >
+                    <span className="grid size-5 shrink-0 place-items-center rounded bg-violet-100 font-bold text-violet-700 dark:bg-violet-950 dark:text-violet-300">{ANALYSIS_OPERATOR_SYMBOLS[operator]}</span>
+                    <span className="truncate">{t(`operator_${operator}`)}</span>
+                  </button>
+                ))}
+              </div>
+            </section>
+          ))}
+          <section>
+            <h3 className="text-[10px] font-semibold tracking-wide text-muted-foreground uppercase">{t("studioOperatorGroup_inputs")}</h3>
+            <div className="mt-1.5 grid grid-cols-2 gap-1.5">
+              <Button variant="outline" size="sm" className="justify-start" aria-label={t("addConstant")} onClick={onConstant}><span className="font-mono text-xs">123</span>{t("constantNode")}<span className="sr-only">{t("addConstant")}</span></Button>
+              <Button variant="outline" size="sm" className="justify-start" onClick={onAnnotation}><StickyNote className="size-3.5" />{t("studioNote")}</Button>
+            </div>
+          </section>
+          <p className="text-[10px] leading-4 text-muted-foreground">{t("analysisUnitRule")}</p>
+        </div>
+      </TabsContent>
+    </Tabs>
+  );
 }
 
-function AnalysisEditor({ analysis, analyses }: { analysis: AnalysisRecord; analyses: MunicipalityAnalysisSummary[] }) {
+function AnalysisEditor({ analysis, analyses, metrics }: { analysis: AnalysisRecord; analyses: MunicipalityAnalysisSummary[]; metrics: MunicipalityMetricRecord[] }) {
   const t = useTranslations("municipalities");
   const format = useFormatter();
   const router = useRouter();
@@ -546,16 +688,28 @@ function AnalysisEditor({ analysis, analyses }: { analysis: AnalysisRecord; anal
   // A drag streams a position per frame. Committing each one would clone the graph and
   // re-evaluate every series mid-drag, so the live positions stay local until the drop.
   const [dragPositions, setDragPositions] = useState<Record<string, { x: number; y: number }> | null>(null);
-  const wide = useWideViewport();
+  const [resizeDrafts, setResizeDrafts] = useState<Record<string, { x?: number; y?: number; width?: number; height?: number }>>({});
+  const resizeDraftsRef = useRef(resizeDrafts);
+  const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>(analysis.graph.selectedNodeId ? [analysis.graph.selectedNodeId] : []);
+  const selectedNodeIdsRef = useRef(selectedNodeIds);
+  const [paletteCollapsed, setPaletteCollapsed] = useState(false);
+  const [inspectorCollapsed, setInspectorCollapsed] = useState(false);
+  const [paletteSheetOpen, setPaletteSheetOpen] = useState(false);
+  const [inspectorSheetOpen, setInspectorSheetOpen] = useState(false);
+  const [quickAddOpen, setQuickAddOpen] = useState(false);
+  const [quickAddQuery, setQuickAddQuery] = useState("");
   const [pending, startTransition] = useTransition();
   const [savingMetric, setSavingMetric] = useState(false);
   const [metricName, setMetricName] = useState("");
   const [deleting, setDeleting] = useState(false);
   const flowRef = useRef<HTMLDivElement>(null);
+  const lastCanvasPosition = useRef<{ x: number; y: number } | null>(null);
   // Undo restores a whole earlier graph rather than inverting operations, so this is a
   // bounded stack of snapshots. Selection and viewport are excluded: they would fill it
   // with entries that look like nothing happened.
   const undoStack = useRef<MunicipalityAnalysisGraph[]>([]);
+  const redoStack = useRef<MunicipalityAnalysisGraph[]>([]);
+  const [historyDepth, setHistoryDepth] = useState({ undo: 0, redo: 0 });
   const datasetSignature = useMemo(() => JSON.stringify(graph.nodes.flatMap((node) => node.type === "dataset" ? [node.data.dataset] : [])), [graph.nodes]);
   const optimisticSignature = JSON.stringify(optimisticOperations);
 
@@ -608,13 +762,15 @@ function AnalysisEditor({ analysis, analyses }: { analysis: AnalysisRecord; anal
 
   const commitOperations = useCallback((
     operations: MunicipalityAnalysisGraphOperation[],
-    options?: { debounceKey?: string; delay?: number },
+    options?: { debounceKey?: string; delay?: number; recordHistory?: boolean },
   ) => {
     try {
       const before = graphRef.current;
       const next = applyMunicipalityAnalysisGraphOperations(before, operations, expandKennzahlIntoGraph).graph;
-      if (operations.some(({ type }) => type !== "set-selected-node" && type !== "set-viewport")) {
+      if ((options?.recordHistory ?? true) && operations.some(({ type }) => type !== "set-selected-node" && type !== "set-viewport")) {
         undoStack.current = [...undoStack.current, before].slice(-UNDO_DEPTH);
+        redoStack.current = [];
+        setHistoryDepth({ undo: undoStack.current.length, redo: 0 });
       }
       graphRef.current = next;
       setGraph(next);
@@ -627,7 +783,7 @@ function AnalysisEditor({ analysis, analyses }: { analysis: AnalysisRecord; anal
       toast.error(t("analysisNodeLimit"));
       return false;
     }
-  }, [analysis.id, enqueue, markApplied, setGraph, t]);
+  }, [analysis.id, enqueue, markApplied, setGraph, setHistoryDepth, t]);
 
   // Debounced: editing a constant is typing, and each keystroke should not become its own
   // entry in the operation journal.
@@ -639,6 +795,25 @@ function AnalysisEditor({ analysis, analyses }: { analysis: AnalysisRecord; anal
     );
   }, [commitOperations]);
 
+  const setNodeTitle = useCallback((nodeId: string, title: string | null) => {
+    commitOperations([{
+      version: ANALYSIS_OPERATION_VERSION,
+      type: "set-node-title",
+      nodeId,
+      title,
+    }]);
+  }, [commitOperations]);
+
+  const setAnnotation = useCallback((nodeId: string, text: string, color: AnalysisAnnotationColor) => {
+    commitOperations([{
+      version: ANALYSIS_OPERATION_VERSION,
+      type: "set-annotation",
+      nodeId,
+      text,
+      color,
+    }], { debounceKey: `annotation:${nodeId}`, delay: 300 });
+  }, [commitOperations]);
+
   /**
    * Undo restores the graph as it stood before the last edit and writes that whole graph,
    * rather than trying to invert each operation. The queue is drained first so a delayed
@@ -647,30 +822,70 @@ function AnalysisEditor({ analysis, analyses }: { analysis: AnalysisRecord; anal
   const undoLastEdit = useCallback(() => {
     const previous = undoStack.current.pop();
     if (!previous) return;
+    redoStack.current = [...redoStack.current, graphRef.current].slice(-UNDO_DEPTH);
+    setHistoryDepth({ undo: undoStack.current.length, redo: redoStack.current.length });
     graphRef.current = previous;
     setGraph(previous);
     setDragPositions(null);
+    setResizeDrafts({});
+    const selection = previous.selectedNodeId ? [previous.selectedNodeId] : [];
+    selectedNodeIdsRef.current = selection;
+    setSelectedNodeIds(selection);
     startTransition(async () => {
       await flush(analysis.id);
       await saveMunicipalityAnalysisGraph({ analysisId: analysis.id, graph: previous });
       toast(t("analysisUndone"));
       router.refresh();
     });
-  }, [analysis.id, flush, router, setDragPositions, setGraph, startTransition, t]);
+  }, [analysis.id, flush, router, setDragPositions, setGraph, setHistoryDepth, setResizeDrafts, setSelectedNodeIds, startTransition, t]);
+
+  const redoLastEdit = useCallback(() => {
+    const next = redoStack.current.pop();
+    if (!next) return;
+    undoStack.current = [...undoStack.current, graphRef.current].slice(-UNDO_DEPTH);
+    setHistoryDepth({ undo: undoStack.current.length, redo: redoStack.current.length });
+    graphRef.current = next;
+    setGraph(next);
+    setDragPositions(null);
+    setResizeDrafts({});
+    const selection = next.selectedNodeId ? [next.selectedNodeId] : [];
+    selectedNodeIdsRef.current = selection;
+    setSelectedNodeIds(selection);
+    startTransition(async () => {
+      await flush(analysis.id);
+      await saveMunicipalityAnalysisGraph({ analysisId: analysis.id, graph: next });
+      toast(t("analysisRedone"));
+      router.refresh();
+    });
+  }, [analysis.id, flush, router, setDragPositions, setGraph, setHistoryDepth, setResizeDrafts, setSelectedNodeIds, startTransition, t]);
 
   // Ctrl/Cmd+Z anywhere on the page, except while typing into a field — a node's constant
   // and the analysis name both live in inputs with their own undo.
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key.toLowerCase() !== "z" || !(event.metaKey || event.ctrlKey) || event.shiftKey) return;
+      if (event.key.toLowerCase() !== "z" || !(event.metaKey || event.ctrlKey)) return;
       const target = event.target as HTMLElement | null;
       if (target?.closest("input, textarea, select, [contenteditable='true']")) return;
       event.preventDefault();
-      undoLastEdit();
+      if (event.shiftKey) redoLastEdit();
+      else undoLastEdit();
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [undoLastEdit]);
+  }, [redoLastEdit, undoLastEdit]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key.toLowerCase() !== "k" || !(event.metaKey || event.ctrlKey)) return;
+      const target = event.target as HTMLElement | null;
+      if (target?.closest("input, textarea, select, [contenteditable='true']")) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      setQuickAddOpen(true);
+    };
+    window.addEventListener("keydown", onKeyDown, { capture: true });
+    return () => window.removeEventListener("keydown", onKeyDown, { capture: true });
+  }, []);
 
   /**
    * Pins the node to the graph's subject, or releases a pinned one. A node that arrived
@@ -692,50 +907,113 @@ function AnalysisEditor({ analysis, analyses }: { analysis: AnalysisRecord; anal
   const displayNodes = useMemo<DisplayNode[]>(() => graph.nodes.map((node) => {
     const series = results.get(node.id) ?? null;
     const errorLabel = seriesErrorLabel(series?.error ?? null, t);
-    return {
+    const base = {
       id: node.id,
       type: node.type,
       position: node.position,
-      selected: graph.selectedNodeId === node.id,
-      data: node.type === "dataset" ? {
-        kind: "dataset",
-        title: datasetTitle(node.data.dataset, t),
-        // Pinned nodes name their own municipality; open ones show the graph's, so
-        // switching the subject visibly moves them and leaves the pinned ones behind.
-        subtitle: node.data.dataset.kind === "constant"
-          ? t("constantNode")
-          : datasetMunicipalityName(node.data.dataset)
-            ?? graph.subject?.municipalityName
-            ?? t("analysisSubjectNone"),
-        pinned: Boolean(datasetMunicipalityName(node.data.dataset)),
-        togglePin: node.data.dataset.kind === "constant" ? undefined : {
-          label: datasetMunicipalityName(node.data.dataset) ? t("unpinNode") : t("pinNode"),
-          apply: () => togglePin(node.id),
+      width: analysisNodeWidth(node),
+      height: analysisNodeHeight(node),
+      style: { width: analysisNodeWidth(node), height: analysisNodeHeight(node) },
+      selected: selectedNodeIds.includes(node.id),
+    };
+    if (node.type === "annotation") {
+      return {
+        ...base,
+        type: "annotation" as const,
+        data: {
+          kind: "annotation" as const,
+          title: t("studioNote"),
+          technicalTitle: t("studioNote"),
+          series: null,
+          errorLabel: null,
+          warningLabel: null,
+          annotation: {
+            text: node.data.text,
+            color: node.data.color,
+            commit: (text: string, color: AnalysisAnnotationColor) => setAnnotation(node.id, text, color),
+          },
         },
-        editor: node.data.dataset.kind === "constant"
-          ? { value: node.data.dataset.value, label: t("constantValue"), step: 1, commit: (value: number) => setNodeValue(node.id, value) }
-          : undefined,
+      };
+    }
+    if (node.type === "dataset") {
+      const technicalTitle = datasetTitle(node.data.dataset, t);
+      return {
+        ...base,
+        type: "dataset" as const,
+        data: {
+          kind: "dataset" as const,
+          title: node.data.alias ?? technicalTitle,
+          technicalTitle,
+          subtitle: node.data.dataset.kind === "constant"
+            ? t("constantNode")
+            : datasetMunicipalityName(node.data.dataset)
+              ?? graph.subject?.municipalityName
+              ?? t("analysisSubjectNone"),
+          pinned: Boolean(datasetMunicipalityName(node.data.dataset)),
+          togglePin: node.data.dataset.kind === "constant" ? undefined : {
+            label: datasetMunicipalityName(node.data.dataset) ? t("unpinNode") : t("pinNode"),
+            apply: () => togglePin(node.id),
+          },
+          editor: node.data.dataset.kind === "constant"
+            ? { value: node.data.dataset.value, label: t("constantValue"), step: 1, commit: (value: number) => setNodeValue(node.id, value) }
+            : undefined,
+          series,
+          errorLabel,
+          warningLabel: series?.warnings.length ? t("analysisDivisionWarnings", { count: series.warnings.length }) : null,
+          rename: (title: string | null) => setNodeTitle(node.id, title),
+        },
+      };
+    }
+    const technicalTitle = t(`operator_${node.data.operator}`);
+    return {
+      ...base,
+      type: "operator" as const,
+      data: {
+        kind: "operator" as const,
+        title: node.data.alias ?? technicalTitle,
+        technicalTitle,
+        subtitle: t("operatorNode"),
+        symbol: ANALYSIS_OPERATOR_SYMBOLS[node.data.operator],
         series,
-        errorLabel, warningLabel: series?.warnings.length ? t("analysisDivisionWarnings", { count: series.warnings.length }) : null,
-      } : {
-        kind: "operator", title: t(`operator_${node.data.operator}`), subtitle: t("operatorNode"), symbol: ANALYSIS_OPERATOR_SYMBOLS[node.data.operator], series,
         singleInput: isUnaryAnalysisOperator(node.data.operator),
         editor: isUnaryAnalysisOperator(node.data.operator)
           ? { value: node.data.years ?? 1, label: t("shiftYears"), min: 1, max: MAX_ANALYSIS_SHIFT_YEARS, step: 1, commit: (value: number) => setNodeValue(node.id, value) }
           : undefined,
-        errorLabel, warningLabel: series?.warnings.length ? t("analysisDivisionWarnings", { count: series.warnings.length }) : null,
+        errorLabel,
+        warningLabel: series?.warnings.length ? t("analysisDivisionWarnings", { count: series.warnings.length }) : null,
+        rename: (title: string | null) => setNodeTitle(node.id, title),
       },
     };
-  }), [graph.nodes, graph.selectedNodeId, graph.subject, results, setNodeValue, togglePin, t]);
-  const positionedNodes = useMemo<DisplayNode[]>(() => (dragPositions
-    ? displayNodes.map((node) => (dragPositions[node.id] ? { ...node, position: dragPositions[node.id] } : node))
-    : displayNodes), [displayNodes, dragPositions]);
-  const displayEdges = useMemo<Edge[]>(() => graph.edges.map((edge) => ({ ...edge, type: "smoothstep", animated: false })), [graph.edges]);
-  const selectedNode = graph.selectedNodeId ? graph.nodes.find(({ id }) => id === graph.selectedNodeId) : null;
+  }), [graph.nodes, graph.subject, results, selectedNodeIds, setAnnotation, setNodeTitle, setNodeValue, togglePin, t]);
+  const positionedNodes = useMemo<DisplayNode[]>(() => displayNodes.map((node) => {
+    const drag = dragPositions?.[node.id];
+    const resize = resizeDrafts[node.id];
+    const position = drag ?? (resize ? { x: resize.x ?? node.position.x, y: resize.y ?? node.position.y } : node.position);
+    const width = resize?.width ?? node.width;
+    const height = resize?.height ?? node.height;
+    return { ...node, position, width, height, style: { width, height } };
+  }), [displayNodes, dragPositions, resizeDrafts]);
+  const displayEdges = useMemo<Edge[]>(() => graph.edges.map((edge) => {
+    const highlighted = selectedNodeIds.includes(edge.source) || selectedNodeIds.includes(edge.target);
+    return { ...edge, type: "smoothstep", animated: false, style: highlighted ? { strokeWidth: 2.5, stroke: "var(--color-teal-600)" } : undefined };
+  }), [graph.edges, selectedNodeIds]);
+  const selectedNode = selectedNodeIds.length === 1 ? graph.nodes.find(({ id }) => id === selectedNodeIds[0]) ?? null : null;
   const selectedSeries = selectedNode ? results.get(selectedNode.id) ?? null : null;
-  const selectedTitle = selectedNode ? selectedNode.type === "dataset" ? datasetTitle(selectedNode.data.dataset, t) : t(`operator_${selectedNode.data.operator}`) : t("analysisNoResultSelected");
+  const selectedTechnicalTitle = selectedNode?.type === "dataset" ? datasetTitle(selectedNode.data.dataset, t)
+    : selectedNode?.type === "operator" ? t(`operator_${selectedNode.data.operator}`)
+      : selectedNode?.type === "annotation" ? t("studioNote") : t("analysisNoResultSelected");
+  const selectedTitle = selectedNode && selectedNode.type !== "annotation" ? selectedNode.data.alias ?? selectedTechnicalTitle : selectedTechnicalTitle;
 
   const onNodesChange = useCallback((changes: NodeChange<DisplayNode>[]) => {
+    const resizeBatchIds = new Set(changes.flatMap((change) => change.type === "dimensions" && change.resizing !== undefined ? [change.id] : []));
+    const selection = new Set(selectedNodeIdsRef.current);
+    let selectionChanged = false;
+    const updateResizeDraft = (id: string, draft: { x?: number; y?: number; width?: number; height?: number }) => {
+      const next = { ...(resizeDraftsRef.current[id] ?? {}), ...draft };
+      resizeDraftsRef.current = { ...resizeDraftsRef.current, [id]: next };
+      setResizeDrafts(resizeDraftsRef.current);
+      return next;
+    };
     for (const change of changes) {
       if (change.type === "remove") {
         // Backspace/Delete removes a node straight into the persisted graph, so the
@@ -747,6 +1025,8 @@ function AnalysisEditor({ analysis, analyses }: { analysis: AnalysisRecord; anal
         commitOperations([{
           version: ANALYSIS_OPERATION_VERSION, type: "remove-node", nodeId: change.id,
         }]);
+        selection.delete(change.id);
+        selectionChanged = true;
         if (removedNode) {
           toast(t("analysisNodeRemoved"), {
             action: {
@@ -762,6 +1042,10 @@ function AnalysisEditor({ analysis, analyses }: { analysis: AnalysisRecord; anal
         }
       } else if (change.type === "position" && change.position) {
         const { id, position } = change;
+        if (resizeBatchIds.has(id)) {
+          updateResizeDraft(id, position);
+          continue;
+        }
         if (change.dragging) {
           setDragPositions((current) => ({ ...current, [id]: position }));
           continue;
@@ -773,14 +1057,41 @@ function AnalysisEditor({ analysis, analyses }: { analysis: AnalysisRecord; anal
           [{ version: ANALYSIS_OPERATION_VERSION, type: "move-node", nodeId: id, position }],
           { debounceKey: `node-position:${id}`, delay: 500 },
         );
-      } else if (change.type === "select") {
-        const selectedNodeId = change.selected ? change.id : graphRef.current.selectedNodeId === change.id ? null : graphRef.current.selectedNodeId;
-        if (selectedNodeId !== graphRef.current.selectedNodeId) {
-          commitOperations([{ version: ANALYSIS_OPERATION_VERSION, type: "set-selected-node", nodeId: selectedNodeId }]);
+      } else if (change.type === "dimensions" && change.dimensions && change.resizing !== undefined) {
+        const draft = updateResizeDraft(change.id, change.dimensions);
+        if (change.resizing === false) {
+          const node = graphRef.current.nodes.find(({ id }) => id === change.id);
+          if (node) {
+            commitOperations([{
+              version: ANALYSIS_OPERATION_VERSION,
+              type: "resize-node",
+              nodeId: change.id,
+              position: { x: draft.x ?? node.position.x, y: draft.y ?? node.position.y },
+              width: draft.width ?? analysisNodeWidth(node),
+              height: draft.height ?? analysisNodeHeight(node),
+            }]);
+          }
+          const remaining = { ...resizeDraftsRef.current };
+          delete remaining[change.id];
+          resizeDraftsRef.current = remaining;
+          setResizeDrafts(remaining);
         }
+      } else if (change.type === "select") {
+        if (change.selected) selection.add(change.id);
+        else selection.delete(change.id);
+        selectionChanged = true;
       }
     }
-  }, [commitOperations, setDragPositions, t]);
+    if (selectionChanged) {
+      const ids = [...selection];
+      selectedNodeIdsRef.current = ids;
+      setSelectedNodeIds(ids);
+      const primary = ids.at(-1) ?? null;
+      if (primary !== graphRef.current.selectedNodeId) {
+        commitOperations([{ version: ANALYSIS_OPERATION_VERSION, type: "set-selected-node", nodeId: primary }], { recordHistory: false });
+      }
+    }
+  }, [commitOperations, setDragPositions, setResizeDrafts, setSelectedNodeIds, t]);
 
   const connect = useCallback((connection: Connection) => {
     if (!connection.source || !connection.target || (connection.targetHandle !== "a" && connection.targetHandle !== "b")) return;
@@ -798,24 +1109,93 @@ function AnalysisEditor({ analysis, analyses }: { analysis: AnalysisRecord; anal
   function addOperator(operator: AnalysisOperatorId, position?: { x: number; y: number }) {
     if (graphRef.current.nodes.length >= 100) { toast.error(t("analysisNodeLimit")); return; }
     const id = createId();
-    commitOperations([{
+    if (commitOperations([{
       version: ANALYSIS_OPERATION_VERSION,
       type: "add-node",
-      node: { id, type: "operator", position: position ?? { x: 360, y: 120 + graphRef.current.nodes.length * 30 }, data: { operator } },
-    }]);
+      node: { id, type: "operator", position: position ?? lastCanvasPosition.current ?? { x: 360, y: 120 + graphRef.current.nodes.length * 30 }, data: { operator } },
+    }])) {
+      selectedNodeIdsRef.current = [id];
+      setSelectedNodeIds([id]);
+    }
   }
 
   function addConstant(position?: { x: number; y: number }) {
     if (graphRef.current.nodes.length >= 100) { toast.error(t("analysisNodeLimit")); return; }
-    commitOperations([{
+    const id = createId();
+    if (commitOperations([{
       version: ANALYSIS_OPERATION_VERSION,
       type: "add-node",
       node: {
-        id: createId(), type: "dataset",
-        position: position ?? { x: 360, y: 120 + graphRef.current.nodes.length * 30 },
+        id, type: "dataset",
+        position: position ?? lastCanvasPosition.current ?? { x: 360, y: 120 + graphRef.current.nodes.length * 30 },
         data: { dataset: { kind: "constant", value: 0 } },
       },
-    }]);
+    }])) {
+      selectedNodeIdsRef.current = [id];
+      setSelectedNodeIds([id]);
+    }
+  }
+
+  function addAnnotation(position?: { x: number; y: number }) {
+    if (graphRef.current.nodes.length >= 100) { toast.error(t("analysisNodeLimit")); return; }
+    const id = createId();
+    if (commitOperations([{
+      version: ANALYSIS_OPERATION_VERSION,
+      type: "add-node",
+      node: {
+        id,
+        type: "annotation",
+        position: position ?? lastCanvasPosition.current ?? { x: 240, y: 160 + graphRef.current.nodes.length * 24 },
+        data: { text: t("studioNotePlaceholder"), color: "sand" },
+      },
+    }])) {
+      selectedNodeIdsRef.current = [id];
+      setSelectedNodeIds([id]);
+    }
+  }
+
+  function applyNodePositions(positions: Record<string, { x: number; y: number }>) {
+    const operations = Object.entries(positions).flatMap(([nodeId, position]): MunicipalityAnalysisGraphOperation[] => {
+      const node = graphRef.current.nodes.find(({ id }) => id === nodeId);
+      if (!node || (node.position.x === position.x && node.position.y === position.y)) return [];
+      return [{ version: ANALYSIS_OPERATION_VERSION, type: "move-node", nodeId, position }];
+    });
+    if (operations.length) commitOperations(operations);
+  }
+
+  function autoLayout() {
+    applyNodePositions(autoLayoutAnalysisGraph(graphRef.current));
+    requestAnimationFrame(() => void reactFlow.fitView({ padding: 0.2, duration: 250 }));
+  }
+
+  function arrangeSelection(action: AnalysisArrangeAction) {
+    applyNodePositions(arrangeAnalysisNodes(graphRef.current, selectedNodeIdsRef.current, action));
+  }
+
+  function resizeSelectedNode(size: { width?: number; height?: number }) {
+    const node = selectedNodeIdsRef.current.length === 1
+      ? graphRef.current.nodes.find(({ id }) => id === selectedNodeIdsRef.current[0])
+      : null;
+    if (!node) return;
+    const width = size.width ?? analysisNodeWidth(node);
+    const height = size.height ?? analysisNodeHeight(node);
+    if (!Number.isFinite(width) || !Number.isFinite(height)) return;
+    commitOperations([{
+      version: ANALYSIS_OPERATION_VERSION,
+      type: "resize-node",
+      nodeId: node.id,
+      position: node.position,
+      width,
+      height,
+    }], { debounceKey: `node-size:${node.id}`, delay: 300 });
+  }
+
+  function deleteSelection() {
+    const ids = [...selectedNodeIdsRef.current];
+    if (!ids.length) return;
+    commitOperations(ids.map((nodeId) => ({ version: ANALYSIS_OPERATION_VERSION, type: "remove-node", nodeId })));
+    selectedNodeIdsRef.current = [];
+    setSelectedNodeIds([]);
   }
 
   /**
@@ -887,60 +1267,194 @@ function AnalysisEditor({ analysis, analyses }: { analysis: AnalysisRecord; anal
     });
   }
 
+  type QuickAddItem =
+    | { id: string; label: string; group: string; kind: "dataset"; request: { label: string; dataset: MunicipalityDatasetRef } }
+    | { id: string; label: string; group: string; kind: "operator"; operator: AnalysisOperatorId }
+    | { id: string; label: string; group: string; kind: "constant" | "annotation" };
+  const quickAddItems: QuickAddItem[] = [
+    ...AUSGANGSDATEN_CATALOG.map(({ id, output }) => ({
+      id: `data:${id}`,
+      label: datasetTitle(output, t),
+      group: t("dataKindBase"),
+      kind: "dataset" as const,
+      request: { label: datasetTitle(output, t), dataset: bindKennzahlInput(output) },
+    })),
+    ...KENNZAHL_CATALOG.flatMap(({ id, labelKey, output }) => kennzahlExpressionFor(output) ? [{
+      id: `metric:${id}`,
+      label: t(labelKey as "populationDensity"),
+      group: t("dataKindDerived"),
+      kind: "dataset" as const,
+      request: { label: t(labelKey as "populationDensity"), dataset: bindKennzahlInput(output) },
+    }] : []),
+    ...analysisOperatorIds.map((operator) => ({
+      id: `operator:${operator}`,
+      label: t(`operator_${operator}`),
+      group: t("operators"),
+      kind: "operator" as const,
+      operator,
+    })),
+    { id: "constant", label: t("constantNode"), group: t("studioBlocks"), kind: "constant" },
+    { id: "annotation", label: t("studioNote"), group: t("studioBlocks"), kind: "annotation" },
+  ];
+  const quickAddNeedle = normalizeMunicipalitySearch(quickAddQuery);
+  const visibleQuickAddItems = quickAddItems.filter(({ label, group }) => !quickAddNeedle
+    || normalizeMunicipalitySearch(`${label} ${group}`).includes(quickAddNeedle)).slice(0, 40);
 
-  // The grid row is an explicit 1fr rather than auto: the catalog and the year table are
-  // taller than the screen, and an auto row would grow to fit them instead of letting them
-  // scroll inside their own panel.
+  const runQuickAdd = (item: QuickAddItem) => {
+    if (item.kind === "dataset") insertDataset(item.request);
+    else if (item.kind === "operator") addOperator(item.operator);
+    else if (item.kind === "constant") addConstant();
+    else addAnnotation();
+    setQuickAddOpen(false);
+    setQuickAddQuery("");
+  };
+  const palettePanel = (
+    <StudioPalette
+      metrics={metrics}
+      onOperator={addOperator}
+      onConstant={() => addConstant()}
+      onAnnotation={() => addAnnotation()}
+      onDataset={insertDataset}
+    />
+  );
+
+  const selectedWidth = selectedNode ? analysisNodeWidth(selectedNode) : 0;
+  const selectedHeight = selectedNode ? analysisNodeHeight(selectedNode) : 0;
+  const inspectorPanel = (
+    <Tabs defaultValue="properties" className="min-h-0 flex-1">
+      <TabsList className="grid h-9 w-full grid-cols-2">
+        <TabsTrigger value="properties"><SlidersHorizontal className="size-3.5" />{t("studioProperties")}</TabsTrigger>
+        <TabsTrigger value="result"><ChartLine className="size-3.5" />{t("resultPreview")}</TabsTrigger>
+      </TabsList>
+      <TabsContent value="properties" className="min-h-0 overflow-y-auto pr-1">
+        {selectedNodeIds.length > 1 ? (
+          <div className="grid gap-4 py-3">
+            <div>
+              <h2 className="text-sm font-semibold">{t("studioSelectionCount", { count: selectedNodeIds.length })}</h2>
+              <p className="mt-1 text-xs text-muted-foreground">{t("studioSelectionHint")}</p>
+            </div>
+            <div>
+              <h3 className="text-[10px] font-semibold tracking-wide text-muted-foreground uppercase">{t("studioAlign")}</h3>
+              <div className="mt-1.5 grid grid-cols-3 gap-1">
+                {([
+                  ["align-left", AlignStartVertical], ["align-center", AlignCenterVertical], ["align-right", AlignEndVertical],
+                  ["align-top", AlignStartHorizontal], ["align-middle", AlignCenterHorizontal], ["align-bottom", AlignEndHorizontal],
+                ] as const).map(([action, Icon]) => (
+                  <Button key={action} variant="outline" size="icon-sm" aria-label={t(`studio_${action}`)} title={t(`studio_${action}`)} onClick={() => arrangeSelection(action)}><Icon className="size-3.5" /></Button>
+                ))}
+              </div>
+            </div>
+            <div>
+              <h3 className="text-[10px] font-semibold tracking-wide text-muted-foreground uppercase">{t("studioDistribute")}</h3>
+              <div className="mt-1.5 grid grid-cols-2 gap-1.5">
+                <Button variant="outline" size="sm" onClick={() => arrangeSelection("distribute-horizontal")}><Columns3 className="size-3.5" />{t("studioHorizontal")}</Button>
+                <Button variant="outline" size="sm" onClick={() => arrangeSelection("distribute-vertical")}><Rows3 className="size-3.5" />{t("studioVertical")}</Button>
+              </div>
+            </div>
+            <Button variant="destructive" size="sm" onClick={deleteSelection}><Trash2 className="size-3.5" />{t("studioDeleteSelection")}</Button>
+          </div>
+        ) : selectedNode ? (
+          <div className="grid gap-4 py-3">
+            <div>
+              <h2 className="truncate text-sm font-semibold">{selectedTitle}</h2>
+              <p className="mt-0.5 truncate text-xs text-muted-foreground">{selectedTechnicalTitle}</p>
+            </div>
+            {selectedNode.type !== "annotation" && (
+              <label className="grid gap-1.5 text-xs font-medium">
+                {t("studioCustomTitle")}
+                <Input
+                  key={`${selectedNode.id}:${selectedTitle}`}
+                  className="h-9 text-xs"
+                  defaultValue={selectedNode.data.alias ?? ""}
+                  maxLength={120}
+                  placeholder={selectedTechnicalTitle}
+                  onBlur={(event) => setNodeTitle(selectedNode.id, event.target.value.trim() || null)}
+                  onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }}
+                />
+              </label>
+            )}
+            {selectedNode.type === "annotation" && (
+              <>
+                <label className="grid gap-1.5 text-xs font-medium">
+                  {t("studioNoteText")}
+                  <Textarea
+                    key={`${selectedNode.id}:${selectedNode.data.text}`}
+                    defaultValue={selectedNode.data.text}
+                    maxLength={2_000}
+                    onBlur={(event) => setAnnotation(selectedNode.id, event.target.value, selectedNode.data.color)}
+                  />
+                </label>
+                <div>
+                  <h3 className="text-xs font-medium">{t("studioNoteColor")}</h3>
+                  <div className="mt-1.5 flex gap-2">
+                    {analysisAnnotationColors.map((color) => (
+                      <button
+                        key={color}
+                        type="button"
+                        className={cn("size-7 rounded-full border-2", NOTE_STYLES[color], selectedNode.data.color === color && "ring-2 ring-teal-600 ring-offset-2")}
+                        aria-label={t(`studioNoteColor_${color}`)}
+                        title={t(`studioNoteColor_${color}`)}
+                        onClick={() => setAnnotation(selectedNode.id, selectedNode.data.text, color)}
+                      ><span className="sr-only">{t(`studioNoteColor_${color}`)}</span></button>
+                    ))}
+                  </div>
+                </div>
+              </>
+            )}
+            <div>
+              <h3 className="text-xs font-medium">{t("studioDimensions")}</h3>
+              <div className="mt-1.5 grid grid-cols-2 gap-2">
+                <label className="grid gap-1 text-[10px] text-muted-foreground">{t("studioWidth")}
+                  <Input key={`${selectedNode.id}:w:${selectedWidth}`} className="h-8 text-xs" type="number" defaultValue={selectedWidth} min={selectedNode.type === "annotation" ? MIN_ANALYSIS_NOTE_WIDTH : MIN_ANALYSIS_NODE_WIDTH} max={MAX_ANALYSIS_NODE_WIDTH} onBlur={(event) => resizeSelectedNode({ width: Number(event.target.value) })} />
+                </label>
+                <label className="grid gap-1 text-[10px] text-muted-foreground">{t("studioHeight")}
+                  <Input key={`${selectedNode.id}:h:${selectedHeight}`} className="h-8 text-xs" type="number" defaultValue={selectedHeight} min={selectedNode.type === "annotation" ? MIN_ANALYSIS_NOTE_HEIGHT : MIN_ANALYSIS_NODE_HEIGHT} max={MAX_ANALYSIS_NODE_HEIGHT} onBlur={(event) => resizeSelectedNode({ height: Number(event.target.value) })} />
+                </label>
+              </div>
+            </div>
+            {selectedNode.type === "dataset" && selectedNode.data.dataset.kind !== "constant" && (
+              <Button variant="outline" size="sm" onClick={() => togglePin(selectedNode.id)}>
+                {datasetMunicipalityName(selectedNode.data.dataset) ? <PinOff className="size-3.5" /> : <Pin className="size-3.5" />}
+                {datasetMunicipalityName(selectedNode.data.dataset) ? t("unpinNode") : t("pinNode")}
+              </Button>
+            )}
+            <Button variant="outline" size="sm" className="text-destructive" onClick={deleteSelection}><Trash2 className="size-3.5" />{t("studioDeleteNode")}</Button>
+          </div>
+        ) : <p className="py-4 text-xs leading-5 text-muted-foreground">{t("studioSelectProperties")}</p>}
+      </TabsContent>
+      <TabsContent value="result" className="min-h-0 overflow-y-auto pr-1" aria-live="polite">
+        {selectedNodeIds.length === 1 && selectedNode && selectedNode.type !== "annotation" && <h2 className="mt-3 truncate text-sm font-semibold">{selectedTitle}</h2>}
+        {selectedNodeIds.length > 1 ? <p className="py-4 text-xs leading-5 text-muted-foreground">{t("studioMultiResult")}</p>
+          : selectedNode?.type === "annotation" ? <p className="py-4 text-xs leading-5 text-muted-foreground">{t("studioNoteNoResult")}</p>
+            : dataError ? <p className="mt-3 flex gap-2 text-xs text-destructive"><TriangleAlert className="size-4 shrink-0" />{t("analysisDataError")}</p>
+              : selectedSeries?.error ? <p className="mt-3 flex gap-2 text-xs text-destructive"><TriangleAlert className="size-4 shrink-0" />{seriesErrorLabel(selectedSeries.error, t)}</p>
+                : selectedSeries ? (
+                  <div className="py-3">
+                    <AnalysisSeriesChart series={selectedSeries} label={selectedTitle} trueLabel={t("booleanTrue")} falseLabel={t("booleanFalse")} />
+                    {selectedSeries.warnings.length > 0 && <p className="mt-2 text-[11px] text-amber-700 dark:text-amber-300">{t("analysisDivisionWarnings", { count: selectedSeries.warnings.length })}</p>}
+                    <div className="mt-3 grid gap-2">
+                      <Button variant="outline" size="sm" disabled={pending} onClick={() => { setMetricName(selectedTitle); setSavingMetric(true); }}><Bookmark className="size-4" />{t("saveAsKennzahl")}</Button>
+                      <Button variant="outline" size="sm" onClick={copySeriesAsCsv}><Copy className="size-4" />{t("copyCsv")}</Button>
+                    </div>
+                    <div className="mt-3 max-h-80 overflow-y-auto rounded-lg border">
+                      <table className="w-full text-[11px]">
+                        <thead className="sticky top-0 bg-muted text-muted-foreground"><tr><th className="px-2 py-1 text-left font-medium">{t("csvYearHeader")}</th><th className="px-2 py-1 text-right font-medium">{t("analysisValueHeader")}</th></tr></thead>
+                        <tbody>{[...selectedSeries.points].reverse().map(({ year, value }) => <tr key={year} className="border-t"><td className="px-2 py-1">{year}</td><td className="px-2 py-1 text-right tabular-nums">{value === null ? "—" : typeof value === "boolean" ? (value ? t("booleanTrue") : t("booleanFalse")) : format.number(value, { maximumFractionDigits: 2 })}</td></tr>)}</tbody>
+                      </table>
+                    </div>
+                  </div>
+                ) : <p className="py-4 text-xs leading-5 text-muted-foreground">{t("analysisSelectResult")}</p>}
+      </TabsContent>
+    </Tabs>
+  );
+
   return (
-    <div className="grid gap-2 lg:h-full lg:min-h-[34rem] lg:grid-cols-[13rem_minmax(0,1fr)_16rem] lg:grid-rows-[minmax(0,1fr)]" data-analysis-editor data-testid="municipality-analysis-editor">
-      {/* Native <details>: the side panels fold away on a phone and are permanently
-          open from lg on, where the summary is hidden. */}
-      {/* The panel itself scrolls rather than a box inside it: Chrome wraps a <details>
-          element's children in ::details-content, so `flex` on the element does not make
-          them flex items and a nested `flex-1` scroll area never gets a height. */}
-      <details className="group rounded-2xl border bg-card px-3 py-2 shadow-sm lg:min-h-0 lg:overflow-y-auto lg:[&>summary]:hidden" open={wide}>
-        <summary className="flex cursor-pointer list-none items-center justify-between py-1 text-xs font-semibold tracking-wide uppercase [&::-webkit-details-marker]:hidden">
-          {t("operators")}<ChevronDown className="size-4 transition-transform group-open:rotate-180" />
-        </summary>
-        <label htmlFor="analysis-switcher" className="mt-2 block text-[11px] font-semibold text-muted-foreground">{t("savedAnalyses")}</label>
-        <select id="analysis-switcher" className="mt-1 h-8 w-full rounded-lg border bg-background px-2 text-xs" value={analysis.id} onChange={(event) => router.push(`/municipalities/analysis?analysis=${encodeURIComponent(event.target.value)}`)}>
-          {/* Two analyses may share a name; the municipality and the size are what tell
-              them apart in a flat list. */}
+    <div className="flex min-h-[42rem] flex-col overflow-hidden rounded-2xl border bg-card shadow-sm lg:h-[calc(100vh-10.5rem)]" data-analysis-editor data-testid="municipality-analysis-editor">
+      <header className="flex flex-wrap items-center gap-2 border-b bg-background px-3 py-2">
+        <select id="analysis-switcher" className="h-8 max-w-52 rounded-lg border bg-background px-2 text-xs" value={analysis.id} aria-label={t("savedAnalyses")} onChange={(event) => router.push(`/municipalities/analysis?analysis=${encodeURIComponent(event.target.value)}`)}>
           {analyses.map((item) => <option key={item.id} value={item.id}>{analysisOptionLabel(item, t)}</option>)}
         </select>
-        <div className="mt-3 flex items-baseline justify-between gap-2">
-          <h2 className="text-[11px] font-semibold tracking-wide uppercase">{t("operators")}</h2>
-          <span className="truncate text-[10px] text-muted-foreground">{t("dragHint")}</span>
-        </div>
-        <div className="mt-1.5 grid grid-cols-6 gap-1 sm:grid-cols-8 lg:grid-cols-3">
-          {analysisOperatorIds.map((operator) => (
-            <button
-              key={operator}
-              type="button"
-              draggable
-              className="grid h-9 place-items-center rounded-lg border bg-background font-semibold hover:border-teal-600 hover:bg-teal-50 dark:hover:bg-teal-950"
-              title={t(`operator_${operator}`)}
-              aria-label={t("addOperator", { operator: t(`operator_${operator}`) })}
-              onClick={() => addOperator(operator)}
-              onDragStart={(event) => { event.dataTransfer.effectAllowed = "copy"; event.dataTransfer.setData(OPERATOR_DRAG_TYPE, operator); }}
-            >{ANALYSIS_OPERATOR_SYMBOLS[operator]}</button>
-          ))}
-          <button
-            type="button"
-            draggable
-            className="grid h-9 place-items-center rounded-lg border bg-background text-xs font-semibold hover:border-teal-600 hover:bg-teal-50 dark:hover:bg-teal-950"
-            title={t("constantNode")}
-            aria-label={t("addConstant")}
-            onClick={() => addConstant()}
-            onDragStart={(event) => { event.dataTransfer.effectAllowed = "copy"; event.dataTransfer.setData(OPERATOR_DRAG_TYPE, CONSTANT_DRAG_VALUE); }}
-          >123</button>
-        </div>
-        <p className="mt-2 text-[10px] leading-4 text-muted-foreground">{t("analysisUnitRule")}</p>
-        <DatasetCatalog variant="sidebar" onOpen={insertDataset} />
-      </details>
-
-      <section className="flex min-h-[65vh] flex-col overflow-hidden rounded-2xl border bg-muted/20 shadow-sm lg:min-h-0">
-        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 border-b bg-background px-2 py-1.5">
+        <div className="min-w-32 flex-1">
           <div className="min-w-0 flex-1">
             {renaming ? <Input className="h-8 max-w-xs text-sm" value={name} maxLength={120} autoFocus onValueChange={(value) => setName(value)} onBlur={commitRename} onKeyDown={(event) => { if (event.key === "Enter") commitRename(); if (event.key === "Escape") { setName(analysis.name); setRenaming(false); } }} /> : (
               <button className="flex max-w-full items-center gap-1.5 text-left" onClick={() => setRenaming(true)}>
@@ -948,164 +1462,99 @@ function AnalysisEditor({ analysis, analyses }: { analysis: AnalysisRecord; anal
               </button>
             )}
           </div>
-          <span className={cn("flex items-center gap-1 text-[11px]", saveState === "error" ? "text-destructive" : "text-muted-foreground")}>
-            <Save className="size-3.5 shrink-0" />
-            <span className="hidden sm:inline">{t(saveState === "saving" ? "analysisSaving" : saveState === "error" ? "analysisSaveError" : "analysisSaved")}</span>
-          </span>
-          <Button variant="ghost" size="icon-sm" className="text-destructive" disabled={pending} aria-label={t("deleteAnalysis")} onClick={() => setDeleting(true)}><Trash2 className="size-3.5" /></Button>
-          {/* The graph is a formula; this is the municipality it is evaluated for. */}
-          <div className="flex w-full items-center gap-1.5 lg:w-auto">
-            <MapPin className="size-3.5 shrink-0 text-muted-foreground" />
-            <span className="max-w-32 truncate text-[11px] font-medium" data-testid="analysis-subject">
-              {graph.subject?.municipalityName ?? t("analysisSubjectNone")}
-            </span>
-            <div className="min-w-0 flex-1 lg:w-36 lg:flex-none">
-              <MunicipalityPicker
-                compact
-                label={t("analysisSubject")}
-                placeholder={t("kennzahlMunicipalityPlaceholder")}
-                onPick={(item) => commitOperations([{
-                  version: ANALYSIS_OPERATION_VERSION,
-                  type: "set-subject",
-                  subject: { municipalityCode: item.municipalityCode, municipalityName: item.name },
-                }])}
-              />
-            </div>
+        </div>
+        <div className="hidden items-center gap-1.5 md:flex">
+          <MapPin className="size-3.5 shrink-0 text-muted-foreground" />
+          <span className="max-w-32 truncate text-[11px] font-medium" data-testid="analysis-subject">{graph.subject?.municipalityName ?? t("analysisSubjectNone")}</span>
+          <div className="w-36"><MunicipalityPicker compact label={t("analysisSubject")} placeholder={t("kennzahlMunicipalityPlaceholder")} onPick={(item) => commitOperations([{ version: ANALYSIS_OPERATION_VERSION, type: "set-subject", subject: { municipalityCode: item.municipalityCode, municipalityName: item.name } }])} /></div>
+        </div>
+        <span className={cn("flex items-center gap-1 text-[11px]", saveState === "error" ? "text-destructive" : "text-muted-foreground")}><Save className="size-3.5" />{t(saveState === "saving" ? "analysisSaving" : saveState === "error" ? "analysisSaveError" : "analysisSaved")}</span>
+        <Button variant="ghost" size="icon-sm" className="text-destructive" disabled={pending} aria-label={t("deleteAnalysis")} onClick={() => setDeleting(true)}><Trash2 className="size-3.5" /></Button>
+      </header>
+
+      <div className="flex min-h-0 flex-1">
+        <aside className={cn("hidden min-h-0 shrink-0 border-r bg-muted/10 transition-[width] lg:flex lg:flex-col", paletteCollapsed ? "w-11 p-1" : "w-64 p-3")}>
+          <div className="mb-2 flex items-center justify-between">
+            {!paletteCollapsed && <h2 className="text-xs font-semibold tracking-wide uppercase">{t("studioLibrary")}</h2>}
+            <Button variant="ghost" size="icon-sm" className={cn(paletteCollapsed && "mx-auto")} aria-label={paletteCollapsed ? t("studioOpenPalette") : t("studioClosePalette")} onClick={() => setPaletteCollapsed((value) => !value)}>{paletteCollapsed ? <PanelLeftOpen className="size-4" /> : <PanelLeftClose className="size-4" />}</Button>
           </div>
-        </div>
-        <div className="relative min-h-0 flex-1" ref={flowRef}>
-          <ReactFlow
-            nodes={positionedNodes}
-            edges={displayEdges}
-            nodeTypes={nodeTypes}
-            onNodesChange={onNodesChange}
-            onEdgesChange={(changes) => {
-              for (const change of changes) {
-                if (change.type === "remove") {
-                  commitOperations([{ version: ANALYSIS_OPERATION_VERSION, type: "remove-edge", edgeId: change.id }]);
-                }
-              }
-            }}
-            onConnect={connect}
-            onMoveEnd={(_, viewport: Viewport) => {
-              const current = graphRef.current.viewport;
-              if (current.x === viewport.x && current.y === viewport.y && current.zoom === viewport.zoom) return;
-              commitOperations(
-                [{ version: ANALYSIS_OPERATION_VERSION, type: "set-viewport", viewport }],
-                { debounceKey: "viewport", delay: 500 },
-              );
-            }}
-            defaultViewport={graph.viewport}
-            minZoom={0.2}
-            maxZoom={2}
-            fitView={!graph.nodes.length}
-            deleteKeyCode={["Backspace", "Delete"]}
-            onPaneClick={() => {
-              if (graphRef.current.selectedNodeId) {
-                commitOperations([{ version: ANALYSIS_OPERATION_VERSION, type: "set-selected-node", nodeId: null }]);
-              }
-            }}
-            onDragOver={(event) => { if (event.dataTransfer.types.includes(OPERATOR_DRAG_TYPE)) { event.preventDefault(); event.dataTransfer.dropEffect = "copy"; } }}
-            onDrop={(event) => {
-              event.preventDefault();
-              const payload = event.dataTransfer.getData(OPERATOR_DRAG_TYPE);
-              const position = reactFlow.screenToFlowPosition({ x: event.clientX, y: event.clientY });
-              if (payload === CONSTANT_DRAG_VALUE) addConstant(position);
-              else if (analysisOperatorIds.includes(payload as AnalysisOperatorId)) addOperator(payload as AnalysisOperatorId, position);
-            }}
+          {!paletteCollapsed && palettePanel}
+        </aside>
+
+        <section className="flex min-w-0 flex-1 flex-col bg-muted/20">
+          <div className="flex flex-wrap items-center gap-1 border-b bg-background px-2 py-1.5">
+            <Button variant="outline" size="sm" className="lg:hidden" onClick={() => setPaletteSheetOpen(true)}><Menu className="size-3.5" />{t("studioLibrary")}</Button>
+            <Button variant="outline" size="sm" onClick={() => setQuickAddOpen(true)}><Plus className="size-3.5" />{t("studioQuickAdd")}<span className="ml-2 hidden rounded border px-1 text-[9px] text-muted-foreground sm:inline">⌘K</span></Button>
+            <span className="mx-1 h-5 w-px bg-border" />
+            <Button variant="ghost" size="icon-sm" aria-label={t("analysisUndo")} title={t("analysisUndo")} disabled={!historyDepth.undo} onClick={undoLastEdit}><Undo2 className="size-3.5" /></Button>
+            <Button variant="ghost" size="icon-sm" aria-label={t("studioRedo")} title={t("studioRedo")} disabled={!historyDepth.redo} onClick={redoLastEdit}><Redo2 className="size-3.5" /></Button>
+            <Button variant="ghost" size="sm" onClick={autoLayout}><WandSparkles className="size-3.5" />{t("studioAutoLayout")}</Button>
+            <Button variant="ghost" size="sm" onClick={() => void reactFlow.fitView({ padding: 0.2, duration: 250 })}><Maximize2 className="size-3.5" />{t("studioFit")}</Button>
+            {selectedNodeIds.length > 1 && <span className="ml-auto rounded-full bg-teal-100 px-2 py-1 text-[10px] font-medium text-teal-800 dark:bg-teal-950 dark:text-teal-200">{t("studioSelectionCount", { count: selectedNodeIds.length })}</span>}
+            <Button variant="outline" size="sm" className="ml-auto lg:hidden" onClick={() => setInspectorSheetOpen(true)}><SlidersHorizontal className="size-3.5" />{t("studioInspector")}</Button>
+          </div>
+          <div
+            className="relative min-h-0 flex-1"
+            ref={flowRef}
+            onPointerMove={(event) => { lastCanvasPosition.current = reactFlow.screenToFlowPosition({ x: event.clientX, y: event.clientY }); }}
           >
-            <Background gap={20} size={1} />
-            <Controls position="bottom-left" showInteractive={false} />
-          </ReactFlow>
-          {!graph.nodes.length && <div className="pointer-events-none absolute inset-0 grid place-items-center p-6 text-center"><div><BarChart3 className="mx-auto size-8 text-muted-foreground" /><p className="mt-2 text-sm font-semibold">{t("emptyAnalysisTitle")}</p><p className="mt-1 max-w-xs text-xs text-muted-foreground">{t("emptyAnalysisDescription")}</p></div></div>}
-          {/* The data files are megabytes of national statistics. Until they arrive the
-              nodes are on the canvas but every chart is blank, which looks like a broken
-              graph rather than one that is still loading. */}
-          {!data && !dataError && graph.nodes.length > 0 && (
-            <div className="pointer-events-none absolute inset-x-0 top-2 grid place-items-center" role="status">
-              <span className="flex items-center gap-2 rounded-full border bg-background/95 px-3 py-1 text-xs shadow-sm backdrop-blur">
-                <Loader2 className="size-3.5 animate-spin" />{t("analysisDataLoading")}
-              </span>
-            </div>
-          )}
-        </div>
-      </section>
+            <ReactFlow
+              nodes={positionedNodes}
+              edges={displayEdges}
+              nodeTypes={nodeTypes}
+              onNodesChange={onNodesChange}
+              onEdgesChange={(changes) => { for (const change of changes) if (change.type === "remove") commitOperations([{ version: ANALYSIS_OPERATION_VERSION, type: "remove-edge", edgeId: change.id }]); }}
+              onConnect={connect}
+              onMoveEnd={(_, viewport: Viewport) => { const current = graphRef.current.viewport; if (current.x !== viewport.x || current.y !== viewport.y || current.zoom !== viewport.zoom) commitOperations([{ version: ANALYSIS_OPERATION_VERSION, type: "set-viewport", viewport }], { debounceKey: "viewport", delay: 500, recordHistory: false }); }}
+              defaultViewport={graph.viewport}
+              minZoom={0.2}
+              maxZoom={2}
+              fitView={!graph.nodes.length}
+              deleteKeyCode={["Backspace", "Delete"]}
+              selectionOnDrag
+              selectionMode={SelectionMode.Partial}
+              onPaneClick={() => { selectedNodeIdsRef.current = []; setSelectedNodeIds([]); if (graphRef.current.selectedNodeId) commitOperations([{ version: ANALYSIS_OPERATION_VERSION, type: "set-selected-node", nodeId: null }], { recordHistory: false }); }}
+              onDragOver={(event) => { if (event.dataTransfer.types.includes(OPERATOR_DRAG_TYPE)) { event.preventDefault(); event.dataTransfer.dropEffect = "copy"; } }}
+              onDrop={(event) => { event.preventDefault(); const payload = event.dataTransfer.getData(OPERATOR_DRAG_TYPE); const position = reactFlow.screenToFlowPosition({ x: event.clientX, y: event.clientY }); if (payload === CONSTANT_DRAG_VALUE) addConstant(position); else if (analysisOperatorIds.includes(payload as AnalysisOperatorId)) addOperator(payload as AnalysisOperatorId, position); }}
+            >
+              <Background gap={20} size={1} />
+              <Controls position="bottom-left" showInteractive={false} />
+              {graph.nodes.length > 4 && <MiniMap position="bottom-right" pannable zoomable nodeColor={(node) => node.type === "operator" ? "#8b5cf6" : node.type === "annotation" ? "#f59e0b" : "#0d9488"} maskColor="rgb(15 23 42 / 0.08)" />}
+            </ReactFlow>
+            {!graph.nodes.length && <div className="pointer-events-none absolute inset-0 grid place-items-center p-6 text-center"><div><BarChart3 className="mx-auto size-8 text-muted-foreground" /><p className="mt-2 text-sm font-semibold">{t("emptyAnalysisTitle")}</p><p className="mt-1 max-w-xs text-xs text-muted-foreground">{t("studioEmptyDescription")}</p></div></div>}
+            {!data && !dataError && graph.nodes.some(({ type }) => type !== "annotation") && <div className="pointer-events-none absolute inset-x-0 top-2 grid place-items-center" role="status"><span className="flex items-center gap-2 rounded-full border bg-background/95 px-3 py-1 text-xs shadow-sm backdrop-blur"><Loader2 className="size-3.5 animate-spin" />{t("analysisDataLoading")}</span></div>}
+          </div>
+        </section>
 
-      <details className="group rounded-2xl border bg-card px-3 py-2 shadow-sm lg:min-h-0 lg:overflow-y-auto lg:[&>summary]:hidden" open={wide} aria-live="polite">
-        <summary className="flex cursor-pointer list-none items-center justify-between gap-2 py-1 [&::-webkit-details-marker]:hidden">
-          <span className="min-w-0 truncate text-xs font-semibold tracking-wide uppercase">{t("resultPreview")}</span>
-          <ChevronDown className="size-4 shrink-0 transition-transform group-open:rotate-180" />
-        </summary>
-        <h2 className="mt-1 truncate text-sm font-semibold">{selectedTitle}</h2>
-        {dataError ? <p className="mt-3 flex gap-2 text-xs text-destructive"><TriangleAlert className="size-4 shrink-0" />{t("analysisDataError")}</p>
-          : selectedSeries?.error ? <p className="mt-3 flex gap-2 text-xs text-destructive"><TriangleAlert className="size-4 shrink-0" />{seriesErrorLabel(selectedSeries.error, t)}</p>
-            : selectedSeries ? (
-              <div className="mt-2">
-                <AnalysisSeriesChart series={selectedSeries} label={selectedTitle} trueLabel={t("booleanTrue")} falseLabel={t("booleanFalse")} />
-                {selectedSeries.warnings.length > 0 && <p className="mt-2 text-[11px] text-amber-700 dark:text-amber-300">{t("analysisDivisionWarnings", { count: selectedSeries.warnings.length })}</p>}
-                <div className="mt-3 grid gap-2">
-                  <Button variant="outline" size="sm" disabled={pending} onClick={() => { setMetricName(selectedTitle); setSavingMetric(true); }}>
-                    <Bookmark className="size-4" />{t("saveAsKennzahl")}
-                  </Button>
-                  <Button variant="outline" size="sm" onClick={copySeriesAsCsv}>
-                    <Copy className="size-4" />{t("copyCsv")}
-                  </Button>
-                </div>
-                {/* The chart shows the shape; only the table lets a year be read off and
-                    checked against the source. */}
-                <div className="mt-3 rounded-lg border">
-                  <table className="w-full text-[11px]">
-                    <thead className="sticky top-0 bg-muted/60 text-muted-foreground">
-                      <tr><th scope="col" className="px-2 py-1 text-left font-medium">{t("csvYearHeader")}</th><th scope="col" className="px-2 py-1 text-right font-medium">{t("analysisValueHeader")}</th></tr>
-                    </thead>
-                    <tbody>
-                      {[...selectedSeries.points].reverse().map(({ year, value }) => (
-                        <tr key={year} className="border-t">
-                          <td className="px-2 py-1">{year}</td>
-                          <td className="px-2 py-1 text-right tabular-nums">
-                            {value === null ? "—" : typeof value === "boolean" ? (value ? t("booleanTrue") : t("booleanFalse")) : format.number(value, { maximumFractionDigits: 2 })}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            ) : <p className="mt-3 text-xs leading-5 text-muted-foreground">{t("analysisSelectResult")}</p>}
-      </details>
+        <aside className={cn("hidden min-h-0 shrink-0 border-l bg-background transition-[width] lg:flex lg:flex-col", inspectorCollapsed ? "w-11 p-1" : "w-72 p-3")}>
+          <div className="mb-2 flex items-center justify-between">
+            {!inspectorCollapsed && <h2 className="text-xs font-semibold tracking-wide uppercase">{t("studioInspector")}</h2>}
+            <Button variant="ghost" size="icon-sm" className={cn(inspectorCollapsed && "mx-auto")} aria-label={inspectorCollapsed ? t("studioOpenInspector") : t("studioCloseInspector")} onClick={() => setInspectorCollapsed((value) => !value)}>{inspectorCollapsed ? <PanelRightOpen className="size-4" /> : <PanelRightClose className="size-4" />}</Button>
+          </div>
+          {!inspectorCollapsed && inspectorPanel}
+        </aside>
+      </div>
 
-      <Dialog open={savingMetric} onOpenChange={setSavingMetric}>
-        <DialogContent className="sm:max-w-md" data-testid="save-kennzahl-dialog">
-          <DialogHeader>
-            <DialogTitle>{t("saveAsKennzahl")}</DialogTitle>
-            <DialogDescription>{t("saveAsKennzahlPrompt")}</DialogDescription>
-          </DialogHeader>
-          <Input
-            autoFocus
-            value={metricName}
-            maxLength={120}
-            aria-label={t("saveAsKennzahlPrompt")}
-            onValueChange={(value) => setMetricName(value)}
-            onKeyDown={(event) => { if (event.key === "Enter") saveSelectionAsMetric(metricName); }}
-          />
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setSavingMetric(false)}>{t("cancel")}</Button>
-            <Button disabled={!metricName.trim() || pending} onClick={() => saveSelectionAsMetric(metricName)}>{t("save")}</Button>
-          </DialogFooter>
+      <Sheet open={paletteSheetOpen} onOpenChange={setPaletteSheetOpen}><SheetContent side="left" className="p-4"><SheetHeader className="p-0"><SheetTitle>{t("studioLibrary")}</SheetTitle></SheetHeader>{palettePanel}</SheetContent></Sheet>
+      <Sheet open={inspectorSheetOpen} onOpenChange={setInspectorSheetOpen}><SheetContent side="right" className="p-4"><SheetHeader className="p-0"><SheetTitle>{t("studioInspector")}</SheetTitle></SheetHeader>{inspectorPanel}</SheetContent></Sheet>
+
+      <Dialog open={quickAddOpen} onOpenChange={(open) => { setQuickAddOpen(open); if (!open) setQuickAddQuery(""); }}>
+        <DialogContent className="gap-3 sm:max-w-xl" data-testid="analysis-quick-add">
+          <DialogHeader><DialogTitle>{t("studioQuickAdd")}</DialogTitle><DialogDescription>{t("studioQuickAddHint")}</DialogDescription></DialogHeader>
+          <div className="relative"><Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" /><Input autoFocus className="pl-9" value={quickAddQuery} onValueChange={setQuickAddQuery} placeholder={t("studioQuickAddSearch")} onKeyDown={(event) => { if (event.key === "Enter" && visibleQuickAddItems[0]) { event.preventDefault(); runQuickAdd(visibleQuickAddItems[0]); } }} /></div>
+          <div className="max-h-96 overflow-y-auto rounded-xl border p-1">
+            {visibleQuickAddItems.map((item) => <button key={item.id} type="button" className="flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2 text-left hover:bg-accent" onClick={() => runQuickAdd(item)}><span className="truncate text-sm font-medium">{item.label}</span><span className="shrink-0 text-[10px] text-muted-foreground">{item.group}</span></button>)}
+            {!visibleQuickAddItems.length && <p className="p-6 text-center text-sm text-muted-foreground">{t("catalogNoMatches")}</p>}
+          </div>
         </DialogContent>
       </Dialog>
 
+      <Dialog open={savingMetric} onOpenChange={setSavingMetric}>
+        <DialogContent className="sm:max-w-md" data-testid="save-kennzahl-dialog"><DialogHeader><DialogTitle>{t("saveAsKennzahl")}</DialogTitle><DialogDescription>{t("saveAsKennzahlPrompt")}</DialogDescription></DialogHeader><Input autoFocus value={metricName} maxLength={120} aria-label={t("saveAsKennzahlPrompt")} onValueChange={setMetricName} onKeyDown={(event) => { if (event.key === "Enter") saveSelectionAsMetric(metricName); }} /><DialogFooter><Button variant="outline" onClick={() => setSavingMetric(false)}>{t("cancel")}</Button><Button disabled={!metricName.trim() || pending} onClick={() => saveSelectionAsMetric(metricName)}>{t("save")}</Button></DialogFooter></DialogContent>
+      </Dialog>
+
       <Dialog open={deleting} onOpenChange={setDeleting}>
-        <DialogContent className="sm:max-w-md" data-testid="delete-analysis-dialog">
-          <DialogHeader>
-            <DialogTitle>{t("deleteAnalysis")}</DialogTitle>
-            <DialogDescription>{t("deleteAnalysisConfirm", { name: analysis.name })}</DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setDeleting(false)}>{t("cancel")}</Button>
-            <Button variant="destructive" disabled={pending} onClick={removeAnalysis}>{t("delete")}</Button>
-          </DialogFooter>
-        </DialogContent>
+        <DialogContent className="sm:max-w-md" data-testid="delete-analysis-dialog"><DialogHeader><DialogTitle>{t("deleteAnalysis")}</DialogTitle><DialogDescription>{t("deleteAnalysisConfirm", { name: analysis.name })}</DialogDescription></DialogHeader><DialogFooter><Button variant="outline" onClick={() => setDeleting(false)}>{t("cancel")}</Button><Button variant="destructive" disabled={pending} onClick={removeAnalysis}>{t("delete")}</Button></DialogFooter></DialogContent>
       </Dialog>
     </div>
   );
@@ -1137,34 +1586,47 @@ function AnalysisLanding({
 
   return (
     <div className="grid gap-4" data-testid="municipality-analysis-landing">
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_22rem]">
+      <section className="overflow-hidden rounded-2xl border bg-gradient-to-br from-teal-50 via-background to-violet-50 shadow-sm dark:from-teal-950/35 dark:to-violet-950/25">
+        <div className="grid gap-6 p-6 lg:grid-cols-[minmax(0,1fr)_24rem] lg:items-center">
+          <div>
+            <span className="inline-flex items-center gap-2 rounded-full border bg-background/75 px-3 py-1 text-xs font-medium text-teal-800 shadow-sm dark:text-teal-200"><BarChart3 className="size-3.5" />{t("analysisTab")}</span>
+            <h2 className="mt-4 text-2xl font-semibold tracking-tight">{t("newAnalysis")}</h2>
+            <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">{t("newAnalysisDescription")}</p>
+          </div>
+          <form action={createMunicipalityAnalysisAndRedirect} className="rounded-xl border bg-background/90 p-3 shadow-sm backdrop-blur">
+            <Input name="name" maxLength={120} required placeholder={t("analysisNamePlaceholder")} />
+            <Button className="mt-2 w-full" size="lg" type="submit"><Plus className="size-4" />{t("create")}</Button>
+          </form>
+        </div>
+      </section>
+
       <section className="rounded-2xl border bg-card p-5 shadow-sm">
         <h2 className="text-xl font-semibold">{t("savedAnalyses")}</h2>
         <p className="mt-1 text-sm text-muted-foreground">{t("savedAnalysesDescription")}</p>
-        <div className="mt-5 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
-          {analyses.map((analysis) => <Button key={analysis.id} variant="outline" className="h-auto justify-start gap-3 px-4 py-3" onClick={() => router.push(`/municipalities/analysis?analysis=${encodeURIComponent(analysis.id)}`)}>
-            <BarChart3 className="size-4 shrink-0" />
-            <span className="min-w-0 text-left">
-              <span className="block truncate">{analysis.name}</span>
-              {/* Names repeat; the municipality and the size are what tell two apart. */}
-              <span className="block truncate text-xs font-normal text-muted-foreground">
-                {[analysis.municipalityName, t("analysisNodeCount", { count: analysis.nodeCount })].filter(Boolean).join(" · ")}
+        <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          {analyses.map((analysis) => (
+            <button
+              key={analysis.id}
+              type="button"
+              className="group rounded-xl border bg-background p-4 text-left shadow-xs transition hover:-translate-y-0.5 hover:border-teal-400 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600"
+              onClick={() => router.push(`/municipalities/analysis?analysis=${encodeURIComponent(analysis.id)}`)}
+            >
+              <span className="flex items-start justify-between gap-3">
+                <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-teal-100 text-teal-800 dark:bg-teal-950 dark:text-teal-200"><BarChart3 className="size-4" /></span>
+                <span className="text-[10px] text-muted-foreground">{format.dateTime(analysis.updatedAt, { dateStyle: "medium" })}</span>
               </span>
-              <span className="block truncate text-xs font-normal text-muted-foreground">{t("analysisUpdatedAt", { date: format.dateTime(analysis.updatedAt, { dateStyle: "medium", timeStyle: "short" }) })}</span>
-            </span>
-          </Button>)}
+              <span className="mt-4 block truncate text-sm font-semibold group-hover:text-teal-800 dark:group-hover:text-teal-200">{analysis.name}</span>
+              <span className="mt-1 flex items-center gap-1 truncate text-xs text-muted-foreground"><MapPin className="size-3" />{analysis.municipalityName ?? t("analysisSubjectNone")}</span>
+              <span className="mt-3 flex flex-wrap gap-1.5 text-[10px] text-muted-foreground">
+                <span className="rounded-full bg-muted px-2 py-1">{t("analysisNodeCount", { count: analysis.nodeCount })}</span>
+                <span className="rounded-full bg-muted px-2 py-1">{t("analysisNoteCount", { count: analysis.noteCount })}</span>
+              </span>
+              <span className="mt-3 block truncate text-[10px] text-muted-foreground">{t("analysisUpdatedAt", { date: format.dateTime(analysis.updatedAt, { dateStyle: "medium", timeStyle: "short" }) })}</span>
+            </button>
+          ))}
           {!analyses.length && <p className="col-span-full rounded-xl border border-dashed p-8 text-center text-sm text-muted-foreground">{t("noAnalyses")}</p>}
         </div>
       </section>
-      <aside className="rounded-2xl border bg-muted/25 p-5">
-        <h2 className="font-semibold">{t("newAnalysis")}</h2>
-        <p className="mt-1 text-sm text-muted-foreground">{t("newAnalysisDescription")}</p>
-        <form action={createMunicipalityAnalysisAndRedirect}>
-          <Input className="mt-4" name="name" maxLength={120} required placeholder={t("analysisNamePlaceholder")} />
-          <Button className="mt-2 w-full" type="submit"><Plus className="size-4" />{t("create")}</Button>
-        </form>
-        </aside>
-      </div>
 
       <section className="rounded-2xl border bg-card p-5 shadow-sm">
         <DatasetCatalog variant="page" ownMetrics={metrics} onOpen={openAsAnalysis} />
@@ -1175,5 +1637,5 @@ function AnalysisLanding({
 
 export function MunicipalityAnalysisClient({ analyses, initialAnalysis, metrics }: { analyses: MunicipalityAnalysisSummary[]; initialAnalysis: AnalysisRecord | null; metrics: MunicipalityMetricRecord[] }) {
   if (!initialAnalysis) return <AnalysisLanding analyses={analyses} metrics={metrics} />;
-  return <ReactFlowProvider><AnalysisEditor key={initialAnalysis.id} analysis={initialAnalysis} analyses={analyses} /></ReactFlowProvider>;
+  return <ReactFlowProvider><AnalysisEditor key={initialAnalysis.id} analysis={initialAnalysis} analyses={analyses} metrics={metrics} /></ReactFlowProvider>;
 }

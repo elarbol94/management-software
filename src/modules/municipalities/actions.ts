@@ -174,7 +174,12 @@ export async function applyMunicipalityAnalysisOperations(input: {
       nodeId: result.lastDatasetNodeId,
     };
   });
-  if (parsed.operations.some(({ type }) => !["move-node", "set-viewport", "set-selected-node"].includes(type))) {
+  // Property edits do not change the saved-analysis cards. Revalidating the route for
+  // them remounts uncontrolled studio UI (active palette tab, panel state) mid-edit.
+  const summaryChangingOperations = new Set([
+    "add-kennzahl", "add-dataset", "add-node", "remove-node", "set-subject",
+  ]);
+  if (parsed.operations.some(({ type }) => summaryChangingOperations.has(type))) {
     revalidateAnalyses();
   }
   return result;

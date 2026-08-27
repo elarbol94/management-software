@@ -2,19 +2,24 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  ANALYSIS_GRAPH_VERSION,
   addDatasetToGraph,
   analysisSeriesToCsv,
   analysisUnitLabel,
   datasetRefKey,
   applyMunicipalityAnalysisGraphOperations,
   emptyMunicipalityAnalysisGraph,
+  evaluateAnalysisGraph,
   evaluateAnalysisOperator,
   municipalityAnalysisGraphSchema,
+  parseMunicipalityAnalysisGraph,
   resolveMunicipalityDataset,
+  serializeMunicipalityAnalysisGraph,
   wouldCreateAnalysisCycle,
   type AnalysisSeries,
   type MunicipalityAnalysisData,
 } from "./analysis";
+import { arrangeAnalysisNodes, autoLayoutAnalysisGraph } from "./analysis-layout";
 import type { MunicipalityCostSeries } from "./costs";
 import type { MunicipalityIndex } from "./data";
 import type { MunicipalityPopulationSeries } from "./population";
@@ -38,6 +43,22 @@ const truths = (values: Array<[number, boolean]>): AnalysisSeries => ({
 const dataset = (municipalityCode: string) => ({ kind: "population" as const, municipalityCode, municipalityName: municipalityCode, view: "count" as const });
 
 describe("municipality analysis graph", () => {
+  it("normalizes version 1 graphs without changing their formula", () => {
+    const legacy = JSON.stringify({
+      version: 1,
+      nodes: [
+        { id: "a", type: "dataset", position: { x: 1, y: 2 }, data: { dataset: dataset("60101") } },
+        { id: "b", type: "operator", position: { x: 3, y: 4 }, data: { operator: "add" } },
+      ],
+      edges: [{ id: "a-b", source: "a", target: "b", sourceHandle: "output", targetHandle: "a" }],
+      viewport: { x: 0, y: 0, zoom: 1 }, selectedNodeId: "b", subject: null,
+    });
+    const graph = parseMunicipalityAnalysisGraph(legacy);
+    expect(graph.version).toBe(ANALYSIS_GRAPH_VERSION);
+    expect(graph.nodes.map(({ id, type }) => ({ id, type }))).toEqual([{ id: "a", type: "dataset" }, { id: "b", type: "operator" }]);
+    expect(graph.edges).toHaveLength(1);
+  });
+
   it("deduplicates identical municipality datasets", () => {
     const dataset = { kind: "population" as const, municipalityCode: "60101", municipalityName: "Graz", view: "count" as const };
     const first = addDatasetToGraph(emptyMunicipalityAnalysisGraph(), dataset, "node-1");
@@ -130,6 +151,63 @@ describe("municipality analysis graph", () => {
       { version: 1, type: "add-edge", edge: { id: "a-b", source: "a", target: "b", sourceHandle: "output", targetHandle: "a" } },
       { version: 1, type: "add-edge", edge: { id: "b-a", source: "b", target: "a", sourceHandle: "output", targetHandle: "a" } },
     ])).toThrow();
+  });
+
+  it("persists aliases, clamped dimensions and annotation content", () => {
+    const graph = applyMunicipalityAnalysisGraphOperations(emptyMunicipalityAnalysisGraph(), [
+      { version: 1, type: "add-dataset", nodeId: "dataset-a", dataset: dataset("60101") },
+      { version: 1, type: "set-node-title", nodeId: "dataset-a", title: "Working population" },
+      { version: 1, type: "resize-node", nodeId: "dataset-a", position: { x: 10, y: 20 }, width: 999, height: 10 },
+      { version: 1, type: "add-node", node: { id: "note", type: "annotation", position: { x: 30, y: 40 }, data: { text: "Check source", color: "sand" } } },
+      { version: 1, type: "set-annotation", nodeId: "note", text: "Reviewed", color: "green" },
+      { version: 1, type: "resize-node", nodeId: "note", position: { x: 31, y: 41 }, width: 20, height: 999 },
+    ]).graph;
+    const dataNode = graph.nodes.find(({ id }) => id === "dataset-a")!;
+    const note = graph.nodes.find(({ id }) => id === "note")!;
+    expect(dataNode.type === "dataset" && dataNode.data.alias).toBe("Working population");
+    expect({ width: dataNode.width, height: dataNode.height, position: dataNode.position }).toEqual({ width: 640, height: 140, position: { x: 10, y: 20 } });
+    expect(note.type === "annotation" && note.data).toEqual({ text: "Reviewed", color: "green" });
+    expect({ width: note.width, height: note.height, position: note.position }).toEqual({ width: 160, height: 480, position: { x: 31, y: 41 } });
+    expect(parseMunicipalityAnalysisGraph(serializeMunicipalityAnalysisGraph(graph))).toEqual(graph);
+  });
+
+  it("ignores annotations during evaluation", () => {
+    const graph = municipalityAnalysisGraphSchema.parse({
+      ...emptyMunicipalityAnalysisGraph(),
+      nodes: [{ id: "note", type: "annotation", position: { x: 1, y: 2 }, data: { text: "Context", color: "blue" } }],
+      selectedNodeId: "note",
+    });
+    const data: MunicipalityAnalysisData = {
+      index: JSON.parse(readFileSync(resolve("public/data/municipalities-at-2026.index.json"), "utf8")) as MunicipalityIndex,
+      population: JSON.parse(readFileSync(resolve("public/data/municipality-population-2002-2025.json"), "utf8")) as MunicipalityPopulationSeries,
+      structure: null, demography: null, movement: null, costs: null,
+    };
+    expect(evaluateAnalysisGraph(graph, data)).toEqual(new Map());
+  });
+
+  it("lays out the calculation left to right without moving notes", () => {
+    const graph = municipalityAnalysisGraphSchema.parse({
+      version: ANALYSIS_GRAPH_VERSION,
+      nodes: [
+        { id: "a", type: "dataset", position: { x: 400, y: 400 }, width: 300, height: 180, data: { dataset: dataset("60101") } },
+        { id: "b", type: "dataset", position: { x: 300, y: 100 }, data: { dataset: dataset("60102") } },
+        { id: "sum", type: "operator", position: { x: 0, y: 0 }, data: { operator: "add" } },
+        { id: "note", type: "annotation", position: { x: 777, y: 888 }, data: { text: "Do not move", color: "gray" } },
+      ],
+      edges: [
+        { id: "a-sum", source: "a", target: "sum", sourceHandle: "output", targetHandle: "a" },
+        { id: "b-sum", source: "b", target: "sum", sourceHandle: "output", targetHandle: "b" },
+      ],
+      viewport: { x: 0, y: 0, zoom: 1 }, selectedNodeId: null, subject: null,
+    });
+    const first = autoLayoutAnalysisGraph(graph);
+    expect(first).toEqual(autoLayoutAnalysisGraph(graph));
+    expect(first.note).toBeUndefined();
+    expect(first.sum!.x).toBeGreaterThan(first.a!.x + 300);
+    expect(first.a!.y).not.toBe(first.b!.y);
+
+    const aligned = arrangeAnalysisNodes(graph, ["a", "b"], "align-left");
+    expect(aligned.a!.x).toBe(aligned.b!.x);
   });
 });
 

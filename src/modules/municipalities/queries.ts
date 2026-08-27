@@ -11,6 +11,7 @@ export type MunicipalityAnalysisSummary = {
   /** Which municipality the graph is evaluated for, when it has one. */
   municipalityName: string | null;
   nodeCount: number;
+  noteCount: number;
 };
 
 /**
@@ -20,14 +21,16 @@ export type MunicipalityAnalysisSummary = {
  */
 function analysisSummaryFacts(graphJson: string) {
   try {
-    const graph = JSON.parse(graphJson) as { subject?: { municipalityName?: unknown } | null; nodes?: unknown[] };
+    const graph = JSON.parse(graphJson) as { subject?: { municipalityName?: unknown } | null; nodes?: Array<{ type?: unknown }> };
     const name = graph.subject?.municipalityName;
+    const nodes = Array.isArray(graph.nodes) ? graph.nodes : [];
     return {
       municipalityName: typeof name === "string" && name ? name : null,
-      nodeCount: Array.isArray(graph.nodes) ? graph.nodes.length : 0,
+      nodeCount: nodes.filter(({ type }) => type !== "annotation").length,
+      noteCount: nodes.filter(({ type }) => type === "annotation").length,
     };
   } catch {
-    return { municipalityName: null, nodeCount: 0 };
+    return { municipalityName: null, nodeCount: 0, noteCount: 0 };
   }
 }
 

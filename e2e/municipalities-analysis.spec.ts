@@ -75,8 +75,7 @@ test("municipality subpages route and transfer a dataset into a saved analysis",
   await expect(page.locator(".react-flow__node-dataset").first()).toContainText("Graz");
   await expect(page.locator(".react-flow__node-dataset")).toHaveCount(3);
   await expect(page.locator(".react-flow__node-dataset").filter({ hasText: "Dienstleistungen" })).toHaveCount(1);
-
-
+  await page.getByRole("tab", { name: "Bausteine" }).click();
   await page.getByRole("button", { name: "Operator Addieren hinzufügen" }).click();
   await page.getByRole("link", { name: "Überblick" }).click();
   await expect(page).toHaveURL(/\/municipalities\/overview/);
@@ -118,6 +117,8 @@ test("a constant and a time shift keep the number typed into them", async ({ pag
   await page.getByRole("button", { name: "Erstellen" }).click();
   await expect(page.getByTestId("municipality-analysis-editor")).toBeVisible();
 
+  await page.getByRole("tab", { name: "Bausteine" }).click();
+  await expect(page.getByRole("button", { name: "Konstante hinzufügen" })).toBeVisible();
   await page.getByRole("button", { name: "Konstante hinzufügen" }).click();
   const value = page.getByLabel("Wert der Konstante");
   await value.fill("2000");
@@ -136,4 +137,84 @@ test("a constant and a time shift keep the number typed into them", async ({ pag
   await page.reload();
   await expect(page.getByLabel("Wert der Konstante")).toHaveValue("2000");
   await expect(page.getByLabel("Um wie viele Jahre zurück")).toHaveValue("20");
+});
+
+test("studio aliases, dimensions, notes, quick add, layout, and panels persist", async ({ page }) => {
+  await page.route("https://mapsneu.wien.gv.at/**", (route) => route.abort());
+  await login(page);
+
+  await page.goto("/municipalities/analysis");
+  await page.getByPlaceholder("z. B. Bevölkerungsvergleich").fill("Studio Werkzeuge");
+  await page.getByRole("button", { name: "Erstellen" }).click();
+  await expect(page.getByTestId("municipality-analysis-editor")).toBeVisible();
+
+  await page.keyboard.press("ControlOrMeta+KeyK");
+  await expect(page.getByTestId("analysis-quick-add")).toBeVisible();
+  await page.getByPlaceholder("Bausteine durchsuchen").fill("Notiz");
+  await page.getByPlaceholder("Bausteine durchsuchen").press("Enter");
+  const note = page.locator(".react-flow__node-annotation");
+  await expect(note).toHaveCount(1);
+  await page.getByLabel("Notiztext").fill("Annahme für die Auswertung");
+  await page.getByLabel("Notiztext").blur();
+  await expect(page.getByRole("button", { name: "Blau" })).toBeVisible();
+  await page.getByRole("button", { name: "Blau" }).click();
+  await page.getByLabel("Breite").fill("320");
+  await page.getByLabel("Breite").blur();
+  await page.getByLabel("Höhe").fill("220");
+  await page.getByLabel("Höhe").blur();
+  await expect.poll(() => note.evaluate((element) => Math.round(Number.parseFloat(getComputedStyle(element).width)))).toBe(320);
+  await expect.poll(() => note.evaluate((element) => Math.round(Number.parseFloat(getComputedStyle(element).height)))).toBe(220);
+
+  await page.getByRole("tab", { name: "Bausteine" }).click();
+  await page.getByRole("button", { name: "Operator Dividieren hinzufügen" }).click();
+  const operator = page.locator(".react-flow__node-operator");
+  await expect(operator).toHaveCount(1);
+  await operator.getByRole("button", { name: "Dividieren" }).dblclick();
+  const inlineTitle = operator.getByRole("textbox", { name: "Dividieren" });
+  await inlineTitle.fill("Pro-Kopf-Quote");
+  await inlineTitle.press("Enter");
+  await expect(operator).toContainText("Pro-Kopf-Quote");
+  await expect(operator).toContainText("Dividieren");
+  await page.getByRole("tab", { name: "Ergebnis" }).click();
+  await expect(page.getByRole("tabpanel", { name: "Ergebnis" }).getByRole("heading", { name: "Pro-Kopf-Quote" })).toBeVisible();
+  await page.getByRole("tab", { name: "Eigenschaften" }).click();
+
+  await page.getByLabel("Breite").fill("360");
+  await page.getByLabel("Breite").blur();
+  await page.getByLabel("Höhe").fill("240");
+  await page.getByLabel("Höhe").blur();
+  await expect.poll(() => operator.evaluate((element) => Math.round(Number.parseFloat(getComputedStyle(element).width)))).toBe(360);
+  await expect.poll(() => operator.evaluate((element) => Math.round(Number.parseFloat(getComputedStyle(element).height)))).toBe(240);
+
+  const noteBeforeLayout = await note.evaluate((element) => (element as HTMLElement).style.transform);
+  await page.getByRole("button", { name: "Automatisch anordnen" }).click();
+  await expect.poll(() => note.evaluate((element) => (element as HTMLElement).style.transform)).toBe(noteBeforeLayout);
+  await page.getByRole("button", { name: "Rückgängig" }).click();
+  await expect(page.getByRole("button", { name: "Wiederholen" })).toBeEnabled();
+  await page.getByRole("button", { name: "Wiederholen" }).click();
+
+  await note.focus();
+  await note.press("Enter");
+  await expect(page.getByRole("button", { name: "Baustein löschen" })).toBeVisible();
+  await page.getByRole("button", { name: "Baustein löschen" }).click();
+  await expect(note).toHaveCount(0);
+  await page.getByRole("button", { name: "Rückgängig" }).click();
+  await expect(note).toHaveCount(1);
+
+  await page.getByRole("button", { name: "Bibliothek einklappen" }).click();
+  await expect(page.getByRole("button", { name: "Bibliothek öffnen" })).toBeVisible();
+  await page.getByRole("button", { name: "Inspektor einklappen" }).click();
+  await expect(page.getByRole("button", { name: "Inspektor öffnen" })).toBeVisible();
+
+  await expect(page.getByTestId("municipality-analysis-editor").getByText("Gespeichert", { exact: true })).toBeVisible({ timeout: 30_000 });
+  await page.reload();
+  await expect(page.locator(".react-flow__node-operator")).toContainText("Pro-Kopf-Quote");
+  await expect(page.locator(".react-flow__node-operator")).toContainText("Dividieren");
+  await expect(page.locator(".react-flow__node-annotation")).toContainText("Annahme für die Auswertung");
+  await expect.poll(() => page.locator(".react-flow__node-operator").evaluate((element) => Math.round(Number.parseFloat(getComputedStyle(element).width)))).toBe(360);
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await page.getByRole("button", { name: "Bibliothek" }).click();
+  await expect(page.getByRole("dialog").getByText("Bibliothek", { exact: true })).toBeVisible();
 });

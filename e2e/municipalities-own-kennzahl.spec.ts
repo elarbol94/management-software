@@ -85,6 +85,7 @@ test("a Kennzahl derivation can be inspected, saved and used on the map", async 
   await expect(editor.getByText("Gespeichert", { exact: true })).toBeVisible({ timeout: 30_000 });
   await page.reload();
   await expect(page.locator(".react-flow__node-operator")).toHaveCount(2);
+  await page.getByRole("tab", { name: "Ergebnis" }).click();
   await page.getByRole("button", { name: "Als Kennzahl speichern" }).click();
   const saveDialog = page.getByTestId("save-kennzahl-dialog");
   await expect(saveDialog).toBeVisible();

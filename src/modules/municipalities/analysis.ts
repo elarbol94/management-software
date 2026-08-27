@@ -27,10 +27,23 @@ import {
   type MunicipalityStructureSeries,
 } from "./structure";
 
-export const ANALYSIS_GRAPH_VERSION = 1;
+export const ANALYSIS_GRAPH_VERSION = 2;
 export const MAX_ANALYSIS_NODES = 100;
 export const MAX_ANALYSIS_EDGES = 200;
 export const MAX_ANALYSIS_JSON_BYTES = 250_000;
+
+export const DEFAULT_ANALYSIS_NODE_WIDTH = 240;
+export const DEFAULT_ANALYSIS_NODE_HEIGHT = 176;
+export const MIN_ANALYSIS_NODE_WIDTH = 200;
+export const MIN_ANALYSIS_NODE_HEIGHT = 140;
+export const MAX_ANALYSIS_NODE_WIDTH = 640;
+export const MAX_ANALYSIS_NODE_HEIGHT = 480;
+export const DEFAULT_ANALYSIS_NOTE_WIDTH = 240;
+export const DEFAULT_ANALYSIS_NOTE_HEIGHT = 160;
+export const MIN_ANALYSIS_NOTE_WIDTH = 160;
+export const MIN_ANALYSIS_NOTE_HEIGHT = 100;
+export const analysisAnnotationColors = ["gray", "sand", "blue", "green"] as const;
+export type AnalysisAnnotationColor = (typeof analysisAnnotationColors)[number];
 
 export const analysisBinaryOperatorIds = [
   "add", "subtract", "multiply", "divide", "greater-than",
@@ -102,24 +115,42 @@ export const municipalityDatasetRefSchema = z.discriminatedUnion("kind", [
 ]);
 export type MunicipalityDatasetRef = z.infer<typeof municipalityDatasetRefSchema>;
 
+const analysisAliasSchema = z.string().trim().min(1).max(120).nullable().optional();
+const analysisComputationalSize = {
+  width: z.number().finite().min(MIN_ANALYSIS_NODE_WIDTH).max(MAX_ANALYSIS_NODE_WIDTH).optional(),
+  height: z.number().finite().min(MIN_ANALYSIS_NODE_HEIGHT).max(MAX_ANALYSIS_NODE_HEIGHT).optional(),
+};
+
 export const analysisDatasetNodeSchema = z.object({
   id: z.string().min(1).max(100), type: z.literal("dataset"), position: positionSchema,
-  data: z.object({ dataset: municipalityDatasetRefSchema }),
+  ...analysisComputationalSize,
+  data: z.object({ dataset: municipalityDatasetRefSchema, alias: analysisAliasSchema }),
 });
 export const analysisOperatorNodeSchema = z.object({
   id: z.string().min(1).max(100), type: z.literal("operator"), position: positionSchema,
+  ...analysisComputationalSize,
   // Only the unary operators read `years`; older graphs carry none and take the default.
   data: z.object({
     operator: z.enum(analysisOperatorIds),
     years: z.number().int().min(1).max(MAX_ANALYSIS_SHIFT_YEARS).optional(),
+    alias: analysisAliasSchema,
   }),
 });
-export const analysisNodeSchema = z.discriminatedUnion("type", [analysisDatasetNodeSchema, analysisOperatorNodeSchema]);
+export const analysisAnnotationNodeSchema = z.object({
+  id: z.string().min(1).max(100), type: z.literal("annotation"), position: positionSchema,
+  width: z.number().finite().min(MIN_ANALYSIS_NOTE_WIDTH).max(MAX_ANALYSIS_NODE_WIDTH).optional(),
+  height: z.number().finite().min(MIN_ANALYSIS_NOTE_HEIGHT).max(MAX_ANALYSIS_NODE_HEIGHT).optional(),
+  data: z.object({
+    text: z.string().max(2_000),
+    color: z.enum(analysisAnnotationColors),
+  }),
+});
+export const analysisNodeSchema = z.discriminatedUnion("type", [analysisDatasetNodeSchema, analysisOperatorNodeSchema, analysisAnnotationNodeSchema]);
 export const analysisEdgeSchema = z.object({
   id: z.string().min(1).max(140), source: z.string().min(1).max(100), target: z.string().min(1).max(100),
   sourceHandle: z.literal("output").default("output"), targetHandle: z.enum(["a", "b"]),
 });
-export const municipalityAnalysisGraphSchema = z.object({
+const municipalityAnalysisGraphV2Schema = z.object({
   version: z.literal(ANALYSIS_GRAPH_VERSION),
   nodes: z.array(analysisNodeSchema).max(MAX_ANALYSIS_NODES),
   edges: z.array(analysisEdgeSchema).max(MAX_ANALYSIS_EDGES),
@@ -137,6 +168,7 @@ export const municipalityAnalysisGraphSchema = z.object({
   for (const edge of graph.edges) {
     if (!nodeIds.has(edge.source) || !nodeIds.has(edge.target)) context.addIssue({ code: "custom", message: "Edges must reference existing nodes" });
     if (nodesById.get(edge.target)?.type !== "operator") context.addIssue({ code: "custom", message: "Edges can only target operators" });
+    if (nodesById.get(edge.source)?.type === "annotation") context.addIssue({ code: "custom", message: "Annotations cannot be connected" });
     const inputId = `${edge.target}:${edge.targetHandle}`;
     if (inputIds.has(inputId)) context.addIssue({ code: "custom", message: "Each operator input accepts one edge" });
     inputIds.add(inputId);
@@ -145,6 +177,12 @@ export const municipalityAnalysisGraphSchema = z.object({
     context.addIssue({ code: "custom", message: "Analysis graph must not contain cycles" });
   }
 });
+export const municipalityAnalysisGraphSchema = z.preprocess((input) => {
+  if (input && typeof input === "object" && "version" in input && input.version === 1) {
+    return { ...input, version: ANALYSIS_GRAPH_VERSION };
+  }
+  return input;
+}, municipalityAnalysisGraphV2Schema);
 export type MunicipalityAnalysisGraph = z.infer<typeof municipalityAnalysisGraphSchema>;
 export type MunicipalityAnalysisNode = z.infer<typeof analysisNodeSchema>;
 export type MunicipalityAnalysisEdge = z.infer<typeof analysisEdgeSchema>;
@@ -156,7 +194,7 @@ export const municipalityAnalysisGraphOperationSchema = z.discriminatedUnion("ty
   z.object({ version: z.literal(ANALYSIS_OPERATION_VERSION), type: z.literal("move-node"), nodeId: z.string().min(1).max(100), position: positionSchema }),
   z.object({ version: z.literal(ANALYSIS_OPERATION_VERSION), type: z.literal("add-edge"), edge: analysisEdgeSchema }),
   z.object({ version: z.literal(ANALYSIS_OPERATION_VERSION), type: z.literal("remove-edge"), edgeId: z.string().min(1).max(140) }),
-  z.object({ version: z.literal(ANALYSIS_OPERATION_VERSION), type: z.literal("set-viewport"), viewport: municipalityAnalysisGraphSchema.shape.viewport }),
+  z.object({ version: z.literal(ANALYSIS_OPERATION_VERSION), type: z.literal("set-viewport"), viewport: municipalityAnalysisGraphV2Schema.shape.viewport }),
   z.object({ version: z.literal(ANALYSIS_OPERATION_VERSION), type: z.literal("set-selected-node"), nodeId: z.string().max(100).nullable() }),
   z.object({ version: z.literal(ANALYSIS_OPERATION_VERSION), type: z.literal("add-dataset"), nodeId: z.string().min(1).max(100), dataset: municipalityDatasetRefSchema }),
   // Like add-dataset, but for a Kennzahl: the graph decides how it lands, because only it
@@ -165,6 +203,15 @@ export const municipalityAnalysisGraphOperationSchema = z.discriminatedUnion("ty
   z.object({ version: z.literal(ANALYSIS_OPERATION_VERSION), type: z.literal("set-subject"), subject: analysisSubjectSchema.nullable() }),
   // The number typed into a node: a constant's value, or a unary operator's year count.
   z.object({ version: z.literal(ANALYSIS_OPERATION_VERSION), type: z.literal("set-node-value"), nodeId: z.string().min(1).max(100), value: z.number().finite() }),
+  z.object({ version: z.literal(ANALYSIS_OPERATION_VERSION), type: z.literal("set-node-title"), nodeId: z.string().min(1).max(100), title: z.string().trim().min(1).max(120).nullable() }),
+  z.object({
+    version: z.literal(ANALYSIS_OPERATION_VERSION), type: z.literal("resize-node"), nodeId: z.string().min(1).max(100),
+    position: positionSchema, width: z.number().finite().positive(), height: z.number().finite().positive(),
+  }),
+  z.object({
+    version: z.literal(ANALYSIS_OPERATION_VERSION), type: z.literal("set-annotation"), nodeId: z.string().min(1).max(100),
+    text: z.string().max(2_000), color: z.enum(analysisAnnotationColors),
+  }),
   // Pins one dataset node to a municipality, or releases it so it follows the subject.
   z.object({ version: z.literal(ANALYSIS_OPERATION_VERSION), type: z.literal("set-node-municipality"), nodeId: z.string().min(1).max(100), municipality: analysisSubjectSchema.nullable() }),
 ]);
@@ -184,6 +231,23 @@ export function serializeMunicipalityAnalysisGraph(graph: MunicipalityAnalysisGr
 export function parseMunicipalityAnalysisGraph(json: string) {
   if (new TextEncoder().encode(json).byteLength > MAX_ANALYSIS_JSON_BYTES) throw new Error("Analysis graph is too large");
   return municipalityAnalysisGraphSchema.parse(JSON.parse(json));
+}
+
+export function analysisNodeWidth(node: MunicipalityAnalysisNode) {
+  return node.width ?? (node.type === "annotation" ? DEFAULT_ANALYSIS_NOTE_WIDTH : DEFAULT_ANALYSIS_NODE_WIDTH);
+}
+
+export function analysisNodeHeight(node: MunicipalityAnalysisNode) {
+  return node.height ?? (node.type === "annotation" ? DEFAULT_ANALYSIS_NOTE_HEIGHT : DEFAULT_ANALYSIS_NODE_HEIGHT);
+}
+
+function clampAnalysisNodeSize(node: MunicipalityAnalysisNode, width: number, height: number) {
+  const minWidth = node.type === "annotation" ? MIN_ANALYSIS_NOTE_WIDTH : MIN_ANALYSIS_NODE_WIDTH;
+  const minHeight = node.type === "annotation" ? MIN_ANALYSIS_NOTE_HEIGHT : MIN_ANALYSIS_NODE_HEIGHT;
+  return {
+    width: Math.min(MAX_ANALYSIS_NODE_WIDTH, Math.max(minWidth, Math.round(width))),
+    height: Math.min(MAX_ANALYSIS_NODE_HEIGHT, Math.max(minHeight, Math.round(height))),
+  };
 }
 
 /**
@@ -300,10 +364,34 @@ export function applyMunicipalityAnalysisGraphOperations(
             const years = Math.min(MAX_ANALYSIS_SHIFT_YEARS, Math.max(1, Math.round(operation.value)));
             return { ...node, data: { ...node.data, years } };
           }
+          if (node.type !== "dataset") return node;
           return node.data.dataset.kind === "constant"
-            ? { ...node, data: { dataset: { kind: "constant" as const, value: operation.value } } }
+            ? { ...node, data: { ...node.data, dataset: { kind: "constant" as const, value: operation.value } } }
             : node;
         }),
+      };
+    } else if (operation.type === "set-node-title") {
+      next = {
+        ...next,
+        nodes: next.nodes.map((node) => {
+          if (node.id !== operation.nodeId || node.type === "annotation") return node;
+          if (node.type === "dataset") return { ...node, data: { ...node.data, alias: operation.title } };
+          return { ...node, data: { ...node.data, alias: operation.title } };
+        }),
+      };
+    } else if (operation.type === "resize-node") {
+      next = {
+        ...next,
+        nodes: next.nodes.map((node) => node.id === operation.nodeId
+          ? { ...node, position: operation.position, ...clampAnalysisNodeSize(node, operation.width, operation.height) }
+          : node),
+      };
+    } else if (operation.type === "set-annotation") {
+      next = {
+        ...next,
+        nodes: next.nodes.map((node) => node.id === operation.nodeId && node.type === "annotation"
+          ? { ...node, data: { text: operation.text, color: operation.color } }
+          : node),
       };
     } else if (operation.type === "set-node-municipality") {
       next = {
@@ -318,7 +406,7 @@ export function applyMunicipalityAnalysisGraphOperations(
           );
           return {
             ...node,
-            data: { dataset: (operation.municipality ? { ...open, ...operation.municipality } : open) as MunicipalityDatasetRef },
+            data: { ...node.data, dataset: (operation.municipality ? { ...open, ...operation.municipality } : open) as MunicipalityDatasetRef },
           };
         }),
       };
@@ -588,13 +676,13 @@ export function evaluateAnalysisGraph(graph: MunicipalityAnalysisGraph, data: Mu
     evaluating.add(id);
     let result: AnalysisSeries | null;
     if (node.type === "dataset") result = resolveMunicipalityDataset(node.data.dataset, data, graph.subject);
-    else {
+    else if (node.type === "operator") {
       const input = (handle: "a" | "b") => {
         const edge = graph.edges.find((item) => item.target === id && item.targetHandle === handle);
         return edge ? evaluate(edge.source) : null;
       };
       result = evaluateAnalysisOperator(node.data.operator, input("a"), input("b"), node.data.years);
-    }
+    } else result = null;
     evaluating.delete(id);
     if (result) results.set(id, result);
     return result;
