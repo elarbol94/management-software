@@ -3023,6 +3023,15 @@
       "deleteConfirm": "Präsentation „{title}“ endgültig löschen?",
       "deleteFailed": "Die Präsentation konnte nicht gelöscht werden.",
       "createFailed": "Die Präsentation konnte nicht angelegt werden.",
+      "chooseTemplate": "Vorlage wählen",
+      "chooseTemplateDescription": "Beginne mit einem leeren Canvas oder einer der integrierten Vorlagen.",
+      "templates": {
+        "blank": "Leer",
+        "timeline": "Zeitleiste",
+        "hub": "Kreis / Hub",
+        "pitch": "Pitch",
+        "mindmap": "Mindmap"
+      },
       "saveFailed": "Speichern fehlgeschlagen.",
       "uploadFailed": "Das Bild konnte nicht hochgeladen werden.",
       "textContent": "Text",

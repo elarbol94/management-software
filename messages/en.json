@@ -3021,6 +3021,15 @@
       "deleteConfirm": "Permanently delete the presentation “{title}”?",
       "deleteFailed": "The presentation could not be deleted.",
       "createFailed": "The presentation could not be created.",
+      "chooseTemplate": "Choose a template",
+      "chooseTemplateDescription": "Start from a blank canvas or one of the built-in layouts.",
+      "templates": {
+        "blank": "Blank",
+        "timeline": "Timeline",
+        "hub": "Circle / Hub",
+        "pitch": "Pitch",
+        "mindmap": "Mindmap"
+      },
       "saveFailed": "Saving failed.",
       "uploadFailed": "The image could not be uploaded.",
       "textContent": "Text",
