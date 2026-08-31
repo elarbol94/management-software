@@ -12,21 +12,34 @@ import {
   presentationElementsSchema,
   presentationStepsSchema,
 } from "./lib/presentation";
+import { presentationTemplateIds, presentationTemplates } from "./lib/presentation-templates";
 
 const idSchema = z.string().min(1).max(64);
 const titleSchema = z.string().trim().min(1).max(200);
+const templateIdSchema = z.enum(presentationTemplateIds);
 
 function revalidatePresentations(id?: string) {
   revalidatePath("/wiki/presentations");
   if (id) revalidatePath(`/wiki/presentations/${id}`);
 }
 
-export async function createPresentation(input: { title: string }) {
+export async function createPresentation(input: { title: string; templateId?: string }) {
   const currentUser = await requireUserOrThrow();
-  const { title } = z.object({ title: titleSchema }).parse(input);
+  const { title, templateId } = z
+    .object({ title: titleSchema, templateId: templateIdSchema.optional() })
+    .parse(input);
+  // templateId is validated against the enum above, so this is always a known template.
+  const template = templateId ? presentationTemplates[templateId] : null;
   const row = db
     .insert(wikiPresentations)
-    .values({ title, createdBy: currentUser.id, updatedBy: currentUser.id })
+    .values({
+      title,
+      createdBy: currentUser.id,
+      updatedBy: currentUser.id,
+      ...(template
+        ? { elementsJson: JSON.stringify(template.elements), pathJson: JSON.stringify(template.steps) }
+        : {}),
+    })
     .returning({ id: wikiPresentations.id })
     .get();
   revalidatePresentations();
