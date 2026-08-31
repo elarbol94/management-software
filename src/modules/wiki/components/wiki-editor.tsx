@@ -12,7 +12,7 @@ import StarterKit from "@tiptap/starter-kit";
 import Placeholder from "@tiptap/extension-placeholder";
 import TaskList from "@tiptap/extension-task-list";
 import TaskItem from "@tiptap/extension-task-item";
-import { Fragment, Slice } from "@tiptap/pm/model";
+import { DOMParser as ProseMirrorDOMParser, Fragment, Slice } from "@tiptap/pm/model";
 import { AlertCircle, AlignCenter, AlignLeft, AlignRight, ArrowLeftRight, Bold, BookMarked, CalendarClock, Captions, Check, ClipboardCheck, CloudOff, Code, Columns2, FileText, Heading1, Heading2, Heading3, Highlighter, ImagePlus, Italic, Keyboard, Languages, Layers3, Link2, List, ListOrdered, ListTree, ListTodo, MessageSquareText, Minus, MoreHorizontal, PanelRightClose, PanelRightOpen, Paperclip, Pilcrow, Quote, Redo2, RotateCcw, Rows3, Scan, ScissorsLineDashed, Search, Settings2, Strikethrough, Trash2, Underline as UnderlineIcon, Undo2, WifiOff, Workflow } from "lucide-react";
 import { addComment, restorePageRevision } from "../research-actions";
 import { Button } from "@/components/ui/button";
@@ -35,6 +35,7 @@ import { mergeCommentThreadIds, normalizeImageRect, type CommentAnchor } from ".
 import { EditorSearchExtension } from "../lib/editor-search";
 import { collectSpellcheckParagraphs, createSpellcheckBatches, createSpellcheckExtension, getSpellcheckIssues, mapSpellcheckMatches, remapSpellcheckBatchMatches, replaceAllSpellcheckOccurrences, setSpellcheckIssues, type ProofingLanguage, type SpellcheckIssue, type SpellcheckResponseMatch } from "../lib/spellcheck";
 import { looksLikeMarkdown, parseMarkdownDocument } from "../lib/markdown-import";
+import { sanitizePastedHtml } from "../lib/paste-html";
 import { calculateWritingStats, type WritingStats } from "../lib/editor-writing";
 import { userMarkColorStyle, type UserMarkColor } from "@/lib/user-mark-colors";
 import { MermaidDiagram, MERMAID_PLACEHOLDER } from "./mermaid-extension";
@@ -1132,22 +1133,37 @@ export function WikiEditor({
         const clipboard = event.clipboardData;
         if (!clipboard) return false;
         const plainText = clipboard.getData("text/plain");
-        if (clipboard.getData("text/html")) {
-          if (!plainText) return false;
+        // Raw markdown text takes priority over any HTML the clipboard also carries:
+        // many sources (browsers, note apps) wrap even a plain-text copy in an HTML
+        // format that adds no real structure, which used to make pasted "#### Heading"
+        // fall into the HTML branch below and show up as literal punctuation.
+        if (looksLikeMarkdown(plainText)) {
+          try {
+            const parsed = parseMarkdownDocument(plainText);
+            const nodes = (parsed.content ?? []).map((node) => view.state.schema.nodeFromJSON(node));
+            event.preventDefault();
+            view.dispatch(view.state.tr.replaceSelection(new Slice(Fragment.fromArray(nodes), 0, 0)).scrollIntoView());
+            return true;
+          } catch {
+            // Not actually parseable as markdown - fall through to HTML/plain-text handling.
+          }
+        }
+        const html = clipboard.getData("text/html");
+        if (html) {
+          // Sanitize first, then hand off to the schema's own DOMParser: it already
+          // keeps only the nodes/marks each extension's parseHTML() rule recognizes
+          // and silently drops everything else, so no hand-rolled HTML->Tiptap
+          // converter is needed here.
+          const { html: sanitized, hadImages } = sanitizePastedHtml(html);
+          const container = document.createElement("div");
+          container.innerHTML = sanitized;
+          const slice = ProseMirrorDOMParser.fromSchema(view.state.schema).parseSlice(container, { preserveWhitespace: true });
           event.preventDefault();
-          view.dispatch(view.state.tr.insertText(plainText).scrollIntoView());
+          view.dispatch(view.state.tr.replaceSelection(slice).scrollIntoView());
+          if (hadImages) toast.info(t("editor.paste.imagesDropped"));
           return true;
         }
-        if (!looksLikeMarkdown(plainText)) return false;
-        try {
-          const parsed = parseMarkdownDocument(plainText);
-          const nodes = (parsed.content ?? []).map((node) => view.state.schema.nodeFromJSON(node));
-          event.preventDefault();
-          view.dispatch(view.state.tr.replaceSelection(new Slice(Fragment.fromArray(nodes), 0, 0)).scrollIntoView());
-          return true;
-        } catch {
-          return false;
-        }
+        return false;
       },
       handleDrop(view, event) {
         const files = [...(event.dataTransfer?.files ?? [])].filter(isInlineImageFile).map(normalizeInlineImageFile);

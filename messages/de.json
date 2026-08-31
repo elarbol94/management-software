@@ -2268,6 +2268,9 @@
         "takeover": "Bearbeitung übernehmen",
         "takeoverFailed": "Die Bearbeitung konnte nicht übernommen werden."
       },
+      "paste": {
+        "imagesDropped": "Bilder aus dem eingefügten Inhalt wurden nicht übernommen. Verwende „Bild einfügen“, um sie hinzuzufügen."
+      },
       "search": {
         "title": "Suchen und ersetzen",
         "placeholder": "In dieser Notiz suchen…",
