@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type CSSProperties } from "react";
 import { NodeResizer, type Node, type NodeProps } from "@xyflow/react";
 import { cn } from "@/lib/utils";
 import type { PresentationElement } from "../lib/presentation";
@@ -222,24 +222,38 @@ const FRONT_BAND = 1_000;
 
 export function elementsToNodes(
   elements: PresentationElement[],
-  options: { editable: boolean; selectedId?: string | null; onTextChange?: (id: string, text: string) => void },
+  options: {
+    editable: boolean;
+    selectedId?: string | null;
+    onTextChange?: (id: string, text: string) => void;
+    /** Ids currently hidden so they can fade in — the player's step-arrival entrance. */
+    enteringIds?: Set<string>;
+  },
 ): PresentationNode[] {
-  return elements.map((element, index) => ({
-    id: element.id,
-    type: element.type,
-    position: { x: element.x, y: element.y },
-    width: element.width,
-    height: element.height,
-    selected: options.editable ? element.id === options.selectedId : false,
-    draggable: options.editable,
-    selectable: options.editable,
-    connectable: false,
-    deletable: options.editable,
-    zIndex: (element.type === "frame" ? 0 : FRONT_BAND) + index,
-    style: {
-      ...(element.rotation ? { transform: `rotate(${element.rotation}deg)` } : null),
-      ...(element.background ? { backgroundColor: element.background } : null),
-    },
-    data: { element, editable: options.editable, onTextChange: options.onTextChange },
-  }));
+  return elements.map((element, index) => {
+    const style: CSSProperties = {};
+    if (element.rotation) style.transform = `rotate(${element.rotation}deg)`;
+    if (element.background) style.backgroundColor = element.background;
+    if (options.enteringIds?.has(element.id)) {
+      // Fixed, subtle fade on step arrival — deliberately not a per-element setting.
+      // A keyframe animation (not a state-driven transition) plays once whenever this
+      // element newly becomes part of the arriving step.
+      style.animation = "presentation-element-enter 300ms ease";
+    }
+    return {
+      id: element.id,
+      type: element.type,
+      position: { x: element.x, y: element.y },
+      width: element.width,
+      height: element.height,
+      selected: options.editable ? element.id === options.selectedId : false,
+      draggable: options.editable,
+      selectable: options.editable,
+      connectable: false,
+      deletable: options.editable,
+      zIndex: (element.type === "frame" ? 0 : FRONT_BAND) + index,
+      style: Object.keys(style).length ? style : undefined,
+      data: { element, editable: options.editable, onTextChange: options.onTextChange },
+    };
+  });
 }

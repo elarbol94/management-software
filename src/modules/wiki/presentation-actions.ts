@@ -14,11 +14,13 @@ import { requireUserOrThrow } from "@/lib/auth";
 import { deleteAttachmentsFor } from "@/lib/files";
 import {
   PRESENTATION_LEASE_TIMEOUT_MS,
+  defaultPresentationSettings,
   isLeaseHeldByOther,
   normalizeSteps,
   parsePresentationCanvas,
   parsePresentationSteps,
   presentationElementsSchema,
+  presentationSettingsSchema,
   presentationStepsSchema,
   shouldSnapshotRevision,
 } from "./lib/presentation";
@@ -156,6 +158,7 @@ export async function savePresentation(input: {
   steps: unknown;
   sessionId?: string;
   background?: unknown;
+  settings?: unknown;
 }) {
   const currentUser = await requireUserOrThrow();
   const data = z
@@ -165,6 +168,7 @@ export async function savePresentation(input: {
       steps: presentationStepsSchema,
       sessionId: sessionSchema.optional(),
       background: z.string().max(32).default(""),
+      settings: presentationSettingsSchema.default(defaultPresentationSettings),
     })
     .parse(input);
   const current = db.select().from(wikiPresentations).where(eq(wikiPresentations.id, data.id)).get();
@@ -177,7 +181,7 @@ export async function savePresentation(input: {
     db.update(wikiPresentations)
       .set({
         // The envelope form; `parsePresentationCanvas` still reads the older bare array.
-        elementsJson: JSON.stringify({ elements: data.elements, background: data.background }),
+        elementsJson: JSON.stringify({ elements: data.elements, background: data.background, settings: data.settings }),
         // Steps pointing at deleted elements are dropped here, so a saved path is always
         // one the player can actually fly.
         pathJson: JSON.stringify(normalizeSteps(data.steps, data.elements)),

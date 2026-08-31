@@ -1037,3 +1037,23 @@
 .municipality-hover-popup .maplibregl-popup-tip {
   border-top-color: var(--background);
 }
+
+/* Presentation player: subtle, fixed entrance for elements arriving with a step. */
+@keyframes presentation-element-enter {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* Presentation player: autoplay progress hint fills over a step's effective duration. */
+@keyframes presentation-step-progress {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}

@@ -3079,7 +3079,23 @@
       "noRevisions": "Noch keine Versionen. Beim Speichern wird jeweils eine Version behalten.",
       "restore": "Wiederherstellen",
       "restoreConfirm": "Diese Version wiederherstellen? Der aktuelle Stand wird vorher als Version gesichert.",
-      "restoreFailed": "Die Version konnte nicht wiederhergestellt werden."
+      "restoreFailed": "Die Version konnte nicht wiederhergestellt werden.",
+      "play": "Wiedergabe",
+      "pause": "Pause",
+      "playbackSettings": "Wiedergabeeinstellungen",
+      "defaultStepDuration": "Standard-Stationsdauer (s)",
+      "loopPlayback": "Wiederholen",
+      "cameraTransition": "Kamera-Übergang (s)",
+      "cameraEasing": "Easing",
+      "easings": {
+        "linear": "Linear",
+        "ease": "Sanft",
+        "ease-in": "Einschwingend",
+        "ease-out": "Ausschwingend",
+        "ease-in-out": "Ein-/ausschwingend"
+      },
+      "stepDuration": "Stationsdauer (s)",
+      "stepDurationHint": "Leer verwendet die Standarddauer."
     }
   },
   "settings": {

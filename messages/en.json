@@ -3077,7 +3077,23 @@
       "noRevisions": "No versions yet. A version is kept whenever you save.",
       "restore": "Restore",
       "restoreConfirm": "Restore this version? The current state is saved as a version first.",
-      "restoreFailed": "The version could not be restored."
+      "restoreFailed": "The version could not be restored.",
+      "play": "Play",
+      "pause": "Pause",
+      "playbackSettings": "Playback settings",
+      "defaultStepDuration": "Default stop duration (s)",
+      "loopPlayback": "Loop",
+      "cameraTransition": "Camera transition (s)",
+      "cameraEasing": "Easing",
+      "easings": {
+        "linear": "Linear",
+        "ease": "Ease",
+        "ease-in": "Ease in",
+        "ease-out": "Ease out",
+        "ease-in-out": "Ease in-out"
+      },
+      "stepDuration": "Stop duration (s)",
+      "stepDurationHint": "Empty uses the default duration."
     }
   },
   "settings": {

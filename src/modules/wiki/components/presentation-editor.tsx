@@ -47,6 +47,7 @@ import {
   Play,
   Plus,
   Save,
+  Settings,
   Shapes,
   Square,
   Trash2,
@@ -58,6 +59,8 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 import {
   acquirePresentationEditLease,
@@ -73,12 +76,15 @@ import {
   duplicateElement,
   elementBounds,
   moveStep,
+  presentationCameraEasings,
   presentationFrameShapes,
   presentationShapeKinds,
   reorderElement,
   stepLabel,
   stepTarget,
+  type PresentationCameraEasing,
   type PresentationElement,
+  type PresentationSettings,
   type PresentationStep,
 } from "../lib/presentation";
 import { elementsToNodes, presentationNodeTypes, type PresentationNode } from "./presentation-canvas";
@@ -171,15 +177,22 @@ function Editor({
   const [elements, setElements] = useState<PresentationElement[]>(presentation.elements);
   const [background, setBackground] = useState(presentation.background);
   const [steps, setSteps] = useState<PresentationStep[]>(presentation.steps);
+  const [settings, setSettings] = useState<PresentationSettings>(presentation.settings);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [activeStepId, setActiveStepId] = useState<string | null>(null);
   const [saveState, setSaveState] = useState<SaveState>("idle");
   const [uploading, setUploading] = useState(false);
 
   const selected = elements.find((element) => element.id === selectedId) ?? null;
+  const activeStep = steps.find((step) => step.id === activeStepId) ?? null;
 
   const persist = useCallback(
-    async (nextElements: PresentationElement[], nextSteps: PresentationStep[], nextBackground: string) => {
+    async (
+      nextElements: PresentationElement[],
+      nextSteps: PresentationStep[],
+      nextBackground: string,
+      nextSettings: PresentationSettings,
+    ) => {
       setSaveState("saving");
       try {
         const result = await savePresentation({
@@ -187,6 +200,7 @@ function Editor({
           elements: nextElements,
           steps: nextSteps,
           background: nextBackground,
+          settings: nextSettings,
           sessionId: sessionId.current,
         });
         // Someone took over while this tab was editing: stop writing rather than
@@ -209,9 +223,9 @@ function Editor({
   // burst is the one that writes.
   useEffect(() => {
     if (saveState !== "unsaved" || readOnly) return;
-    const timer = setTimeout(() => void persist(elements, steps, background), AUTOSAVE_DELAY);
+    const timer = setTimeout(() => void persist(elements, steps, background, settings), AUTOSAVE_DELAY);
     return () => clearTimeout(timer);
-  }, [saveState, elements, steps, background, persist, readOnly]);
+  }, [saveState, elements, steps, background, settings, persist, readOnly]);
 
   // Edit lease: claim it on open, keep it warm while the tab lives, hand it back on exit.
   // A missed release is harmless — the lease expires on its own.
@@ -252,6 +266,16 @@ function Editor({
 
   const updateElement = useCallback((id: string, update: (element: PresentationElement) => PresentationElement) => {
     setElements((current) => current.map((element) => (element.id === id ? update(element) : element)));
+    setSaveState("unsaved");
+  }, []);
+
+  const updateSettings = useCallback((update: Partial<PresentationSettings>) => {
+    setSettings((current) => ({ ...current, ...update }));
+    setSaveState("unsaved");
+  }, []);
+
+  const updateStepDuration = useCallback((id: string, durationMs: number | undefined) => {
+    setSteps((current) => current.map((step) => (step.id === id ? { ...step, durationMs } : step)));
     setSaveState("unsaved");
   }, []);
 
@@ -542,9 +566,64 @@ function Editor({
         <Button type="button" variant="ghost" size="sm" onClick={() => void reactFlow.fitView({ padding: 0.15, duration: CAMERA_DURATION })}>
           <Maximize2 className="size-3.5" />{t("presentations.overview")}
         </Button>
+        <Popover>
+          <PopoverTrigger render={<Button type="button" variant="ghost" size="sm" />}>
+            <Settings className="size-3.5" />{t("presentations.playbackSettings")}
+          </PopoverTrigger>
+          <PopoverContent className="w-72 space-y-3 p-3">
+            <label className="block text-xs text-muted-foreground">
+              {t("presentations.defaultStepDuration")}
+              <Input
+                type="number"
+                min={0.5}
+                max={120}
+                step={0.5}
+                className="mt-1 h-8"
+                value={settings.defaultStepDurationMs / 1000}
+                onChange={(event) => {
+                  const seconds = Number(event.currentTarget.value);
+                  if (!Number.isFinite(seconds)) return;
+                  updateSettings({ defaultStepDurationMs: Math.round(Math.min(120, Math.max(0.5, seconds)) * 1000) });
+                }}
+              />
+            </label>
+            <label className="flex items-center gap-2 text-xs text-muted-foreground">
+              <Checkbox checked={settings.loop} onCheckedChange={(checked) => updateSettings({ loop: checked === true })} />
+              {t("presentations.loopPlayback")}
+            </label>
+            <label className="block text-xs text-muted-foreground">
+              {t("presentations.cameraTransition")}
+              <Input
+                type="number"
+                min={0.1}
+                max={5}
+                step={0.1}
+                className="mt-1 h-8"
+                value={settings.cameraTransitionMs / 1000}
+                onChange={(event) => {
+                  const seconds = Number(event.currentTarget.value);
+                  if (!Number.isFinite(seconds)) return;
+                  updateSettings({ cameraTransitionMs: Math.round(Math.min(5, Math.max(0.1, seconds)) * 1000) });
+                }}
+              />
+            </label>
+            <label className="block text-xs text-muted-foreground">
+              {t("presentations.cameraEasing")}
+              <select
+                className="mt-1 h-8 w-full rounded-lg border border-input bg-transparent px-2 text-sm outline-none dark:bg-input/30"
+                value={settings.cameraEasing}
+                onChange={(event) => updateSettings({ cameraEasing: event.target.value as PresentationCameraEasing })}
+              >
+                {presentationCameraEasings.map((easing) => (
+                  <option key={easing} value={easing}>{t(`presentations.easings.${easing}`)}</option>
+                ))}
+              </select>
+            </label>
+          </PopoverContent>
+        </Popover>
         <div className="ml-auto flex items-center gap-2 text-xs">
           {saveIndicator}
-          <Button type="button" variant="outline" size="sm" onClick={() => void persist(elements, steps, background)} disabled={saveState === "saving" || readOnly}>
+          <Button type="button" variant="outline" size="sm" onClick={() => void persist(elements, steps, background, settings)} disabled={saveState === "saving" || readOnly}>
             <Save className="size-3.5" />{t("presentations.save")}
           </Button>
           <Button type="button" size="sm" disabled={!steps.length} render={<Link href={`/wiki/presentations/${presentation.id}/present`} />}>
@@ -638,6 +717,31 @@ function Editor({
                 </ol>
               </SortableContext>
             </DndContext>
+          )}
+
+          {activeStep && (
+            <section className="mt-3 border-t pt-3">
+              <label className="block text-xs text-muted-foreground">
+                {t("presentations.stepDuration")}
+                <Input
+                  type="number"
+                  min={0.5}
+                  max={120}
+                  step={0.5}
+                  className="mt-1 h-8"
+                  placeholder={String(settings.defaultStepDurationMs / 1000)}
+                  value={activeStep.durationMs != null ? activeStep.durationMs / 1000 : ""}
+                  onChange={(event) => {
+                    const raw = event.currentTarget.value;
+                    if (!raw) return updateStepDuration(activeStep.id, undefined);
+                    const seconds = Number(raw);
+                    if (!Number.isFinite(seconds)) return;
+                    updateStepDuration(activeStep.id, Math.round(Math.min(120, Math.max(0.5, seconds)) * 1000));
+                  }}
+                />
+              </label>
+              <p className="mt-1 text-[11px] text-muted-foreground">{t("presentations.stepDurationHint")}</p>
+            </section>
           )}
 
           {selected && (

@@ -7,17 +7,18 @@ import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { useTheme } from "next-themes";
 import { ReactFlow, ReactFlowProvider, useReactFlow } from "@xyflow/react";
-import { ChevronLeft, ChevronRight, Maximize, Minimize, Scan, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Maximize, Minimize, Pause, Play, Scan, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   PRESENTATION_CAMERA_PADDING,
   elementBounds,
+  elementsWithinStep,
+  presentationCameraEasingFns,
+  resolveStepDuration,
   stepTarget,
 } from "../lib/presentation";
 import type { PresentationRecord } from "../presentation-queries";
 import { elementsToNodes, presentationNodeTypes, type PresentationNode } from "./presentation-canvas";
-
-const CAMERA_DURATION = 700;
 
 function Player({ presentation }: { presentation: PresentationRecord }) {
   const t = useTranslations("wiki");
@@ -27,13 +28,25 @@ function Player({ presentation }: { presentation: PresentationRecord }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [index, setIndex] = useState(0);
   const [fullscreen, setFullscreen] = useState(false);
+  const [playing, setPlaying] = useState(false);
 
-  const { elements, steps } = presentation;
-  const nodes = useMemo(() => elementsToNodes(elements, { editable: false }), [elements]);
+  const { elements, steps, settings } = presentation;
+  const cameraDuration = settings.cameraTransitionMs;
+  const cameraEase = presentationCameraEasingFns[settings.cameraEasing];
+
+  // Elements that belong to the current step's target: what fades in as it arrives.
+  // Derived straight from the index, so re-arriving at a step re-plays the entrance.
+  const enteringIds = useMemo(() => {
+    const step = steps[index];
+    const target = step ? stepTarget(step, elements) : null;
+    return target ? new Set(elementsWithinStep(target, elements).map((element) => element.id)) : new Set<string>();
+  }, [index, steps, elements]);
+
+  const nodes = useMemo(() => elementsToNodes(elements, { editable: false, enteringIds }), [elements, enteringIds]);
 
   const overview = useCallback(
-    (duration = CAMERA_DURATION) => void reactFlow.fitView({ padding: 0.15, duration }),
-    [reactFlow],
+    (duration = cameraDuration) => void reactFlow.fitView({ padding: 0.15, duration, ease: cameraEase }),
+    [reactFlow, cameraDuration, cameraEase],
   );
 
   /**
@@ -41,14 +54,31 @@ function Player({ presentation }: { presentation: PresentationRecord }) {
    * a large one zooms all the way in — the camera never inherits the previous scale.
    */
   const flyTo = useCallback(
-    (stepIndex: number, duration = CAMERA_DURATION) => {
+    (stepIndex: number, duration = cameraDuration) => {
       const step = steps[stepIndex];
       const target = step ? stepTarget(step, elements) : null;
       if (!target) return overview(duration);
-      void reactFlow.fitBounds(elementBounds(target), { padding: PRESENTATION_CAMERA_PADDING, duration });
+      void reactFlow.fitBounds(elementBounds(target), { padding: PRESENTATION_CAMERA_PADDING, duration, ease: cameraEase });
     },
-    [elements, overview, reactFlow, steps],
+    [elements, overview, reactFlow, steps, cameraDuration, cameraEase],
   );
+
+  // Autoplay: advance to the next step after its effective duration elapses, looping
+  // back to the start (or stopping) once the path runs out.
+  useEffect(() => {
+    if (!playing || !steps.length) return;
+    const duration = resolveStepDuration(steps[index], settings);
+    const timer = setTimeout(() => {
+      setIndex((current) => {
+        const next = current + 1;
+        if (next < steps.length) return next;
+        if (settings.loop) return 0;
+        setPlaying(false);
+        return current;
+      });
+    }, duration);
+    return () => clearTimeout(timer);
+  }, [playing, index, steps, settings]);
 
   const move = useCallback(
     (delta: number) => {
@@ -134,11 +164,33 @@ function Player({ presentation }: { presentation: PresentationRecord }) {
         proOptions={{ hideAttribution: false }}
       />
 
+      {playing && steps.length > 0 && (
+        // Progress hint for the running step: a bar that fills over its effective duration.
+        <div className="absolute inset-x-0 top-0 z-10 h-1 bg-foreground/10">
+          <div
+            key={`${index}-${playing}`}
+            className="h-full origin-left bg-indigo-500"
+            style={{ animation: `presentation-step-progress ${resolveStepDuration(steps[index], settings)}ms linear forwards` }}
+          />
+        </div>
+      )}
+
       <div
         className="absolute inset-x-0 bottom-0 flex items-center justify-center gap-2 p-4"
         onClick={(event) => event.stopPropagation()}
       >
         <div className="flex items-center gap-1 rounded-full border bg-background/90 px-2 py-1 shadow-sm backdrop-blur">
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            aria-label={playing ? t("presentations.pause") : t("presentations.play")}
+            disabled={!steps.length}
+            onClick={() => setPlaying((current) => !current)}
+          >
+            {playing ? <Pause className="size-4" /> : <Play className="size-4" />}
+          </Button>
+          <span className="mx-1 h-5 w-px bg-border" />
           <Button type="button" variant="ghost" size="icon-sm" aria-label={t("presentations.previousStep")} disabled={index === 0} onClick={() => move(-1)}>
             <ChevronLeft className="size-4" />
           </Button>

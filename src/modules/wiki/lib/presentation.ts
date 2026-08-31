@@ -85,11 +85,37 @@ export type PresentationShapeElement = z.infer<typeof shapeElementSchema>;
 export const presentationStepSchema = z.object({
   id: z.string().min(1).max(64),
   elementId: z.string().min(1).max(64),
+  // Overrides the presentation's default autoplay duration for this stop only.
+  durationMs: z.number().int().min(500).max(120_000).optional(),
 });
 export type PresentationStep = z.infer<typeof presentationStepSchema>;
 
 export const presentationElementsSchema = presentationElementSchema.array().max(500);
 export const presentationStepsSchema = presentationStepSchema.array().max(500);
+
+export const presentationCameraEasings = ["linear", "ease", "ease-in", "ease-out", "ease-in-out"] as const;
+export type PresentationCameraEasing = (typeof presentationCameraEasings)[number];
+
+/** Playback settings for one presentation: autoplay pacing plus the camera curve shared
+ * by manual step navigation and autoplay, so the two never feel different. */
+export const presentationSettingsSchema = z.object({
+  defaultStepDurationMs: z.number().int().min(500).max(120_000).default(4_000),
+  loop: z.boolean().default(false),
+  cameraTransitionMs: z.number().int().min(100).max(5_000).default(700),
+  cameraEasing: z.enum(presentationCameraEasings).default("ease-in-out"),
+});
+export type PresentationSettings = z.infer<typeof presentationSettingsSchema>;
+export const defaultPresentationSettings: PresentationSettings = presentationSettingsSchema.parse({});
+
+// react-flow's fitBounds/fitView take a d3-ease-style `(t) => t` function rather than a
+// CSS easing keyword, so the setting's name is mapped to the small set of standard curves.
+export const presentationCameraEasingFns: Record<PresentationCameraEasing, (t: number) => number> = {
+  linear: (t) => t,
+  ease: (t) => t * t * (3 - 2 * t),
+  "ease-in": (t) => t * t,
+  "ease-out": (t) => t * (2 - t),
+  "ease-in-out": (t) => (t < 0.5 ? 2 * t * t : 1 - ((-2 * t + 2) ** 2) / 2),
+};
 
 export type PresentationBounds = { x: number; y: number; width: number; height: number };
 
@@ -98,15 +124,20 @@ export const PRESENTATION_CAMERA_PADDING = 0.12;
 
 /**
  * The canvas column used to hold a bare element array. It now holds an envelope that can
- * also carry canvas-wide settings, and the bare array stays readable so presentations
- * saved before the envelope existed keep opening.
+ * also carry the canvas background and playback settings, and the bare array stays
+ * readable so presentations saved before the envelope existed keep opening.
  */
 export const presentationCanvasSchema = z.union([
   z.object({
     elements: presentationElementsSchema,
     background: z.string().max(32).default(""),
+    settings: presentationSettingsSchema.default(defaultPresentationSettings),
   }),
-  presentationElementsSchema.transform((elements) => ({ elements, background: "" })),
+  presentationElementsSchema.transform((elements) => ({
+    elements,
+    background: "",
+    settings: defaultPresentationSettings,
+  })),
 ]);
 export type PresentationCanvas = z.infer<typeof presentationCanvasSchema>;
 
@@ -114,7 +145,7 @@ export function parsePresentationCanvas(json: string): PresentationCanvas {
   try {
     return presentationCanvasSchema.parse(JSON.parse(json));
   } catch {
-    return { elements: [], background: "" };
+    return { elements: [], background: "", settings: defaultPresentationSettings };
   }
 }
 
@@ -233,6 +264,30 @@ export function isLeaseHeldByOther(
   now: number,
 ): boolean {
   return Boolean(lease && lease.sessionId !== sessionId && now - lease.heartbeatAt <= PRESENTATION_LEASE_TIMEOUT_MS);
+}
+
+/** A step's own duration wins over the presentation's default autoplay pacing. */
+export function resolveStepDuration(step: PresentationStep, settings: PresentationSettings): number {
+  return step.durationMs ?? settings.defaultStepDurationMs;
+}
+
+/** Elements that belong to a step's target — the target itself, plus anything nested
+ * inside its bounds — which is what fades in together when the step arrives. */
+export function elementsWithinStep(
+  target: PresentationElement,
+  elements: PresentationElement[],
+): PresentationElement[] {
+  const bounds = elementBounds(target);
+  return elements.filter((element) => {
+    if (element.id === target.id) return true;
+    const box = elementBounds(element);
+    return (
+      box.x >= bounds.x &&
+      box.y >= bounds.y &&
+      box.x + box.width <= bounds.x + bounds.width &&
+      box.y + box.height <= bounds.y + bounds.height
+    );
+  });
 }
 
 export function stepLabel(element: PresentationElement, index: number): string {
