@@ -3093,7 +3093,13 @@
         "ease-in-out": "Ease in-out"
       },
       "stepDuration": "Stop duration (s)",
-      "stepDurationHint": "Empty uses the default duration."
+      "stepDurationHint": "Empty uses the default duration.",
+      "speakerNotes": "Speaker notes",
+      "speakerNotesPlaceholder": "Notes for this stop, visible only in the presenter view",
+      "openPresenterView": "Open presenter view",
+      "noNotes": "No notes for this stop",
+      "nextStepPreview": "Next",
+      "noNextStep": "This is the last stop"
     }
   },
   "settings": {

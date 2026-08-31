@@ -3095,7 +3095,13 @@
         "ease-in-out": "Ein-/ausschwingend"
       },
       "stepDuration": "Stationsdauer (s)",
-      "stepDurationHint": "Leer verwendet die Standarddauer."
+      "stepDurationHint": "Leer verwendet die Standarddauer.",
+      "speakerNotes": "Sprechernotizen",
+      "speakerNotesPlaceholder": "Notizen zu dieser Station, nur in der Präsentationsansicht sichtbar",
+      "openPresenterView": "Präsentationsansicht öffnen",
+      "noNotes": "Keine Notizen zu dieser Station",
+      "nextStepPreview": "Weiter",
+      "noNextStep": "Dies ist die letzte Station"
     }
   },
   "settings": {

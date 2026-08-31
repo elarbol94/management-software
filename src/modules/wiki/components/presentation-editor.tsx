@@ -459,6 +459,13 @@ function Editor({
     setSaveState("unsaved");
   }, [selected]);
 
+  const updateStepNotes = useCallback((stepId: string, notes: string) => {
+    setSteps((current) =>
+      current.map((step) => (step.id === stepId ? { ...step, notes: notes || undefined } : step)),
+    );
+    setSaveState("unsaved");
+  }, []);
+
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
@@ -741,6 +748,17 @@ function Editor({
                 />
               </label>
               <p className="mt-1 text-[11px] text-muted-foreground">{t("presentations.stepDurationHint")}</p>
+              <h2 className="mt-3 text-xs font-semibold tracking-wide uppercase">{t("presentations.speakerNotes")}</h2>
+              <Textarea
+                key={activeStep.id}
+                aria-label={t("presentations.speakerNotes")}
+                defaultValue={activeStep.notes ?? ""}
+                maxLength={5_000}
+                rows={4}
+                className="mt-2"
+                placeholder={t("presentations.speakerNotesPlaceholder")}
+                onBlur={(event) => updateStepNotes(activeStep.id, event.currentTarget.value)}
+              />
             </section>
           )}
 

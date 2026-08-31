@@ -87,6 +87,8 @@ export const presentationStepSchema = z.object({
   elementId: z.string().min(1).max(64),
   // Overrides the presentation's default autoplay duration for this stop only.
   durationMs: z.number().int().min(500).max(120_000).optional(),
+  // Optional and additive so presentations saved before presenter notes existed still parse.
+  notes: z.string().max(5_000).optional(),
 });
 export type PresentationStep = z.infer<typeof presentationStepSchema>;
 
