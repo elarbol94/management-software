@@ -748,6 +748,8 @@ function AnalysisEditor({ analysis, analyses, metrics }: { analysis: AnalysisRec
   // with entries that look like nothing happened.
   const undoStack = useRef<MunicipalityAnalysisGraph[]>([]);
   const redoStack = useRef<MunicipalityAnalysisGraph[]>([]);
+  /** Set for the rest of the turn once a snapshot has been taken — see `commitOperations`. */
+  const historyRecorded = useRef(false);
   const [historyDepth, setHistoryDepth] = useState({ undo: 0, redo: 0 });
   const datasetSignature = useMemo(() => JSON.stringify(graph.nodes.flatMap((node) => node.type === "dataset" ? [node.data.dataset] : [])), [graph.nodes]);
   const optimisticSignature = JSON.stringify(optimisticOperations);
@@ -806,8 +808,17 @@ function AnalysisEditor({ analysis, analyses, metrics }: { analysis: AnalysisRec
     try {
       const before = graphRef.current;
       const next = applyMunicipalityAnalysisGraphOperations(before, operations, expandKennzahlIntoGraph).graph;
+      // One gesture is one step back, even when it reaches the graph as several commits.
+      // Deleting a connected block is the case that needs this: React Flow reports the
+      // removal of its connections first and the block itself after, both in the same
+      // turn, and recording each separately left an undo that restored a block with its
+      // connections silently missing.
       if ((options?.recordHistory ?? true) && operations.some(({ type }) => type !== "set-selected-node" && type !== "set-viewport")) {
-        undoStack.current = [...undoStack.current, before].slice(-UNDO_DEPTH);
+        if (!historyRecorded.current) {
+          undoStack.current = [...undoStack.current, before].slice(-UNDO_DEPTH);
+          historyRecorded.current = true;
+          queueMicrotask(() => { historyRecorded.current = false; });
+        }
         redoStack.current = [];
         setHistoryDepth({ undo: undoStack.current.length, redo: 0 });
       }
