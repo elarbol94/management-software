@@ -4,6 +4,15 @@ export type AnalysisRoutingRect = { x: number; y: number; width: number; height:
 const EDGE_CLEARANCE = 14;
 const EDGE_STUB = EDGE_CLEARANCE + 8;
 const BEND_PENALTY = 12;
+/**
+ * How far outside its own endpoints an edge looks for obstacles. The search grid is
+ * built from every obstacle corner, so its size — and with it the cost of the A* — grows
+ * with the square of the node count. A card this far from both ends of a short edge is
+ * not what that edge has to get around.
+ * ponytail: a corridor, not a full visibility graph. If routes start crossing distant
+ * cards on very wide graphs, widen this before reaching for a smarter algorithm.
+ */
+const ROUTING_MARGIN = 260;
 
 type Direction = 0 | 1 | 2; // none, horizontal, vertical
 type HeapItem = { state: number; score: number };
@@ -69,6 +78,18 @@ function simplify(points: AnalysisRoutingPoint[]) {
 }
 
 /**
+ * The route an edge takes while the layout is still moving: out of the source, across at
+ * the midpoint, into the target. It ignores obstacles, which is the point — it costs four
+ * points instead of a search, so it can be recomputed on every frame of a drag.
+ */
+export function analysisStubRoute(source: AnalysisRoutingPoint, target: AnalysisRoutingPoint): AnalysisRoutingPoint[] {
+  const start = { x: source.x + EDGE_STUB, y: source.y };
+  const end = { x: target.x - EDGE_STUB, y: target.y };
+  const middle = (start.x + end.x) / 2;
+  return simplify([source, start, { x: middle, y: start.y }, { x: middle, y: end.y }, end, target]);
+}
+
+/**
  * Finds a rectilinear route on the visibility grid formed by the padded node
  * bounds. The short endpoint stubs deliberately cross their own node padding;
  * every section between the stubs stays outside every padded card rectangle.
@@ -80,7 +101,12 @@ export function routeAnalysisEdge(
 ): AnalysisRoutingPoint[] {
   const start = { x: source.x + EDGE_STUB, y: source.y };
   const end = { x: target.x - EDGE_STUB, y: target.y };
-  const obstacles = nodeBounds.map((rect) => ({
+  const corridorLeft = Math.min(start.x, end.x) - ROUTING_MARGIN;
+  const corridorRight = Math.max(start.x, end.x) + ROUTING_MARGIN;
+  const corridorTop = Math.min(start.y, end.y) - ROUTING_MARGIN;
+  const corridorBottom = Math.max(start.y, end.y) + ROUTING_MARGIN;
+  const obstacles = nodeBounds.filter((rect) => rect.x < corridorRight && rect.x + rect.width > corridorLeft
+    && rect.y < corridorBottom && rect.y + rect.height > corridorTop).map((rect) => ({
     x: rect.x - EDGE_CLEARANCE,
     y: rect.y - EDGE_CLEARANCE,
     width: rect.width + EDGE_CLEARANCE * 2,
@@ -116,6 +142,7 @@ export function routeAnalysisEdge(
     }
     const xIndex = Math.floor(currentPointId / yCount);
     const yIndex = currentPointId % yCount;
+    const currentPoint = pointFor(currentPointId);
     const neighbors = [
       xIndex > 0 ? [xIndex - 1, yIndex, 1] : null,
       xIndex + 1 < xs.length ? [xIndex + 1, yIndex, 1] : null,
@@ -128,7 +155,6 @@ export function routeAnalysisEdge(
       const [nextXIndex, nextYIndex, nextDirection] = neighbor;
       const nextPointId = pointId(nextXIndex, nextYIndex);
       const nextPoint = pointFor(nextPointId);
-      const currentPoint = pointFor(currentPointId);
       const midpoint = { x: (currentPoint.x + nextPoint.x) / 2, y: (currentPoint.y + nextPoint.y) / 2 };
       if (obstacles.some((rect) => inside(nextPoint, rect) || inside(midpoint, rect))) continue;
       const step = Math.abs(currentPoint.x - nextPoint.x) + Math.abs(currentPoint.y - nextPoint.y);
@@ -144,7 +170,7 @@ export function routeAnalysisEdge(
     }
   }
 
-  if (finalState === null) return simplify([source, start, end, target]);
+  if (finalState === null) return analysisStubRoute(source, target);
   const routed: AnalysisRoutingPoint[] = [];
   for (let state: number | undefined = finalState; state !== undefined; state = previous.get(state)) {
     routed.push(pointFor(Math.floor(state / 3)));
