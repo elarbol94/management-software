@@ -140,6 +140,7 @@ function Editor({ presentation }: { presentation: PresentationRecord }) {
   const [uploading, setUploading] = useState(false);
 
   const selected = elements.find((element) => element.id === selectedId) ?? null;
+  const activeStep = steps.find((step) => step.id === activeStepId) ?? null;
 
   const persist = useCallback(
     async (nextElements: PresentationElement[], nextSteps: PresentationStep[]) => {
@@ -305,6 +306,13 @@ function Editor({ presentation }: { presentation: PresentationRecord }) {
     setSteps((current) => [...current, { id: createId(), elementId: selected.id }]);
     setSaveState("unsaved");
   }, [selected]);
+
+  const updateStepNotes = useCallback((stepId: string, notes: string) => {
+    setSteps((current) =>
+      current.map((step) => (step.id === stepId ? { ...step, notes: notes || undefined } : step)),
+    );
+    setSaveState("unsaved");
+  }, []);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
@@ -479,6 +487,22 @@ function Editor({ presentation }: { presentation: PresentationRecord }) {
                 </ol>
               </SortableContext>
             </DndContext>
+          )}
+
+          {activeStep && (
+            <section className="mt-4 border-t pt-3">
+              <h2 className="text-xs font-semibold tracking-wide uppercase">{t("presentations.speakerNotes")}</h2>
+              <Textarea
+                key={activeStep.id}
+                aria-label={t("presentations.speakerNotes")}
+                defaultValue={activeStep.notes ?? ""}
+                maxLength={5_000}
+                rows={4}
+                className="mt-2"
+                placeholder={t("presentations.speakerNotesPlaceholder")}
+                onBlur={(event) => updateStepNotes(activeStep.id, event.currentTarget.value)}
+              />
+            </section>
           )}
 
           {selected && (

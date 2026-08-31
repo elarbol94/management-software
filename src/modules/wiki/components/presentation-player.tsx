@@ -7,13 +7,14 @@ import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { useTheme } from "next-themes";
 import { ReactFlow, ReactFlowProvider, useReactFlow } from "@xyflow/react";
-import { ChevronLeft, ChevronRight, Maximize, Minimize, Scan, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Maximize, Minimize, NotebookText, Scan, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   PRESENTATION_CAMERA_PADDING,
   elementBounds,
   stepTarget,
 } from "../lib/presentation";
+import { parsePresenterMessage, presenterChannelName } from "../lib/presenter";
 import type { PresentationRecord } from "../presentation-queries";
 import { elementsToNodes, presentationNodeTypes, type PresentationNode } from "./presentation-canvas";
 
@@ -56,6 +57,47 @@ function Player({ presentation }: { presentation: PresentationRecord }) {
     },
     [steps.length],
   );
+
+  // Kept current without being an effect dependency, so the channel below is set up once
+  // and can still answer a presenter window's "where are we" with the latest step.
+  const indexRef = useRef(index);
+  useEffect(() => {
+    indexRef.current = index;
+  }, [index]);
+
+  const channelRef = useRef<BroadcastChannel | null>(null);
+
+  // Presenter windows follow this player over BroadcastChannel: it broadcasts its own step
+  // changes, and applies "goto" from a presenter window steering it back.
+  useEffect(() => {
+    const channel = new BroadcastChannel(presenterChannelName(presentation.id));
+    channelRef.current = channel;
+    channel.onmessage = (event) => {
+      const message = parsePresenterMessage(event.data);
+      if (!message) return;
+      if (message.type === "goto") {
+        setIndex(Math.min(Math.max(message.index, 0), Math.max(steps.length - 1, 0)));
+      } else if (message.type === "request-step") {
+        channel.postMessage({ type: "step", index: indexRef.current });
+      }
+    };
+    return () => {
+      channel.close();
+      channelRef.current = null;
+    };
+  }, [presentation.id, steps.length]);
+
+  useEffect(() => {
+    channelRef.current?.postMessage({ type: "step", index });
+  }, [index]);
+
+  const openPresenterView = useCallback(() => {
+    window.open(
+      `/wiki/presentations/${presentation.id}/present/notes`,
+      `presenter-${presentation.id}`,
+      "width=960,height=680",
+    );
+  }, [presentation.id]);
 
   useEffect(() => {
     // A frame after paint, so the very first flight is measured against a pane that
@@ -153,6 +195,9 @@ function Player({ presentation }: { presentation: PresentationRecord }) {
           </Button>
           <Button type="button" variant="ghost" size="icon-sm" aria-label={t("presentations.fullscreen")} onClick={toggleFullscreen}>
             {fullscreen ? <Minimize className="size-4" /> : <Maximize className="size-4" />}
+          </Button>
+          <Button type="button" variant="ghost" size="icon-sm" aria-label={t("presentations.openPresenterView")} onClick={openPresenterView}>
+            <NotebookText className="size-4" />
           </Button>
           <Button
             type="button"

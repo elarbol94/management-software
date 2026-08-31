@@ -3050,7 +3050,13 @@
         "saving": "Saving…",
         "saved": "Saved",
         "error": "Error"
-      }
+      },
+      "speakerNotes": "Speaker notes",
+      "speakerNotesPlaceholder": "Notes for this stop, visible only in the presenter view",
+      "openPresenterView": "Open presenter view",
+      "noNotes": "No notes for this stop",
+      "nextStepPreview": "Next",
+      "noNextStep": "This is the last stop"
     }
   },
   "settings": {

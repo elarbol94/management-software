@@ -3052,7 +3052,13 @@
         "saving": "Speichert…",
         "saved": "Gespeichert",
         "error": "Fehler"
-      }
+      },
+      "speakerNotes": "Sprechernotizen",
+      "speakerNotesPlaceholder": "Notizen zu dieser Station, nur in der Präsentationsansicht sichtbar",
+      "openPresenterView": "Präsentationsansicht öffnen",
+      "noNotes": "Keine Notizen zu dieser Station",
+      "nextStepPreview": "Weiter",
+      "noNextStep": "Dies ist die letzte Station"
     }
   },
   "settings": {

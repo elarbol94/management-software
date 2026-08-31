@@ -65,6 +65,8 @@ export type PresentationFrameElement = z.infer<typeof frameElementSchema>;
 export const presentationStepSchema = z.object({
   id: z.string().min(1).max(64),
   elementId: z.string().min(1).max(64),
+  // Optional and additive so presentations saved before presenter notes existed still parse.
+  notes: z.string().max(5_000).optional(),
 });
 export type PresentationStep = z.infer<typeof presentationStepSchema>;
 
