@@ -153,6 +153,26 @@ describe("document renderer", () => {
     expect(result.html).not.toContain('class="figure-number"');
   });
 
+  it("resolves cross-reference labels live from the exported document, ignoring stale stored labels", async () => {
+    const settings = { ...DEFAULT_DOCUMENT_SETTINGS, cover: { ...DEFAULT_DOCUMENT_SETTINGS.cover, enabled: false } };
+    const referencing: TiptapNode = {
+      type: "doc",
+      content: [
+        { type: "heading", attrs: { level: 1, id: "methodik" }, content: [{ type: "text", text: "Methodik" }] },
+        { type: "commentableImage", attrs: { nodeId: "fig-1", src: "data:image/png;base64,AA==", alt: "Chart", caption: "Sparquote", includeInFigureIndex: true } },
+        { type: "paragraph", content: [
+          { type: "crossReference", attrs: { targetId: "methodik", label: "Old heading title" } },
+          { type: "crossReference", attrs: { targetId: "fig-1", label: "Abbildung 7" } },
+        ] },
+      ],
+    };
+    const result = await renderDocumentHtml({ title: "Antrag", doc: referencing, settings, figureLabel: "Abbildung", tableLabel: "Tabelle" });
+    expect(result.html).toContain('href="#methodik">Methodik</a>');
+    expect(result.html).toContain('href="#fig-1">Abbildung 1</a>');
+    expect(result.html).not.toContain("Old heading title");
+    expect(result.html).not.toContain("Abbildung 7");
+  });
+
   it("makes image paths absolute for a downloaded markdown file", () => {
     const markdown = renderDocumentMarkdown(
       { type: "doc", content: [{ type: "commentableImage", attrs: { src: "/api/wiki/svg-assets/abc/content?v=1.2", alt: "Chart", caption: "" } }] },

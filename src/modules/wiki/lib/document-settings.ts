@@ -520,6 +520,16 @@ export function collectDocumentPreflightIssues(
     }
     if (node.type === "crossReference") references.push({ targetId: String(node.attrs?.targetId ?? ""), index: references.length });
     if (node.type === "markdownTable" && String(node.attrs?.tableId ?? "").startsWith("budget-")) budgetCount += 1;
+    // A reference can only land on a figure/table that actually gets an anchor in the
+    // export — the same inclusion rule collectFigures/collectTables use there.
+    if (node.type === "commentableImage" && node.attrs?.includeInFigureIndex !== false && String(node.attrs?.caption ?? "").trim()) {
+      const nodeId = String(node.attrs?.nodeId ?? "");
+      if (nodeId) targets.add(nodeId);
+    }
+    if (node.type === "markdownTable" && node.attrs?.includeInTableIndex !== false && String(node.attrs?.caption ?? "").trim()) {
+      const tableId = String(node.attrs?.tableId ?? "");
+      if (tableId) targets.add(tableId);
+    }
     if (node.type === "heading") {
       activeHeadingId = typeof node.attrs?.id === "string" ? node.attrs.id : "";
       if (activeHeadingId) { headingSections.set(activeHeadingId, ""); targets.add(activeHeadingId); }

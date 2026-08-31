@@ -1,6 +1,8 @@
 import { Extension, Mark, Node, mergeAttributes, type Editor } from "@tiptap/core";
+import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
 import { Plugin, PluginKey } from "@tiptap/pm/state";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
+import { figureNumberLabel, resolveCrossReferenceLabels } from "../lib/figure-caption";
 
 export type DocumentPaginationBreak = {
   position: number;
@@ -179,11 +181,175 @@ const ProposalSuggestion = Mark.create({
   renderHTML: ({ HTMLAttributes }) => ["span", mergeAttributes(HTMLAttributes, { "data-proposal-suggestion": HTMLAttributes.kind, class: `wiki-proposal-suggestion wiki-proposal-suggestion-${HTMLAttributes.kind}` }), 0],
 });
 
+export type DocumentNumberingConfig = {
+  figureLabel: string;
+  tableLabel: string;
+  /** Mirror settings.figures.enabled / settings.tables.enabled — the export prefixes
+   * captions only when the matching index is enabled, so the canvas does too. */
+  numberFigures: boolean;
+  numberTables: boolean;
+};
+const DEFAULT_NUMBERING_CONFIG: DocumentNumberingConfig = { figureLabel: "Figure", tableLabel: "Table", numberFigures: false, numberTables: false };
+
+export type DocumentNumberingState = {
+  config: DocumentNumberingConfig;
+  /** targetId (heading id / annexId / figure nodeId / table tableId) -> live label. */
+  labels: Map<string, string>;
+  /** targetId -> current position in the live document, for scroll-to-target. */
+  positions: Map<string, number>;
+  headings: Array<{ id: string; text: string }>;
+  annexes: Array<{ id: string; title: string }>;
+  figures: Array<{ id: string; caption: string }>;
+  tables: Array<{ id: string; caption: string }>;
+  decorations: DecorationSet;
+};
+
+const documentNumberingKey = new PluginKey<DocumentNumberingState>("documentNumbering");
+
+/** Escapes a generated numbering string for use inside a single-quoted CSS `content:` value. */
+function cssQuotedString(value: string) {
+  return `'${value.replace(/\\/g, "\\\\").replace(/'/g, "\\'")}'`;
+}
+
+function computeDocumentNumberingState(doc: ProseMirrorNode, config: DocumentNumberingConfig): DocumentNumberingState {
+  const headings: Array<{ id: string; text: string }> = [];
+  const annexes: Array<{ id: string; title: string }> = [];
+  const figures: Array<{ id: string; caption: string }> = [];
+  const tables: Array<{ id: string; caption: string }> = [];
+  const positions = new Map<string, number>();
+
+  doc.descendants((node, pos) => {
+    if (node.type.name === "heading") {
+      const id = String(node.attrs.id ?? "").trim();
+      if (id) { headings.push({ id, text: node.textContent.trim() }); positions.set(id, pos); }
+    } else if (node.type.name === "annexMarker") {
+      const id = String(node.attrs.annexId ?? "").trim();
+      if (id) { annexes.push({ id, title: String(node.attrs.title ?? "Annex") }); positions.set(id, pos); }
+    } else if (node.type.name === "commentableImage") {
+      const caption = String(node.attrs.caption ?? "").trim();
+      const id = String(node.attrs.nodeId ?? "");
+      if (id && caption && node.attrs.includeInFigureIndex !== false) { figures.push({ id, caption }); positions.set(id, pos); }
+    } else if (node.type.name === "markdownTable") {
+      const caption = String(node.attrs.caption ?? "").trim();
+      const id = String(node.attrs.tableId ?? "");
+      if (id && caption && node.attrs.includeInTableIndex !== false) { tables.push({ id, caption }); positions.set(id, pos); }
+    }
+    return true;
+  });
+
+  const labels = resolveCrossReferenceLabels({ headings, annexes, figures, tables, figureLabel: config.figureLabel, tableLabel: config.tableLabel });
+
+  const decorationList: Decoration[] = [];
+  doc.descendants((node, pos) => {
+    if (config.numberFigures && node.type.name === "commentableImage") {
+      const index = figures.findIndex((figure) => figure.id === String(node.attrs.nodeId ?? ""));
+      if (index >= 0) {
+        const prefix = figureNumberLabel(figures[index].caption, config.figureLabel, index + 1);
+        if (prefix) decorationList.push(Decoration.node(pos, pos + node.nodeSize, { style: `--wiki-figure-number:${cssQuotedString(`${prefix}. `)}` }));
+      }
+    } else if (config.numberTables && node.type.name === "markdownTable") {
+      const index = tables.findIndex((table) => table.id === String(node.attrs.tableId ?? ""));
+      if (index >= 0) decorationList.push(Decoration.node(pos, pos + node.nodeSize, { style: `--wiki-table-number:${cssQuotedString(`${config.tableLabel} ${index + 1}. `)}` }));
+    } else if (node.type.name === "crossReference") {
+      const targetId = String(node.attrs.targetId ?? "");
+      // Diffed against the previous decoration set, so the CrossReference node view
+      // only re-renders when its resolved label actually changed.
+      decorationList.push(Decoration.node(pos, pos + node.nodeSize, { "data-wiki-cross-reference-label": (targetId && labels.get(targetId)) || "" }));
+    }
+    return true;
+  });
+
+  return {
+    config,
+    labels,
+    positions,
+    headings,
+    annexes,
+    figures,
+    tables,
+    decorations: DecorationSet.create(doc, decorationList),
+  };
+}
+
+const DocumentNumbering = Extension.create({
+  name: "documentNumbering",
+  addProseMirrorPlugins() {
+    return [new Plugin<DocumentNumberingState>({
+      key: documentNumberingKey,
+      state: {
+        init: (_, state) => computeDocumentNumberingState(state.doc, DEFAULT_NUMBERING_CONFIG),
+        apply(transaction, previous) {
+          const meta = transaction.getMeta(documentNumberingKey) as Partial<DocumentNumberingConfig> | undefined;
+          if (!transaction.docChanged && !meta) return previous;
+          const config = meta ? { ...previous.config, ...meta } : previous.config;
+          return computeDocumentNumberingState(transaction.doc, config);
+        },
+      },
+      props: {
+        decorations(state) {
+          return documentNumberingKey.getState(state)?.decorations;
+        },
+      },
+    })];
+  },
+});
+
+/** Pushes the document's figure/table numbering language into the live editor. */
+export function setDocumentNumberingConfig(editor: Editor, config: DocumentNumberingConfig) {
+  editor.view.dispatch(editor.state.tr.setMeta(documentNumberingKey, config));
+}
+
+export function getDocumentNumberingState(editor: Editor): DocumentNumberingState | undefined {
+  return documentNumberingKey.getState(editor.state);
+}
+
+function scrollTargetIntoView(view: { nodeDOM: (pos: number) => globalThis.Node | null }, pos: number) {
+  const dom = view.nodeDOM(pos);
+  const element = dom instanceof HTMLElement ? dom : dom?.parentElement;
+  element?.scrollIntoView({ behavior: "smooth", block: "center" });
+}
+
 const CrossReference = Node.create({
   name: "crossReference", group: "inline", inline: true, atom: true, selectable: true,
   addAttributes: () => ({ targetId: { default: "" }, label: { default: "" } }),
   parseHTML: () => [{ tag: "span[data-document-cross-reference]" }],
   renderHTML: ({ HTMLAttributes }) => ["span", mergeAttributes(HTMLAttributes, { "data-document-cross-reference": HTMLAttributes.targetId, class: "wiki-document-cross-reference", contenteditable: "false" }), HTMLAttributes.label || "Reference"],
+  addNodeView() {
+    return ({ node, view }) => {
+      let current = node;
+      const dom = document.createElement("span");
+      dom.className = "wiki-document-cross-reference";
+      dom.setAttribute("contenteditable", "false");
+
+      const render = () => {
+        const targetId = String(current.attrs.targetId ?? "");
+        dom.dataset.documentCrossReference = targetId;
+        const label = (targetId && documentNumberingKey.getState(view.state)?.labels.get(targetId)) || String(current.attrs.label ?? "") || "Reference";
+        dom.textContent = label;
+      };
+      render();
+
+      dom.addEventListener("click", (event) => {
+        event.preventDefault();
+        const targetId = String(current.attrs.targetId ?? "");
+        const pos = targetId ? documentNumberingKey.getState(view.state)?.positions.get(targetId) : undefined;
+        if (pos !== undefined) scrollTargetIntoView(view, pos);
+      });
+
+      return {
+        dom,
+        update: (updatedNode) => {
+          if (updatedNode.type.name !== "crossReference") return false;
+          current = updatedNode;
+          render();
+          return true;
+        },
+        selectNode: () => dom.classList.add("ProseMirror-selectednode"),
+        deselectNode: () => dom.classList.remove("ProseMirror-selectednode"),
+        ignoreMutation: () => true,
+      };
+    };
+  },
 });
 
 const AnnexMarker = Node.create({
@@ -245,5 +411,6 @@ export const DocumentExtensions = [
   SignatureBlock,
   DocumentBlockAttributes,
   DocumentPagination,
+  DocumentNumbering,
 ];
 

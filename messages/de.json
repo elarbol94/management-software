@@ -2689,6 +2689,18 @@
             "comment"
           ]
         },
+        "crossReference": {
+          "label": "Querverweis",
+          "description": "Auf Überschrift, Abbildung, Tabelle oder Anhang verweisen",
+          "keywords": [
+            "verweis",
+            "querverweis",
+            "abbildung",
+            "tabelle",
+            "anhang",
+            "reference"
+          ]
+        },
         "mermaidDiagram": {
           "label": "Mermaid-Diagramm",
           "description": "Diagramm als Text schreiben",

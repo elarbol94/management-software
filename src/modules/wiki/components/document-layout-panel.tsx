@@ -28,6 +28,7 @@ import {
   type DocumentSettingsV1,
 } from "../lib/document-settings";
 import type { OutlineItem } from "./editor-tools";
+import { getDocumentNumberingState } from "./document-extension";
 import { formatEuro, proposalSectionSnippet, proposalTable, type ProposalWorkspaceData } from "../lib/proposal";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -116,6 +117,16 @@ export function DocumentLayoutPanel({
   const selectedTable = selectedAncestor("markdownTable");
   const selectedHeading = selectedAncestor("heading");
   void selectionVersion;
+
+  // Live-resolved from the document (headings/annexes/figures/tables), so the picker offers
+  // every kind of cross-reference target without needing its own separate collection pass.
+  const numbering = getDocumentNumberingState(editor);
+  const referenceTargets: Array<{ id: string; text: string }> = [
+    ...outline.map((item) => ({ id: item.id, text: item.text || t("untitledSection") })),
+    ...(numbering?.figures ?? []).map((figure) => ({ id: figure.id, text: numbering?.labels.get(figure.id) ?? figure.caption })),
+    ...(numbering?.tables ?? []).map((table) => ({ id: table.id, text: numbering?.labels.get(table.id) ?? table.caption })),
+    ...(numbering?.annexes ?? []).map((annex) => ({ id: annex.id, text: annex.title })),
+  ];
 
   const effectiveConstraintHeading = outline.some((item) => item.id === constraintHeading)
     ? constraintHeading
@@ -347,9 +358,9 @@ export function DocumentLayoutPanel({
             <Button type="button" size="sm" variant="outline" onClick={() => editor.chain().focus().insertContent({ type: "annexMarker", attrs: { annexId: crypto.randomUUID(), title: t("proposal.annex") } }).run()}>{t("proposal.annex")}</Button>
             <Button type="button" size="sm" variant="outline" onClick={() => editor.chain().focus().insertContent({ type: "signatureBlock", attrs: { name: settings.cover.author, role: "", location: "", date: settings.cover.date } }).run()}>{t("proposal.signature")}</Button>
           </div>
-          {outline.length > 0 && <div className="flex gap-1">
-            <Select value={referenceTarget} onValueChange={(value) => setReferenceTarget(value ?? "")}><SelectTrigger className="h-8 min-w-0 flex-1"><SelectValue placeholder={t("proposal.reference")} /></SelectTrigger><SelectContent>{outline.map((item) => <SelectItem key={`${item.id}-${item.position}`} value={item.id}>{item.text}</SelectItem>)}</SelectContent></Select>
-            <Button type="button" size="sm" variant="outline" disabled={!referenceTarget} onClick={() => editor.chain().focus().insertContent({ type: "crossReference", attrs: { targetId: referenceTarget, label: outline.find((item) => item.id === referenceTarget)?.text || t("proposal.reference") } }).run()}>{t("proposal.insert")}</Button>
+          {referenceTargets.length > 0 && <div className="flex gap-1">
+            <Select value={referenceTarget} onValueChange={(value) => setReferenceTarget(value ?? "")}><SelectTrigger className="h-8 min-w-0 flex-1"><SelectValue placeholder={t("proposal.reference")} /></SelectTrigger><SelectContent>{referenceTargets.map((item, index) => <SelectItem key={`${item.id}-${index}`} value={item.id}>{item.text}</SelectItem>)}</SelectContent></Select>
+            <Button type="button" size="sm" variant="outline" disabled={!referenceTarget} onClick={() => editor.chain().focus().insertContent({ type: "crossReference", attrs: { targetId: referenceTarget, label: referenceTargets.find((item) => item.id === referenceTarget)?.text || t("proposal.reference") } }).run()}>{t("proposal.insert")}</Button>
           </div>}
         </section>
 
