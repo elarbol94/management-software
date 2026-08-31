@@ -103,7 +103,7 @@ export async function createQuickNote(locale: "de" | "en" = "de") {
     slug: uniquePageSlug(title),
     status: "inbox",
     citationLocale: locale === "de" ? "de-DE" : "en-US",
-    proofingLanguage: locale === "de" ? "de-DE" : "en-US",
+    proofingLanguage: locale === "de" ? "de-AT" : "en-US",
     createdBy: currentUser.id,
     updatedBy: currentUser.id,
   }).returning({ id: wikiPages.id, slug: wikiPages.slug }).get();

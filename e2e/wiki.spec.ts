@@ -639,6 +639,9 @@ test("proofing language persists and spelling and writing issues use distinct st
   await expect(page.locator(".wiki-spellcheck-issue--spelling")).toHaveCount(0, { timeout: 10_000 });
   await expect(page.locator(".wiki-spellcheck-issue--writing")).toHaveCount(1);
 
+  // Quick notes default to de-AT, which now sits last in the de-DE -> en-US -> de-AT
+  // cycle, so reaching en-US takes two clicks instead of one.
+  await page.getByTestId("proofing-language-toggle").click();
   await page.getByTestId("proofing-language-toggle").click();
   await expect.poll(() => requestedLanguages.includes("en-US")).toBe(true);
   await page.reload();

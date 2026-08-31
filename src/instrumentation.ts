@@ -2,9 +2,9 @@ async function warmLanguageTool() {
   const baseUrl = process.env.LANGUAGETOOL_URL;
   if (!baseUrl) return;
   const endpoint = new URL("/v2/check", baseUrl);
-  await Promise.allSettled((["de-DE", "en-US"] as const).map((language) => fetch(endpoint, {
+  await Promise.allSettled((["de-DE", "de-AT", "en-US"] as const).map((language) => fetch(endpoint, {
     method: "POST",
-    body: new URLSearchParams({ text: language === "de-DE" ? "Die Prüfung ist bereit." : "The proofing service is ready.", language, enabledOnly: "false" }),
+    body: new URLSearchParams({ text: language === "en-US" ? "The proofing service is ready." : "Die Prüfung ist bereit.", language, enabledOnly: "false" }),
     signal: AbortSignal.timeout(15_000),
     cache: "no-store",
   })));

@@ -7,6 +7,7 @@ import { getPageComments, getPageResearchMeta, listCitationSources, listTags, li
 import { WikiShell } from "@/modules/wiki/components/wiki-shell";
 import { listDocumentTemplates } from "@/modules/wiki/document-queries";
 import { getWikiTypographyForUser, getWikiTypographyProfileForUser } from "@/modules/wiki/lib/wiki-typography.server";
+import { getWikiProofingPrefsForUser } from "@/modules/wiki/lib/wiki-proofing-prefs.server";
 import { listDeadlinesForContext, listTasksForContext } from "@/modules/projects/queries";
 import { listGraphicAttachmentIds } from "@/modules/wiki/svg-assets";
 import { getAppSettings } from "@/modules/settings/queries";
@@ -44,6 +45,7 @@ export default async function WikiPage({ params, searchParams }: { params: Promi
     typography={getWikiTypographyForUser(page.createdBy)}
     editableTypography={currentUserTypography.typography}
     typographyTemplates={currentUserTypography.templates}
+    proofingPrefs={getWikiProofingPrefsForUser(currentUser.id)}
     tasks={listTasksForContext("wikiPage", page.id)}
     deadlines={listDeadlinesForContext("wikiPage", page.id)}
     focusTaskId={query.task}

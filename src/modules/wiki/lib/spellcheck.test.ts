@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { Schema } from "@tiptap/pm/model";
-import { SPELLCHECK_BATCH_MAX_CHARACTERS, SPELLCHECK_BATCH_MAX_PARAGRAPHS, collectSpellcheckParagraphs, createSpellcheckBatches, mapSpellcheckMatches, remapSpellcheckBatchMatches } from "./spellcheck";
+import { PROOFING_LANGUAGES, SPELLCHECK_BATCH_MAX_CHARACTERS, SPELLCHECK_BATCH_MAX_PARAGRAPHS, collectSpellcheckParagraphs, createSpellcheckBatches, mapSpellcheckMatches, nextProofingLanguage, remapSpellcheckBatchMatches } from "./spellcheck";
 
 const schema = new Schema({
   nodes: {
@@ -61,5 +61,12 @@ describe("wiki spellcheck helpers", () => {
     expect(remapSpellcheckBatchMatches(longBatches[1], [{ paragraph: 0, offset: 3, length: 2, message: "Late issue", kind: "writing", category: "Grammar", ruleId: "GRAMMAR", replacements: [] }])).toEqual([
       { paragraph: 0, offset: 24_003, length: 2, message: "Late issue", kind: "writing", category: "Grammar", ruleId: "GRAMMAR", replacements: [] },
     ]);
+  });
+
+  it("cycles the proofing language through de-DE, en-US, and de-AT and back", () => {
+    expect(nextProofingLanguage("de-DE")).toBe("en-US");
+    expect(nextProofingLanguage("en-US")).toBe("de-AT");
+    expect(nextProofingLanguage("de-AT")).toBe("de-DE");
+    expect(PROOFING_LANGUAGES).toEqual(["de-DE", "en-US", "de-AT"]);
   });
 });
