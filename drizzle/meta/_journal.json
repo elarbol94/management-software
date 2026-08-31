@@ -372,6 +372,13 @@
       "when": 1788164940729,
       "tag": "0052_wiki_presentation_history",
       "breakpoints": true
+    },
+    {
+      "idx": 53,
+      "version": "6",
+      "when": 1788178845773,
+      "tag": "0053_early_franklin_richards",
+      "breakpoints": true
     }
   ]
 }
