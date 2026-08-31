@@ -17,6 +17,7 @@ import {
   ReactFlowProvider,
   type Connection,
   type Edge,
+  type EdgeChange,
   type EdgeProps,
   type Node,
   type NodeChange,
@@ -85,7 +86,7 @@ import {
   type MunicipalityDatasetRef,
 } from "../analysis";
 import { arrangeAnalysisNodes, autoLayoutAnalysisGraph, type AnalysisArrangeAction } from "../analysis-layout";
-import { analysisEdgePath, routeAnalysisEdge } from "../analysis-edge-routing";
+import { analysisEdgePath, analysisStubRoute, routeAnalysisEdge } from "../analysis-edge-routing";
 import { loadMunicipalityAnalysisData, loadMunicipalityIndex } from "../analysis-data";
 import { normalizeMunicipalitySearch, searchMunicipalities, type MunicipalityIndexItem } from "../data";
 import type { MapMetric } from "../demography";
@@ -679,7 +680,17 @@ function StudioPalette({
           <section>
             <h3 className="text-[10px] font-semibold tracking-wide text-muted-foreground uppercase">{t("studioOperatorGroup_inputs")}</h3>
             <div className="mt-1.5 grid grid-cols-2 gap-1.5">
-              <Button variant="outline" size="sm" className="justify-start" aria-label={t("addConstant")} onClick={onConstant}><span className="font-mono text-xs">123</span>{t("constantNode")}<span className="sr-only">{t("addConstant")}</span></Button>
+              {/* Draggable like the operators beside it: the drop handler has always
+                  accepted a constant, but nothing offered one to drag. */}
+              <Button
+                variant="outline"
+                size="sm"
+                className="justify-start"
+                draggable
+                aria-label={t("addConstant")}
+                onClick={onConstant}
+                onDragStart={(event) => { event.dataTransfer.effectAllowed = "copy"; event.dataTransfer.setData(OPERATOR_DRAG_TYPE, CONSTANT_DRAG_VALUE); }}
+              ><span className="font-mono text-xs">123</span>{t("constantNode")}<span className="sr-only">{t("addConstant")}</span></Button>
               <Button variant="outline" size="sm" className="justify-start" onClick={onAnnotation}><StickyNote className="size-3.5" />{t("studioNote")}</Button>
             </div>
           </section>
@@ -711,6 +722,10 @@ function AnalysisEditor({ analysis, analyses, metrics }: { analysis: AnalysisRec
   const resizeDraftsRef = useRef(resizeDrafts);
   const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>(analysis.graph.selectedNodeId ? [analysis.graph.selectedNodeId] : []);
   const selectedNodeIdsRef = useRef(selectedNodeIds);
+  // Which connection is selected is not worth persisting, but it has to reach React Flow:
+  // the delete key removes the edges its store has marked selected, and with a controlled
+  // edge list nothing marks them unless the selection change is applied here.
+  const [selectedEdgeIds, setSelectedEdgeIds] = useState<string[]>([]);
   const [paletteCollapsed, setPaletteCollapsed] = useState(false);
   const [inspectorCollapsed, setInspectorCollapsed] = useState(false);
   const [paletteSheetOpen, setPaletteSheetOpen] = useState(false);
@@ -722,7 +737,12 @@ function AnalysisEditor({ analysis, analyses, metrics }: { analysis: AnalysisRec
   const [metricName, setMetricName] = useState("");
   const [deleting, setDeleting] = useState(false);
   const flowRef = useRef<HTMLDivElement>(null);
-  const lastCanvasPosition = useRef<{ x: number; y: number } | null>(null);
+  const lastPointerPosition = useRef<{ x: number; y: number } | null>(null);
+  /** Where a new block lands: the last place the pointer was over the canvas. */
+  const pointerFlowPosition = useCallback(
+    () => lastPointerPosition.current ? reactFlow.screenToFlowPosition(lastPointerPosition.current) : null,
+    [reactFlow],
+  );
   // Undo restores a whole earlier graph rather than inverting operations, so this is a
   // bounded stack of snapshots. Selection and viewport are excluded: they would fill it
   // with entries that look like nothing happened.
@@ -1004,38 +1024,59 @@ function AnalysisEditor({ analysis, analyses, metrics }: { analysis: AnalysisRec
       },
     };
   }), [graph.nodes, graph.subject, results, selectedNodeIds, setAnnotation, setNodeTitle, setNodeValue, togglePin, t]);
+  // A node with no live draft is handed back unchanged: React Flow keeps the internal node
+  // it already built for an unchanged object, so dragging one card does not re-render the
+  // sparkline of every other one.
   const positionedNodes = useMemo<DisplayNode[]>(() => displayNodes.map((node) => {
     const drag = dragPositions?.[node.id];
     const resize = resizeDrafts[node.id];
-    const position = drag ?? (resize ? { x: resize.x ?? node.position.x, y: resize.y ?? node.position.y } : node.position);
+    if (!drag && !resize) return node;
+    const position = drag ?? { x: resize?.x ?? node.position.x, y: resize?.y ?? node.position.y };
     const width = resize?.width ?? node.width;
     const height = resize?.height ?? node.height;
     return { ...node, position, width, height, style: { width, height } };
   }), [displayNodes, dragPositions, resizeDrafts]);
-  const displayEdges = useMemo<AnalysisDisplayEdge[]>(() => graph.edges.map((edge) => {
-    const highlighted = selectedNodeIds.includes(edge.source) || selectedNodeIds.includes(edge.target);
-    const source = positionedNodes.find((node) => node.id === edge.source);
-    const target = positionedNodes.find((node) => node.id === edge.target);
-    const targetGraphNode = graph.nodes.find((node) => node.id === edge.target);
-    const targetRatio = targetGraphNode?.type === "operator" && isUnaryAnalysisOperator(targetGraphNode.data.operator)
-      ? 0.5
-      : edge.targetHandle === "a" ? 0.38 : 0.72;
-    const sourcePoint = { x: (source?.position.x ?? 0) + (source?.width ?? 0), y: (source?.position.y ?? 0) + (source?.height ?? 0) / 2 };
-    const targetPoint = { x: target?.position.x ?? 0, y: (target?.position.y ?? 0) + (target?.height ?? 0) * targetRatio };
+
+  /** Where each edge leaves its source card and enters its target handle. */
+  const edgeGeometry = useMemo(() => {
+    const byId = new Map(positionedNodes.map((node) => [node.id, node]));
+    return graph.edges.map((edge) => {
+      const source = byId.get(edge.source);
+      const target = byId.get(edge.target);
+      const targetRatio = target?.data.singleInput ? 0.5 : edge.targetHandle === "a" ? 0.38 : 0.72;
+      return {
+        id: edge.id,
+        source: { x: (source?.position.x ?? 0) + (source?.width ?? 0), y: (source?.position.y ?? 0) + (source?.height ?? 0) / 2 },
+        target: { x: target?.position.x ?? 0, y: (target?.position.y ?? 0) + (target?.height ?? 0) * targetRatio },
+      };
+    });
+  }, [graph.edges, positionedNodes]);
+
+  // While a card is being dragged or resized the layout changes every frame, and routing
+  // every edge around every card is an A* per edge — far too much for a frame budget. The
+  // stub route follows the pointer for those frames; the real routes are found on drop.
+  const interacting = dragPositions !== null || Object.keys(resizeDrafts).length > 0;
+  const routedPaths = useMemo(() => {
+    if (interacting) return null;
     const bounds = positionedNodes.map((node) => ({
-      x: node.position.x,
-      y: node.position.y,
-      width: node.width ?? 0,
-      height: node.height ?? 0,
+      x: node.position.x, y: node.position.y, width: node.width ?? 0, height: node.height ?? 0,
     }));
+    return new Map(edgeGeometry.map(({ id, source, target }) =>
+      [id, analysisEdgePath(routeAnalysisEdge(source, target, bounds))]));
+  }, [edgeGeometry, interacting, positionedNodes]);
+
+  const displayEdges = useMemo<AnalysisDisplayEdge[]>(() => graph.edges.map((edge, index) => {
+    const highlighted = selectedNodeIds.includes(edge.source) || selectedNodeIds.includes(edge.target);
+    const geometry = edgeGeometry[index]!;
     return {
       ...edge,
       type: "analysis",
       animated: false,
-      data: { path: analysisEdgePath(routeAnalysisEdge(sourcePoint, targetPoint, bounds)) },
-      style: highlighted ? { strokeWidth: 2.5, stroke: "var(--color-teal-600)" } : undefined,
+      selected: selectedEdgeIds.includes(edge.id),
+      data: { path: routedPaths?.get(edge.id) ?? analysisEdgePath(analysisStubRoute(geometry.source, geometry.target)) },
+      style: highlighted || selectedEdgeIds.includes(edge.id) ? { strokeWidth: 2.5, stroke: "var(--color-teal-600)" } : undefined,
     };
-  }), [graph.edges, graph.nodes, positionedNodes, selectedNodeIds]);
+  }), [edgeGeometry, graph.edges, routedPaths, selectedEdgeIds, selectedNodeIds]);
   const selectedNode = selectedNodeIds.length === 1 ? graph.nodes.find(({ id }) => id === selectedNodeIds[0]) ?? null : null;
   const selectedSeries = selectedNode ? results.get(selectedNode.id) ?? null : null;
   const selectedTechnicalTitle = selectedNode?.type === "dataset" ? datasetTitle(selectedNode.data.dataset, t)
@@ -1053,32 +1094,16 @@ function AnalysisEditor({ analysis, analyses, metrics }: { analysis: AnalysisRec
       setResizeDrafts(resizeDraftsRef.current);
       return next;
     };
+    // Deleting or dropping a multiple selection arrives as one batch of changes. Committing
+    // each one on its own would fill the undo stack with steps the reader never took, and
+    // stack up a toast per node.
+    const removedIds: string[] = [];
+    const moves: Array<Extract<MunicipalityAnalysisGraphOperation, { type: "move-node" }>> = [];
     for (const change of changes) {
       if (change.type === "remove") {
-        // Backspace/Delete removes a node straight into the persisted graph, so the
-        // removal has to be reversible: keep the node and its edges for the undo action.
-        const removedNode = graphRef.current.nodes.find(({ id }) => id === change.id);
-        const removedEdges = graphRef.current.edges.filter(
-          ({ source, target }) => source === change.id || target === change.id,
-        );
-        commitOperations([{
-          version: ANALYSIS_OPERATION_VERSION, type: "remove-node", nodeId: change.id,
-        }]);
+        removedIds.push(change.id);
         selection.delete(change.id);
         selectionChanged = true;
-        if (removedNode) {
-          toast(t("analysisNodeRemoved"), {
-            action: {
-              label: t("analysisUndo"),
-              onClick: () => commitOperations([
-                { version: ANALYSIS_OPERATION_VERSION, type: "add-node", node: removedNode },
-                ...removedEdges.map((edge): MunicipalityAnalysisGraphOperation => ({
-                  version: ANALYSIS_OPERATION_VERSION, type: "add-edge", edge,
-                })),
-              ]),
-            },
-          });
-        }
       } else if (change.type === "position" && change.position) {
         const { id, position } = change;
         if (resizeBatchIds.has(id)) {
@@ -1092,10 +1117,7 @@ function AnalysisEditor({ analysis, analyses, metrics }: { analysis: AnalysisRec
         setDragPositions(null);
         const current = graphRef.current.nodes.find((node) => node.id === id);
         if (current?.position.x === position.x && current.position.y === position.y) continue;
-        commitOperations(
-          [{ version: ANALYSIS_OPERATION_VERSION, type: "move-node", nodeId: id, position }],
-          { debounceKey: `node-position:${id}`, delay: 500 },
-        );
+        moves.push({ version: ANALYSIS_OPERATION_VERSION, type: "move-node", nodeId: id, position });
       } else if (change.type === "dimensions" && change.dimensions && change.resizing !== undefined) {
         const draft = updateResizeDraft(change.id, change.dimensions);
         if (change.resizing === false) {
@@ -1121,6 +1143,30 @@ function AnalysisEditor({ analysis, analyses, metrics }: { analysis: AnalysisRec
         selectionChanged = true;
       }
     }
+    if (removedIds.length) {
+      // Backspace/Delete removes nodes straight into the persisted graph, so the removal
+      // has to be reversible: keep the nodes and their edges for the undo action.
+      const removed = new Set(removedIds);
+      const removedNodes = graphRef.current.nodes.filter(({ id }) => removed.has(id));
+      const removedEdges = graphRef.current.edges.filter(({ source, target }) => removed.has(source) || removed.has(target));
+      commitOperations(removedIds.map((nodeId) => ({ version: ANALYSIS_OPERATION_VERSION, type: "remove-node", nodeId })));
+      if (removedNodes.length) {
+        toast(t("analysisNodeRemoved", { count: removedNodes.length }), {
+          action: {
+            label: t("analysisUndo"),
+            onClick: () => commitOperations([
+              ...removedNodes.map((node): MunicipalityAnalysisGraphOperation => ({
+                version: ANALYSIS_OPERATION_VERSION, type: "add-node", node,
+              })),
+              ...removedEdges.map((edge): MunicipalityAnalysisGraphOperation => ({
+                version: ANALYSIS_OPERATION_VERSION, type: "add-edge", edge,
+              })),
+            ]),
+          },
+        });
+      }
+    }
+    if (moves.length) commitOperations(moves, { debounceKey: `node-position:${moves.map(({ nodeId }) => nodeId).join(",")}`, delay: 500 });
     if (selectionChanged) {
       const ids = [...selection];
       selectedNodeIdsRef.current = ids;
@@ -1131,6 +1177,28 @@ function AnalysisEditor({ analysis, analyses, metrics }: { analysis: AnalysisRec
       }
     }
   }, [commitOperations, setDragPositions, setResizeDrafts, setSelectedNodeIds, t]);
+
+  /**
+   * Connections carry no selection of their own in the saved graph, so it is held here and
+   * handed back to React Flow — which is what lets one be clicked and then deleted.
+   */
+  const onEdgesChange = useCallback((changes: EdgeChange<AnalysisDisplayEdge>[]) => {
+    const removed = changes.flatMap((change) => change.type === "remove" ? [change.id] : []);
+    if (removed.length) {
+      commitOperations(removed.map((edgeId) => ({ version: ANALYSIS_OPERATION_VERSION, type: "remove-edge", edgeId })));
+    }
+    const selections = changes.filter((change) => change.type === "select");
+    if (removed.length || selections.length) {
+      setSelectedEdgeIds((current) => {
+        const next = new Set(current.filter((id) => !removed.includes(id)));
+        for (const change of selections) {
+          if (change.selected) next.add(change.id);
+          else next.delete(change.id);
+        }
+        return [...next];
+      });
+    }
+  }, [commitOperations, setSelectedEdgeIds]);
 
   const connect = useCallback((connection: Connection) => {
     if (!connection.source || !connection.target || (connection.targetHandle !== "a" && connection.targetHandle !== "b")) return;
@@ -1145,20 +1213,22 @@ function AnalysisEditor({ analysis, analyses, metrics }: { analysis: AnalysisRec
     }]);
   }, [commitOperations, t]);
 
-  function addOperator(operator: AnalysisOperatorId, position?: { x: number; y: number }) {
+  // Stable identities: the palette below is a hundred-odd catalog entries, and it must
+  // not be rebuilt on every frame of a node drag just because a callback is new.
+  const addOperator = useCallback((operator: AnalysisOperatorId, position?: { x: number; y: number }) => {
     if (graphRef.current.nodes.length >= 100) { toast.error(t("analysisNodeLimit")); return; }
     const id = createId();
     if (commitOperations([{
       version: ANALYSIS_OPERATION_VERSION,
       type: "add-node",
-      node: { id, type: "operator", position: position ?? lastCanvasPosition.current ?? { x: 360, y: 120 + graphRef.current.nodes.length * 30 }, data: { operator } },
+      node: { id, type: "operator", position: position ?? pointerFlowPosition() ?? { x: 360, y: 120 + graphRef.current.nodes.length * 30 }, data: { operator } },
     }])) {
       selectedNodeIdsRef.current = [id];
       setSelectedNodeIds([id]);
     }
-  }
+  }, [commitOperations, pointerFlowPosition, setSelectedNodeIds, t]);
 
-  function addConstant(position?: { x: number; y: number }) {
+  const addConstant = useCallback((position?: { x: number; y: number }) => {
     if (graphRef.current.nodes.length >= 100) { toast.error(t("analysisNodeLimit")); return; }
     const id = createId();
     if (commitOperations([{
@@ -1166,16 +1236,16 @@ function AnalysisEditor({ analysis, analyses, metrics }: { analysis: AnalysisRec
       type: "add-node",
       node: {
         id, type: "dataset",
-        position: position ?? lastCanvasPosition.current ?? { x: 360, y: 120 + graphRef.current.nodes.length * 30 },
+        position: position ?? pointerFlowPosition() ?? { x: 360, y: 120 + graphRef.current.nodes.length * 30 },
         data: { dataset: { kind: "constant", value: 0 } },
       },
     }])) {
       selectedNodeIdsRef.current = [id];
       setSelectedNodeIds([id]);
     }
-  }
+  }, [commitOperations, pointerFlowPosition, setSelectedNodeIds, t]);
 
-  function addAnnotation(position?: { x: number; y: number }) {
+  const addAnnotation = useCallback((position?: { x: number; y: number }) => {
     if (graphRef.current.nodes.length >= 100) { toast.error(t("analysisNodeLimit")); return; }
     const id = createId();
     if (commitOperations([{
@@ -1184,14 +1254,14 @@ function AnalysisEditor({ analysis, analyses, metrics }: { analysis: AnalysisRec
       node: {
         id,
         type: "annotation",
-        position: position ?? lastCanvasPosition.current ?? { x: 240, y: 160 + graphRef.current.nodes.length * 24 },
+        position: position ?? pointerFlowPosition() ?? { x: 240, y: 160 + graphRef.current.nodes.length * 24 },
         data: { text: t("studioNotePlaceholder"), color: "sand" },
       },
     }])) {
       selectedNodeIdsRef.current = [id];
       setSelectedNodeIds([id]);
     }
-  }
+  }, [commitOperations, pointerFlowPosition, setSelectedNodeIds, t]);
 
   function applyNodePositions(positions: Record<string, { x: number; y: number }>) {
     const operations = Object.entries(positions).flatMap(([nodeId, position]): MunicipalityAnalysisGraphOperation[] => {
@@ -1242,12 +1312,12 @@ function AnalysisEditor({ analysis, analyses, metrics }: { analysis: AnalysisRec
    * expands a derivation into real nodes and falls back to a single node for an
    * Ausgangsdatum, which is exactly the difference between the two lists.
    */
-  function insertDataset(request: { label: string; dataset: MunicipalityDatasetRef }) {
+  const insertDataset = useCallback((request: { label: string; dataset: MunicipalityDatasetRef }) => {
     const inserted = commitOperations([{
       version: ANALYSIS_OPERATION_VERSION, type: "add-kennzahl", nodeId: createId(), dataset: request.dataset,
     }]);
     if (inserted) toast.success(t("kennzahlInserted", { kennzahl: request.label }));
-  }
+  }, [commitOperations, t]);
 
   /**
    * Turns the selected node into a reusable Kennzahl. The server reads the persisted
@@ -1310,7 +1380,9 @@ function AnalysisEditor({ analysis, analyses, metrics }: { analysis: AnalysisRec
     | { id: string; label: string; group: string; kind: "dataset"; request: { label: string; dataset: MunicipalityDatasetRef } }
     | { id: string; label: string; group: string; kind: "operator"; operator: AnalysisOperatorId }
     | { id: string; label: string; group: string; kind: "constant" | "annotation" };
-  const quickAddItems: QuickAddItem[] = [
+  // Both catalogs, every operator, in one list. Built once per language rather than per
+  // render: it is a hundred-odd entries that never change while a node is being dragged.
+  const quickAddItems = useMemo<QuickAddItem[]>(() => [
     ...AUSGANGSDATEN_CATALOG.map(({ id, output }) => ({
       id: `data:${id}`,
       label: datasetTitle(output, t),
@@ -1334,10 +1406,12 @@ function AnalysisEditor({ analysis, analyses, metrics }: { analysis: AnalysisRec
     })),
     { id: "constant", label: t("constantNode"), group: t("studioBlocks"), kind: "constant" },
     { id: "annotation", label: t("studioNote"), group: t("studioBlocks"), kind: "annotation" },
-  ];
-  const quickAddNeedle = normalizeMunicipalitySearch(quickAddQuery);
-  const visibleQuickAddItems = quickAddItems.filter(({ label, group }) => !quickAddNeedle
-    || normalizeMunicipalitySearch(`${label} ${group}`).includes(quickAddNeedle)).slice(0, 40);
+  ], [t]);
+  const visibleQuickAddItems = useMemo(() => {
+    const needle = normalizeMunicipalitySearch(quickAddQuery);
+    return quickAddItems.filter(({ label, group }) => !needle
+      || normalizeMunicipalitySearch(`${label} ${group}`).includes(needle)).slice(0, 40);
+  }, [quickAddItems, quickAddQuery]);
 
   const runQuickAdd = (item: QuickAddItem) => {
     if (item.kind === "dataset") insertDataset(item.request);
@@ -1347,15 +1421,19 @@ function AnalysisEditor({ analysis, analyses, metrics }: { analysis: AnalysisRec
     setQuickAddOpen(false);
     setQuickAddQuery("");
   };
-  const palettePanel = (
+  // Held across renders: dragging a node re-renders this editor on every frame, and the
+  // library it holds is the whole Ausgangsdaten and Kennzahlen catalog.
+  const addConstantAtPointer = useCallback(() => addConstant(), [addConstant]);
+  const addAnnotationAtPointer = useCallback(() => addAnnotation(), [addAnnotation]);
+  const palettePanel = useMemo(() => (
     <StudioPalette
       metrics={metrics}
       onOperator={addOperator}
-      onConstant={() => addConstant()}
-      onAnnotation={() => addAnnotation()}
+      onConstant={addConstantAtPointer}
+      onAnnotation={addAnnotationAtPointer}
       onDataset={insertDataset}
     />
-  );
+  ), [addAnnotationAtPointer, addConstantAtPointer, addOperator, insertDataset, metrics]);
 
   const selectedWidth = selectedNode ? analysisNodeWidth(selectedNode) : 0;
   const selectedHeight = selectedNode ? analysisNodeHeight(selectedNode) : 0;
@@ -1535,7 +1613,11 @@ function AnalysisEditor({ analysis, analyses, metrics }: { analysis: AnalysisRec
           <div
             className="relative min-h-0 flex-1"
             ref={flowRef}
-            onPointerMove={(event) => { lastCanvasPosition.current = reactFlow.screenToFlowPosition({ x: event.clientX, y: event.clientY }); }}
+            // Only the screen coordinates are kept. Converting them here would measure the
+            // canvas on every pointer move, interleaved with the transforms React Flow
+            // writes during a drag, which is a forced layout per frame for a number that is
+            // read at most once, when a block is placed.
+            onPointerMove={(event) => { lastPointerPosition.current = { x: event.clientX, y: event.clientY }; }}
           >
             <ReactFlow
               nodes={positionedNodes}
@@ -1543,7 +1625,7 @@ function AnalysisEditor({ analysis, analyses, metrics }: { analysis: AnalysisRec
               nodeTypes={nodeTypes}
               edgeTypes={edgeTypes}
               onNodesChange={onNodesChange}
-              onEdgesChange={(changes) => { for (const change of changes) if (change.type === "remove") commitOperations([{ version: ANALYSIS_OPERATION_VERSION, type: "remove-edge", edgeId: change.id }]); }}
+              onEdgesChange={onEdgesChange}
               onConnect={connect}
               onMoveEnd={(_, viewport: Viewport) => { const current = graphRef.current.viewport; if (current.x !== viewport.x || current.y !== viewport.y || current.zoom !== viewport.zoom) commitOperations([{ version: ANALYSIS_OPERATION_VERSION, type: "set-viewport", viewport }], { debounceKey: "viewport", delay: 500, recordHistory: false }); }}
               defaultViewport={graph.viewport}

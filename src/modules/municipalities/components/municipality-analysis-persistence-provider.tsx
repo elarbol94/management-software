@@ -7,7 +7,11 @@ import type { MunicipalityAnalysisGraphOperation } from "../analysis";
 export type MunicipalityAnalysisSaveState = "saved" | "saving" | "error";
 
 type EnqueueOptions = { debounceKey?: string; delay?: number };
-type DelayedOperation = { operation: MunicipalityAnalysisGraphOperation; timer: number };
+/**
+ * A whole batch, not one operation: dragging a multiple selection moves every node in it
+ * under a single key, and keeping only the last of them would drop the rest on the floor.
+ */
+type DelayedOperation = { operations: MunicipalityAnalysisGraphOperation[]; timer: number };
 type AnalysisQueue = {
   /**
    * Operations that are already in the reader's copy of the graph. They stay in the queue
@@ -71,6 +75,11 @@ export function MunicipalityAnalysisPersistenceProvider({ children }: { children
     publish(analysisId, "saving");
     try {
       await applyMunicipalityAnalysisOperations({ analysisId, operations: queue.inFlight });
+      // Confirmed by the server, so they are no longer what an arriving graph might be
+      // missing. Left in place they would grow for as long as the editor is open, and
+      // every render walks this list to find what still has to be replayed.
+      const confirmed = new Set(queue.inFlight);
+      queue.optimistic = queue.optimistic.filter(({ operation }) => !confirmed.has(operation));
       queue.inFlight = [];
       queue.running = false;
       queue.failures = 0;
@@ -97,22 +106,22 @@ export function MunicipalityAnalysisPersistenceProvider({ children }: { children
     const queue = getQueue(analysisId);
     publish(analysisId, "saving");
     if (options?.debounceKey) {
+      const { debounceKey } = options;
       queue.optimistic = [
-        ...queue.optimistic.filter(({ debounceKey }) => debounceKey !== options.debounceKey),
-        { operation: operations.at(-1)!, debounceKey: options.debounceKey },
+        ...queue.optimistic.filter((entry) => entry.debounceKey !== debounceKey),
+        ...operations.map((operation) => ({ operation, debounceKey })),
       ];
-      const existing = queue.delayed.get(options.debounceKey);
+      const existing = queue.delayed.get(debounceKey);
       if (existing) window.clearTimeout(existing.timer);
-      const operation = operations.at(-1)!;
       const timer = window.setTimeout(() => {
-        const delayed = queue.delayed.get(options.debounceKey!);
+        const delayed = queue.delayed.get(debounceKey);
         if (!delayed || delayed.timer !== timer) return;
-        queue.delayed.delete(options.debounceKey!);
-        queue.ready.push(delayed.operation);
+        queue.delayed.delete(debounceKey);
+        queue.ready.push(...delayed.operations);
         publish(analysisId, "saving");
         void pump(analysisId);
       }, options.delay ?? 500);
-      queue.delayed.set(options.debounceKey, { operation, timer });
+      queue.delayed.set(debounceKey, { operations, timer });
       return;
     }
     queue.optimistic.push(...operations.map((operation) => ({ operation })));
@@ -143,7 +152,7 @@ export function MunicipalityAnalysisPersistenceProvider({ children }: { children
     const queue = getQueue(analysisId);
     for (const delayed of queue.delayed.values()) {
       window.clearTimeout(delayed.timer);
-      queue.ready.push(delayed.operation);
+      queue.ready.push(...delayed.operations);
     }
     queue.delayed.clear();
     if (queue.retryTimer !== null) { window.clearTimeout(queue.retryTimer); queue.retryTimer = null; }

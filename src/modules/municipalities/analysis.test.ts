@@ -20,7 +20,7 @@ import {
   type MunicipalityAnalysisData,
 } from "./analysis";
 import { arrangeAnalysisNodes, autoLayoutAnalysisGraph } from "./analysis-layout";
-import { analysisEdgePath, routeAnalysisEdge } from "./analysis-edge-routing";
+import { analysisEdgePath, analysisStubRoute, routeAnalysisEdge } from "./analysis-edge-routing";
 import type { MunicipalityCostSeries } from "./costs";
 import type { MunicipalityIndex } from "./data";
 import type { MunicipalityPopulationSeries } from "./population";
@@ -236,6 +236,30 @@ describe("municipality analysis graph", () => {
     expect(crossesBlockingCard).toBe(false);
     expect(route.length).toBeGreaterThan(4);
     expect(analysisEdgePath(route)).toMatch(/^M .* Q /);
+  });
+
+  // The route an edge takes while its cards are still being dragged. It skips the search,
+  // so the only thing it has to get right is that it stays rectilinear and reaches both
+  // ends — a diagonal here would visibly snap into place on the drop.
+  it("connects both endpoints with right angles while the layout is moving", () => {
+    const source = { x: 200, y: 168 };
+    const target = { x: 680, y: 320 };
+    const route = analysisStubRoute(source, target);
+    expect(route.at(0)).toEqual(source);
+    expect(route.at(-1)).toEqual(target);
+    for (const [index, point] of route.slice(1).entries()) {
+      const previous = route[index]!;
+      expect(previous.x === point.x || previous.y === point.y).toBe(true);
+    }
+  });
+
+  it("refuses a batch that would push the graph past the node ceiling", () => {
+    const operations = Array.from({ length: 101 }, (_, index) => ({
+      version: 1 as const,
+      type: "add-node" as const,
+      node: { id: `n${index}`, type: "operator" as const, position: { x: index, y: 0 }, data: { operator: "add" as const } },
+    }));
+    expect(() => applyMunicipalityAnalysisGraphOperations(emptyMunicipalityAnalysisGraph(), operations)).toThrow();
   });
 });
 

@@ -416,9 +416,12 @@ export function applyMunicipalityAnalysisGraphOperations(
         selectedNodeId: operation.nodeId && next.nodes.some(({ id }) => id === operation.nodeId) ? operation.nodeId : null,
       };
     }
-    next = validateAnalysisGraph(next);
   }
-  return { graph: next, duplicateCount, lastDatasetNodeId };
+  // Once for the batch rather than once per operation: the check parses the whole graph,
+  // and an auto-layout of a large graph is one move operation per node. What it guards —
+  // the node and edge ceilings, finite positions — is a property of where the batch ends
+  // up, so checking every intermediate step only made tidying up quadratic.
+  return { graph: validateAnalysisGraph(next), duplicateCount, lastDatasetNodeId };
 }
 
 export function wouldCreateAnalysisCycle(edges: MunicipalityAnalysisEdge[], source: string, target: string) {

@@ -397,7 +397,7 @@
     "mobileDetails": "Details",
     "mobileClose": "Close",
     "mobileSelected": "Details",
-    "analysisNodeRemoved": "Block removed.",
+    "analysisNodeRemoved": "{count, plural, one {Block removed.} other {# blocks removed.}}",
     "analysisUndo": "Undo",
     "analysisUpdatedAt": "Last edited: {date}",
     "dataKind": "Data type",

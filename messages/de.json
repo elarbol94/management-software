@@ -397,7 +397,7 @@
     "mobileDetails": "Details",
     "mobileClose": "Schließen",
     "mobileSelected": "Details",
-    "analysisNodeRemoved": "Baustein entfernt.",
+    "analysisNodeRemoved": "{count, plural, one {Baustein entfernt.} other {# Bausteine entfernt.}}",
     "analysisUndo": "Rückgängig",
     "analysisUpdatedAt": "Zuletzt geändert: {date}",
     "dataKind": "Datenart",
