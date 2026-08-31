@@ -2987,7 +2987,73 @@
       }
     },
     "editors": "Herausgeber:innen",
-    "editorsHelp": "Eine Person pro Zeile, wie oben. Leer lassen, wenn es keine gibt."
+    "editorsHelp": "Eine Person pro Zeile, wie oben. Leer lassen, wenn es keine gibt.",
+    "presentations": {
+      "title": "Präsentationen",
+      "description": "Ein unendlicher Canvas statt Folien: Elemente frei anordnen, Rahmen als Stationen setzen und den Weg dazwischen abfahren.",
+      "new": "Neu",
+      "newPlaceholder": "Titel der Präsentation",
+      "untitled": "Ohne Titel",
+      "presentationTitle": "Titel der Präsentation",
+      "empty": "Noch keine Präsentationen",
+      "emptyDescription": "Lege eine Präsentation an und baue den Canvas aus Text, Bildern und Rahmen auf.",
+      "emptyCanvasTitle": "Leerer Canvas",
+      "emptyCanvasDescription": "Füge Text, ein Bild oder einen Rahmen hinzu. Rahmen werden zu den Stationen des Wegs.",
+      "stepsCount": "{count, plural, =0 {Keine Station} one {# Station} other {# Stationen}}",
+      "elementsCount": "{count, plural, =0 {Keine Elemente} one {# Element} other {# Elemente}}",
+      "addText": "Text",
+      "addImage": "Bild",
+      "addFrame": "Rahmen",
+      "newTextPlaceholder": "Neuer Text",
+      "overview": "Übersicht",
+      "save": "Speichern",
+      "present": "Präsentieren",
+      "exitPresent": "Präsentation beenden",
+      "fullscreen": "Vollbild",
+      "previousStep": "Vorherige Station",
+      "nextStep": "Nächste Station",
+      "path": "Weg",
+      "pathDescription": "Die Reihenfolge der Stationen. Ziehen zum Umsortieren, Klicken fliegt die Kamera hin.",
+      "addStep": "Auswahl als Station",
+      "removeStep": "Station entfernen",
+      "missingStep": "Element gelöscht",
+      "noSteps": "Noch keine Stationen",
+      "deleteElement": "Element löschen",
+      "deletePresentation": "Präsentation löschen",
+      "deleteConfirm": "Präsentation „{title}“ endgültig löschen?",
+      "deleteFailed": "Die Präsentation konnte nicht gelöscht werden.",
+      "createFailed": "Die Präsentation konnte nicht angelegt werden.",
+      "saveFailed": "Speichern fehlgeschlagen.",
+      "uploadFailed": "Das Bild konnte nicht hochgeladen werden.",
+      "textContent": "Text",
+      "fontSize": "Schriftgröße",
+      "bold": "Fett",
+      "altText": "Alternativtext",
+      "frameLabel": "Beschriftung",
+      "colorDefault": "Standardfarbe",
+      "colorNamed": "Farbe {color}",
+      "elementTypes": {
+        "text": "Text",
+        "image": "Bild",
+        "frame": "Rahmen"
+      },
+      "frameShapes": {
+        "rect": "Rechteck",
+        "circle": "Kreis",
+        "none": "Unsichtbar"
+      },
+      "align": {
+        "left": "Links",
+        "center": "Mitte",
+        "right": "Rechts"
+      },
+      "saveStates": {
+        "unsaved": "Nicht gespeichert",
+        "saving": "Speichert…",
+        "saved": "Gespeichert",
+        "error": "Fehler"
+      }
+    }
   },
   "settings": {
     "title": "Einstellungen",
