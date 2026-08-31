@@ -2498,6 +2498,7 @@ export function WikiEditor({
       <div
         className={`wiki-editor-surface${documentMode ? " wiki-document-canvas" : ""}`}
         data-margin-guides={documentSettings.page.showMarginGuides ? "true" : "false"}
+        data-numbered-headings={documentMode && documentSettings.page.numberedHeadings ? "true" : "false"}
         style={documentMode ? documentCanvasStyle : editorTypographyStyle}
       >
         {documentMode && Array.from({ length: visibleDocumentPages }, (_, index) => <div key={index} className="wiki-document-page-sheet" style={{ top: `calc(${index} * (var(--document-paper-height) + var(--document-page-gap)))` }} aria-hidden="true" />)}
