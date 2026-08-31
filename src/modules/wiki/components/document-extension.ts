@@ -1,6 +1,8 @@
 import { Extension, Mark, Node, mergeAttributes, type Editor } from "@tiptap/core";
 import { Plugin, PluginKey } from "@tiptap/pm/state";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
+import { ReactNodeViewRenderer } from "@tiptap/react";
+import { TableOfContentsView } from "./table-of-contents-view";
 
 export type DocumentPaginationBreak = {
   position: number;
@@ -17,6 +19,41 @@ export function setDocumentPaginationBreaks(editor: Editor, breaks: DocumentPagi
 
 export function getDocumentPaginationBreaks(editor: Editor) {
   return documentPaginationKey.getState(editor.state) ?? [];
+}
+
+/**
+ * Which page (1-indexed) a document position falls on, given the current break
+ * list. A break's `page` is the page its own content starts on, so the position
+ * is on the page of the latest break at or before it (or page 1 before any break).
+ */
+export function pageForPosition(breaks: DocumentPaginationBreak[], position: number): number {
+  let page = 1;
+  let bestPosition = -1;
+  for (const item of breaks) {
+    if (item.position <= position && item.position > bestPosition) {
+      bestPosition = item.position;
+      page = item.page;
+    }
+  }
+  return page;
+}
+
+/**
+ * Section-number label per heading ("1. ", "1.2 ", "1.2.3 "), mirroring the
+ * CSS counters used for numbered headings in export (document-renderer.ts) and
+ * the live editor canvas (.wiki-document-canvas[data-numbered-headings] in
+ * globals.css). Only levels 1-3 are numbered there, so deeper headings get "".
+ */
+export function numberHeadings(headings: Array<{ level: number }>): string[] {
+  const counters = [0, 0, 0];
+  return headings.map((heading) => {
+    const level = heading.level;
+    if (level < 1 || level > 3) return "";
+    counters[level - 1] += 1;
+    for (let index = level; index < 3; index += 1) counters[index] = 0;
+    const parts = counters.slice(0, level);
+    return level === 1 ? `${parts[0]}. ` : `${parts.join(".")} `;
+  });
 }
 
 export function samePaginationBreaks(left: DocumentPaginationBreak[], right: DocumentPaginationBreak[]) {
@@ -107,6 +144,9 @@ const TableOfContents = Node.create({
     ["strong", {}, HTMLAttributes.title || "Contents"],
     ["p", {}, "Generated from headings during export"],
   ],
+  addNodeView() {
+    return ReactNodeViewRenderer(TableOfContentsView);
+  },
 });
 
 const DocumentVariable = Node.create({
