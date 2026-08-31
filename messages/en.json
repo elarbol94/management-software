@@ -2271,6 +2271,9 @@
         "takeover": "Take over editing",
         "takeoverFailed": "Editing could not be taken over."
       },
+      "paste": {
+        "imagesDropped": "Images from the pasted content were not included. Use \"Insert image\" to add them."
+      },
       "search": {
         "title": "Find and replace",
         "placeholder": "Search this note…",
