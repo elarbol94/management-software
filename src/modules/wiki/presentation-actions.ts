@@ -8,8 +8,10 @@ import { wikiPresentations } from "@/db/schema";
 import { requireUserOrThrow } from "@/lib/auth";
 import { deleteAttachmentsFor } from "@/lib/files";
 import {
+  defaultPresentationSettings,
   normalizeSteps,
   presentationElementsSchema,
+  presentationSettingsSchema,
   presentationStepsSchema,
 } from "./lib/presentation";
 
@@ -44,15 +46,20 @@ export async function renamePresentation(input: { id: string; title: string }) {
   return { savedAt: Date.now() };
 }
 
-export async function savePresentation(input: { id: string; elements: unknown; steps: unknown }) {
+export async function savePresentation(input: { id: string; elements: unknown; steps: unknown; settings?: unknown }) {
   const currentUser = await requireUserOrThrow();
   const data = z
-    .object({ id: idSchema, elements: presentationElementsSchema, steps: presentationStepsSchema })
+    .object({
+      id: idSchema,
+      elements: presentationElementsSchema,
+      steps: presentationStepsSchema,
+      settings: presentationSettingsSchema.default(defaultPresentationSettings),
+    })
     .parse(input);
   const result = db
     .update(wikiPresentations)
     .set({
-      elementsJson: JSON.stringify(data.elements),
+      elementsJson: JSON.stringify({ elements: data.elements, settings: data.settings }),
       // Steps pointing at deleted elements are dropped here, so a saved path is always
       // one the player can actually fly.
       pathJson: JSON.stringify(normalizeSteps(data.steps, data.elements)),

@@ -3052,7 +3052,23 @@
         "saving": "Speichert…",
         "saved": "Gespeichert",
         "error": "Fehler"
-      }
+      },
+      "play": "Wiedergabe",
+      "pause": "Pause",
+      "playbackSettings": "Wiedergabeeinstellungen",
+      "defaultStepDuration": "Standard-Stationsdauer (s)",
+      "loopPlayback": "Wiederholen",
+      "cameraTransition": "Kamera-Übergang (s)",
+      "cameraEasing": "Easing",
+      "easings": {
+        "linear": "Linear",
+        "ease": "Sanft",
+        "ease-in": "Einschwingend",
+        "ease-out": "Ausschwingend",
+        "ease-in-out": "Ein-/ausschwingend"
+      },
+      "stepDuration": "Stationsdauer (s)",
+      "stepDurationHint": "Leer verwendet die Standarddauer."
     }
   },
   "settings": {

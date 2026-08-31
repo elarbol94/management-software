@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type CSSProperties } from "react";
 import { NodeResizer, type Node, type NodeProps } from "@xyflow/react";
 import { cn } from "@/lib/utils";
 import type { PresentationElement } from "../lib/presentation";
@@ -144,21 +144,37 @@ export const presentationNodeTypes = { text: TextNode, image: ImageNode, frame: 
  */
 export function elementsToNodes(
   elements: PresentationElement[],
-  options: { editable: boolean; selectedId?: string | null; onTextChange?: (id: string, text: string) => void },
+  options: {
+    editable: boolean;
+    selectedId?: string | null;
+    onTextChange?: (id: string, text: string) => void;
+    /** Ids currently hidden so they can fade in — the player's step-arrival entrance. */
+    enteringIds?: Set<string>;
+  },
 ): PresentationNode[] {
-  return elements.map((element) => ({
-    id: element.id,
-    type: element.type,
-    position: { x: element.x, y: element.y },
-    width: element.width,
-    height: element.height,
-    selected: options.editable ? element.id === options.selectedId : false,
-    draggable: options.editable,
-    selectable: options.editable,
-    connectable: false,
-    deletable: options.editable,
-    zIndex: element.type === "frame" ? 0 : 1,
-    style: element.rotation ? { transform: `rotate(${element.rotation}deg)` } : undefined,
-    data: { element, editable: options.editable, onTextChange: options.onTextChange },
-  }));
+  return elements.map((element) => {
+    const style: CSSProperties = {};
+    if (element.rotation) style.transform = `rotate(${element.rotation}deg)`;
+    if (options.enteringIds?.has(element.id)) {
+      // Fixed, subtle fade on step arrival — deliberately not a per-element setting.
+      // A keyframe animation (not a state-driven transition) plays once whenever this
+      // element newly becomes part of the arriving step.
+      style.animation = "presentation-element-enter 300ms ease";
+    }
+    return {
+      id: element.id,
+      type: element.type,
+      position: { x: element.x, y: element.y },
+      width: element.width,
+      height: element.height,
+      selected: options.editable ? element.id === options.selectedId : false,
+      draggable: options.editable,
+      selectable: options.editable,
+      connectable: false,
+      deletable: options.editable,
+      zIndex: element.type === "frame" ? 0 : 1,
+      style: Object.keys(style).length ? style : undefined,
+      data: { element, editable: options.editable, onTextChange: options.onTextChange },
+    };
+  });
 }

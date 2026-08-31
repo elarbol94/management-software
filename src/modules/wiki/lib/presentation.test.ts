@@ -1,8 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
+  defaultPresentationSettings,
   elementBounds,
+  elementsWithinStep,
   moveStep,
   normalizeSteps,
+  parsePresentationCanvas,
+  resolveStepDuration,
   stepLabel,
   stepTarget,
   unionBounds,
@@ -97,5 +101,54 @@ describe("presentation step labels", () => {
 
   it("collapses whitespace in a text element's own content", () => {
     expect(stepLabel(text("a", "Zwei\n  Zeilen"), 0)).toBe("Zwei Zeilen");
+  });
+});
+
+describe("autoplay step duration", () => {
+  it("uses the presentation's default when a step has no override", () => {
+    const step: PresentationStep = { id: "s0", elementId: "a" };
+    expect(resolveStepDuration(step, defaultPresentationSettings)).toBe(defaultPresentationSettings.defaultStepDurationMs);
+  });
+
+  it("prefers a step's own duration over the default", () => {
+    const step: PresentationStep = { id: "s0", elementId: "a", durationMs: 9_000 };
+    expect(resolveStepDuration(step, defaultPresentationSettings)).toBe(9_000);
+  });
+});
+
+describe("presentation canvas settings", () => {
+  it("falls back to default settings for a legacy bare elements array", () => {
+    const parsed = parsePresentationCanvas(JSON.stringify([frame("a", 0, 0, 100, 100)]));
+    expect(parsed.elements).toHaveLength(1);
+    expect(parsed.settings).toEqual(defaultPresentationSettings);
+  });
+
+  it("reads settings saved alongside the elements", () => {
+    const parsed = parsePresentationCanvas(
+      JSON.stringify({ elements: [], settings: { loop: true, defaultStepDurationMs: 6_000 } }),
+    );
+    expect(parsed.settings.loop).toBe(true);
+    expect(parsed.settings.defaultStepDurationMs).toBe(6_000);
+    // Fields left out of a partial settings object still get their defaults.
+    expect(parsed.settings.cameraEasing).toBe("ease-in-out");
+  });
+
+  it("recovers with defaults from unparsable canvas JSON", () => {
+    expect(parsePresentationCanvas("not json")).toEqual({ elements: [], settings: defaultPresentationSettings });
+  });
+});
+
+describe("step entrance grouping", () => {
+  it("fades in everything nested inside the target frame", () => {
+    const target = frame("outer", 0, 0, 400, 300);
+    const inside = frame("inner", 50, 50, 100, 100);
+    const outside = frame("elsewhere", 1000, 1000, 50, 50);
+    const ids = elementsWithinStep(target, [target, inside, outside]).map((element) => element.id);
+    expect(ids).toEqual(["outer", "inner"]);
+  });
+
+  it("includes at least the target itself when nothing else is nested inside it", () => {
+    const target = text("solo", "Hello");
+    expect(elementsWithinStep(target, [target]).map((element) => element.id)).toEqual(["solo"]);
   });
 });
