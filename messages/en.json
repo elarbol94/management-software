@@ -2985,7 +2985,73 @@
       }
     },
     "editors": "Editors",
-    "editorsHelp": "One person per line, as above. Leave empty if there are none."
+    "editorsHelp": "One person per line, as above. Leave empty if there are none.",
+    "presentations": {
+      "title": "Presentations",
+      "description": "An infinite canvas instead of slides: arrange elements freely, set frames as stops, and fly the path between them.",
+      "new": "New",
+      "newPlaceholder": "Presentation title",
+      "untitled": "Untitled",
+      "presentationTitle": "Presentation title",
+      "empty": "No presentations yet",
+      "emptyDescription": "Create a presentation and build the canvas from text, images and frames.",
+      "emptyCanvasTitle": "Empty canvas",
+      "emptyCanvasDescription": "Add text, an image or a frame. Frames become the stops along the path.",
+      "stepsCount": "{count, plural, =0 {No stops} one {# stop} other {# stops}}",
+      "elementsCount": "{count, plural, =0 {No elements} one {# element} other {# elements}}",
+      "addText": "Text",
+      "addImage": "Image",
+      "addFrame": "Frame",
+      "newTextPlaceholder": "New text",
+      "overview": "Overview",
+      "save": "Save",
+      "present": "Present",
+      "exitPresent": "Exit presentation",
+      "fullscreen": "Fullscreen",
+      "previousStep": "Previous stop",
+      "nextStep": "Next stop",
+      "path": "Path",
+      "pathDescription": "The order of the stops. Drag to reorder, click to fly the camera there.",
+      "addStep": "Add selection as stop",
+      "removeStep": "Remove stop",
+      "missingStep": "Element deleted",
+      "noSteps": "No stops yet",
+      "deleteElement": "Delete element",
+      "deletePresentation": "Delete presentation",
+      "deleteConfirm": "Permanently delete the presentation “{title}”?",
+      "deleteFailed": "The presentation could not be deleted.",
+      "createFailed": "The presentation could not be created.",
+      "saveFailed": "Saving failed.",
+      "uploadFailed": "The image could not be uploaded.",
+      "textContent": "Text",
+      "fontSize": "Font size",
+      "bold": "Bold",
+      "altText": "Alt text",
+      "frameLabel": "Label",
+      "colorDefault": "Default colour",
+      "colorNamed": "Colour {color}",
+      "elementTypes": {
+        "text": "Text",
+        "image": "Image",
+        "frame": "Frame"
+      },
+      "frameShapes": {
+        "rect": "Rectangle",
+        "circle": "Circle",
+        "none": "Invisible"
+      },
+      "align": {
+        "left": "Left",
+        "center": "Center",
+        "right": "Right"
+      },
+      "saveStates": {
+        "unsaved": "Unsaved",
+        "saving": "Saving…",
+        "saved": "Saved",
+        "error": "Error"
+      }
+    }
   },
   "settings": {
     "title": "Settings",

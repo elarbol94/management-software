@@ -1,0 +1,641 @@
+"use client";
+
+import "@xyflow/react/dist/style.css";
+
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { useTranslations } from "next-intl";
+import { useTheme } from "next-themes";
+import { createId } from "@paralleldrive/cuid2";
+import {
+  Background,
+  Controls,
+  MiniMap,
+  ReactFlow,
+  ReactFlowProvider,
+  useReactFlow,
+  type NodeChange,
+} from "@xyflow/react";
+import {
+  DndContext,
+  KeyboardSensor,
+  PointerSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
+import {
+  Check,
+  GripVertical,
+  ImagePlus,
+  Loader2,
+  Maximize2,
+  Play,
+  Plus,
+  Save,
+  Square,
+  Trash2,
+  TriangleAlert,
+  Type,
+  X,
+} from "lucide-react";
+import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { cn } from "@/lib/utils";
+import { renamePresentation, savePresentation } from "../presentation-actions";
+import type { PresentationRecord } from "../presentation-queries";
+import {
+  PRESENTATION_CAMERA_PADDING,
+  elementBounds,
+  moveStep,
+  presentationFrameShapes,
+  stepLabel,
+  stepTarget,
+  type PresentationElement,
+  type PresentationStep,
+} from "../lib/presentation";
+import { elementsToNodes, presentationNodeTypes, type PresentationNode } from "./presentation-canvas";
+
+/** Empty means "follow the theme"; the rest read acceptably on light and dark canvases. */
+const COLORS = ["", "#6366f1", "#0d9488", "#f59e0b", "#e11d48", "#0ea5e9"] as const;
+const AUTOSAVE_DELAY = 1_200;
+const CAMERA_DURATION = 700;
+const MAX_IMAGE_SIDE = 480;
+
+type SaveState = "idle" | "unsaved" | "saving" | "saved" | "error";
+
+function StepRow({
+  step,
+  index,
+  active,
+  label,
+  missing,
+  onSelect,
+  onRemove,
+  removeLabel,
+}: {
+  step: PresentationStep;
+  index: number;
+  active: boolean;
+  label: string;
+  missing: boolean;
+  onSelect: () => void;
+  onRemove: () => void;
+  removeLabel: string;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: step.id });
+  return (
+    <li
+      ref={setNodeRef}
+      style={{ transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.6 : 1 }}
+      className={cn(
+        "flex items-center gap-1 rounded-md border bg-card px-1.5 py-1.5 text-sm",
+        active && "border-indigo-500 bg-indigo-50 dark:bg-indigo-950/40",
+      )}
+    >
+      <button type="button" className="cursor-grab touch-none rounded p-0.5 text-muted-foreground" {...attributes} {...listeners}>
+        <GripVertical className="size-4" />
+      </button>
+      <span className="w-5 shrink-0 text-right text-xs tabular-nums text-muted-foreground">{index + 1}</span>
+      <button
+        type="button"
+        onClick={onSelect}
+        className={cn("min-w-0 flex-1 truncate text-left", missing && "text-destructive")}
+        title={label}
+      >
+        {label}
+      </button>
+      <Button type="button" variant="ghost" size="icon-sm" aria-label={removeLabel} onClick={onRemove}>
+        <X className="size-3.5" />
+      </Button>
+    </li>
+  );
+}
+
+function Editor({ presentation }: { presentation: PresentationRecord }) {
+  const t = useTranslations("wiki");
+  const router = useRouter();
+  const reactFlow = useReactFlow<PresentationNode>();
+  const { resolvedTheme } = useTheme();
+  const canvasRef = useRef<HTMLDivElement>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
+
+  const [title, setTitle] = useState(presentation.title);
+  const [elements, setElements] = useState<PresentationElement[]>(presentation.elements);
+  const [steps, setSteps] = useState<PresentationStep[]>(presentation.steps);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [activeStepId, setActiveStepId] = useState<string | null>(null);
+  const [saveState, setSaveState] = useState<SaveState>("idle");
+  const [uploading, setUploading] = useState(false);
+
+  const selected = elements.find((element) => element.id === selectedId) ?? null;
+
+  const persist = useCallback(
+    async (nextElements: PresentationElement[], nextSteps: PresentationStep[]) => {
+      setSaveState("saving");
+      try {
+        await savePresentation({ id: presentation.id, elements: nextElements, steps: nextSteps });
+        setSaveState("saved");
+      } catch {
+        setSaveState("error");
+        toast.error(t("presentations.saveFailed"));
+      }
+    },
+    [presentation.id, t],
+  );
+
+  // Debounced autosave: every edit marks the canvas unsaved, and the last edit of a
+  // burst is the one that writes.
+  useEffect(() => {
+    if (saveState !== "unsaved") return;
+    const timer = setTimeout(() => void persist(elements, steps), AUTOSAVE_DELAY);
+    return () => clearTimeout(timer);
+  }, [saveState, elements, steps, persist]);
+
+  useEffect(() => {
+    if (saveState !== "unsaved" && saveState !== "saving") return;
+    const warn = (event: BeforeUnloadEvent) => event.preventDefault();
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [saveState]);
+
+  const updateElement = useCallback((id: string, update: (element: PresentationElement) => PresentationElement) => {
+    setElements((current) => current.map((element) => (element.id === id ? update(element) : element)));
+    setSaveState("unsaved");
+  }, []);
+
+  const onTextChange = useCallback(
+    (id: string, text: string) => {
+      updateElement(id, (element) => (element.type === "text" ? { ...element, content: { ...element.content, text } } : element));
+    },
+    [updateElement],
+  );
+
+  const nodes = useMemo(
+    () => elementsToNodes(elements, { editable: true, selectedId, onTextChange }),
+    [elements, selectedId, onTextChange],
+  );
+
+  const onNodesChange = useCallback((changes: NodeChange<PresentationNode>[]) => {
+    for (const change of changes) {
+      if (change.type === "select") {
+        setSelectedId((previous) => (change.selected ? change.id : previous === change.id ? null : previous));
+      }
+    }
+    let touched = false;
+    setElements((current) => {
+      let next = current;
+      for (const change of changes) {
+        if (change.type === "position" && change.position) {
+          next = next.map((element) =>
+            element.id === change.id && (element.x !== change.position!.x || element.y !== change.position!.y)
+              ? { ...element, x: change.position!.x, y: change.position!.y }
+              : element,
+          );
+        } else if (change.type === "dimensions" && change.dimensions && (change.resizing || change.setAttributes)) {
+          // React Flow also reports the dimensions it measured on mount; only a real
+          // difference counts as an edit, otherwise every load would look unsaved.
+          const { width, height } = change.dimensions;
+          next = next.map((element) =>
+            element.id === change.id && (Math.abs(element.width - width) > 0.5 || Math.abs(element.height - height) > 0.5)
+              ? { ...element, width, height }
+              : element,
+          );
+        } else if (change.type === "remove") {
+          next = next.filter((element) => element.id !== change.id);
+        }
+      }
+      touched = next !== current;
+      return next;
+    });
+    if (touched) setSaveState("unsaved");
+  }, []);
+
+  /** Where a new element lands: the middle of what the author is currently looking at. */
+  const viewportCenter = useCallback(() => {
+    const rect = canvasRef.current?.getBoundingClientRect();
+    if (!rect) return { x: 0, y: 0 };
+    return reactFlow.screenToFlowPosition({ x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 });
+  }, [reactFlow]);
+
+  const addElement = useCallback(
+    (element: PresentationElement) => {
+      setElements((current) => [...current, element]);
+      setSelectedId(element.id);
+      setSaveState("unsaved");
+    },
+    [],
+  );
+
+  const addText = useCallback(() => {
+    const { x, y } = viewportCenter();
+    addElement({
+      id: createId(), type: "text", x: x - 160, y: y - 30, width: 320, height: 60, rotation: 0,
+      content: { text: t("presentations.newTextPlaceholder"), fontSize: 32, bold: false, color: "", align: "left" },
+    });
+  }, [addElement, t, viewportCenter]);
+
+  const addFrame = useCallback(() => {
+    const { x, y } = viewportCenter();
+    addElement({
+      id: createId(), type: "frame", x: x - 320, y: y - 200, width: 640, height: 400, rotation: 0,
+      content: { label: "", shape: "rect", color: "" },
+    });
+  }, [addElement, viewportCenter]);
+
+  const uploadImage = useCallback(
+    async (file: File) => {
+      setUploading(true);
+      try {
+        // Natural proportions up front, so the picture is not stretched into a default box.
+        const objectUrl = URL.createObjectURL(file);
+        const size = await new Promise<{ width: number; height: number }>((resolve) => {
+          const image = new Image();
+          image.onload = () => resolve({ width: image.naturalWidth, height: image.naturalHeight });
+          image.onerror = () => resolve({ width: MAX_IMAGE_SIDE, height: MAX_IMAGE_SIDE });
+          image.src = objectUrl;
+        });
+        URL.revokeObjectURL(objectUrl);
+
+        const body = new FormData();
+        body.append("file", file);
+        body.append("entityType", "wikiPresentation");
+        body.append("entityId", presentation.id);
+        const response = await fetch("/api/files", { method: "POST", body });
+        const payload = (await response.json()) as { id?: string; error?: string };
+        if (!response.ok || !payload.id) throw new Error(payload.error ?? "upload failed");
+
+        const scale = MAX_IMAGE_SIDE / Math.max(size.width, size.height, 1);
+        const { x, y } = viewportCenter();
+        const width = Math.max(40, Math.round(size.width * scale));
+        const height = Math.max(40, Math.round(size.height * scale));
+        addElement({
+          id: createId(), type: "image", x: x - width / 2, y: y - height / 2, width, height, rotation: 0,
+          content: { attachmentId: payload.id, alt: file.name },
+        });
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : t("presentations.uploadFailed"));
+      } finally {
+        setUploading(false);
+      }
+    },
+    [addElement, presentation.id, t, viewportCenter],
+  );
+
+  const flyTo = useCallback(
+    (element: PresentationElement) => {
+      void reactFlow.fitBounds(elementBounds(element), { padding: PRESENTATION_CAMERA_PADDING, duration: CAMERA_DURATION });
+    },
+    [reactFlow],
+  );
+
+  const addStep = useCallback(() => {
+    if (!selected) return;
+    setSteps((current) => [...current, { id: createId(), elementId: selected.id }]);
+    setSaveState("unsaved");
+  }, [selected]);
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
+
+  const onStepDragEnd = useCallback((event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    setSteps((current) => {
+      const from = current.findIndex((step) => step.id === active.id);
+      const to = current.findIndex((step) => step.id === over.id);
+      return moveStep(current, from, to);
+    });
+    setSaveState("unsaved");
+  }, []);
+
+  const saveIndicator = {
+    idle: null,
+    unsaved: <span className="text-muted-foreground">{t("presentations.saveStates.unsaved")}</span>,
+    saving: <span className="flex items-center gap-1 text-muted-foreground"><Loader2 className="size-3.5 animate-spin" />{t("presentations.saveStates.saving")}</span>,
+    saved: <span className="flex items-center gap-1 text-muted-foreground"><Check className="size-3.5" />{t("presentations.saveStates.saved")}</span>,
+    error: <span className="flex items-center gap-1 text-destructive"><TriangleAlert className="size-3.5" />{t("presentations.saveStates.error")}</span>,
+  }[saveState];
+
+  const colorSwatches = (value: string, onPick: (color: string) => void) => (
+    <div className="flex flex-wrap gap-1.5">
+      {COLORS.map((color) => (
+        <button
+          key={color || "default"}
+          type="button"
+          aria-label={color ? t("presentations.colorNamed", { color }) : t("presentations.colorDefault")}
+          onClick={() => onPick(color)}
+          className={cn(
+            "size-6 rounded-full border-2",
+            value === color ? "border-indigo-500" : "border-transparent",
+            !color && "bg-foreground",
+          )}
+          style={color ? { backgroundColor: color } : undefined}
+        />
+      ))}
+    </div>
+  );
+
+  return (
+    <div className="flex h-[calc(100vh-3.5rem)] min-h-0 flex-col md:h-screen">
+      <header className="flex flex-wrap items-center gap-2 border-b bg-background px-3 py-2">
+        <Link href="/wiki/presentations" className="text-sm text-muted-foreground hover:text-foreground">
+          {t("presentations.title")}
+        </Link>
+        <span className="text-muted-foreground">/</span>
+        <Input
+          value={title}
+          maxLength={200}
+          aria-label={t("presentations.presentationTitle")}
+          className="h-8 w-56 font-medium"
+          onChange={(event) => setTitle(event.target.value)}
+          onBlur={async (event) => {
+            const next = event.target.value.trim();
+            if (!next || next === presentation.title) return setTitle(next || presentation.title);
+            try {
+              await renamePresentation({ id: presentation.id, title: next });
+              router.refresh();
+            } catch {
+              toast.error(t("presentations.saveFailed"));
+            }
+          }}
+        />
+        <span className="mx-1 h-5 w-px bg-border" />
+        <Button type="button" variant="outline" size="sm" onClick={addText}><Type className="size-3.5" />{t("presentations.addText")}</Button>
+        <Button type="button" variant="outline" size="sm" disabled={uploading} onClick={() => imageInputRef.current?.click()}>
+          {uploading ? <Loader2 className="size-3.5 animate-spin" /> : <ImagePlus className="size-3.5" />}
+          {t("presentations.addImage")}
+        </Button>
+        <Button type="button" variant="outline" size="sm" onClick={addFrame}><Square className="size-3.5" />{t("presentations.addFrame")}</Button>
+        <input
+          ref={imageInputRef}
+          hidden
+          type="file"
+          accept="image/png,image/jpeg,image/webp,image/svg+xml"
+          onChange={(event) => {
+            const file = event.target.files?.[0];
+            event.target.value = "";
+            if (file) void uploadImage(file);
+          }}
+        />
+        <Button type="button" variant="ghost" size="sm" onClick={() => void reactFlow.fitView({ padding: 0.15, duration: CAMERA_DURATION })}>
+          <Maximize2 className="size-3.5" />{t("presentations.overview")}
+        </Button>
+        <div className="ml-auto flex items-center gap-2 text-xs">
+          {saveIndicator}
+          <Button type="button" variant="outline" size="sm" onClick={() => void persist(elements, steps)} disabled={saveState === "saving"}>
+            <Save className="size-3.5" />{t("presentations.save")}
+          </Button>
+          <Button type="button" size="sm" disabled={!steps.length} render={<Link href={`/wiki/presentations/${presentation.id}/present`} />}>
+            <Play className="size-3.5" />{t("presentations.present")}
+          </Button>
+        </div>
+      </header>
+
+      <div className="flex min-h-0 flex-1">
+        <div ref={canvasRef} className="relative min-w-0 flex-1">
+          <ReactFlow
+            nodes={nodes}
+            edges={[]}
+            nodeTypes={presentationNodeTypes}
+            onNodesChange={onNodesChange}
+            colorMode={resolvedTheme === "dark" ? "dark" : "light"}
+            fitView
+            fitViewOptions={{ padding: 0.2 }}
+            minZoom={0.02}
+            maxZoom={8}
+            nodesConnectable={false}
+            deleteKeyCode={["Backspace", "Delete"]}
+            selectionOnDrag={false}
+            panOnDrag
+            onPaneClick={() => setSelectedId(null)}
+            proOptions={{ hideAttribution: false }}
+          >
+            <Background gap={24} size={1} />
+            <Controls position="bottom-left" showInteractive={false} />
+            {elements.length > 3 && <MiniMap position="bottom-right" pannable zoomable maskColor="rgb(15 23 42 / 0.08)" />}
+          </ReactFlow>
+          {!elements.length && (
+            <div className="pointer-events-none absolute inset-0 grid place-items-center p-6 text-center">
+              <div>
+                <Square className="mx-auto size-8 text-muted-foreground" />
+                <p className="mt-2 text-sm font-semibold">{t("presentations.emptyCanvasTitle")}</p>
+                <p className="mt-1 max-w-xs text-xs text-muted-foreground">{t("presentations.emptyCanvasDescription")}</p>
+              </div>
+            </div>
+          )}
+        </div>
+
+        <aside className="hidden w-72 shrink-0 overflow-y-auto border-l bg-background p-3 lg:block">
+          <h2 className="text-xs font-semibold tracking-wide uppercase">{t("presentations.path")}</h2>
+          <p className="mt-1 text-xs text-muted-foreground">{t("presentations.pathDescription")}</p>
+          <Button type="button" variant="outline" size="sm" className="mt-2 w-full" disabled={!selected} onClick={addStep}>
+            <Plus className="size-3.5" />{t("presentations.addStep")}
+          </Button>
+          {steps.length === 0 ? (
+            <p className="mt-3 rounded-md border border-dashed p-3 text-xs text-muted-foreground">{t("presentations.noSteps")}</p>
+          ) : (
+            <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onStepDragEnd}>
+              <SortableContext items={steps.map((step) => step.id)} strategy={verticalListSortingStrategy}>
+                <ol className="mt-3 space-y-1.5">
+                  {steps.map((step, index) => {
+                    const target = stepTarget(step, elements);
+                    return (
+                      <StepRow
+                        key={step.id}
+                        step={step}
+                        index={index}
+                        active={activeStepId === step.id}
+                        missing={!target}
+                        label={target ? stepLabel(target, index) : t("presentations.missingStep")}
+                        removeLabel={t("presentations.removeStep")}
+                        onSelect={() => {
+                          setActiveStepId(step.id);
+                          if (target) {
+                            setSelectedId(target.id);
+                            flyTo(target);
+                          }
+                        }}
+                        onRemove={() => {
+                          setSteps((current) => current.filter((entry) => entry.id !== step.id));
+                          setSaveState("unsaved");
+                        }}
+                      />
+                    );
+                  })}
+                </ol>
+              </SortableContext>
+            </DndContext>
+          )}
+
+          {selected && (
+            <section className="mt-5 border-t pt-4">
+              <div className="flex items-center justify-between">
+                <h2 className="text-xs font-semibold tracking-wide uppercase">{t(`presentations.elementTypes.${selected.type}`)}</h2>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label={t("presentations.deleteElement")}
+                  onClick={() => {
+                    setElements((current) => current.filter((element) => element.id !== selected.id));
+                    setSteps((current) => current.filter((step) => step.elementId !== selected.id));
+                    setSelectedId(null);
+                    setSaveState("unsaved");
+                  }}
+                >
+                  <Trash2 className="size-4" />
+                </Button>
+              </div>
+
+              {selected.type === "text" && (
+                <div className="mt-3 space-y-3">
+                  <Textarea
+                    key={selected.id}
+                    aria-label={t("presentations.textContent")}
+                    defaultValue={selected.content.text}
+                    maxLength={5_000}
+                    rows={4}
+                    onBlur={(event) => onTextChange(selected.id, event.currentTarget.value)}
+                  />
+                  <label className="block text-xs text-muted-foreground">
+                    {t("presentations.fontSize")}
+                    <Input
+                      type="number"
+                      min={8}
+                      max={400}
+                      className="mt-1 h-8"
+                      key={`${selected.id}-size`}
+                      defaultValue={selected.content.fontSize}
+                      onBlur={(event) => {
+                        const value = Math.min(400, Math.max(8, Math.round(Number(event.currentTarget.value) || 32)));
+                        updateElement(selected.id, (element) =>
+                          element.type === "text" ? { ...element, content: { ...element.content, fontSize: value } } : element,
+                        );
+                      }}
+                    />
+                  </label>
+                  <div className="flex gap-1.5">
+                    <Button
+                      type="button"
+                      variant={selected.content.bold ? "default" : "outline"}
+                      size="sm"
+                      onClick={() =>
+                        updateElement(selected.id, (element) =>
+                          element.type === "text" ? { ...element, content: { ...element.content, bold: !element.content.bold } } : element,
+                        )
+                      }
+                    >
+                      {t("presentations.bold")}
+                    </Button>
+                    {(["left", "center", "right"] as const).map((align) => (
+                      <Button
+                        key={align}
+                        type="button"
+                        variant={selected.content.align === align ? "default" : "outline"}
+                        size="sm"
+                        onClick={() =>
+                          updateElement(selected.id, (element) =>
+                            element.type === "text" ? { ...element, content: { ...element.content, align } } : element,
+                          )
+                        }
+                      >
+                        {t(`presentations.align.${align}`)}
+                      </Button>
+                    ))}
+                  </div>
+                  {colorSwatches(selected.content.color, (color) =>
+                    updateElement(selected.id, (element) =>
+                      element.type === "text" ? { ...element, content: { ...element.content, color } } : element,
+                    ),
+                  )}
+                </div>
+              )}
+
+              {selected.type === "image" && (
+                <label className="mt-3 block text-xs text-muted-foreground">
+                  {t("presentations.altText")}
+                  <Input
+                    key={selected.id}
+                    className="mt-1 h-8"
+                    defaultValue={selected.content.alt}
+                    maxLength={500}
+                    onBlur={(event) => {
+                      const alt = event.currentTarget.value;
+                      updateElement(selected.id, (element) =>
+                        element.type === "image" ? { ...element, content: { ...element.content, alt } } : element,
+                      );
+                    }}
+                  />
+                </label>
+              )}
+
+              {selected.type === "frame" && (
+                <div className="mt-3 space-y-3">
+                  <label className="block text-xs text-muted-foreground">
+                    {t("presentations.frameLabel")}
+                    <Input
+                      key={selected.id}
+                      className="mt-1 h-8"
+                      defaultValue={selected.content.label}
+                      maxLength={200}
+                      onBlur={(event) => {
+                        const label = event.currentTarget.value;
+                        updateElement(selected.id, (element) =>
+                          element.type === "frame" ? { ...element, content: { ...element.content, label } } : element,
+                        );
+                      }}
+                    />
+                  </label>
+                  <div className="flex gap-1.5">
+                    {presentationFrameShapes.map((shape) => (
+                      <Button
+                        key={shape}
+                        type="button"
+                        variant={selected.content.shape === shape ? "default" : "outline"}
+                        size="sm"
+                        onClick={() =>
+                          updateElement(selected.id, (element) =>
+                            element.type === "frame" ? { ...element, content: { ...element.content, shape } } : element,
+                          )
+                        }
+                      >
+                        {t(`presentations.frameShapes.${shape}`)}
+                      </Button>
+                    ))}
+                  </div>
+                  {colorSwatches(selected.content.color, (color) =>
+                    updateElement(selected.id, (element) =>
+                      element.type === "frame" ? { ...element, content: { ...element.content, color } } : element,
+                    ),
+                  )}
+                </div>
+              )}
+            </section>
+          )}
+        </aside>
+      </div>
+    </div>
+  );
+}
+
+export function PresentationEditor({ presentation }: { presentation: PresentationRecord }) {
+  return (
+    <ReactFlowProvider>
+      <Editor key={presentation.id} presentation={presentation} />
+    </ReactFlowProvider>
+  );
+}

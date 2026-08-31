@@ -108,6 +108,7 @@ export const attachmentEntityTypes = [
   "task",
   "wikiPage",
   "wikiSource",
+  "wikiPresentation",
 ] as const;
 
 export const attachments = sqliteTable(
