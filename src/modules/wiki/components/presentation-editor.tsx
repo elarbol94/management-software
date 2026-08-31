@@ -2,7 +2,7 @@
 
 import "@xyflow/react/dist/style.css";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
@@ -14,7 +14,9 @@ import {
   MiniMap,
   ReactFlow,
   ReactFlowProvider,
+  ViewportPortal,
   useReactFlow,
+  useViewport,
   type NodeChange,
 } from "@xyflow/react";
 import {
@@ -47,13 +49,17 @@ import {
   Maximize2,
   Play,
   Plus,
+  Redo2,
+  RotateCw,
   Save,
   Settings,
   Shapes,
   Square,
+  Target,
   Trash2,
   TriangleAlert,
   Type,
+  Undo2,
   X,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -74,19 +80,29 @@ import {
 import type { PresentationRecord, PresentationRevisionItem } from "../presentation-queries";
 import {
   PRESENTATION_CAMERA_PADDING,
+  PRESENTATION_SNAP_TOLERANCE,
   duplicateElement,
+  initialPresentationCanvasState,
+  presentationCanvasReducer,
   elementBounds,
   moveStep,
   presentationCameraEasings,
   presentationFrameShapes,
   presentationShapeKinds,
   reorderElement,
+  retargetStep,
+  rotateElements,
+  scaleElements,
   stepLabel,
   stepTarget,
+  unionBounds,
+  type PresentationBounds,
   type PresentationCameraEasing,
   type PresentationElement,
+  type PresentationGeometryChange,
   type PresentationSettings,
   type PresentationStep,
+  type SnapGuide,
 } from "../lib/presentation";
 import { elementsToNodes, presentationNodeTypes, type PresentationNode } from "./presentation-canvas";
 
@@ -97,7 +113,6 @@ const CAMERA_DURATION = 700;
 const MAX_IMAGE_SIDE = 480;
 /** Well inside the server's lease timeout, so a live editor never looks abandoned. */
 const LEASE_HEARTBEAT_INTERVAL = 15_000;
-
 type SaveState = "idle" | "unsaved" | "saving" | "saved" | "error";
 
 function StepRow({
@@ -156,6 +171,135 @@ function StepRow({
   );
 }
 
+/** Alignment lines are drawn in canvas coordinates, so they stay glued to the elements
+ * they describe while the author pans and zooms. */
+function SnapGuides({ guides }: { guides: SnapGuide[] }) {
+  const { zoom } = useViewport();
+  if (!guides.length) return null;
+  return (
+    <ViewportPortal>
+      {guides.map((guide) => (
+        <div
+          key={`${guide.axis}-${guide.position}`}
+          className="pointer-events-none absolute bg-indigo-500"
+          style={
+            guide.axis === "x"
+              ? { left: guide.position, top: guide.start, width: 1 / zoom, height: guide.end - guide.start }
+              : { left: guide.start, top: guide.position, height: 1 / zoom, width: guide.end - guide.start }
+          }
+        />
+      ))}
+    </ViewportPortal>
+  );
+}
+
+/** A gesture never scales the selection away to nothing. */
+const MIN_SCALE = 0.02;
+/** Handle size and the rotate handle's stand-off, both in screen pixels. */
+const HANDLE_SIZE = 12;
+const ROTATE_OFFSET = 28;
+
+/**
+ * One overlay serves both jobs React Flow's own `NodeResizer` does not: turning a
+ * selection, and scaling several elements as one. It is drawn around the union of the
+ * selection, so a single element gets a rotation handle and a group gets both.
+ */
+function SelectionOverlay({
+  bounds,
+  scalable,
+  rotateLabel,
+  scaleLabel,
+  onRotate,
+  onScale,
+}: {
+  bounds: PresentationBounds;
+  scalable: boolean;
+  rotateLabel: string;
+  scaleLabel: string;
+  onRotate: (deltaDegrees: number, center: { x: number; y: number }) => void;
+  onScale: (scaleX: number, scaleY: number, origin: { x: number; y: number }) => void;
+}) {
+  const { zoom } = useViewport();
+  const reactFlow = useReactFlow();
+  const screen = (value: number) => value / zoom;
+
+  const beginGesture = (event: React.PointerEvent<HTMLButtonElement>, kind: "rotate" | "scale") => {
+    event.preventDefault();
+    event.stopPropagation();
+    const handle = event.currentTarget;
+    handle.setPointerCapture(event.pointerId);
+    // The anchor is frozen at gesture start: the union bounds shift as the selection turns,
+    // and chasing them mid-drag would make the element run away from the pointer.
+    const center = { x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2 };
+    const origin = { x: bounds.x, y: bounds.y };
+    const size = { width: bounds.width, height: bounds.height };
+    const start = reactFlow.screenToFlowPosition({ x: event.clientX, y: event.clientY });
+    let lastAngle = Math.atan2(start.y - center.y, start.x - center.x);
+    let lastScaleX = 1;
+    let lastScaleY = 1;
+
+    const move = (moveEvent: PointerEvent) => {
+      const point = reactFlow.screenToFlowPosition({ x: moveEvent.clientX, y: moveEvent.clientY });
+      if (kind === "rotate") {
+        const angle = Math.atan2(point.y - center.y, point.x - center.x);
+        onRotate(((angle - lastAngle) * 180) / Math.PI, center);
+        lastAngle = angle;
+        return;
+      }
+      const scaleX = Math.max((point.x - origin.x) / size.width, MIN_SCALE);
+      // Shift keeps the proportions, which is the only way to scale a picture safely.
+      const scaleY = moveEvent.shiftKey ? scaleX : Math.max((point.y - origin.y) / size.height, MIN_SCALE);
+      onScale(scaleX / lastScaleX, scaleY / lastScaleY, origin);
+      lastScaleX = scaleX;
+      lastScaleY = scaleY;
+    };
+    const end = () => {
+      handle.removeEventListener("pointermove", move);
+      handle.removeEventListener("pointerup", end);
+      handle.removeEventListener("pointercancel", end);
+    };
+    handle.addEventListener("pointermove", move);
+    handle.addEventListener("pointerup", end);
+    handle.addEventListener("pointercancel", end);
+  };
+
+  const handleStyle = { width: screen(HANDLE_SIZE), height: screen(HANDLE_SIZE), borderWidth: screen(1) };
+
+  return (
+    <ViewportPortal>
+      <div
+        className="pointer-events-none absolute"
+        style={{ left: bounds.x, top: bounds.y, width: bounds.width, height: bounds.height }}
+      >
+        {scalable && (
+          <div
+            className="absolute inset-0 border-dashed border-indigo-500"
+            style={{ borderWidth: screen(1) }}
+          />
+        )}
+        <button
+          type="button"
+          aria-label={rotateLabel}
+          title={rotateLabel}
+          className="nodrag nopan pointer-events-auto absolute -translate-x-1/2 -translate-y-1/2 cursor-grab rounded-full border-white bg-indigo-500 active:cursor-grabbing"
+          style={{ ...handleStyle, left: bounds.width / 2, top: -screen(ROTATE_OFFSET) }}
+          onPointerDown={(event) => beginGesture(event, "rotate")}
+        />
+        {scalable && (
+          <button
+            type="button"
+            aria-label={scaleLabel}
+            title={scaleLabel}
+            className="nodrag nopan pointer-events-auto absolute -translate-x-1/2 -translate-y-1/2 cursor-nwse-resize rounded-xs border-white bg-indigo-500"
+            style={{ ...handleStyle, left: bounds.width, top: bounds.height }}
+            onPointerDown={(event) => beginGesture(event, "scale")}
+          />
+        )}
+      </div>
+    </ViewportPortal>
+  );
+}
+
 function Editor({
   presentation,
   revisions,
@@ -175,17 +319,50 @@ function Editor({
   const [restoring, setRestoring] = useState<string | null>(null);
   const readOnly = lockedBy !== null;
   const [title, setTitle] = useState(presentation.title);
-  const [elements, setElements] = useState<PresentationElement[]>(presentation.elements);
+  /**
+   * The canvas, its undo stack and the alignment guides are one reducer: undo has to
+   * snapshot exactly the canvas an edit is applied to, and a drag reports edits faster than
+   * React re-renders, so every canvas change is expressed as a pure transition instead of a
+   * read-modify-write. The stack lives for this editing session only.
+   */
+  const [canvas, dispatch] = useReducer(
+    presentationCanvasReducer,
+    presentation,
+    (source) => initialPresentationCanvasState(source.elements, source.steps),
+  );
+  const { elements, steps, guides } = canvas;
   const [background, setBackground] = useState(presentation.background);
-  const [steps, setSteps] = useState<PresentationStep[]>(presentation.steps);
   const [settings, setSettings] = useState<PresentationSettings>(presentation.settings);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [activeStepId, setActiveStepId] = useState<string | null>(null);
-  const [saveState, setSaveState] = useState<SaveState>("idle");
+  const [status, setStatus] = useState<Exclude<SaveState, "unsaved">>("idle");
   const [uploading, setUploading] = useState(false);
 
-  const selected = elements.find((element) => element.id === selectedId) ?? null;
+  // "Unsaved" is not a state of its own: it is the canvas being dirty while nothing is
+  // in flight, which keeps the indicator honest even when an edit lands mid-save.
+  const saveState: SaveState = status === "saving" ? "saving" : canvas.dirty ? "unsaved" : status;
+
+  const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
+  const selection = useMemo(
+    () => elements.filter((element) => selectedSet.has(element.id)),
+    [elements, selectedSet],
+  );
+  // The property panel edits exactly one element; two or more are handled as a group.
+  const selected = selection.length === 1 ? selection[0] : null;
+  const selectionBounds = useMemo(() => unionBounds(selection), [selection]);
   const activeStep = steps.find((step) => step.id === activeStepId) ?? null;
+
+  const commitElements = useCallback(
+    (update: (current: PresentationElement[]) => PresentationElement[]) =>
+      dispatch({ type: "edit", at: Date.now(), elements: update }),
+    [],
+  );
+
+  const commitSteps = useCallback(
+    (update: (current: PresentationStep[]) => PresentationStep[]) =>
+      dispatch({ type: "edit", at: Date.now(), steps: update }),
+    [],
+  );
 
   const persist = useCallback(
     async (
@@ -194,7 +371,7 @@ function Editor({
       nextBackground: string,
       nextSettings: PresentationSettings,
     ) => {
-      setSaveState("saving");
+      setStatus("saving");
       try {
         const result = await savePresentation({
           id: presentation.id,
@@ -208,12 +385,13 @@ function Editor({
         // overwriting their canvas with a stale one.
         if (result.locked) {
           setLockedBy(result.holderName);
-          setSaveState("error");
+          setStatus("error");
           return;
         }
-        setSaveState("saved");
+        dispatch({ type: "saved", elements: nextElements, steps: nextSteps });
+        setStatus("saved");
       } catch {
-        setSaveState("error");
+        setStatus("error");
         toast.error(t("presentations.saveFailed"));
       }
     },
@@ -223,10 +401,10 @@ function Editor({
   // Debounced autosave: every edit marks the canvas unsaved, and the last edit of a
   // burst is the one that writes.
   useEffect(() => {
-    if (saveState !== "unsaved" || readOnly) return;
+    if (!canvas.dirty || readOnly || status === "saving") return;
     const timer = setTimeout(() => void persist(elements, steps, background, settings), AUTOSAVE_DELAY);
     return () => clearTimeout(timer);
-  }, [saveState, elements, steps, background, settings, persist, readOnly]);
+  }, [canvas.dirty, status, elements, steps, background, settings, persist, readOnly]);
 
   // Edit lease: claim it on open, keep it warm while the tab lives, hand it back on exit.
   // A missed release is harmless — the lease expires on its own.
@@ -259,26 +437,30 @@ function Editor({
   }, [presentation.id]);
 
   useEffect(() => {
-    if (saveState !== "unsaved" && saveState !== "saving") return;
+    if (!canvas.dirty && status !== "saving") return;
     const warn = (event: BeforeUnloadEvent) => event.preventDefault();
     window.addEventListener("beforeunload", warn);
     return () => window.removeEventListener("beforeunload", warn);
-  }, [saveState]);
+  }, [canvas.dirty, status]);
 
-  const updateElement = useCallback((id: string, update: (element: PresentationElement) => PresentationElement) => {
-    setElements((current) => current.map((element) => (element.id === id ? update(element) : element)));
-    setSaveState("unsaved");
-  }, []);
+  const updateElement = useCallback(
+    (id: string, update: (element: PresentationElement) => PresentationElement) => {
+      commitElements((current) => current.map((element) => (element.id === id ? update(element) : element)));
+    },
+    [commitElements],
+  );
 
   const updateSettings = useCallback((update: Partial<PresentationSettings>) => {
     setSettings((current) => ({ ...current, ...update }));
-    setSaveState("unsaved");
+    dispatch({ type: "touch" });
   }, []);
 
-  const updateStepDuration = useCallback((id: string, durationMs: number | undefined) => {
-    setSteps((current) => current.map((step) => (step.id === id ? { ...step, durationMs } : step)));
-    setSaveState("unsaved");
-  }, []);
+  const updateStepDuration = useCallback(
+    (id: string, durationMs: number | undefined) => {
+      commitSteps((current) => current.map((step) => (step.id === id ? { ...step, durationMs } : step)));
+    },
+    [commitSteps],
+  );
 
   const onTextChange = useCallback(
     (id: string, text: string) => {
@@ -288,42 +470,69 @@ function Editor({
   );
 
   const nodes = useMemo(
-    () => elementsToNodes(elements, { editable: !readOnly, selectedId, onTextChange }),
-    [elements, selectedId, onTextChange, readOnly],
+    () => elementsToNodes(elements, { editable: !readOnly, selectedIds: selectedSet, onTextChange }),
+    [elements, selectedSet, onTextChange, readOnly],
   );
 
-  const onNodesChange = useCallback((changes: NodeChange<PresentationNode>[]) => {
-    for (const change of changes) {
-      if (change.type === "select") {
-        setSelectedId((previous) => (change.selected ? change.id : previous === change.id ? null : previous));
+  /**
+   * React Flow reports a whole gesture as one batch of changes, which is what makes group
+   * dragging and snapping possible: the moving elements are collected first, aligned as a
+   * single box against everything that stayed put, and only then written back.
+   */
+  const onNodesChange = useCallback(
+    (changes: NodeChange<PresentationNode>[]) => {
+      const selectChanges = changes.filter((change) => change.type === "select");
+      if (selectChanges.length) {
+        setSelectedIds((current) => {
+          const next = new Set(current);
+          for (const change of selectChanges) {
+            if (change.selected) next.add(change.id);
+            else next.delete(change.id);
+          }
+          if (next.size === current.length && current.every((id) => next.has(id))) return current;
+          return [...next];
+        });
       }
-    }
-    let touched = false;
-    setElements((current) => {
-      let next = current;
+
+      const geometry = new Map<string, PresentationGeometryChange>();
+      let gesture = false;
       for (const change of changes) {
         if (change.type === "position" && change.position) {
-          next = next.map((element) =>
-            element.id === change.id && (element.x !== change.position!.x || element.y !== change.position!.y)
-              ? { ...element, x: change.position!.x, y: change.position!.y }
-              : element,
-          );
+          geometry.set(change.id, { ...geometry.get(change.id), id: change.id, x: change.position.x, y: change.position.y });
+          if (change.dragging) gesture = true;
         } else if (change.type === "dimensions" && change.dimensions && (change.resizing || change.setAttributes)) {
-          // React Flow also reports the dimensions it measured on mount; only a real
-          // difference counts as an edit, otherwise every load would look unsaved.
-          const { width, height } = change.dimensions;
-          next = next.map((element) =>
-            element.id === change.id && (Math.abs(element.width - width) > 0.5 || Math.abs(element.height - height) > 0.5)
-              ? { ...element, width, height }
-              : element,
-          );
+          // React Flow also reports the dimensions it measured on mount; the reducer drops
+          // those, so opening a presentation never looks unsaved.
+          geometry.set(change.id, { ...geometry.get(change.id), id: change.id, ...change.dimensions });
+          if (change.resizing) gesture = true;
         }
       }
-      touched = next !== current;
-      return next;
-    });
-    if (touched) setSaveState("unsaved");
-  }, []);
+      if (!geometry.size) return;
+      dispatch({
+        type: "geometry",
+        at: Date.now(),
+        changes: [...geometry.values()],
+        // The snap has to feel the same at any zoom, so the screen tolerance is converted.
+        tolerance: PRESENTATION_SNAP_TOLERANCE / reactFlow.getZoom(),
+        gesture,
+      });
+    },
+    [reactFlow],
+  );
+
+  const rotateSelection = useCallback(
+    (deltaDegrees: number, center: { x: number; y: number }) => {
+      commitElements((current) => rotateElements(current, selectedSet, deltaDegrees, center));
+    },
+    [commitElements, selectedSet],
+  );
+
+  const scaleSelection = useCallback(
+    (scaleX: number, scaleY: number, origin: { x: number; y: number }) => {
+      commitElements((current) => scaleElements(current, selectedSet, origin, scaleX, scaleY));
+    },
+    [commitElements, selectedSet],
+  );
 
   /** Where a new element lands: the middle of what the author is currently looking at. */
   const viewportCenter = useCallback(() => {
@@ -334,55 +543,82 @@ function Editor({
 
   const addElement = useCallback(
     (element: PresentationElement) => {
-      setElements((current) => [...current, element]);
-      setSelectedId(element.id);
-      setSaveState("unsaved");
+      commitElements((current) => [...current, element]);
+      setSelectedIds([element.id]);
+    },
+    [commitElements],
+  );
+
+  /** Deleting takes the steps that pointed at the gone elements with it. */
+  const deleteSelection = useCallback(
+    (ids: string[]) => {
+      if (!ids.length) return;
+      const removed = new Set(ids);
+      // One action, so deleting an element and the stops that pointed at it is one undo.
+      dispatch({
+        type: "edit",
+        at: Date.now(),
+        elements: (current) => current.filter((element) => !removed.has(element.id)),
+        steps: (current) => {
+          const next = current.filter((step) => !removed.has(step.elementId));
+          return next.length === current.length ? current : next;
+        },
+      });
+      setSelectedIds((current) => current.filter((id) => !removed.has(id)));
     },
     [],
   );
 
-  const deleteElement = useCallback((id: string) => {
-    setElements((current) => current.filter((element) => element.id !== id));
-    setSteps((current) => current.filter((step) => step.elementId !== id));
-    setSelectedId((current) => (current === id ? null : current));
-    setSaveState("unsaved");
-  }, []);
+  const duplicateSelection = useCallback(
+    (ids: string[]) => {
+      if (!ids.length) return;
+      // Ids are minted here rather than inside the update, which has to stay pure.
+      const copies = ids.map((id) => ({ id, copyId: createId() }));
+      commitElements((current) =>
+        copies.reduce((elements, copy) => duplicateElement(elements, copy.id, copy.copyId).elements, current),
+      );
+      setSelectedIds(copies.map((copy) => copy.copyId));
+    },
+    [commitElements],
+  );
 
-  const duplicateSelected = useCallback((id: string) => {
-    setElements((current) => {
-      const { elements: next, element } = duplicateElement(current, id, createId());
-      if (element) setSelectedId(element.id);
-      return next;
-    });
-    setSaveState("unsaved");
-  }, []);
-
-  const reorderSelected = useCallback((id: string, to: "front" | "back") => {
-    setElements((current) => reorderElement(current, id, to));
-    setSaveState("unsaved");
-  }, []);
+  const reorderSelected = useCallback(
+    (id: string, to: "front" | "back") => {
+      commitElements((current) => reorderElement(current, id, to));
+    },
+    [commitElements],
+  );
 
   /**
-   * Delete and Ctrl+D are handled here rather than by React Flow's `deleteKeyCode`, so the
-   * shortcuts work no matter which pane has focus — and so a copy is offset instead of
-   * landing exactly on the original. Typing in a field is never a canvas command.
+   * Delete, Ctrl+D and undo/redo are handled here rather than by React Flow's own key
+   * options, so the shortcuts work no matter which pane has focus — and so a copy is offset
+   * instead of landing exactly on the original. Typing in a field is never a canvas command.
    */
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
       if (target?.closest("input, textarea, select, [contenteditable='true']")) return;
-      if (!selectedId || readOnly) return;
-      if (event.key === "Delete" || event.key === "Backspace") {
+      if (readOnly) return;
+      const shortcut = event.ctrlKey || event.metaKey;
+      if (shortcut && event.key.toLowerCase() === "z") {
         event.preventDefault();
-        deleteElement(selectedId);
-      } else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "d") {
+        dispatch({ type: event.shiftKey ? "redo" : "undo" });
+      } else if (shortcut && event.key.toLowerCase() === "y") {
         event.preventDefault();
-        duplicateSelected(selectedId);
+        dispatch({ type: "redo" });
+      } else if (!selectedIds.length) {
+        return;
+      } else if (event.key === "Delete" || event.key === "Backspace") {
+        event.preventDefault();
+        deleteSelection(selectedIds);
+      } else if (shortcut && event.key.toLowerCase() === "d") {
+        event.preventDefault();
+        duplicateSelection(selectedIds);
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [deleteElement, duplicateSelected, selectedId, readOnly]);
+  }, [deleteSelection, duplicateSelection, selectedIds, readOnly]);
 
   const addText = useCallback(() => {
     const { x, y } = viewportCenter();
@@ -456,16 +692,17 @@ function Editor({
 
   const addStep = useCallback(() => {
     if (!selected) return;
-    setSteps((current) => [...current, { id: createId(), elementId: selected.id }]);
-    setSaveState("unsaved");
-  }, [selected]);
+    commitSteps((current) => [...current, { id: createId(), elementId: selected.id }]);
+  }, [commitSteps, selected]);
 
-  const updateStepNotes = useCallback((stepId: string, notes: string) => {
-    setSteps((current) =>
-      current.map((step) => (step.id === stepId ? { ...step, notes: notes || undefined } : step)),
-    );
-    setSaveState("unsaved");
-  }, []);
+  const updateStepNotes = useCallback(
+    (stepId: string, notes: string) => {
+      commitSteps((current) =>
+        current.map((step) => (step.id === stepId ? { ...step, notes: notes || undefined } : step)),
+      );
+    },
+    [commitSteps],
+  );
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
@@ -475,13 +712,12 @@ function Editor({
   const onStepDragEnd = useCallback((event: DragEndEvent) => {
     const { active, over } = event;
     if (readOnly || !over || active.id === over.id) return;
-    setSteps((current) => {
-      const from = current.findIndex((step) => step.id === active.id);
-      const to = current.findIndex((step) => step.id === over.id);
-      return moveStep(current, from, to);
-    });
-    setSaveState("unsaved");
-  }, [readOnly]);
+    commitSteps((current) => moveStep(
+      current,
+      current.findIndex((step) => step.id === active.id),
+      current.findIndex((step) => step.id === over.id),
+    ));
+  }, [commitSteps, readOnly]);
 
   const saveIndicator = {
     idle: null,
@@ -571,6 +807,28 @@ function Editor({
             if (file) void uploadImage(file);
           }}
         />
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-sm"
+          aria-label={t("presentations.undo")}
+          title={t("presentations.undo")}
+          disabled={readOnly || !canvas.past.length}
+          onClick={() => dispatch({ type: "undo" })}
+        >
+          <Undo2 className="size-4" />
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-sm"
+          aria-label={t("presentations.redo")}
+          title={t("presentations.redo")}
+          disabled={readOnly || !canvas.future.length}
+          onClick={() => dispatch({ type: "redo" })}
+        >
+          <Redo2 className="size-4" />
+        </Button>
         <Button type="button" variant="ghost" size="sm" onClick={() => void reactFlow.fitView({ padding: 0.15, duration: CAMERA_DURATION })}>
           <Maximize2 className="size-3.5" />{t("presentations.overview")}
         </Button>
@@ -673,15 +931,31 @@ function Editor({
             nodesDraggable={!readOnly}
             // Delete is handled by the editor's own shortcut, so there is one delete path.
             deleteKeyCode={null}
+            // Shift draws a marquee on the pane and adds to the selection on an element,
+            // which is the pair of gestures every canvas tool has trained authors to expect.
+            selectionKeyCode="Shift"
+            multiSelectionKeyCode={["Shift", "Meta", "Control"]}
             selectionOnDrag={false}
             style={background ? { backgroundColor: background } : undefined}
             panOnDrag
-            onPaneClick={() => setSelectedId(null)}
+            onPaneClick={() => setSelectedIds([])}
             proOptions={{ hideAttribution: false }}
           >
             <Background gap={24} size={1} />
             <Controls position="bottom-left" showInteractive={false} />
             {elements.length > 3 && <MiniMap position="bottom-right" pannable zoomable maskColor="rgb(15 23 42 / 0.08)" />}
+            <SnapGuides guides={guides} />
+            {!readOnly && selectionBounds && (
+              <SelectionOverlay
+                bounds={selectionBounds}
+                // One element resizes with React Flow's own handles; a group needs its own.
+                scalable={selection.length > 1}
+                rotateLabel={t("presentations.rotateHandle")}
+                scaleLabel={t("presentations.scaleHandle")}
+                onRotate={rotateSelection}
+                onScale={scaleSelection}
+              />
+            )}
           </ReactFlow>
           {!elements.length && (
             <div className="pointer-events-none absolute inset-0 grid place-items-center p-6 text-center">
@@ -721,14 +995,11 @@ function Editor({
                         onSelect={() => {
                           setActiveStepId(step.id);
                           if (target) {
-                            setSelectedId(target.id);
+                            setSelectedIds([target.id]);
                             flyTo(target);
                           }
                         }}
-                        onRemove={() => {
-                          setSteps((current) => current.filter((entry) => entry.id !== step.id));
-                          setSaveState("unsaved");
-                        }}
+                        onRemove={() => commitSteps((current) => current.filter((entry) => entry.id !== step.id))}
                       />
                     );
                   })}
@@ -739,6 +1010,19 @@ function Editor({
 
           {activeStep && (
             <section className="mt-3 border-t pt-3">
+              {selected && selected.id !== activeStep.elementId && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="mb-3 w-full"
+                  disabled={readOnly}
+                  onClick={() => commitSteps((current) => retargetStep(current, activeStep.id, selected.id))}
+                >
+                  <Target className="size-3.5" />
+                  {t("presentations.retargetStep")}
+                </Button>
+              )}
               <label className="block text-xs text-muted-foreground">
                 {t("presentations.stepDuration")}
                 <Input
@@ -773,6 +1057,28 @@ function Editor({
             </section>
           )}
 
+          {selection.length > 1 && (
+            <section className="mt-5 border-t pt-4">
+              <div className="flex items-center justify-between gap-1">
+                <h2 className="min-w-0 truncate text-xs font-semibold tracking-wide uppercase">
+                  {t("presentations.selectionCount", { count: selection.length })}
+                </h2>
+                <div className="flex shrink-0 items-center">
+                  <Button type="button" variant="ghost" size="icon-sm" disabled={readOnly} aria-label={t("presentations.duplicateElement")} onClick={() => duplicateSelection(selectedIds)}>
+                    <Copy className="size-4" />
+                  </Button>
+                  <Button type="button" variant="ghost" size="icon-sm" disabled={readOnly} aria-label={t("presentations.deleteElement")} onClick={() => deleteSelection(selectedIds)}>
+                    <Trash2 className="size-4" />
+                  </Button>
+                </div>
+              </div>
+              <p className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground">
+                <RotateCw className="size-3.5 shrink-0" />
+                {t("presentations.groupHint")}
+              </p>
+            </section>
+          )}
+
           {selected && (
             <section className="mt-5 border-t pt-4">
               <div className="flex items-center justify-between gap-1">
@@ -784,10 +1090,10 @@ function Editor({
                   <Button type="button" variant="ghost" size="icon-sm" aria-label={t("presentations.sendToBack")} onClick={() => reorderSelected(selected.id, "back")}>
                     <ArrowDownToLine className="size-4" />
                   </Button>
-                  <Button type="button" variant="ghost" size="icon-sm" aria-label={t("presentations.duplicateElement")} onClick={() => duplicateSelected(selected.id)}>
+                  <Button type="button" variant="ghost" size="icon-sm" aria-label={t("presentations.duplicateElement")} onClick={() => duplicateSelection([selected.id])}>
                     <Copy className="size-4" />
                   </Button>
-                  <Button type="button" variant="ghost" size="icon-sm" aria-label={t("presentations.deleteElement")} onClick={() => deleteElement(selected.id)}>
+                  <Button type="button" variant="ghost" size="icon-sm" aria-label={t("presentations.deleteElement")} onClick={() => deleteSelection([selected.id])}>
                     <Trash2 className="size-4" />
                   </Button>
                 </div>
@@ -1012,7 +1318,7 @@ function Editor({
             <div className="mt-3">
               {colorField(t("presentations.canvasBackground"), background, (color) => {
                 setBackground(color);
-                setSaveState("unsaved");
+                dispatch({ type: "touch" });
               })}
             </div>
           </section>
