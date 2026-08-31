@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  PRESENTATION_CAMERA_PADDING,
+  PRESENTATION_PAGE_SIZE,
   elementBounds,
+  fitBoundsToPage,
   moveStep,
   normalizeSteps,
   stepLabel,
@@ -83,6 +86,60 @@ describe("presentation path ordering", () => {
   it("resolves a step to its element, or to nothing once it is gone", () => {
     expect(stepTarget({ id: "s0", elementId: "b" }, elements)?.id).toBe("b");
     expect(stepTarget({ id: "s0", elementId: "gone" }, elements)).toBeNull();
+  });
+});
+
+describe("presentation page export transform", () => {
+  const page = { width: 1000, height: 500 };
+  const project = (
+    point: { x: number; y: number },
+    transform: { scale: number; offsetX: number; offsetY: number },
+  ) => ({
+    x: point.x * transform.scale + transform.offsetX,
+    y: point.y * transform.scale + transform.offsetY,
+  });
+
+  it("centres the step's target on the page", () => {
+    const bounds = { x: 200, y: -100, width: 400, height: 200 };
+    const transform = fitBoundsToPage(bounds, page, 0);
+    expect(project({ x: 400, y: 0 }, transform)).toEqual({ x: 500, y: 250 });
+  });
+
+  it("fits the constraining side and leaves the other with slack", () => {
+    // A tall target on a wide page is limited by height, not width.
+    const transform = fitBoundsToPage({ x: 0, y: 0, width: 100, height: 500 }, page, 0);
+    expect(transform.scale).toBe(1);
+    expect(project({ x: 0, y: 0 }, transform)).toEqual({ x: 450, y: 0 });
+    expect(project({ x: 100, y: 500 }, transform)).toEqual({ x: 550, y: 500 });
+  });
+
+  it("keeps the padded target inside the page", () => {
+    const bounds = { x: -50, y: 40, width: 800, height: 600 };
+    const transform = fitBoundsToPage(bounds, page);
+    const topLeft = project(bounds, transform);
+    const bottomRight = project({ x: bounds.x + bounds.width, y: bounds.y + bounds.height }, transform);
+    expect(topLeft.x).toBeGreaterThanOrEqual(0);
+    expect(topLeft.y).toBeGreaterThanOrEqual(0);
+    expect(bottomRight.x).toBeLessThanOrEqual(page.width);
+    expect(bottomRight.y).toBeLessThanOrEqual(page.height);
+    // Height is the constraining side here, and the padding it leaves is the player's,
+    // so a printed page frames a step exactly as the screen does.
+    expect((bottomRight.y - topLeft.y) / page.height).toBeCloseTo(1 / (1 + PRESENTATION_CAMERA_PADDING), 5);
+  });
+
+  it("does not divide by zero on a degenerate target", () => {
+    const transform = fitBoundsToPage({ x: 0, y: 0, width: 0, height: 0 }, page, 0);
+    expect(Number.isFinite(transform.scale)).toBe(true);
+    expect(project({ x: 0, y: 0 }, transform)).toEqual({ x: 500, y: 250 });
+  });
+
+  it("defaults to an A4 landscape page", () => {
+    expect(PRESENTATION_PAGE_SIZE.width).toBeGreaterThan(PRESENTATION_PAGE_SIZE.height);
+    const transform = fitBoundsToPage(elementBounds(frame("a", 0, 0, 640, 400)));
+    expect(project({ x: 320, y: 200 }, transform)).toEqual({
+      x: PRESENTATION_PAGE_SIZE.width / 2,
+      y: PRESENTATION_PAGE_SIZE.height / 2,
+    });
   });
 });
 

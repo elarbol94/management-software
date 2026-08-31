@@ -35,6 +35,7 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import {
   Check,
+  FileDown,
   GripVertical,
   ImagePlus,
   Loader2,
@@ -398,6 +399,16 @@ function Editor({ presentation }: { presentation: PresentationRecord }) {
           {saveIndicator}
           <Button type="button" variant="outline" size="sm" onClick={() => void persist(elements, steps)} disabled={saveState === "saving"}>
             <Save className="size-3.5" />{t("presentations.save")}
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={!steps.length}
+            // The print view reads the saved canvas, so a new tab shows the last save.
+            render={<a href={`/print/presentations/${presentation.id}`} target="_blank" rel="noopener noreferrer" />}
+          >
+            <FileDown className="size-3.5" />{t("presentations.exportPdf")}
           </Button>
           <Button type="button" size="sm" disabled={!steps.length} render={<Link href={`/wiki/presentations/${presentation.id}/present`} />}>
             <Play className="size-3.5" />{t("presentations.present")}

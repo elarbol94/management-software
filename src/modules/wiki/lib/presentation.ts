@@ -111,6 +111,36 @@ export function unionBounds(elements: PresentationElement[]): PresentationBounds
 }
 
 /**
+ * A4 landscape at the CSS reference resolution of 96 dpi, which is what a printer hands
+ * `@page { size: A4 landscape; margin: 0 }`. Keeping the page in px lets the export reuse
+ * the canvas' own pixel geometry unchanged.
+ */
+export const PRESENTATION_PAGE_SIZE = { width: 1122.5, height: 793.7 };
+
+export type PresentationPageTransform = { scale: number; offsetX: number; offsetY: number };
+
+/**
+ * The print equivalent of the player's `fitBounds`: pad the step's target, fit it to the
+ * page, and centre it. A canvas point p lands at `p * scale + offset` on the page, so one
+ * transform frames a whole page's worth of elements.
+ */
+export function fitBoundsToPage(
+  bounds: PresentationBounds,
+  page: { width: number; height: number } = PRESENTATION_PAGE_SIZE,
+  padding: number = PRESENTATION_CAMERA_PADDING,
+): PresentationPageTransform {
+  const scale = Math.min(
+    page.width / (Math.max(bounds.width, 1) * (1 + padding)),
+    page.height / (Math.max(bounds.height, 1) * (1 + padding)),
+  );
+  return {
+    scale,
+    offsetX: page.width / 2 - (bounds.x + bounds.width / 2) * scale,
+    offsetY: page.height / 2 - (bounds.y + bounds.height / 2) * scale,
+  };
+}
+
+/**
  * Steps whose element was deleted would fly the camera nowhere, so they are dropped on
  * read rather than on delete — a step list is only ever as valid as the canvas it points at.
  */
