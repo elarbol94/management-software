@@ -25,11 +25,12 @@ type AnalysisQueue = {
   ready: MunicipalityAnalysisGraphOperation[];
   inFlight: MunicipalityAnalysisGraphOperation[];
   /**
-   * Deliberately not pruned when the server confirms an operation. Transferring a dataset
-   * from the map queues it here and navigates straight to the analysis, and that navigation
-   * can be served from a payload prefetched before the write landed — the graph then arrives
-   * without the transfer, and this list is the only thing that puts it back. `applied` is
-   * what decides whether an entry still has to be replayed, not the save having succeeded.
+   * Pruned when a reader marks an entry applied, never when the server confirms it.
+   * Transferring a dataset from the map queues it here and navigates straight to the
+   * analysis, and that navigation can be served from a payload prefetched before the write
+   * landed — the graph then arrives without the transfer, and this list is the only thing
+   * that puts it back. What decides that an entry is done is the reader's copy having it,
+   * not the save having succeeded.
    */
   optimistic: Array<{ operation: MunicipalityAnalysisGraphOperation; debounceKey?: string }>;
   delayed: Map<string, DelayedOperation>;
@@ -135,6 +136,10 @@ export function MunicipalityAnalysisPersistenceProvider({ children }: { children
   const markApplied = useCallback((analysisId: string, operations: MunicipalityAnalysisGraphOperation[]) => {
     const queue = getQueue(analysisId);
     for (const operation of operations) queue.applied.add(operation);
+    // Dropping what is now applied is what `getPendingOperations` already computes — it
+    // skips every applied entry — so this only stops the list growing for as long as the
+    // editor is open.
+    queue.optimistic = queue.optimistic.filter(({ operation }) => !queue.applied.has(operation));
   }, [getQueue]);
 
   const getPendingOperations = useCallback((analysisId: string) => {
