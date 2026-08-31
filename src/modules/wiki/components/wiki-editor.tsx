@@ -40,7 +40,8 @@ import { userMarkColorStyle, type UserMarkColor } from "@/lib/user-mark-colors";
 import { MermaidDiagram, MERMAID_PLACEHOLDER } from "./mermaid-extension";
 import { SuggestionDelete, SuggestionInsert, SuggestionMode } from "./suggestion-extension";
 import { acceptSuggestions, countSuggestions, rejectSuggestions } from "../lib/suggestions";
-import { DocumentExtensions, getDocumentPaginationBreaks, samePaginationBreaks, setDocumentPaginationBreaks, type DocumentPaginationBreak } from "./document-extension";
+import { DocumentExtensions, getDocumentPaginationBreaks, samePaginationBreaks, setDocumentPaginationBreaks } from "./document-extension";
+import { computeDocumentPagination, type PaginationItem, type PaginationSplit } from "../lib/document-pagination";
 import { DocumentLayoutPanel } from "./document-layout-panel";
 import { WikiTypographyDialog, type WikiEditorPreferences } from "./wiki-typography-dialog";
 import {
@@ -132,6 +133,63 @@ const DOCUMENT_ZOOM_MAX = 200;
 // content snapshot wait out the burst instead of running per keystroke.
 const PAGINATION_TYPING_DELAY = 120;
 const CONTENT_SYNC_DELAY = 200;
+// Line geometry is only measured for blocks that actually reach a page edge, and
+// each such block moves the flow, so a couple of rounds settle the whole page.
+const PAGINATION_MEASURE_ROUNDS = 3;
+
+// Measures the line boxes of a text block and maps each line start back to a
+// document position, so a paragraph or code block can break between its lines.
+function measureTextLines(editor: Editor, element: HTMLElement, natural: (value: number) => number) {
+  const range = document.createRange();
+  const rectAt = (text: Text, offset: number) => {
+    if (offset < 0 || offset >= text.length) return null;
+    range.setStart(text, offset);
+    range.setEnd(text, offset + 1);
+    const rect = range.getBoundingClientRect();
+    return rect.height > 0 ? rect : null;
+  };
+  const splits: PaginationSplit[] = [];
+  const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    const text = node as Text;
+    if (!text.length || text.parentElement?.closest("[contenteditable=\"false\"]")) continue;
+    let offset = 0;
+    while (offset < text.length) {
+      const rect = rectAt(text, offset);
+      if (!rect) {
+        offset += 1;
+        continue;
+      }
+      const top = natural(rect.top);
+      const previous = splits[splits.length - 1];
+      // A line box can span several text nodes when marks interrupt it.
+      if (previous && Math.abs(previous.top - top) < 1) previous.bottom = Math.max(previous.bottom, natural(rect.bottom));
+      else splits.push({ position: editor.view.posAtDOM(text, offset), top, bottom: natural(rect.bottom) });
+      // Probing every character is too slow on a paragraph that fills a page, so
+      // the end of the line box is found by bisection instead.
+      let low = offset + 1;
+      let high = text.length;
+      while (low < high) {
+        const middle = Math.ceil((low + high) / 2);
+        const probe = rectAt(text, middle - 1);
+        if (probe && Math.abs(probe.top - rect.top) < 1) low = middle;
+        else high = middle - 1;
+      }
+      offset = Math.max(low, offset + 1);
+    }
+  }
+  return splits;
+}
+
+// ponytail: split tables between rows without repeating the header row on the
+// following page; the export renderers own that, this is the on-screen preview.
+function measureTableRows(editor: Editor, table: HTMLElement, natural: (value: number) => number) {
+  const rows = table.querySelectorAll<HTMLTableRowElement>(":scope > tr, :scope > tbody > tr");
+  return Array.from(rows, (row) => {
+    const rect = row.getBoundingClientRect();
+    return { position: Math.max(0, editor.view.posAtDOM(row, 0) - 1), top: natural(rect.top), bottom: natural(rect.bottom) };
+  });
+}
 
 function loadDocumentZoom() {
   if (typeof window === "undefined") return 100;
@@ -1473,69 +1531,69 @@ export function WikiEditor({
       const marginTop = documentSettings.page.marginsMm.top * pixelsPerMm;
       const marginBottom = documentSettings.page.marginsMm.bottom * pixelsPerMm;
       const usableHeight = pageHeight - marginTop - marginBottom;
-      const cycle = pageHeight + pageGap;
       const canvasTop = canvas.getBoundingClientRect().top;
-      const breaks: DocumentPaginationBreak[] = [];
-      let accumulated = 0;
-      let forceNextPage = false;
-      let finalBottom = marginTop;
+      const natural = (value: number) => (value - canvasTop) / zoomFactor;
 
-      const paginationElements: HTMLElement[] = [];
+      const elements: HTMLElement[] = [];
+      const items: PaginationItem[] = [];
       const collectPaginationElements = (element: HTMLElement) => {
-        const elementHeight = element.getBoundingClientRect().height / zoomFactor;
+        if (element.classList.contains("wiki-document-auto-page-break")) return;
+        const rect = element.getBoundingClientRect();
+        const elementHeight = rect.height / zoomFactor;
         const canSplit = element.matches("ul, ol, li, blockquote, section[data-document-columns]");
         if (canSplit && elementHeight > usableHeight && element.children.length > 0) {
           for (const child of Array.from(element.children) as HTMLElement[]) collectPaginationElements(child);
           return;
         }
-        paginationElements.push(element);
+        const isTable = element.matches("table");
+        elements.push(element);
+        items.push({
+          position: Math.max(0, editor.view.posAtDOM(element, 0) - 1),
+          top: natural(rect.top),
+          bottom: natural(rect.bottom),
+          kind: element.tagName === "LI" ? "listItem" : "block",
+          splitKind: isTable ? "tableRow" : "inline",
+          splittable: isTable || element.matches("p, pre, li, blockquote"),
+          pageBreak: element.hasAttribute("data-document-page-break"),
+          heading: /^H[1-6]$/.test(element.tagName),
+          keepWithNext: element.hasAttribute("data-keep-with-next"),
+          keepTogether: element.hasAttribute("data-keep-together"),
+        });
       };
       for (const element of Array.from(proseMirror.children) as HTMLElement[]) collectPaginationElements(element);
 
-      for (const element of paginationElements) {
-        if (element.classList.contains("wiki-document-auto-page-break")) continue;
-        if (element.hasAttribute("data-document-page-break")) {
-          forceNextPage = true;
-          continue;
+      const geometry = { pageHeight, pageGap, marginTop, marginBottom };
+      let plan = computeDocumentPagination(items, geometry);
+      // Line geometry is expensive, so it is only measured for the blocks the
+      // plan reports as reaching a page edge, and the plan is then redone.
+      for (let round = 0; round < PAGINATION_MEASURE_ROUNDS && plan.measure.length; round += 1) {
+        let measured = false;
+        for (const index of plan.measure) {
+          const element = elements[index];
+          if (items[index].splits || !element) continue;
+          try {
+            items[index] = {
+              ...items[index],
+              splits: element.matches("table")
+                ? measureTableRows(editor, element, natural)
+                : measureTextLines(editor, element, natural),
+            };
+          } catch {
+            items[index] = { ...items[index], splits: [] };
+          }
+          measured = true;
         }
-        const rect = element.getBoundingClientRect();
-        const naturalTop = (rect.top - canvasTop) / zoomFactor;
-        const naturalBottom = (rect.bottom - canvasTop) / zoomFactor;
-        let flowTop = naturalTop + accumulated;
-        let flowBottom = naturalBottom + accumulated;
-        let pageIndex = Math.max(0, Math.floor(flowTop / cycle));
-        const pageStart = pageIndex * cycle;
-        const contentStart = pageStart + marginTop;
-        const contentEnd = pageStart + pageHeight - marginBottom;
-        let offset = 0;
-
-        if (forceNextPage) {
-          offset = (pageIndex + 1) * cycle + marginTop - flowTop;
-          forceNextPage = false;
-        } else if (flowTop < contentStart) {
-          offset = contentStart - flowTop;
-        } else if (flowBottom > contentEnd + 1 && rect.height / zoomFactor <= usableHeight) {
-          offset = (pageIndex + 1) * cycle + marginTop - flowTop;
-        }
-
-        if (offset > 0.5) {
-          const position = Math.max(0, editor.view.posAtDOM(element, 0) - 1);
-          pageIndex = Math.max(1, Math.floor((flowTop + offset) / cycle));
-          breaks.push({ position, height: offset, page: pageIndex + 1, kind: element.tagName === "LI" ? "listItem" : "block" });
-          accumulated += offset;
-          flowTop += offset;
-          flowBottom += offset;
-        }
-        finalBottom = Math.max(finalBottom, flowBottom);
+        if (!measured) break;
+        plan = computeDocumentPagination(items, geometry);
       }
 
       // Re-dispatching an unchanged set would rebuild every spacer widget for nothing.
-      if (samePaginationBreaks(previousBreaks, breaks)) {
+      if (samePaginationBreaks(previousBreaks, plan.breaks)) {
         if (previousBreaks.length) setDocumentPaginationBreaks(editor, previousBreaks);
       } else {
-        setDocumentPaginationBreaks(editor, breaks);
+        setDocumentPaginationBreaks(editor, plan.breaks);
       }
-      setDocumentPageCount(Math.max(1, Math.floor((finalBottom + marginBottom) / cycle) + 1));
+      setDocumentPageCount(plan.pageCount);
     };
 
     const schedule = (delay = 0) => {
