@@ -179,6 +179,7 @@ function Player({ presentation }: { presentation: PresentationRecord }) {
   return (
     <div
       ref={containerRef}
+      data-testid="presentation-player"
       // Covers the wiki rail and the app chrome: presenting owns the whole viewport.
       className="fixed inset-0 z-50 bg-background"
       style={presentation.background ? { backgroundColor: presentation.background } : undefined}
