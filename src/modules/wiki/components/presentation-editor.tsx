@@ -34,7 +34,10 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import {
+  ArrowDownToLine,
+  ArrowUpToLine,
   Check,
+  Copy,
   GripVertical,
   ImagePlus,
   Loader2,
@@ -42,6 +45,7 @@ import {
   Play,
   Plus,
   Save,
+  Shapes,
   Square,
   Trash2,
   TriangleAlert,
@@ -57,9 +61,12 @@ import { renamePresentation, savePresentation } from "../presentation-actions";
 import type { PresentationRecord } from "../presentation-queries";
 import {
   PRESENTATION_CAMERA_PADDING,
+  duplicateElement,
   elementBounds,
   moveStep,
   presentationFrameShapes,
+  presentationShapeKinds,
+  reorderElement,
   stepLabel,
   stepTarget,
   type PresentationElement,
@@ -133,6 +140,7 @@ function Editor({ presentation }: { presentation: PresentationRecord }) {
 
   const [title, setTitle] = useState(presentation.title);
   const [elements, setElements] = useState<PresentationElement[]>(presentation.elements);
+  const [background, setBackground] = useState(presentation.background);
   const [steps, setSteps] = useState<PresentationStep[]>(presentation.steps);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [activeStepId, setActiveStepId] = useState<string | null>(null);
@@ -142,10 +150,15 @@ function Editor({ presentation }: { presentation: PresentationRecord }) {
   const selected = elements.find((element) => element.id === selectedId) ?? null;
 
   const persist = useCallback(
-    async (nextElements: PresentationElement[], nextSteps: PresentationStep[]) => {
+    async (nextElements: PresentationElement[], nextSteps: PresentationStep[], nextBackground: string) => {
       setSaveState("saving");
       try {
-        await savePresentation({ id: presentation.id, elements: nextElements, steps: nextSteps });
+        await savePresentation({
+          id: presentation.id,
+          elements: nextElements,
+          steps: nextSteps,
+          background: nextBackground,
+        });
         setSaveState("saved");
       } catch {
         setSaveState("error");
@@ -159,9 +172,9 @@ function Editor({ presentation }: { presentation: PresentationRecord }) {
   // burst is the one that writes.
   useEffect(() => {
     if (saveState !== "unsaved") return;
-    const timer = setTimeout(() => void persist(elements, steps), AUTOSAVE_DELAY);
+    const timer = setTimeout(() => void persist(elements, steps, background), AUTOSAVE_DELAY);
     return () => clearTimeout(timer);
-  }, [saveState, elements, steps, persist]);
+  }, [saveState, elements, steps, background, persist]);
 
   useEffect(() => {
     if (saveState !== "unsaved" && saveState !== "saving") return;
@@ -212,8 +225,6 @@ function Editor({ presentation }: { presentation: PresentationRecord }) {
               ? { ...element, width, height }
               : element,
           );
-        } else if (change.type === "remove") {
-          next = next.filter((element) => element.id !== change.id);
         }
       }
       touched = next !== current;
@@ -238,6 +249,49 @@ function Editor({ presentation }: { presentation: PresentationRecord }) {
     [],
   );
 
+  const deleteElement = useCallback((id: string) => {
+    setElements((current) => current.filter((element) => element.id !== id));
+    setSteps((current) => current.filter((step) => step.elementId !== id));
+    setSelectedId((current) => (current === id ? null : current));
+    setSaveState("unsaved");
+  }, []);
+
+  const duplicateSelected = useCallback((id: string) => {
+    setElements((current) => {
+      const { elements: next, element } = duplicateElement(current, id, createId());
+      if (element) setSelectedId(element.id);
+      return next;
+    });
+    setSaveState("unsaved");
+  }, []);
+
+  const reorderSelected = useCallback((id: string, to: "front" | "back") => {
+    setElements((current) => reorderElement(current, id, to));
+    setSaveState("unsaved");
+  }, []);
+
+  /**
+   * Delete and Ctrl+D are handled here rather than by React Flow's `deleteKeyCode`, so the
+   * shortcuts work no matter which pane has focus — and so a copy is offset instead of
+   * landing exactly on the original. Typing in a field is never a canvas command.
+   */
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target?.closest("input, textarea, select, [contenteditable='true']")) return;
+      if (!selectedId) return;
+      if (event.key === "Delete" || event.key === "Backspace") {
+        event.preventDefault();
+        deleteElement(selectedId);
+      } else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "d") {
+        event.preventDefault();
+        duplicateSelected(selectedId);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [deleteElement, duplicateSelected, selectedId]);
+
   const addText = useCallback(() => {
     const { x, y } = viewportCenter();
     addElement({
@@ -251,6 +305,14 @@ function Editor({ presentation }: { presentation: PresentationRecord }) {
     addElement({
       id: createId(), type: "frame", x: x - 320, y: y - 200, width: 640, height: 400, rotation: 0,
       content: { label: "", shape: "rect", color: "" },
+    });
+  }, [addElement, viewportCenter]);
+
+  const addShape = useCallback(() => {
+    const { x, y } = viewportCenter();
+    addElement({
+      id: createId(), type: "shape", x: x - 140, y: y - 90, width: 280, height: 180, rotation: 0,
+      content: { shape: "rect", fill: "", stroke: "", strokeWidth: 2, opacity: 1 },
     });
   }, [addElement, viewportCenter]);
 
@@ -349,6 +411,23 @@ function Editor({ presentation }: { presentation: PresentationRecord }) {
     </div>
   );
 
+  /** Native picker plus a reset, because `<input type="color">` cannot express "none". */
+  const colorField = (label: string, value: string, onPick: (color: string) => void) => (
+    <div className="flex items-center gap-2 text-xs text-muted-foreground">
+      <span className="min-w-0 flex-1 truncate">{label}</span>
+      <input
+        type="color"
+        aria-label={label}
+        value={/^#[0-9a-f]{6}$/i.test(value) ? value : "#ffffff"}
+        onChange={(event) => onPick(event.target.value)}
+        className="h-7 w-10 cursor-pointer rounded border bg-transparent p-0.5"
+      />
+      <Button type="button" variant="ghost" size="icon-sm" aria-label={t("presentations.clearColor")} onClick={() => onPick("")}>
+        <X className="size-3.5" />
+      </Button>
+    </div>
+  );
+
   return (
     <div className="flex h-[calc(100vh-3.5rem)] min-h-0 flex-col md:h-screen">
       <header className="flex flex-wrap items-center gap-2 border-b bg-background px-3 py-2">
@@ -380,6 +459,7 @@ function Editor({ presentation }: { presentation: PresentationRecord }) {
           {t("presentations.addImage")}
         </Button>
         <Button type="button" variant="outline" size="sm" onClick={addFrame}><Square className="size-3.5" />{t("presentations.addFrame")}</Button>
+        <Button type="button" variant="outline" size="sm" onClick={addShape}><Shapes className="size-3.5" />{t("presentations.addShape")}</Button>
         <input
           ref={imageInputRef}
           hidden
@@ -396,7 +476,7 @@ function Editor({ presentation }: { presentation: PresentationRecord }) {
         </Button>
         <div className="ml-auto flex items-center gap-2 text-xs">
           {saveIndicator}
-          <Button type="button" variant="outline" size="sm" onClick={() => void persist(elements, steps)} disabled={saveState === "saving"}>
+          <Button type="button" variant="outline" size="sm" onClick={() => void persist(elements, steps, background)} disabled={saveState === "saving"}>
             <Save className="size-3.5" />{t("presentations.save")}
           </Button>
           <Button type="button" size="sm" disabled={!steps.length} render={<Link href={`/wiki/presentations/${presentation.id}/present`} />}>
@@ -418,8 +498,10 @@ function Editor({ presentation }: { presentation: PresentationRecord }) {
             minZoom={0.02}
             maxZoom={8}
             nodesConnectable={false}
-            deleteKeyCode={["Backspace", "Delete"]}
+            // Delete is handled by the editor's own shortcut, so there is one delete path.
+            deleteKeyCode={null}
             selectionOnDrag={false}
+            style={background ? { backgroundColor: background } : undefined}
             panOnDrag
             onPaneClick={() => setSelectedId(null)}
             proOptions={{ hideAttribution: false }}
@@ -483,22 +565,44 @@ function Editor({ presentation }: { presentation: PresentationRecord }) {
 
           {selected && (
             <section className="mt-5 border-t pt-4">
-              <div className="flex items-center justify-between">
-                <h2 className="text-xs font-semibold tracking-wide uppercase">{t(`presentations.elementTypes.${selected.type}`)}</h2>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-sm"
-                  aria-label={t("presentations.deleteElement")}
-                  onClick={() => {
-                    setElements((current) => current.filter((element) => element.id !== selected.id));
-                    setSteps((current) => current.filter((step) => step.elementId !== selected.id));
-                    setSelectedId(null);
-                    setSaveState("unsaved");
-                  }}
-                >
-                  <Trash2 className="size-4" />
-                </Button>
+              <div className="flex items-center justify-between gap-1">
+                <h2 className="min-w-0 truncate text-xs font-semibold tracking-wide uppercase">{t(`presentations.elementTypes.${selected.type}`)}</h2>
+                <div className="flex shrink-0 items-center">
+                  <Button type="button" variant="ghost" size="icon-sm" aria-label={t("presentations.bringToFront")} onClick={() => reorderSelected(selected.id, "front")}>
+                    <ArrowUpToLine className="size-4" />
+                  </Button>
+                  <Button type="button" variant="ghost" size="icon-sm" aria-label={t("presentations.sendToBack")} onClick={() => reorderSelected(selected.id, "back")}>
+                    <ArrowDownToLine className="size-4" />
+                  </Button>
+                  <Button type="button" variant="ghost" size="icon-sm" aria-label={t("presentations.duplicateElement")} onClick={() => duplicateSelected(selected.id)}>
+                    <Copy className="size-4" />
+                  </Button>
+                  <Button type="button" variant="ghost" size="icon-sm" aria-label={t("presentations.deleteElement")} onClick={() => deleteElement(selected.id)}>
+                    <Trash2 className="size-4" />
+                  </Button>
+                </div>
+              </div>
+
+              <div className="mt-3 space-y-2">
+                <label className="block text-xs text-muted-foreground">
+                  {t("presentations.rotation")}
+                  <Input
+                    type="number"
+                    min={-360}
+                    max={360}
+                    step={5}
+                    className="mt-1 h-8"
+                    key={`${selected.id}-rotation`}
+                    defaultValue={selected.rotation}
+                    onBlur={(event) => {
+                      const value = Math.min(360, Math.max(-360, Math.round(Number(event.currentTarget.value) || 0)));
+                      updateElement(selected.id, (element) => ({ ...element, rotation: value }));
+                    }}
+                  />
+                </label>
+                {colorField(t("presentations.elementBackground"), selected.background ?? "", (color) =>
+                  updateElement(selected.id, (element) => ({ ...element, background: color })),
+                )}
               </div>
 
               {selected.type === "text" && (
@@ -624,8 +728,84 @@ function Editor({ presentation }: { presentation: PresentationRecord }) {
                   )}
                 </div>
               )}
+
+              {selected.type === "shape" && (
+                <div className="mt-3 space-y-3">
+                  <div className="flex flex-wrap gap-1.5">
+                    {presentationShapeKinds.map((shape) => (
+                      <Button
+                        key={shape}
+                        type="button"
+                        variant={selected.content.shape === shape ? "default" : "outline"}
+                        size="sm"
+                        onClick={() =>
+                          updateElement(selected.id, (element) =>
+                            element.type === "shape" ? { ...element, content: { ...element.content, shape } } : element,
+                          )
+                        }
+                      >
+                        {t(`presentations.shapeKinds.${shape}`)}
+                      </Button>
+                    ))}
+                  </div>
+                  {colorField(t("presentations.fill"), selected.content.fill, (fill) =>
+                    updateElement(selected.id, (element) =>
+                      element.type === "shape" ? { ...element, content: { ...element.content, fill } } : element,
+                    ),
+                  )}
+                  {colorField(t("presentations.stroke"), selected.content.stroke, (stroke) =>
+                    updateElement(selected.id, (element) =>
+                      element.type === "shape" ? { ...element, content: { ...element.content, stroke } } : element,
+                    ),
+                  )}
+                  <label className="block text-xs text-muted-foreground">
+                    {t("presentations.strokeWidth")}
+                    <Input
+                      type="number"
+                      min={0}
+                      max={200}
+                      className="mt-1 h-8"
+                      key={`${selected.id}-stroke-width`}
+                      defaultValue={selected.content.strokeWidth}
+                      onBlur={(event) => {
+                        const strokeWidth = Math.min(200, Math.max(0, Number(event.currentTarget.value) || 0));
+                        updateElement(selected.id, (element) =>
+                          element.type === "shape" ? { ...element, content: { ...element.content, strokeWidth } } : element,
+                        );
+                      }}
+                    />
+                  </label>
+                  <label className="block text-xs text-muted-foreground">
+                    {t("presentations.opacity")}
+                    <input
+                      type="range"
+                      min={0}
+                      max={1}
+                      step={0.05}
+                      className="mt-1 w-full"
+                      value={selected.content.opacity}
+                      onChange={(event) => {
+                        const opacity = Number(event.target.value);
+                        updateElement(selected.id, (element) =>
+                          element.type === "shape" ? { ...element, content: { ...element.content, opacity } } : element,
+                        );
+                      }}
+                    />
+                  </label>
+                </div>
+              )}
             </section>
           )}
+
+          <section className="mt-5 border-t pt-4">
+            <h2 className="text-xs font-semibold tracking-wide uppercase">{t("presentations.canvas")}</h2>
+            <div className="mt-3">
+              {colorField(t("presentations.canvasBackground"), background, (color) => {
+                setBackground(color);
+                setSaveState("unsaved");
+              })}
+            </div>
+          </section>
         </aside>
       </div>
     </div>

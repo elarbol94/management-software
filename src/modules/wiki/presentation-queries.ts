@@ -5,7 +5,7 @@ import { db } from "@/db";
 import { user, wikiPresentations } from "@/db/schema";
 import {
   normalizeSteps,
-  parsePresentationElements,
+  parsePresentationCanvas,
   parsePresentationSteps,
 } from "./lib/presentation";
 
@@ -26,7 +26,7 @@ export function listPresentations() {
     .map(({ elementsJson, pathJson, ...row }) => ({
       ...row,
       updatedAt: row.updatedAt.getTime(),
-      elementCount: parsePresentationElements(elementsJson).length,
+      elementCount: parsePresentationCanvas(elementsJson).elements.length,
       stepCount: parsePresentationSteps(pathJson).length,
     }));
 }
@@ -36,11 +36,12 @@ export type PresentationListItem = ReturnType<typeof listPresentations>[number];
 export function getPresentation(id: string) {
   const row = db.select().from(wikiPresentations).where(eq(wikiPresentations.id, id)).get();
   if (!row) return null;
-  const elements = parsePresentationElements(row.elementsJson);
+  const { elements, background } = parsePresentationCanvas(row.elementsJson);
   return {
     id: row.id,
     title: row.title,
     elements,
+    background,
     steps: normalizeSteps(parsePresentationSteps(row.pathJson), elements),
     updatedAt: row.updatedAt.getTime(),
   };

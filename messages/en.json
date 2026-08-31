@@ -3030,10 +3030,30 @@
       "frameLabel": "Label",
       "colorDefault": "Default colour",
       "colorNamed": "Colour {color}",
+      "addShape": "Shape",
+      "rotation": "Rotation (degrees)",
+      "bringToFront": "Bring to front",
+      "sendToBack": "Send to back",
+      "duplicateElement": "Duplicate element",
+      "elementBackground": "Element background",
+      "canvas": "Canvas",
+      "canvasBackground": "Canvas background",
+      "clearColor": "Reset colour",
+      "fill": "Fill",
+      "stroke": "Stroke",
+      "strokeWidth": "Stroke width",
+      "opacity": "Opacity",
+      "shapeKinds": {
+        "rect": "Rectangle",
+        "ellipse": "Ellipse",
+        "arrow": "Arrow",
+        "line": "Line"
+      },
       "elementTypes": {
         "text": "Text",
         "image": "Image",
-        "frame": "Frame"
+        "frame": "Frame",
+        "shape": "Shape"
       },
       "frameShapes": {
         "rect": "Rectangle",

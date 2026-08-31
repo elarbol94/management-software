@@ -44,15 +44,26 @@ export async function renamePresentation(input: { id: string; title: string }) {
   return { savedAt: Date.now() };
 }
 
-export async function savePresentation(input: { id: string; elements: unknown; steps: unknown }) {
+export async function savePresentation(input: {
+  id: string;
+  elements: unknown;
+  steps: unknown;
+  background?: unknown;
+}) {
   const currentUser = await requireUserOrThrow();
   const data = z
-    .object({ id: idSchema, elements: presentationElementsSchema, steps: presentationStepsSchema })
+    .object({
+      id: idSchema,
+      elements: presentationElementsSchema,
+      steps: presentationStepsSchema,
+      background: z.string().max(32).default(""),
+    })
     .parse(input);
   const result = db
     .update(wikiPresentations)
     .set({
-      elementsJson: JSON.stringify(data.elements),
+      // The envelope form; `parsePresentationCanvas` still reads the older bare array.
+      elementsJson: JSON.stringify({ elements: data.elements, background: data.background }),
       // Steps pointing at deleted elements are dropped here, so a saved path is always
       // one the player can actually fly.
       pathJson: JSON.stringify(normalizeSteps(data.steps, data.elements)),
