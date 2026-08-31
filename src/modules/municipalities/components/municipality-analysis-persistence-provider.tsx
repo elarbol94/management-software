@@ -24,6 +24,14 @@ type AnalysisQueue = {
   applied: WeakSet<MunicipalityAnalysisGraphOperation>;
   ready: MunicipalityAnalysisGraphOperation[];
   inFlight: MunicipalityAnalysisGraphOperation[];
+  /**
+   * Pruned when a reader marks an entry applied, never when the server confirms it.
+   * Transferring a dataset from the map queues it here and navigates straight to the
+   * analysis, and that navigation can be served from a payload prefetched before the write
+   * landed — the graph then arrives without the transfer, and this list is the only thing
+   * that puts it back. What decides that an entry is done is the reader's copy having it,
+   * not the save having succeeded.
+   */
   optimistic: Array<{ operation: MunicipalityAnalysisGraphOperation; debounceKey?: string }>;
   delayed: Map<string, DelayedOperation>;
   running: boolean;
@@ -75,11 +83,6 @@ export function MunicipalityAnalysisPersistenceProvider({ children }: { children
     publish(analysisId, "saving");
     try {
       await applyMunicipalityAnalysisOperations({ analysisId, operations: queue.inFlight });
-      // Confirmed by the server, so they are no longer what an arriving graph might be
-      // missing. Left in place they would grow for as long as the editor is open, and
-      // every render walks this list to find what still has to be replayed.
-      const confirmed = new Set(queue.inFlight);
-      queue.optimistic = queue.optimistic.filter(({ operation }) => !confirmed.has(operation));
       queue.inFlight = [];
       queue.running = false;
       queue.failures = 0;
@@ -133,6 +136,10 @@ export function MunicipalityAnalysisPersistenceProvider({ children }: { children
   const markApplied = useCallback((analysisId: string, operations: MunicipalityAnalysisGraphOperation[]) => {
     const queue = getQueue(analysisId);
     for (const operation of operations) queue.applied.add(operation);
+    // Dropping what is now applied is what `getPendingOperations` already computes — it
+    // skips every applied entry — so this only stops the list growing for as long as the
+    // editor is open.
+    queue.optimistic = queue.optimistic.filter(({ operation }) => !queue.applied.has(operation));
   }, [getQueue]);
 
   const getPendingOperations = useCallback((analysisId: string) => {
