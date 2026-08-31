@@ -5,13 +5,13 @@ import { db } from "@/db";
 import { wikiProofingWords } from "@/db/schema";
 import { getSession } from "@/lib/auth";
 
-const languageSchema = z.enum(["de-DE", "en-US"]);
+const languageSchema = z.enum(["de-DE", "de-AT", "en-US"]);
 const addWordSchema = z.object({
   language: languageSchema,
   word: z.string().trim().min(1).max(100),
 });
 
-function normalizeWord(word: string, language: "de-DE" | "en-US") {
+function normalizeWord(word: string, language: z.infer<typeof languageSchema>) {
   return word.normalize("NFKC").toLocaleLowerCase(language);
 }
 

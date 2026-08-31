@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
 
-type ProofingLanguage = "de-DE" | "en-US";
+type ProofingLanguage = "de-DE" | "de-AT" | "en-US";
 type LanguageToolMatch = {
   offset?: number;
   length?: number;
@@ -32,8 +32,8 @@ const CACHE_MAX_ENTRIES = 200;
 const resultCache = new Map<string, { expiresAt: number; matches: LanguageToolMatch[] }>();
 const inFlightChecks = new Map<string, Promise<LanguageToolMatch[]>>();
 
-function cacheKey(text: string, language: ProofingLanguage) {
-  return `${language}\u0000${text}`;
+function cacheKey(text: string, language: ProofingLanguage, picky: boolean) {
+  return `${language}\u0000${picky ? "picky" : "default"}\u0000${text}`;
 }
 
 function trimCache() {
@@ -44,8 +44,8 @@ function trimCache() {
   }
 }
 
-async function checkWithLanguageTool(text: string, language: ProofingLanguage) {
-  const key = cacheKey(text, language);
+async function checkWithLanguageTool(text: string, language: ProofingLanguage, picky: boolean) {
+  const key = cacheKey(text, language, picky);
   const cached = resultCache.get(key);
   if (cached && cached.expiresAt > Date.now()) return cached.matches;
   if (cached) resultCache.delete(key);
@@ -57,7 +57,7 @@ async function checkWithLanguageTool(text: string, language: ProofingLanguage) {
     const endpoint = new URL("/v2/check", baseUrl);
     const response = await fetch(endpoint, {
       method: "POST",
-      body: new URLSearchParams({ text, language, enabledOnly: "false" }),
+      body: new URLSearchParams({ text, language, enabledOnly: "false", level: picky ? "picky" : "default" }),
       signal: AbortSignal.timeout(6_000),
       cache: "no-store",
     });
@@ -108,10 +108,13 @@ export async function POST(request: Request) {
   let paragraphs: unknown;
   let language: unknown;
   let dictionary: unknown;
-  try { ({ paragraphs, language, dictionary } = await request.json()); } catch { return NextResponse.json({ error: "Invalid JSON" }, { status: 400 }); }
+  let picky: unknown;
+  try { ({ paragraphs, language, dictionary, picky } = await request.json()); } catch { return NextResponse.json({ error: "Invalid JSON" }, { status: 400 }); }
   if (!Array.isArray(paragraphs) || paragraphs.length > MAX_PARAGRAPHS || paragraphs.some((item) => typeof item !== "string")) return NextResponse.json({ error: "Invalid paragraphs" }, { status: 400 });
-  if (language !== "de-DE" && language !== "en-US") return NextResponse.json({ error: "Invalid language" }, { status: 400 });
+  if (language !== "de-DE" && language !== "de-AT" && language !== "en-US") return NextResponse.json({ error: "Invalid language" }, { status: 400 });
   if (dictionary !== undefined && (!Array.isArray(dictionary) || dictionary.length > 500 || dictionary.some((item) => typeof item !== "string" || item.length > 100))) return NextResponse.json({ error: "Invalid dictionary" }, { status: 400 });
+  if (picky !== undefined && typeof picky !== "boolean") return NextResponse.json({ error: "Invalid picky" }, { status: 400 });
+  const isPicky = picky === true;
   const validParagraphs = paragraphs as string[];
   if (validParagraphs.reduce((size, item) => size + item.length, 0) > MAX_CHARACTERS) return NextResponse.json({ error: "Payload too large" }, { status: 413 });
   if (!validParagraphs.length) return NextResponse.json({ matches: [] });
@@ -125,7 +128,7 @@ export async function POST(request: Request) {
   const combinedText = validParagraphs.join(PARAGRAPH_SEPARATOR);
   const normalizedDictionary = new Set(((dictionary as string[] | undefined) ?? []).map((word) => word.normalize("NFKC").toLocaleLowerCase(language)));
   try {
-    const rawMatches = await checkWithLanguageTool(combinedText, language);
+    const rawMatches = await checkWithLanguageTool(combinedText, language, isPicky);
     return NextResponse.json({ matches: normalizeMatches(rawMatches, combinedText, paragraphRanges, normalizedDictionary, language) });
   } catch {
     return NextResponse.json({ error: "Rechtschreibprüfung ist momentan nicht erreichbar." }, { status: 503 });

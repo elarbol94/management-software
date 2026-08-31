@@ -135,7 +135,7 @@ export async function releasePageEditLease(input: Omit<z.infer<typeof leaseSchem
 const createSchema = z.object({
   title: z.string().min(1).max(200),
   parentId: z.string().nullable().default(null),
-  proofingLanguage: z.enum(["de-DE", "en-US"]).default("de-DE"),
+  proofingLanguage: z.enum(["de-DE", "de-AT", "en-US"]).default("de-DE"),
 });
 
 export async function createPage(
@@ -166,7 +166,7 @@ export async function createPage(
 
 const proofingLanguageSchema = z.object({
   pageId: z.string().min(1),
-  language: z.enum(["de-DE", "en-US"]),
+  language: z.enum(["de-DE", "de-AT", "en-US"]),
 });
 
 export async function updatePageProofingLanguage(input: z.infer<typeof proofingLanguageSchema>) {

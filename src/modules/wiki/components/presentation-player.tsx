@@ -7,17 +7,19 @@ import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { useTheme } from "next-themes";
 import { ReactFlow, ReactFlowProvider, useReactFlow } from "@xyflow/react";
-import { ChevronLeft, ChevronRight, Maximize, Minimize, Scan, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Maximize, Minimize, NotebookText, Pause, Play, Scan, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   PRESENTATION_CAMERA_PADDING,
   elementBounds,
+  elementsWithinStep,
+  presentationCameraEasingFns,
+  resolveStepDuration,
   stepTarget,
 } from "../lib/presentation";
+import { parsePresenterMessage, presenterChannelName } from "../lib/presenter";
 import type { PresentationRecord } from "../presentation-queries";
 import { elementsToNodes, presentationNodeTypes, type PresentationNode } from "./presentation-canvas";
-
-const CAMERA_DURATION = 700;
 
 function Player({ presentation }: { presentation: PresentationRecord }) {
   const t = useTranslations("wiki");
@@ -27,13 +29,25 @@ function Player({ presentation }: { presentation: PresentationRecord }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [index, setIndex] = useState(0);
   const [fullscreen, setFullscreen] = useState(false);
+  const [playing, setPlaying] = useState(false);
 
-  const { elements, steps } = presentation;
-  const nodes = useMemo(() => elementsToNodes(elements, { editable: false }), [elements]);
+  const { elements, steps, settings } = presentation;
+  const cameraDuration = settings.cameraTransitionMs;
+  const cameraEase = presentationCameraEasingFns[settings.cameraEasing];
+
+  // Elements that belong to the current step's target: what fades in as it arrives.
+  // Derived straight from the index, so re-arriving at a step re-plays the entrance.
+  const enteringIds = useMemo(() => {
+    const step = steps[index];
+    const target = step ? stepTarget(step, elements) : null;
+    return target ? new Set(elementsWithinStep(target, elements).map((element) => element.id)) : new Set<string>();
+  }, [index, steps, elements]);
+
+  const nodes = useMemo(() => elementsToNodes(elements, { editable: false, enteringIds }), [elements, enteringIds]);
 
   const overview = useCallback(
-    (duration = CAMERA_DURATION) => void reactFlow.fitView({ padding: 0.15, duration }),
-    [reactFlow],
+    (duration = cameraDuration) => void reactFlow.fitView({ padding: 0.15, duration, ease: cameraEase }),
+    [reactFlow, cameraDuration, cameraEase],
   );
 
   /**
@@ -41,14 +55,31 @@ function Player({ presentation }: { presentation: PresentationRecord }) {
    * a large one zooms all the way in — the camera never inherits the previous scale.
    */
   const flyTo = useCallback(
-    (stepIndex: number, duration = CAMERA_DURATION) => {
+    (stepIndex: number, duration = cameraDuration) => {
       const step = steps[stepIndex];
       const target = step ? stepTarget(step, elements) : null;
       if (!target) return overview(duration);
-      void reactFlow.fitBounds(elementBounds(target), { padding: PRESENTATION_CAMERA_PADDING, duration });
+      void reactFlow.fitBounds(elementBounds(target), { padding: PRESENTATION_CAMERA_PADDING, duration, ease: cameraEase });
     },
-    [elements, overview, reactFlow, steps],
+    [elements, overview, reactFlow, steps, cameraDuration, cameraEase],
   );
+
+  // Autoplay: advance to the next step after its effective duration elapses, looping
+  // back to the start (or stopping) once the path runs out.
+  useEffect(() => {
+    if (!playing || !steps.length) return;
+    const duration = resolveStepDuration(steps[index], settings);
+    const timer = setTimeout(() => {
+      setIndex((current) => {
+        const next = current + 1;
+        if (next < steps.length) return next;
+        if (settings.loop) return 0;
+        setPlaying(false);
+        return current;
+      });
+    }, duration);
+    return () => clearTimeout(timer);
+  }, [playing, index, steps, settings]);
 
   const move = useCallback(
     (delta: number) => {
@@ -56,6 +87,47 @@ function Player({ presentation }: { presentation: PresentationRecord }) {
     },
     [steps.length],
   );
+
+  // Kept current without being an effect dependency, so the channel below is set up once
+  // and can still answer a presenter window's "where are we" with the latest step.
+  const indexRef = useRef(index);
+  useEffect(() => {
+    indexRef.current = index;
+  }, [index]);
+
+  const channelRef = useRef<BroadcastChannel | null>(null);
+
+  // Presenter windows follow this player over BroadcastChannel: it broadcasts its own step
+  // changes, and applies "goto" from a presenter window steering it back.
+  useEffect(() => {
+    const channel = new BroadcastChannel(presenterChannelName(presentation.id));
+    channelRef.current = channel;
+    channel.onmessage = (event) => {
+      const message = parsePresenterMessage(event.data);
+      if (!message) return;
+      if (message.type === "goto") {
+        setIndex(Math.min(Math.max(message.index, 0), Math.max(steps.length - 1, 0)));
+      } else if (message.type === "request-step") {
+        channel.postMessage({ type: "step", index: indexRef.current });
+      }
+    };
+    return () => {
+      channel.close();
+      channelRef.current = null;
+    };
+  }, [presentation.id, steps.length]);
+
+  useEffect(() => {
+    channelRef.current?.postMessage({ type: "step", index });
+  }, [index]);
+
+  const openPresenterView = useCallback(() => {
+    window.open(
+      `/wiki/presentations/${presentation.id}/present/notes`,
+      `presenter-${presentation.id}`,
+      "width=960,height=680",
+    );
+  }, [presentation.id]);
 
   useEffect(() => {
     // A frame after paint, so the very first flight is measured against a pane that
@@ -109,6 +181,7 @@ function Player({ presentation }: { presentation: PresentationRecord }) {
       ref={containerRef}
       // Covers the wiki rail and the app chrome: presenting owns the whole viewport.
       className="fixed inset-0 z-50 bg-background"
+      style={presentation.background ? { backgroundColor: presentation.background } : undefined}
       onClick={() => move(1)}
     >
       <ReactFlow
@@ -133,11 +206,33 @@ function Player({ presentation }: { presentation: PresentationRecord }) {
         proOptions={{ hideAttribution: false }}
       />
 
+      {playing && steps.length > 0 && (
+        // Progress hint for the running step: a bar that fills over its effective duration.
+        <div className="absolute inset-x-0 top-0 z-10 h-1 bg-foreground/10">
+          <div
+            key={`${index}-${playing}`}
+            className="h-full origin-left bg-indigo-500"
+            style={{ animation: `presentation-step-progress ${resolveStepDuration(steps[index], settings)}ms linear forwards` }}
+          />
+        </div>
+      )}
+
       <div
         className="absolute inset-x-0 bottom-0 flex items-center justify-center gap-2 p-4"
         onClick={(event) => event.stopPropagation()}
       >
         <div className="flex items-center gap-1 rounded-full border bg-background/90 px-2 py-1 shadow-sm backdrop-blur">
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            aria-label={playing ? t("presentations.pause") : t("presentations.play")}
+            disabled={!steps.length}
+            onClick={() => setPlaying((current) => !current)}
+          >
+            {playing ? <Pause className="size-4" /> : <Play className="size-4" />}
+          </Button>
+          <span className="mx-1 h-5 w-px bg-border" />
           <Button type="button" variant="ghost" size="icon-sm" aria-label={t("presentations.previousStep")} disabled={index === 0} onClick={() => move(-1)}>
             <ChevronLeft className="size-4" />
           </Button>
@@ -153,6 +248,9 @@ function Player({ presentation }: { presentation: PresentationRecord }) {
           </Button>
           <Button type="button" variant="ghost" size="icon-sm" aria-label={t("presentations.fullscreen")} onClick={toggleFullscreen}>
             {fullscreen ? <Minimize className="size-4" /> : <Maximize className="size-4" />}
+          </Button>
+          <Button type="button" variant="ghost" size="icon-sm" aria-label={t("presentations.openPresenterView")} onClick={openPresenterView}>
+            <NotebookText className="size-4" />
           </Button>
           <Button
             type="button"

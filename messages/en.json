@@ -2186,6 +2186,7 @@
       "proofing": {
         "languages": {
           "de": "German",
+          "deAt": "German (Austria)",
           "en": "English"
         },
         "switch": "Proofing language: {language}. Switch to {nextLanguage}.",
@@ -2193,6 +2194,7 @@
         "unavailable": "Spelling and grammar checking is currently unavailable",
         "browserFallback": "Fast browser proofing is active. Advanced grammar checking is currently unavailable.",
         "saveFailed": "The proofing language could not be saved.",
+        "picky": "Stricter proofing",
         "dialog": "Correction suggestions",
         "types": {
           "spelling": "Spelling",
@@ -2202,6 +2204,7 @@
         "replaceAll": "Replace all matching occurrences",
         "ignore": "Ignore this suggestion",
         "addToDictionary": "Add to shared dictionary",
+        "disableRule": "Disable rule",
         "dictionaryAdded": "“{word}” was added to the dictionary.",
         "dictionaryFailed": "The word could not be added to the dictionary.",
         "replacedAll": "{count, plural, one {# occurrence replaced} other {# occurrences replaced}}",
@@ -2267,6 +2270,9 @@
         "locked": "This page is already being edited in another window. Your local draft remains safe.",
         "takeover": "Take over editing",
         "takeoverFailed": "Editing could not be taken over."
+      },
+      "paste": {
+        "imagesDropped": "Images from the pasted content were not included. Use \"Insert image\" to add them."
       },
       "search": {
         "title": "Find and replace",
@@ -2687,6 +2693,18 @@
             "kommentar"
           ]
         },
+        "crossReference": {
+          "label": "Cross-reference",
+          "description": "Reference a heading, figure, table or annex",
+          "keywords": [
+            "reference",
+            "cross-reference",
+            "figure",
+            "table",
+            "annex",
+            "verweis"
+          ]
+        },
         "mermaidDiagram": {
           "label": "Mermaid diagram",
           "description": "Write a diagram as text",
@@ -3006,6 +3024,7 @@
       "overview": "Overview",
       "save": "Save",
       "present": "Present",
+      "exportPdf": "Export PDF",
       "exitPresent": "Exit presentation",
       "fullscreen": "Fullscreen",
       "previousStep": "Previous stop",
@@ -3021,6 +3040,15 @@
       "deleteConfirm": "Permanently delete the presentation “{title}”?",
       "deleteFailed": "The presentation could not be deleted.",
       "createFailed": "The presentation could not be created.",
+      "chooseTemplate": "Choose a template",
+      "chooseTemplateDescription": "Start from a blank canvas or one of the built-in layouts.",
+      "templates": {
+        "blank": "Blank",
+        "timeline": "Timeline",
+        "hub": "Circle / Hub",
+        "pitch": "Pitch",
+        "mindmap": "Mindmap"
+      },
       "saveFailed": "Saving failed.",
       "uploadFailed": "The image could not be uploaded.",
       "textContent": "Text",
@@ -3030,10 +3058,30 @@
       "frameLabel": "Label",
       "colorDefault": "Default colour",
       "colorNamed": "Colour {color}",
+      "addShape": "Shape",
+      "rotation": "Rotation (degrees)",
+      "bringToFront": "Bring to front",
+      "sendToBack": "Send to back",
+      "duplicateElement": "Duplicate element",
+      "elementBackground": "Element background",
+      "canvas": "Canvas",
+      "canvasBackground": "Canvas background",
+      "clearColor": "Reset colour",
+      "fill": "Fill",
+      "stroke": "Stroke",
+      "strokeWidth": "Stroke width",
+      "opacity": "Opacity",
+      "shapeKinds": {
+        "rect": "Rectangle",
+        "ellipse": "Ellipse",
+        "arrow": "Arrow",
+        "line": "Line"
+      },
       "elementTypes": {
         "text": "Text",
         "image": "Image",
-        "frame": "Frame"
+        "frame": "Frame",
+        "shape": "Shape"
       },
       "frameShapes": {
         "rect": "Rectangle",
@@ -3050,7 +3098,36 @@
         "saving": "Saving…",
         "saved": "Saved",
         "error": "Error"
-      }
+      },
+      "locked": "Someone else is editing this presentation. You can look around, but changes are not saved.",
+      "lockedBy": "{name} is editing this presentation. You can look around, but changes are not saved.",
+      "history": "History",
+      "noRevisions": "No versions yet. A version is kept whenever you save.",
+      "restore": "Restore",
+      "restoreConfirm": "Restore this version? The current state is saved as a version first.",
+      "restoreFailed": "The version could not be restored.",
+      "play": "Play",
+      "pause": "Pause",
+      "playbackSettings": "Playback settings",
+      "defaultStepDuration": "Default stop duration (s)",
+      "loopPlayback": "Loop",
+      "cameraTransition": "Camera transition (s)",
+      "cameraEasing": "Easing",
+      "easings": {
+        "linear": "Linear",
+        "ease": "Ease",
+        "ease-in": "Ease in",
+        "ease-out": "Ease out",
+        "ease-in-out": "Ease in-out"
+      },
+      "stepDuration": "Stop duration (s)",
+      "stepDurationHint": "Empty uses the default duration.",
+      "speakerNotes": "Speaker notes",
+      "speakerNotesPlaceholder": "Notes for this stop, visible only in the presenter view",
+      "openPresenterView": "Open presenter view",
+      "noNotes": "No notes for this stop",
+      "nextStepPreview": "Next",
+      "noNextStep": "This is the last stop"
     }
   },
   "settings": {

@@ -7,7 +7,7 @@ import {
 } from "./document-settings";
 import type { TiptapNode } from "./tiptap";
 import { formatIeeeCitation } from "./citations";
-import { figureNumberLabel } from "./figure-caption";
+import { figureNumberLabel, resolveCrossReferenceLabels } from "./figure-caption";
 import {
   normalizeWikiTypography,
   wikiFontStack,
@@ -15,6 +15,7 @@ import {
 } from "./wiki-typography";
 
 const DEFAULT_FIGURE_LABEL = "Figure";
+const DEFAULT_TABLE_LABEL = "Table";
 
 export type DocumentAssetResolver = (input: {
   attachmentId: string;
@@ -106,7 +107,7 @@ function renderMarks(text: string, marks: TiptapNode["marks"]) {
   }, escapeHtml(text));
 }
 
-function collectHeadings(doc: TiptapNode) {
+export function collectHeadings(doc: TiptapNode) {
   const headings: Array<{ id: string; level: number; text: string }> = [];
   function text(node: TiptapNode): string {
     return node.text ?? (node.content ?? []).map(text).join("");
@@ -124,7 +125,7 @@ function collectHeadings(doc: TiptapNode) {
   return headings;
 }
 
-function collectFigures(doc: TiptapNode) {
+export function collectFigures(doc: TiptapNode) {
   const figures: Array<{ nodeId: string; caption: string }> = [];
   function walk(node: TiptapNode) {
     if (node.type === "commentableImage" && node.attrs?.includeInFigureIndex !== false) {
@@ -137,7 +138,7 @@ function collectFigures(doc: TiptapNode) {
   return figures;
 }
 
-function collectTables(doc: TiptapNode) {
+export function collectTables(doc: TiptapNode) {
   const tables: Array<{ tableId: string; caption: string }> = [];
   function walk(node: TiptapNode) {
     if (node.type === "markdownTable" && node.attrs?.includeInTableIndex !== false) {
@@ -148,6 +149,19 @@ function collectTables(doc: TiptapNode) {
   }
   walk(doc);
   return tables;
+}
+
+export function collectAnnexes(doc: TiptapNode) {
+  const annexes: Array<{ id: string; title: string }> = [];
+  function walk(node: TiptapNode) {
+    if (node.type === "annexMarker") {
+      const id = String(node.attrs?.annexId ?? "").trim();
+      if (id) annexes.push({ id, title: String(node.attrs?.title ?? "Annex") });
+    }
+    for (const child of node.content ?? []) walk(child);
+  }
+  walk(doc);
+  return annexes;
 }
 
 function variableValue(node: TiptapNode, settings: DocumentSettingsV1) {
@@ -169,9 +183,10 @@ async function renderNode(
   headings: ReturnType<typeof collectHeadings>,
   figures: ReturnType<typeof collectFigures>,
   tables: ReturnType<typeof collectTables>,
+  crossReferenceLabels: Map<string, string>,
 ): Promise<string> {
   const children = async () => (await Promise.all(
-    (node.content ?? []).map((child) => renderNode(child, input, headings, figures, tables)),
+    (node.content ?? []).map((child) => renderNode(child, input, headings, figures, tables, crossReferenceLabels)),
   )).join("");
   const attrs = node.attrs ?? {};
   const keepAttrs = [
@@ -258,7 +273,7 @@ async function renderNode(
       const rows = node.content ?? [];
       const headerRows = rows.filter((row) => row.content?.some((cell) => cell.type === "markdownTableHeader"));
       const bodyRows = rows.filter((row) => !headerRows.includes(row));
-      const renderRows = async (items: TiptapNode[]) => (await Promise.all(items.map((row) => renderNode(row, input, headings, figures, tables)))).join("");
+      const renderRows = async (items: TiptapNode[]) => (await Promise.all(items.map((row) => renderNode(row, input, headings, figures, tables, crossReferenceLabels)))).join("");
       const caption = String(attrs.caption ?? "").trim();
       const tableNumber = tables.findIndex((table) => table.tableId && table.tableId === String(attrs.tableId ?? "")) + 1;
       const tableId = tableNumber ? " id=\"table-" + tableNumber + "\"" : "";
@@ -296,7 +311,7 @@ async function renderNode(
         : `<span class="document-variable unresolved">${escapeHtml(`{${attrs.key || "variable"}}`)}</span>`;
     }
     case "crossReference":
-      return `<a class="cross-reference" href="#${escapeHtml(attrs.targetId)}">${escapeHtml(attrs.label || "Reference")}</a>`;
+      return `<a class="cross-reference" href="#${escapeHtml(attrs.targetId)}">${escapeHtml(crossReferenceLabels.get(String(attrs.targetId ?? "")) || attrs.label || "Reference")}</a>`;
     case "annexMarker":
       return `<section id="${escapeHtml(attrs.annexId)}" class="annex"><h1>${escapeHtml(attrs.title || "Annex")}</h1></section>`;
     case "signatureBlock":
@@ -466,19 +481,29 @@ export async function renderDocumentHtml(input: RenderDocumentInput): Promise<Re
   const headings = collectHeadings(normalizedDoc);
   const figures = collectFigures(normalizedDoc);
   const tables = collectTables(normalizedDoc);
-  const content = await renderNode(normalizedDoc, normalizedInput, headings, figures, tables);
+  const annexes = collectAnnexes(normalizedDoc);
+  const figureLabel = input.figureLabel ?? DEFAULT_FIGURE_LABEL;
+  const tableLabel = input.tableLabel ?? DEFAULT_TABLE_LABEL;
+  const crossReferenceLabels = resolveCrossReferenceLabels({
+    headings,
+    annexes,
+    figures: figures.map((figure) => ({ id: figure.nodeId, caption: figure.caption })),
+    tables: tables.map((table) => ({ id: table.tableId, caption: table.caption })),
+    figureLabel,
+    tableLabel,
+  });
+  const content = await renderNode(normalizedDoc, normalizedInput, headings, figures, tables, crossReferenceLabels);
   const cover = settings.cover.enabled
     ? `<section class="cover"><p class="eyebrow">${escapeHtml(settings.cover.eyebrow)}</p><h1>${escapeHtml(input.title)}</h1>${settings.cover.subtitle ? `<p class="subtitle">${escapeHtml(settings.cover.subtitle)}</p>` : ""}<p class="meta">${escapeHtml(settings.variables.applicant)}${settings.variables.programme ? ` · ${escapeHtml(settings.variables.programme)}` : ""}${settings.variables.date ? ` · ${escapeHtml(settings.variables.date)}` : ""}</p></section>`
     : "";
   const references = settings.bibliography.enabled && input.references?.length
     ? `<section class="bibliography"><h2>${escapeHtml(settings.bibliography.heading)}</h2><ol>${input.references.map((entry) => `<li>${escapeHtml(entry)}</li>`).join("")}</ol></section>`
     : "";
-  const figureLabel = input.figureLabel ?? DEFAULT_FIGURE_LABEL;
   const figureIndex = settings.figures.enabled && figures.length
     ? `<section class="figure-index"><h2>${escapeHtml(settings.figures.heading)}</h2><ol>${figures.map((figure, index) => `<li><a class="figure-index-number" href="#figure-${index + 1}">${escapeHtml(figureNumberLabel(figure.caption, figureLabel, index + 1))}</a><a href="#figure-${index + 1}">${escapeHtml(figure.caption)}</a></li>`).join("")}</ol></section>`
     : "";
   const tableIndex = settings.tables.enabled && tables.length
-    ? "<section class=\"table-index\"><h2>" + escapeHtml(settings.tables.heading) + "</h2><ol>" + tables.map((table, index) => "<li><a href=\"#table-" + (index + 1) + "\">" + escapeHtml(input.tableLabel ?? "Table") + " " + (index + 1) + "</a><a href=\"#table-" + (index + 1) + "\">" + escapeHtml(table.caption) + "</a></li>").join("") + "</ol></section>"
+    ? "<section class=\"table-index\"><h2>" + escapeHtml(settings.tables.heading) + "</h2><ol>" + tables.map((table, index) => "<li><a href=\"#table-" + (index + 1) + "\">" + escapeHtml(tableLabel) + " " + (index + 1) + "</a><a href=\"#table-" + (index + 1) + "\">" + escapeHtml(table.caption) + "</a></li>").join("") + "</ol></section>"
     : "";
   const article = "<article class=\"" + (settings.page.numberedHeadings ? "numbered-headings" : "") + "\">" + content + figureIndex + tableIndex + references + "</article>";
   const bodyHtml = `${cover}${article}`;

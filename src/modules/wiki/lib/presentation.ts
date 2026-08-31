@@ -9,8 +9,11 @@ import { z } from "zod";
 export const presentationFrameShapes = ["rect", "circle", "none"] as const;
 export type PresentationFrameShape = (typeof presentationFrameShapes)[number];
 
-export const presentationElementTypes = ["text", "image", "frame"] as const;
+export const presentationElementTypes = ["text", "image", "frame", "shape"] as const;
 export type PresentationElementType = (typeof presentationElementTypes)[number];
+
+export const presentationShapeKinds = ["rect", "ellipse", "arrow", "line"] as const;
+export type PresentationShapeKind = (typeof presentationShapeKinds)[number];
 
 const geometrySchema = {
   id: z.string().min(1).max(64),
@@ -19,6 +22,8 @@ const geometrySchema = {
   width: z.number().finite().min(20).max(20_000),
   height: z.number().finite().min(20).max(20_000),
   rotation: z.number().finite().min(-360).max(360).default(0),
+  /** Optional so every presentation saved before backgrounds existed still parses. */
+  background: z.string().max(32).optional(),
 };
 
 const textElementSchema = z.object({
@@ -52,36 +57,134 @@ const frameElementSchema = z.object({
   }),
 });
 
+/** Empty `fill`/`stroke` mean "no fill" and "follow the theme", so shapes read on both. */
+const shapeElementSchema = z.object({
+  ...geometrySchema,
+  type: z.literal("shape"),
+  content: z.object({
+    shape: z.enum(presentationShapeKinds).default("rect"),
+    fill: z.string().max(32).default(""),
+    stroke: z.string().max(32).default(""),
+    strokeWidth: z.number().finite().min(0).max(200).default(2),
+    opacity: z.number().finite().min(0).max(1).default(1),
+  }),
+});
+
 export const presentationElementSchema = z.discriminatedUnion("type", [
   textElementSchema,
   imageElementSchema,
   frameElementSchema,
+  shapeElementSchema,
 ]);
 export type PresentationElement = z.infer<typeof presentationElementSchema>;
 export type PresentationTextElement = z.infer<typeof textElementSchema>;
 export type PresentationImageElement = z.infer<typeof imageElementSchema>;
 export type PresentationFrameElement = z.infer<typeof frameElementSchema>;
+export type PresentationShapeElement = z.infer<typeof shapeElementSchema>;
 
 export const presentationStepSchema = z.object({
   id: z.string().min(1).max(64),
   elementId: z.string().min(1).max(64),
+  // Overrides the presentation's default autoplay duration for this stop only.
+  durationMs: z.number().int().min(500).max(120_000).optional(),
+  // Optional and additive so presentations saved before presenter notes existed still parse.
+  notes: z.string().max(5_000).optional(),
 });
 export type PresentationStep = z.infer<typeof presentationStepSchema>;
 
 export const presentationElementsSchema = presentationElementSchema.array().max(500);
 export const presentationStepsSchema = presentationStepSchema.array().max(500);
 
+export const presentationCameraEasings = ["linear", "ease", "ease-in", "ease-out", "ease-in-out"] as const;
+export type PresentationCameraEasing = (typeof presentationCameraEasings)[number];
+
+/** Playback settings for one presentation: autoplay pacing plus the camera curve shared
+ * by manual step navigation and autoplay, so the two never feel different. */
+export const presentationSettingsSchema = z.object({
+  defaultStepDurationMs: z.number().int().min(500).max(120_000).default(4_000),
+  loop: z.boolean().default(false),
+  cameraTransitionMs: z.number().int().min(100).max(5_000).default(700),
+  cameraEasing: z.enum(presentationCameraEasings).default("ease-in-out"),
+});
+export type PresentationSettings = z.infer<typeof presentationSettingsSchema>;
+export const defaultPresentationSettings: PresentationSettings = presentationSettingsSchema.parse({});
+
+// react-flow's fitBounds/fitView take a d3-ease-style `(t) => t` function rather than a
+// CSS easing keyword, so the setting's name is mapped to the small set of standard curves.
+export const presentationCameraEasingFns: Record<PresentationCameraEasing, (t: number) => number> = {
+  linear: (t) => t,
+  ease: (t) => t * t * (3 - 2 * t),
+  "ease-in": (t) => t * t,
+  "ease-out": (t) => t * (2 - t),
+  "ease-in-out": (t) => (t < 0.5 ? 2 * t * t : 1 - ((-2 * t + 2) ** 2) / 2),
+};
+
 export type PresentationBounds = { x: number; y: number; width: number; height: number };
 
 /** Padding around a step target, as a share of the target's size. */
 export const PRESENTATION_CAMERA_PADDING = 0.12;
 
-export function parsePresentationElements(json: string): PresentationElement[] {
+/**
+ * The canvas column used to hold a bare element array. It now holds an envelope that can
+ * also carry the canvas background and playback settings, and the bare array stays
+ * readable so presentations saved before the envelope existed keep opening.
+ */
+export const presentationCanvasSchema = z.union([
+  z.object({
+    elements: presentationElementsSchema,
+    background: z.string().max(32).default(""),
+    settings: presentationSettingsSchema.default(defaultPresentationSettings),
+  }),
+  presentationElementsSchema.transform((elements) => ({
+    elements,
+    background: "",
+    settings: defaultPresentationSettings,
+  })),
+]);
+export type PresentationCanvas = z.infer<typeof presentationCanvasSchema>;
+
+export function parsePresentationCanvas(json: string): PresentationCanvas {
   try {
-    return presentationElementsSchema.parse(JSON.parse(json));
+    return presentationCanvasSchema.parse(JSON.parse(json));
   } catch {
-    return [];
+    return { elements: [], background: "", settings: defaultPresentationSettings };
   }
+}
+
+/**
+ * Z-order is the order of the array: the last element of its band paints on top. Frames
+ * keep their own band behind everything else (see `elementsToNodes`), so bringing a frame
+ * to the front raises it above other frames, not above the content sitting inside it.
+ */
+export function reorderElement(
+  elements: PresentationElement[],
+  id: string,
+  to: "front" | "back",
+): PresentationElement[] {
+  const index = elements.findIndex((element) => element.id === id);
+  if (index < 0) return elements;
+  const rest = elements.filter((element) => element.id !== id);
+  return to === "front" ? [...rest, elements[index]] : [elements[index], ...rest];
+}
+
+/** Offset so the copy is visibly its own element rather than hiding under the original. */
+export const PRESENTATION_DUPLICATE_OFFSET = 24;
+
+export function duplicateElement(
+  elements: PresentationElement[],
+  id: string,
+  newId: string,
+): { elements: PresentationElement[]; element: PresentationElement | null } {
+  const source = elements.find((element) => element.id === id);
+  if (!source) return { elements, element: null };
+  const copy: PresentationElement = {
+    ...source,
+    id: newId,
+    x: source.x + PRESENTATION_DUPLICATE_OFFSET,
+    y: source.y + PRESENTATION_DUPLICATE_OFFSET,
+    content: { ...source.content },
+  } as PresentationElement;
+  return { elements: [...elements, copy], element: copy };
 }
 
 export function parsePresentationSteps(json: string): PresentationStep[] {
@@ -108,6 +211,36 @@ export function unionBounds(elements: PresentationElement[]): PresentationBounds
   const right = Math.max(...elements.map((element) => element.x + element.width));
   const bottom = Math.max(...elements.map((element) => element.y + element.height));
   return { x: left, y: top, width: right - left, height: bottom - top };
+}
+
+/**
+ * A4 landscape at the CSS reference resolution of 96 dpi, which is what a printer hands
+ * `@page { size: A4 landscape; margin: 0 }`. Keeping the page in px lets the export reuse
+ * the canvas' own pixel geometry unchanged.
+ */
+export const PRESENTATION_PAGE_SIZE = { width: 1122.5, height: 793.7 };
+
+export type PresentationPageTransform = { scale: number; offsetX: number; offsetY: number };
+
+/**
+ * The print equivalent of the player's `fitBounds`: pad the step's target, fit it to the
+ * page, and centre it. A canvas point p lands at `p * scale + offset` on the page, so one
+ * transform frames a whole page's worth of elements.
+ */
+export function fitBoundsToPage(
+  bounds: PresentationBounds,
+  page: { width: number; height: number } = PRESENTATION_PAGE_SIZE,
+  padding: number = PRESENTATION_CAMERA_PADDING,
+): PresentationPageTransform {
+  const scale = Math.min(
+    page.width / (Math.max(bounds.width, 1) * (1 + padding)),
+    page.height / (Math.max(bounds.height, 1) * (1 + padding)),
+  );
+  return {
+    scale,
+    offsetX: page.width / 2 - (bounds.x + bounds.width / 2) * scale,
+    offsetY: page.height / 2 - (bounds.y + bounds.height / 2) * scale,
+  };
 }
 
 /**
@@ -143,11 +276,59 @@ export function stepTarget(
   return elements.find((element) => element.id === step.elementId) ?? null;
 }
 
+/**
+ * Revision and lease policy, copied from the wiki page editor so both editors behave the
+ * same: one automatic snapshot per author per five minutes, and a lease that dies sixty
+ * seconds after the last heartbeat.
+ */
+export const PRESENTATION_REVISION_THROTTLE_MS = 5 * 60_000;
+export const PRESENTATION_LEASE_TIMEOUT_MS = 60_000;
+
+/** A burst of autosaves must leave one snapshot, not one per keystroke pause. */
+export function shouldSnapshotRevision(lastRevisionAt: number | null, now: number): boolean {
+  return lastRevisionAt === null || now - lastRevisionAt > PRESENTATION_REVISION_THROTTLE_MS;
+}
+
+/** True while somebody else is actively editing; a lease past its timeout is free to take. */
+export function isLeaseHeldByOther(
+  lease: { sessionId: string; heartbeatAt: number } | null,
+  sessionId: string,
+  now: number,
+): boolean {
+  return Boolean(lease && lease.sessionId !== sessionId && now - lease.heartbeatAt <= PRESENTATION_LEASE_TIMEOUT_MS);
+}
+
+/** A step's own duration wins over the presentation's default autoplay pacing. */
+export function resolveStepDuration(step: PresentationStep, settings: PresentationSettings): number {
+  return step.durationMs ?? settings.defaultStepDurationMs;
+}
+
+/** Elements that belong to a step's target — the target itself, plus anything nested
+ * inside its bounds — which is what fades in together when the step arrives. */
+export function elementsWithinStep(
+  target: PresentationElement,
+  elements: PresentationElement[],
+): PresentationElement[] {
+  const bounds = elementBounds(target);
+  return elements.filter((element) => {
+    if (element.id === target.id) return true;
+    const box = elementBounds(element);
+    return (
+      box.x >= bounds.x &&
+      box.y >= bounds.y &&
+      box.x + box.width <= bounds.x + bounds.width &&
+      box.y + box.height <= bounds.y + bounds.height
+    );
+  });
+}
+
 export function stepLabel(element: PresentationElement, index: number): string {
   const raw =
     element.type === "frame" ? element.content.label
       : element.type === "text" ? element.content.text
-        : element.content.alt;
+        : element.type === "image" ? element.content.alt
+          // A shape has no words of its own, so it is named by its position in the path.
+          : "";
   const trimmed = raw.trim().replace(/\s+/g, " ");
   return trimmed ? trimmed.slice(0, 60) : `${index + 1}`;
 }

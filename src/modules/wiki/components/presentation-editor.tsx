@@ -34,14 +34,22 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import {
+  ArrowDownToLine,
+  ArrowUpToLine,
   Check,
+  Copy,
+  FileDown,
   GripVertical,
+  History,
   ImagePlus,
   Loader2,
+  Lock,
   Maximize2,
   Play,
   Plus,
   Save,
+  Settings,
+  Shapes,
   Square,
   Trash2,
   TriangleAlert,
@@ -52,17 +60,32 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
-import { renamePresentation, savePresentation } from "../presentation-actions";
-import type { PresentationRecord } from "../presentation-queries";
+import {
+  acquirePresentationEditLease,
+  heartbeatPresentationEditLease,
+  releasePresentationEditLease,
+  renamePresentation,
+  restorePresentationRevision,
+  savePresentation,
+} from "../presentation-actions";
+import type { PresentationRecord, PresentationRevisionItem } from "../presentation-queries";
 import {
   PRESENTATION_CAMERA_PADDING,
+  duplicateElement,
   elementBounds,
   moveStep,
+  presentationCameraEasings,
   presentationFrameShapes,
+  presentationShapeKinds,
+  reorderElement,
   stepLabel,
   stepTarget,
+  type PresentationCameraEasing,
   type PresentationElement,
+  type PresentationSettings,
   type PresentationStep,
 } from "../lib/presentation";
 import { elementsToNodes, presentationNodeTypes, type PresentationNode } from "./presentation-canvas";
@@ -72,6 +95,8 @@ const COLORS = ["", "#6366f1", "#0d9488", "#f59e0b", "#e11d48", "#0ea5e9"] as co
 const AUTOSAVE_DELAY = 1_200;
 const CAMERA_DURATION = 700;
 const MAX_IMAGE_SIDE = 480;
+/** Well inside the server's lease timeout, so a live editor never looks abandoned. */
+const LEASE_HEARTBEAT_INTERVAL = 15_000;
 
 type SaveState = "idle" | "unsaved" | "saving" | "saved" | "error";
 
@@ -81,6 +106,7 @@ function StepRow({
   active,
   label,
   missing,
+  readOnly,
   onSelect,
   onRemove,
   removeLabel,
@@ -90,6 +116,7 @@ function StepRow({
   active: boolean;
   label: string;
   missing: boolean;
+  readOnly: boolean;
   onSelect: () => void;
   onRemove: () => void;
   removeLabel: string;
@@ -104,7 +131,13 @@ function StepRow({
         active && "border-indigo-500 bg-indigo-50 dark:bg-indigo-950/40",
       )}
     >
-      <button type="button" className="cursor-grab touch-none rounded p-0.5 text-muted-foreground" {...attributes} {...listeners}>
+      <button
+        type="button"
+        disabled={readOnly}
+        className="cursor-grab touch-none rounded p-0.5 text-muted-foreground disabled:cursor-default disabled:opacity-40"
+        {...attributes}
+        {...listeners}
+      >
         <GripVertical className="size-4" />
       </button>
       <span className="w-5 shrink-0 text-right text-xs tabular-nums text-muted-foreground">{index + 1}</span>
@@ -116,36 +149,68 @@ function StepRow({
       >
         {label}
       </button>
-      <Button type="button" variant="ghost" size="icon-sm" aria-label={removeLabel} onClick={onRemove}>
+      <Button type="button" variant="ghost" size="icon-sm" disabled={readOnly} aria-label={removeLabel} onClick={onRemove}>
         <X className="size-3.5" />
       </Button>
     </li>
   );
 }
 
-function Editor({ presentation }: { presentation: PresentationRecord }) {
+function Editor({
+  presentation,
+  revisions,
+}: {
+  presentation: PresentationRecord;
+  revisions: PresentationRevisionItem[];
+}) {
   const t = useTranslations("wiki");
   const router = useRouter();
   const reactFlow = useReactFlow<PresentationNode>();
   const { resolvedTheme } = useTheme();
   const canvasRef = useRef<HTMLDivElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
+  const sessionId = useRef(globalThis.crypto.randomUUID());
 
+  const [lockedBy, setLockedBy] = useState<string | null>(null);
+  const [restoring, setRestoring] = useState<string | null>(null);
+  const readOnly = lockedBy !== null;
   const [title, setTitle] = useState(presentation.title);
   const [elements, setElements] = useState<PresentationElement[]>(presentation.elements);
+  const [background, setBackground] = useState(presentation.background);
   const [steps, setSteps] = useState<PresentationStep[]>(presentation.steps);
+  const [settings, setSettings] = useState<PresentationSettings>(presentation.settings);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [activeStepId, setActiveStepId] = useState<string | null>(null);
   const [saveState, setSaveState] = useState<SaveState>("idle");
   const [uploading, setUploading] = useState(false);
 
   const selected = elements.find((element) => element.id === selectedId) ?? null;
+  const activeStep = steps.find((step) => step.id === activeStepId) ?? null;
 
   const persist = useCallback(
-    async (nextElements: PresentationElement[], nextSteps: PresentationStep[]) => {
+    async (
+      nextElements: PresentationElement[],
+      nextSteps: PresentationStep[],
+      nextBackground: string,
+      nextSettings: PresentationSettings,
+    ) => {
       setSaveState("saving");
       try {
-        await savePresentation({ id: presentation.id, elements: nextElements, steps: nextSteps });
+        const result = await savePresentation({
+          id: presentation.id,
+          elements: nextElements,
+          steps: nextSteps,
+          background: nextBackground,
+          settings: nextSettings,
+          sessionId: sessionId.current,
+        });
+        // Someone took over while this tab was editing: stop writing rather than
+        // overwriting their canvas with a stale one.
+        if (result.locked) {
+          setLockedBy(result.holderName);
+          setSaveState("error");
+          return;
+        }
         setSaveState("saved");
       } catch {
         setSaveState("error");
@@ -158,10 +223,40 @@ function Editor({ presentation }: { presentation: PresentationRecord }) {
   // Debounced autosave: every edit marks the canvas unsaved, and the last edit of a
   // burst is the one that writes.
   useEffect(() => {
-    if (saveState !== "unsaved") return;
-    const timer = setTimeout(() => void persist(elements, steps), AUTOSAVE_DELAY);
+    if (saveState !== "unsaved" || readOnly) return;
+    const timer = setTimeout(() => void persist(elements, steps, background, settings), AUTOSAVE_DELAY);
     return () => clearTimeout(timer);
-  }, [saveState, elements, steps, persist]);
+  }, [saveState, elements, steps, background, settings, persist, readOnly]);
+
+  // Edit lease: claim it on open, keep it warm while the tab lives, hand it back on exit.
+  // A missed release is harmless — the lease expires on its own.
+  useEffect(() => {
+    const session = sessionId.current;
+    let disposed = false;
+    const claim = () => {
+      void acquirePresentationEditLease({ id: presentation.id, sessionId: session })
+        .then((result) => {
+          if (!disposed) setLockedBy(result.editable ? null : result.holderName);
+        })
+        .catch(() => undefined);
+    };
+    claim();
+    const timer = window.setInterval(() => {
+      if (disposed) return;
+      // While locked out, keep asking: the holder's lease expires and this tab takes over
+      // without the author having to reload.
+      void heartbeatPresentationEditLease({ id: presentation.id, sessionId: session })
+        .then((result) => {
+          if (!disposed && !result.editable) claim();
+        })
+        .catch(() => undefined);
+    }, LEASE_HEARTBEAT_INTERVAL);
+    return () => {
+      disposed = true;
+      window.clearInterval(timer);
+      void releasePresentationEditLease({ id: presentation.id, sessionId: session }).catch(() => undefined);
+    };
+  }, [presentation.id]);
 
   useEffect(() => {
     if (saveState !== "unsaved" && saveState !== "saving") return;
@@ -175,6 +270,16 @@ function Editor({ presentation }: { presentation: PresentationRecord }) {
     setSaveState("unsaved");
   }, []);
 
+  const updateSettings = useCallback((update: Partial<PresentationSettings>) => {
+    setSettings((current) => ({ ...current, ...update }));
+    setSaveState("unsaved");
+  }, []);
+
+  const updateStepDuration = useCallback((id: string, durationMs: number | undefined) => {
+    setSteps((current) => current.map((step) => (step.id === id ? { ...step, durationMs } : step)));
+    setSaveState("unsaved");
+  }, []);
+
   const onTextChange = useCallback(
     (id: string, text: string) => {
       updateElement(id, (element) => (element.type === "text" ? { ...element, content: { ...element.content, text } } : element));
@@ -183,8 +288,8 @@ function Editor({ presentation }: { presentation: PresentationRecord }) {
   );
 
   const nodes = useMemo(
-    () => elementsToNodes(elements, { editable: true, selectedId, onTextChange }),
-    [elements, selectedId, onTextChange],
+    () => elementsToNodes(elements, { editable: !readOnly, selectedId, onTextChange }),
+    [elements, selectedId, onTextChange, readOnly],
   );
 
   const onNodesChange = useCallback((changes: NodeChange<PresentationNode>[]) => {
@@ -212,8 +317,6 @@ function Editor({ presentation }: { presentation: PresentationRecord }) {
               ? { ...element, width, height }
               : element,
           );
-        } else if (change.type === "remove") {
-          next = next.filter((element) => element.id !== change.id);
         }
       }
       touched = next !== current;
@@ -238,6 +341,49 @@ function Editor({ presentation }: { presentation: PresentationRecord }) {
     [],
   );
 
+  const deleteElement = useCallback((id: string) => {
+    setElements((current) => current.filter((element) => element.id !== id));
+    setSteps((current) => current.filter((step) => step.elementId !== id));
+    setSelectedId((current) => (current === id ? null : current));
+    setSaveState("unsaved");
+  }, []);
+
+  const duplicateSelected = useCallback((id: string) => {
+    setElements((current) => {
+      const { elements: next, element } = duplicateElement(current, id, createId());
+      if (element) setSelectedId(element.id);
+      return next;
+    });
+    setSaveState("unsaved");
+  }, []);
+
+  const reorderSelected = useCallback((id: string, to: "front" | "back") => {
+    setElements((current) => reorderElement(current, id, to));
+    setSaveState("unsaved");
+  }, []);
+
+  /**
+   * Delete and Ctrl+D are handled here rather than by React Flow's `deleteKeyCode`, so the
+   * shortcuts work no matter which pane has focus — and so a copy is offset instead of
+   * landing exactly on the original. Typing in a field is never a canvas command.
+   */
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target?.closest("input, textarea, select, [contenteditable='true']")) return;
+      if (!selectedId || readOnly) return;
+      if (event.key === "Delete" || event.key === "Backspace") {
+        event.preventDefault();
+        deleteElement(selectedId);
+      } else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "d") {
+        event.preventDefault();
+        duplicateSelected(selectedId);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [deleteElement, duplicateSelected, selectedId, readOnly]);
+
   const addText = useCallback(() => {
     const { x, y } = viewportCenter();
     addElement({
@@ -251,6 +397,14 @@ function Editor({ presentation }: { presentation: PresentationRecord }) {
     addElement({
       id: createId(), type: "frame", x: x - 320, y: y - 200, width: 640, height: 400, rotation: 0,
       content: { label: "", shape: "rect", color: "" },
+    });
+  }, [addElement, viewportCenter]);
+
+  const addShape = useCallback(() => {
+    const { x, y } = viewportCenter();
+    addElement({
+      id: createId(), type: "shape", x: x - 140, y: y - 90, width: 280, height: 180, rotation: 0,
+      content: { shape: "rect", fill: "", stroke: "", strokeWidth: 2, opacity: 1 },
     });
   }, [addElement, viewportCenter]);
 
@@ -306,6 +460,13 @@ function Editor({ presentation }: { presentation: PresentationRecord }) {
     setSaveState("unsaved");
   }, [selected]);
 
+  const updateStepNotes = useCallback((stepId: string, notes: string) => {
+    setSteps((current) =>
+      current.map((step) => (step.id === stepId ? { ...step, notes: notes || undefined } : step)),
+    );
+    setSaveState("unsaved");
+  }, []);
+
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
@@ -313,14 +474,14 @@ function Editor({ presentation }: { presentation: PresentationRecord }) {
 
   const onStepDragEnd = useCallback((event: DragEndEvent) => {
     const { active, over } = event;
-    if (!over || active.id === over.id) return;
+    if (readOnly || !over || active.id === over.id) return;
     setSteps((current) => {
       const from = current.findIndex((step) => step.id === active.id);
       const to = current.findIndex((step) => step.id === over.id);
       return moveStep(current, from, to);
     });
     setSaveState("unsaved");
-  }, []);
+  }, [readOnly]);
 
   const saveIndicator = {
     idle: null,
@@ -349,6 +510,23 @@ function Editor({ presentation }: { presentation: PresentationRecord }) {
     </div>
   );
 
+  /** Native picker plus a reset, because `<input type="color">` cannot express "none". */
+  const colorField = (label: string, value: string, onPick: (color: string) => void) => (
+    <div className="flex items-center gap-2 text-xs text-muted-foreground">
+      <span className="min-w-0 flex-1 truncate">{label}</span>
+      <input
+        type="color"
+        aria-label={label}
+        value={/^#[0-9a-f]{6}$/i.test(value) ? value : "#ffffff"}
+        onChange={(event) => onPick(event.target.value)}
+        className="h-7 w-10 cursor-pointer rounded border bg-transparent p-0.5"
+      />
+      <Button type="button" variant="ghost" size="icon-sm" aria-label={t("presentations.clearColor")} onClick={() => onPick("")}>
+        <X className="size-3.5" />
+      </Button>
+    </div>
+  );
+
   return (
     <div className="flex h-[calc(100vh-3.5rem)] min-h-0 flex-col md:h-screen">
       <header className="flex flex-wrap items-center gap-2 border-b bg-background px-3 py-2">
@@ -359,6 +537,7 @@ function Editor({ presentation }: { presentation: PresentationRecord }) {
         <Input
           value={title}
           maxLength={200}
+          disabled={readOnly}
           aria-label={t("presentations.presentationTitle")}
           className="h-8 w-56 font-medium"
           onChange={(event) => setTitle(event.target.value)}
@@ -374,12 +553,13 @@ function Editor({ presentation }: { presentation: PresentationRecord }) {
           }}
         />
         <span className="mx-1 h-5 w-px bg-border" />
-        <Button type="button" variant="outline" size="sm" onClick={addText}><Type className="size-3.5" />{t("presentations.addText")}</Button>
-        <Button type="button" variant="outline" size="sm" disabled={uploading} onClick={() => imageInputRef.current?.click()}>
+        <Button type="button" variant="outline" size="sm" disabled={readOnly} onClick={addText}><Type className="size-3.5" />{t("presentations.addText")}</Button>
+        <Button type="button" variant="outline" size="sm" disabled={uploading || readOnly} onClick={() => imageInputRef.current?.click()}>
           {uploading ? <Loader2 className="size-3.5 animate-spin" /> : <ImagePlus className="size-3.5" />}
           {t("presentations.addImage")}
         </Button>
-        <Button type="button" variant="outline" size="sm" onClick={addFrame}><Square className="size-3.5" />{t("presentations.addFrame")}</Button>
+        <Button type="button" variant="outline" size="sm" disabled={readOnly} onClick={addFrame}><Square className="size-3.5" />{t("presentations.addFrame")}</Button>
+        <Button type="button" variant="outline" size="sm" disabled={readOnly} onClick={addShape}><Shapes className="size-3.5" />{t("presentations.addShape")}</Button>
         <input
           ref={imageInputRef}
           hidden
@@ -394,16 +574,88 @@ function Editor({ presentation }: { presentation: PresentationRecord }) {
         <Button type="button" variant="ghost" size="sm" onClick={() => void reactFlow.fitView({ padding: 0.15, duration: CAMERA_DURATION })}>
           <Maximize2 className="size-3.5" />{t("presentations.overview")}
         </Button>
+        <Popover>
+          <PopoverTrigger render={<Button type="button" variant="ghost" size="sm" />}>
+            <Settings className="size-3.5" />{t("presentations.playbackSettings")}
+          </PopoverTrigger>
+          <PopoverContent className="w-72 space-y-3 p-3">
+            <label className="block text-xs text-muted-foreground">
+              {t("presentations.defaultStepDuration")}
+              <Input
+                type="number"
+                min={0.5}
+                max={120}
+                step={0.5}
+                className="mt-1 h-8"
+                value={settings.defaultStepDurationMs / 1000}
+                onChange={(event) => {
+                  const seconds = Number(event.currentTarget.value);
+                  if (!Number.isFinite(seconds)) return;
+                  updateSettings({ defaultStepDurationMs: Math.round(Math.min(120, Math.max(0.5, seconds)) * 1000) });
+                }}
+              />
+            </label>
+            <label className="flex items-center gap-2 text-xs text-muted-foreground">
+              <Checkbox checked={settings.loop} onCheckedChange={(checked) => updateSettings({ loop: checked === true })} />
+              {t("presentations.loopPlayback")}
+            </label>
+            <label className="block text-xs text-muted-foreground">
+              {t("presentations.cameraTransition")}
+              <Input
+                type="number"
+                min={0.1}
+                max={5}
+                step={0.1}
+                className="mt-1 h-8"
+                value={settings.cameraTransitionMs / 1000}
+                onChange={(event) => {
+                  const seconds = Number(event.currentTarget.value);
+                  if (!Number.isFinite(seconds)) return;
+                  updateSettings({ cameraTransitionMs: Math.round(Math.min(5, Math.max(0.1, seconds)) * 1000) });
+                }}
+              />
+            </label>
+            <label className="block text-xs text-muted-foreground">
+              {t("presentations.cameraEasing")}
+              <select
+                className="mt-1 h-8 w-full rounded-lg border border-input bg-transparent px-2 text-sm outline-none dark:bg-input/30"
+                value={settings.cameraEasing}
+                onChange={(event) => updateSettings({ cameraEasing: event.target.value as PresentationCameraEasing })}
+              >
+                {presentationCameraEasings.map((easing) => (
+                  <option key={easing} value={easing}>{t(`presentations.easings.${easing}`)}</option>
+                ))}
+              </select>
+            </label>
+          </PopoverContent>
+        </Popover>
         <div className="ml-auto flex items-center gap-2 text-xs">
           {saveIndicator}
-          <Button type="button" variant="outline" size="sm" onClick={() => void persist(elements, steps)} disabled={saveState === "saving"}>
+          <Button type="button" variant="outline" size="sm" onClick={() => void persist(elements, steps, background, settings)} disabled={saveState === "saving" || readOnly}>
             <Save className="size-3.5" />{t("presentations.save")}
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={!steps.length}
+            // The print view reads the saved canvas, so a new tab shows the last save.
+            render={<a href={`/print/presentations/${presentation.id}`} target="_blank" rel="noopener noreferrer" />}
+          >
+            <FileDown className="size-3.5" />{t("presentations.exportPdf")}
           </Button>
           <Button type="button" size="sm" disabled={!steps.length} render={<Link href={`/wiki/presentations/${presentation.id}/present`} />}>
             <Play className="size-3.5" />{t("presentations.present")}
           </Button>
         </div>
       </header>
+
+      {readOnly && (
+        <div className="flex items-center gap-2 border-b border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100">
+          <Lock className="size-4 shrink-0" />
+          <span>{lockedBy ? t("presentations.lockedBy", { name: lockedBy }) : t("presentations.locked")}</span>
+        </div>
+      )}
 
       <div className="flex min-h-0 flex-1">
         <div ref={canvasRef} className="relative min-w-0 flex-1">
@@ -418,8 +670,11 @@ function Editor({ presentation }: { presentation: PresentationRecord }) {
             minZoom={0.02}
             maxZoom={8}
             nodesConnectable={false}
-            deleteKeyCode={["Backspace", "Delete"]}
+            nodesDraggable={!readOnly}
+            // Delete is handled by the editor's own shortcut, so there is one delete path.
+            deleteKeyCode={null}
             selectionOnDrag={false}
+            style={background ? { backgroundColor: background } : undefined}
             panOnDrag
             onPaneClick={() => setSelectedId(null)}
             proOptions={{ hideAttribution: false }}
@@ -460,6 +715,7 @@ function Editor({ presentation }: { presentation: PresentationRecord }) {
                         index={index}
                         active={activeStepId === step.id}
                         missing={!target}
+                        readOnly={readOnly}
                         label={target ? stepLabel(target, index) : t("presentations.missingStep")}
                         removeLabel={t("presentations.removeStep")}
                         onSelect={() => {
@@ -481,24 +737,82 @@ function Editor({ presentation }: { presentation: PresentationRecord }) {
             </DndContext>
           )}
 
+          {activeStep && (
+            <section className="mt-3 border-t pt-3">
+              <label className="block text-xs text-muted-foreground">
+                {t("presentations.stepDuration")}
+                <Input
+                  type="number"
+                  min={0.5}
+                  max={120}
+                  step={0.5}
+                  className="mt-1 h-8"
+                  placeholder={String(settings.defaultStepDurationMs / 1000)}
+                  value={activeStep.durationMs != null ? activeStep.durationMs / 1000 : ""}
+                  onChange={(event) => {
+                    const raw = event.currentTarget.value;
+                    if (!raw) return updateStepDuration(activeStep.id, undefined);
+                    const seconds = Number(raw);
+                    if (!Number.isFinite(seconds)) return;
+                    updateStepDuration(activeStep.id, Math.round(Math.min(120, Math.max(0.5, seconds)) * 1000));
+                  }}
+                />
+              </label>
+              <p className="mt-1 text-[11px] text-muted-foreground">{t("presentations.stepDurationHint")}</p>
+              <h2 className="mt-3 text-xs font-semibold tracking-wide uppercase">{t("presentations.speakerNotes")}</h2>
+              <Textarea
+                key={activeStep.id}
+                aria-label={t("presentations.speakerNotes")}
+                defaultValue={activeStep.notes ?? ""}
+                maxLength={5_000}
+                rows={4}
+                className="mt-2"
+                placeholder={t("presentations.speakerNotesPlaceholder")}
+                onBlur={(event) => updateStepNotes(activeStep.id, event.currentTarget.value)}
+              />
+            </section>
+          )}
+
           {selected && (
             <section className="mt-5 border-t pt-4">
-              <div className="flex items-center justify-between">
-                <h2 className="text-xs font-semibold tracking-wide uppercase">{t(`presentations.elementTypes.${selected.type}`)}</h2>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-sm"
-                  aria-label={t("presentations.deleteElement")}
-                  onClick={() => {
-                    setElements((current) => current.filter((element) => element.id !== selected.id));
-                    setSteps((current) => current.filter((step) => step.elementId !== selected.id));
-                    setSelectedId(null);
-                    setSaveState("unsaved");
-                  }}
-                >
-                  <Trash2 className="size-4" />
-                </Button>
+              <div className="flex items-center justify-between gap-1">
+                <h2 className="min-w-0 truncate text-xs font-semibold tracking-wide uppercase">{t(`presentations.elementTypes.${selected.type}`)}</h2>
+                <div className="flex shrink-0 items-center">
+                  <Button type="button" variant="ghost" size="icon-sm" aria-label={t("presentations.bringToFront")} onClick={() => reorderSelected(selected.id, "front")}>
+                    <ArrowUpToLine className="size-4" />
+                  </Button>
+                  <Button type="button" variant="ghost" size="icon-sm" aria-label={t("presentations.sendToBack")} onClick={() => reorderSelected(selected.id, "back")}>
+                    <ArrowDownToLine className="size-4" />
+                  </Button>
+                  <Button type="button" variant="ghost" size="icon-sm" aria-label={t("presentations.duplicateElement")} onClick={() => duplicateSelected(selected.id)}>
+                    <Copy className="size-4" />
+                  </Button>
+                  <Button type="button" variant="ghost" size="icon-sm" aria-label={t("presentations.deleteElement")} onClick={() => deleteElement(selected.id)}>
+                    <Trash2 className="size-4" />
+                  </Button>
+                </div>
+              </div>
+
+              <div className="mt-3 space-y-2">
+                <label className="block text-xs text-muted-foreground">
+                  {t("presentations.rotation")}
+                  <Input
+                    type="number"
+                    min={-360}
+                    max={360}
+                    step={5}
+                    className="mt-1 h-8"
+                    key={`${selected.id}-rotation`}
+                    defaultValue={selected.rotation}
+                    onBlur={(event) => {
+                      const value = Math.min(360, Math.max(-360, Math.round(Number(event.currentTarget.value) || 0)));
+                      updateElement(selected.id, (element) => ({ ...element, rotation: value }));
+                    }}
+                  />
+                </label>
+                {colorField(t("presentations.elementBackground"), selected.background ?? "", (color) =>
+                  updateElement(selected.id, (element) => ({ ...element, background: color })),
+                )}
               </div>
 
               {selected.type === "text" && (
@@ -624,18 +938,141 @@ function Editor({ presentation }: { presentation: PresentationRecord }) {
                   )}
                 </div>
               )}
+
+              {selected.type === "shape" && (
+                <div className="mt-3 space-y-3">
+                  <div className="flex flex-wrap gap-1.5">
+                    {presentationShapeKinds.map((shape) => (
+                      <Button
+                        key={shape}
+                        type="button"
+                        variant={selected.content.shape === shape ? "default" : "outline"}
+                        size="sm"
+                        onClick={() =>
+                          updateElement(selected.id, (element) =>
+                            element.type === "shape" ? { ...element, content: { ...element.content, shape } } : element,
+                          )
+                        }
+                      >
+                        {t(`presentations.shapeKinds.${shape}`)}
+                      </Button>
+                    ))}
+                  </div>
+                  {colorField(t("presentations.fill"), selected.content.fill, (fill) =>
+                    updateElement(selected.id, (element) =>
+                      element.type === "shape" ? { ...element, content: { ...element.content, fill } } : element,
+                    ),
+                  )}
+                  {colorField(t("presentations.stroke"), selected.content.stroke, (stroke) =>
+                    updateElement(selected.id, (element) =>
+                      element.type === "shape" ? { ...element, content: { ...element.content, stroke } } : element,
+                    ),
+                  )}
+                  <label className="block text-xs text-muted-foreground">
+                    {t("presentations.strokeWidth")}
+                    <Input
+                      type="number"
+                      min={0}
+                      max={200}
+                      className="mt-1 h-8"
+                      key={`${selected.id}-stroke-width`}
+                      defaultValue={selected.content.strokeWidth}
+                      onBlur={(event) => {
+                        const strokeWidth = Math.min(200, Math.max(0, Number(event.currentTarget.value) || 0));
+                        updateElement(selected.id, (element) =>
+                          element.type === "shape" ? { ...element, content: { ...element.content, strokeWidth } } : element,
+                        );
+                      }}
+                    />
+                  </label>
+                  <label className="block text-xs text-muted-foreground">
+                    {t("presentations.opacity")}
+                    <input
+                      type="range"
+                      min={0}
+                      max={1}
+                      step={0.05}
+                      className="mt-1 w-full"
+                      value={selected.content.opacity}
+                      onChange={(event) => {
+                        const opacity = Number(event.target.value);
+                        updateElement(selected.id, (element) =>
+                          element.type === "shape" ? { ...element, content: { ...element.content, opacity } } : element,
+                        );
+                      }}
+                    />
+                  </label>
+                </div>
+              )}
             </section>
           )}
+
+          <section className="mt-5 border-t pt-4">
+            <h2 className="text-xs font-semibold tracking-wide uppercase">{t("presentations.canvas")}</h2>
+            <div className="mt-3">
+              {colorField(t("presentations.canvasBackground"), background, (color) => {
+                setBackground(color);
+                setSaveState("unsaved");
+              })}
+            </div>
+          </section>
+
+          <section className="mt-5 border-t pt-4">
+            <h2 className="flex items-center gap-1.5 text-xs font-semibold tracking-wide uppercase">
+              <History className="size-3.5" />{t("presentations.history")}
+            </h2>
+            {revisions.length === 0 ? (
+              <p className="mt-2 text-xs text-muted-foreground">{t("presentations.noRevisions")}</p>
+            ) : (
+              <ul className="mt-2 space-y-1">
+                {revisions.map((revision) => (
+                  <li key={revision.id} className="flex items-center gap-2 rounded-md border bg-card px-2 py-1.5 text-xs">
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate">{new Date(revision.createdAt).toLocaleString()}</span>
+                      <span className="block truncate text-muted-foreground">{revision.createdByName}</span>
+                    </span>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="xs"
+                      disabled={readOnly || restoring !== null}
+                      onClick={async () => {
+                        if (!confirm(t("presentations.restoreConfirm"))) return;
+                        setRestoring(revision.id);
+                        try {
+                          await restorePresentationRevision({ revisionId: revision.id });
+                          // The canvas lives in component state, so the restored version
+                          // only shows after a full reload.
+                          window.location.reload();
+                        } catch {
+                          setRestoring(null);
+                          toast.error(t("presentations.restoreFailed"));
+                        }
+                      }}
+                    >
+                      {restoring === revision.id ? <Loader2 className="size-3.5 animate-spin" /> : t("presentations.restore")}
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
         </aside>
       </div>
     </div>
   );
 }
 
-export function PresentationEditor({ presentation }: { presentation: PresentationRecord }) {
+export function PresentationEditor({
+  presentation,
+  revisions,
+}: {
+  presentation: PresentationRecord;
+  revisions: PresentationRevisionItem[];
+}) {
   return (
     <ReactFlowProvider>
-      <Editor key={presentation.id} presentation={presentation} />
+      <Editor key={presentation.id} presentation={presentation} revisions={revisions} />
     </ReactFlowProvider>
   );
 }

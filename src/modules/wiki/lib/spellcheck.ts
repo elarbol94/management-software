@@ -3,8 +3,16 @@ import { Plugin, PluginKey } from "@tiptap/pm/state";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
 import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
 
-export type ProofingLanguage = "de-DE" | "en-US";
+export type ProofingLanguage = "de-DE" | "de-AT" | "en-US";
 export type SpellcheckIssueKind = "spelling" | "writing";
+
+/** Cycle order for the proofing-language switcher; de-DE stays first so it keeps being the "primary" toggle target. */
+export const PROOFING_LANGUAGES: ProofingLanguage[] = ["de-DE", "en-US", "de-AT"];
+
+export function nextProofingLanguage(current: ProofingLanguage): ProofingLanguage {
+  const index = PROOFING_LANGUAGES.indexOf(current);
+  return PROOFING_LANGUAGES[(index + 1) % PROOFING_LANGUAGES.length];
+}
 
 export type SpellcheckIssue = {
   from: number;

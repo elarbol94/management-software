@@ -2186,6 +2186,7 @@
       "proofing": {
         "languages": {
           "de": "Deutsch",
+          "deAt": "Deutsch (Österreich)",
           "en": "Englisch"
         },
         "switch": "Prüfsprache: {language}. Zu {nextLanguage} wechseln.",
@@ -2193,6 +2194,7 @@
         "unavailable": "Rechtschreib- und Grammatikprüfung momentan nicht erreichbar",
         "browserFallback": "Schnelle Browserprüfung aktiv. Die erweiterte Grammatikprüfung ist momentan nicht erreichbar.",
         "saveFailed": "Die Prüfsprache konnte nicht gespeichert werden.",
+        "picky": "Strengere Prüfung",
         "dialog": "Korrekturvorschläge",
         "types": {
           "spelling": "Rechtschreibung",
@@ -2202,6 +2204,7 @@
         "replaceAll": "Alle gleichen Stellen ersetzen",
         "ignore": "Diesen Hinweis ignorieren",
         "addToDictionary": "Zum gemeinsamen Wörterbuch hinzufügen",
+        "disableRule": "Regel deaktivieren",
         "dictionaryAdded": "„{word}“ wurde zum Wörterbuch hinzugefügt.",
         "dictionaryFailed": "Das Wort konnte nicht zum Wörterbuch hinzugefügt werden.",
         "replacedAll": "{count, plural, one {# Stelle ersetzt} other {# Stellen ersetzt}}",
@@ -2267,6 +2270,9 @@
         "locked": "Diese Seite wird bereits in einem anderen Fenster bearbeitet. Dein lokaler Entwurf bleibt erhalten.",
         "takeover": "Bearbeitung übernehmen",
         "takeoverFailed": "Die Bearbeitung konnte nicht übernommen werden."
+      },
+      "paste": {
+        "imagesDropped": "Bilder aus dem eingefügten Inhalt wurden nicht übernommen. Verwende „Bild einfügen“, um sie hinzuzufügen."
       },
       "search": {
         "title": "Suchen und ersetzen",
@@ -2689,6 +2695,18 @@
             "comment"
           ]
         },
+        "crossReference": {
+          "label": "Querverweis",
+          "description": "Auf Überschrift, Abbildung, Tabelle oder Anhang verweisen",
+          "keywords": [
+            "verweis",
+            "querverweis",
+            "abbildung",
+            "tabelle",
+            "anhang",
+            "reference"
+          ]
+        },
         "mermaidDiagram": {
           "label": "Mermaid-Diagramm",
           "description": "Diagramm als Text schreiben",
@@ -3008,6 +3026,7 @@
       "overview": "Übersicht",
       "save": "Speichern",
       "present": "Präsentieren",
+      "exportPdf": "PDF-Export",
       "exitPresent": "Präsentation beenden",
       "fullscreen": "Vollbild",
       "previousStep": "Vorherige Station",
@@ -3023,6 +3042,15 @@
       "deleteConfirm": "Präsentation „{title}“ endgültig löschen?",
       "deleteFailed": "Die Präsentation konnte nicht gelöscht werden.",
       "createFailed": "Die Präsentation konnte nicht angelegt werden.",
+      "chooseTemplate": "Vorlage wählen",
+      "chooseTemplateDescription": "Beginne mit einem leeren Canvas oder einer der integrierten Vorlagen.",
+      "templates": {
+        "blank": "Leer",
+        "timeline": "Zeitleiste",
+        "hub": "Kreis / Hub",
+        "pitch": "Pitch",
+        "mindmap": "Mindmap"
+      },
       "saveFailed": "Speichern fehlgeschlagen.",
       "uploadFailed": "Das Bild konnte nicht hochgeladen werden.",
       "textContent": "Text",
@@ -3032,10 +3060,30 @@
       "frameLabel": "Beschriftung",
       "colorDefault": "Standardfarbe",
       "colorNamed": "Farbe {color}",
+      "addShape": "Form",
+      "rotation": "Drehung (Grad)",
+      "bringToFront": "Nach vorne holen",
+      "sendToBack": "Nach hinten stellen",
+      "duplicateElement": "Element duplizieren",
+      "elementBackground": "Hintergrund des Elements",
+      "canvas": "Canvas",
+      "canvasBackground": "Canvas-Hintergrund",
+      "clearColor": "Farbe zurücksetzen",
+      "fill": "Füllung",
+      "stroke": "Linie",
+      "strokeWidth": "Linienstärke",
+      "opacity": "Deckkraft",
+      "shapeKinds": {
+        "rect": "Rechteck",
+        "ellipse": "Ellipse",
+        "arrow": "Pfeil",
+        "line": "Linie"
+      },
       "elementTypes": {
         "text": "Text",
         "image": "Bild",
-        "frame": "Rahmen"
+        "frame": "Rahmen",
+        "shape": "Form"
       },
       "frameShapes": {
         "rect": "Rechteck",
@@ -3052,7 +3100,36 @@
         "saving": "Speichert…",
         "saved": "Gespeichert",
         "error": "Fehler"
-      }
+      },
+      "locked": "Jemand anderes bearbeitet diese Präsentation gerade. Ansehen ist möglich, Änderungen werden nicht gespeichert.",
+      "lockedBy": "{name} bearbeitet diese Präsentation gerade. Ansehen ist möglich, Änderungen werden nicht gespeichert.",
+      "history": "Versionen",
+      "noRevisions": "Noch keine Versionen. Beim Speichern wird jeweils eine Version behalten.",
+      "restore": "Wiederherstellen",
+      "restoreConfirm": "Diese Version wiederherstellen? Der aktuelle Stand wird vorher als Version gesichert.",
+      "restoreFailed": "Die Version konnte nicht wiederhergestellt werden.",
+      "play": "Wiedergabe",
+      "pause": "Pause",
+      "playbackSettings": "Wiedergabeeinstellungen",
+      "defaultStepDuration": "Standard-Stationsdauer (s)",
+      "loopPlayback": "Wiederholen",
+      "cameraTransition": "Kamera-Übergang (s)",
+      "cameraEasing": "Easing",
+      "easings": {
+        "linear": "Linear",
+        "ease": "Sanft",
+        "ease-in": "Einschwingend",
+        "ease-out": "Ausschwingend",
+        "ease-in-out": "Ein-/ausschwingend"
+      },
+      "stepDuration": "Stationsdauer (s)",
+      "stepDurationHint": "Leer verwendet die Standarddauer.",
+      "speakerNotes": "Sprechernotizen",
+      "speakerNotesPlaceholder": "Notizen zu dieser Station, nur in der Präsentationsansicht sichtbar",
+      "openPresenterView": "Präsentationsansicht öffnen",
+      "noNotes": "Keine Notizen zu dieser Station",
+      "nextStepPreview": "Weiter",
+      "noNextStep": "Dies ist die letzte Station"
     }
   },
   "settings": {

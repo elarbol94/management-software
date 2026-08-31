@@ -16,6 +16,47 @@ import {
   type WikiTypographySettingsV1,
 } from "./lib/wiki-typography";
 import { getWikiTypographyProfileForUser } from "./lib/wiki-typography.server";
+import { serializeWikiProofingPrefs, withDisabledRuleId, withIgnoredIssueKey } from "./lib/wiki-proofing-prefs";
+import { getWikiProofingPrefsForUser } from "./lib/wiki-proofing-prefs.server";
+
+export async function updateMyWikiProofingPicky(picky: boolean) {
+  const currentUser = await requireUserOrThrow();
+  ensureUserMarkColor(currentUser.id);
+  const prefs = getWikiProofingPrefsForUser(currentUser.id);
+  const next = { ...prefs, picky: Boolean(picky) };
+  db.update(userProfilePreferences)
+    .set({ wikiProofingJson: serializeWikiProofingPrefs(next), updatedAt: new Date() })
+    .where(eq(userProfilePreferences.userId, currentUser.id))
+    .run();
+  revalidatePath("/wiki", "layout");
+  return next;
+}
+
+export async function ignoreMyWikiProofingIssue(issueKey: string) {
+  const currentUser = await requireUserOrThrow();
+  const key = z.string().trim().min(1).max(500).parse(issueKey);
+  ensureUserMarkColor(currentUser.id);
+  const prefs = getWikiProofingPrefsForUser(currentUser.id);
+  const next = withIgnoredIssueKey(prefs, key);
+  db.update(userProfilePreferences)
+    .set({ wikiProofingJson: serializeWikiProofingPrefs(next), updatedAt: new Date() })
+    .where(eq(userProfilePreferences.userId, currentUser.id))
+    .run();
+  return next;
+}
+
+export async function disableMyWikiProofingRule(ruleId: string) {
+  const currentUser = await requireUserOrThrow();
+  const id = z.string().trim().min(1).max(200).parse(ruleId);
+  ensureUserMarkColor(currentUser.id);
+  const prefs = getWikiProofingPrefsForUser(currentUser.id);
+  const next = withDisabledRuleId(prefs, id);
+  db.update(userProfilePreferences)
+    .set({ wikiProofingJson: serializeWikiProofingPrefs(next), updatedAt: new Date() })
+    .where(eq(userProfilePreferences.userId, currentUser.id))
+    .run();
+  return next;
+}
 
 export async function updateMyWikiTypography(input: WikiTypographySettingsV1) {
   const currentUser = await requireUserOrThrow();

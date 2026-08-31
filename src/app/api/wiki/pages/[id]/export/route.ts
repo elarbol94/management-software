@@ -40,7 +40,10 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
 
     const { page, rendered } = await renderStoredWikiDocument(id, typography);
     if (format === "docx") {
-      const bytes = await generateDocumentDocx(page.title, parseDocumentForExport(page.contentJson), parseDocumentSettings(page.documentSettingsJson));
+      const bytes = await generateDocumentDocx(page.title, parseDocumentForExport(page.contentJson), parseDocumentSettings(page.documentSettingsJson), {
+        figureLabel: page.citationLocale.toLocaleLowerCase().startsWith("de") ? "Abbildung" : "Figure",
+        tableLabel: page.citationLocale.toLocaleLowerCase().startsWith("de") ? "Tabelle" : "Table",
+      });
       return new Response(new Uint8Array(bytes), { headers: { "Content-Type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "Content-Disposition": disposition(page.slug, "docx", inline), "Cache-Control": "no-store" } });
     }
     if (format === "html") {

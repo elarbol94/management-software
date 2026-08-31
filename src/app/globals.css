@@ -920,7 +920,12 @@
   .wiki-proposal-suggestion-insert { background: color-mix(in srgb, #22c55e 22%, transparent); text-decoration: underline; text-decoration-color: #16a34a; }
   .wiki-proposal-suggestion-delete { background: color-mix(in srgb, #ef4444 16%, transparent); color: #b91c1c; text-decoration: line-through; }
 
-  .wiki-document-cross-reference { border-bottom: 1px dotted var(--document-accent); color: var(--document-accent); font-weight: 600; }
+  .wiki-document-cross-reference { border-bottom: 1px dotted var(--document-accent); color: var(--document-accent); font-weight: 600; cursor: pointer; }
+
+  /* Live figure/table numbers: a decoration sets the custom property on the figure's/table's
+     own wrapping element (see document-extension.ts); CSS prepends it to the existing caption. */
+  .wiki-document-canvas .wiki-commentable-media figcaption::before { content: var(--wiki-figure-number, ""); }
+  .wiki-document-canvas .wiki-markdown-table > caption::before { content: var(--wiki-table-number, ""); }
 
   .wiki-document-annex { margin-block: 2rem 1rem; border-top: 2px solid var(--document-accent); padding-top: 0.75rem; font-size: 1.35em; }
 
@@ -1036,4 +1041,24 @@
 
 .municipality-hover-popup .maplibregl-popup-tip {
   border-top-color: var(--background);
+}
+
+/* Presentation player: subtle, fixed entrance for elements arriving with a step. */
+@keyframes presentation-element-enter {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* Presentation player: autoplay progress hint fills over a step's effective duration. */
+@keyframes presentation-step-progress {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
 }

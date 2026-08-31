@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type CSSProperties } from "react";
 import { NodeResizer, type Node, type NodeProps } from "@xyflow/react";
 import { cn } from "@/lib/utils";
 import type { PresentationElement } from "../lib/presentation";
@@ -17,7 +17,7 @@ export type PresentationNodeData = {
   [key: string]: unknown;
 };
 
-export type PresentationNode = Node<PresentationNodeData, "text" | "image" | "frame">;
+export type PresentationNode = Node<PresentationNodeData, "text" | "image" | "frame" | "shape">;
 
 const MIN_SIZE = 40;
 
@@ -136,29 +136,124 @@ function FrameNode({ data, selected }: NodeProps<PresentationNode>) {
   );
 }
 
-export const presentationNodeTypes = { text: TextNode, image: ImageNode, frame: FrameNode };
+/**
+ * SVG rather than styled divs: a rectangle and an ellipse are as cheap either way, but an
+ * arrow and a line are not, and one drawing path keeps stroke and fill behaving alike.
+ * Rotation stays on the node wrapper, so it applies to shapes exactly as to everything else.
+ */
+function ShapeNode({ data, selected }: NodeProps<PresentationNode>) {
+  const element = data.element;
+  if (element.type !== "shape") return null;
+  const { shape, fill, stroke, strokeWidth, opacity } = element.content;
+  const w = element.width;
+  const h = element.height;
+  const inset = strokeWidth / 2;
+  // The head has to fit inside the box, so a short arrow degrades to a stub rather than
+  // pointing backwards.
+  const head = Math.min(Math.max(strokeWidth * 3, 10), w / 2);
+  const mid = h / 2;
+
+  return (
+    <div
+      className={cn(
+        "h-full w-full text-foreground",
+        data.editable && "cursor-grab active:cursor-grabbing",
+        data.editable && selected && "ring-2 ring-indigo-500/60",
+      )}
+    >
+      <Resizer selected={Boolean(selected)} editable={data.editable} />
+      <svg
+        width="100%"
+        height="100%"
+        viewBox={`0 0 ${w} ${h}`}
+        preserveAspectRatio="none"
+        className="pointer-events-none block h-full w-full overflow-visible"
+        style={{ opacity }}
+        aria-hidden
+      >
+        {shape === "rect" && (
+          <rect
+            x={inset}
+            y={inset}
+            width={Math.max(w - strokeWidth, 0)}
+            height={Math.max(h - strokeWidth, 0)}
+            fill={fill || "none"}
+            stroke={stroke || "currentColor"}
+            strokeWidth={strokeWidth}
+          />
+        )}
+        {shape === "ellipse" && (
+          <ellipse
+            cx={w / 2}
+            cy={h / 2}
+            rx={Math.max(w - strokeWidth, 0) / 2}
+            ry={Math.max(h - strokeWidth, 0) / 2}
+            fill={fill || "none"}
+            stroke={stroke || "currentColor"}
+            strokeWidth={strokeWidth}
+          />
+        )}
+        {shape === "line" && (
+          <line x1={0} y1={mid} x2={w} y2={mid} stroke={stroke || "currentColor"} strokeWidth={strokeWidth} />
+        )}
+        {shape === "arrow" && (
+          <>
+            <line x1={0} y1={mid} x2={w - head} y2={mid} stroke={stroke || "currentColor"} strokeWidth={strokeWidth} />
+            <polygon
+              points={`${w},${mid} ${w - head},${mid - head / 2} ${w - head},${mid + head / 2}`}
+              fill={stroke || "currentColor"}
+            />
+          </>
+        )}
+      </svg>
+    </div>
+  );
+}
+
+export const presentationNodeTypes = { text: TextNode, image: ImageNode, frame: FrameNode, shape: ShapeNode };
 
 /**
- * Frames sit behind everything else so a text block placed inside one stays grabbable;
- * that ordering is the only reason element order in the array is not enough.
+ * Frames sit behind everything else so a text block placed inside one stays grabbable.
+ * Within each of those two bands the array index decides what paints on top, which is what
+ * "bring to front" / "send to back" reorder. The band offset is larger than the 500-element
+ * cap, so a frame can never climb over content.
  */
+const FRONT_BAND = 1_000;
+
 export function elementsToNodes(
   elements: PresentationElement[],
-  options: { editable: boolean; selectedId?: string | null; onTextChange?: (id: string, text: string) => void },
+  options: {
+    editable: boolean;
+    selectedId?: string | null;
+    onTextChange?: (id: string, text: string) => void;
+    /** Ids currently hidden so they can fade in — the player's step-arrival entrance. */
+    enteringIds?: Set<string>;
+  },
 ): PresentationNode[] {
-  return elements.map((element) => ({
-    id: element.id,
-    type: element.type,
-    position: { x: element.x, y: element.y },
-    width: element.width,
-    height: element.height,
-    selected: options.editable ? element.id === options.selectedId : false,
-    draggable: options.editable,
-    selectable: options.editable,
-    connectable: false,
-    deletable: options.editable,
-    zIndex: element.type === "frame" ? 0 : 1,
-    style: element.rotation ? { transform: `rotate(${element.rotation}deg)` } : undefined,
-    data: { element, editable: options.editable, onTextChange: options.onTextChange },
-  }));
+  return elements.map((element, index) => {
+    const style: CSSProperties = {};
+    if (element.rotation) style.transform = `rotate(${element.rotation}deg)`;
+    if (element.background) style.backgroundColor = element.background;
+    if (options.enteringIds?.has(element.id)) {
+      // Fixed, subtle fade on step arrival — deliberately not a per-element setting.
+      // A keyframe animation (not a state-driven transition) plays once whenever this
+      // element newly becomes part of the arriving step.
+      style.animation = "presentation-element-enter 300ms ease";
+    }
+    return {
+      id: element.id,
+      type: element.type,
+      position: { x: element.x, y: element.y },
+      width: element.width,
+      height: element.height,
+      selected: options.editable ? element.id === options.selectedId : false,
+      draggable: options.editable,
+      selectable: options.editable,
+      connectable: false,
+      deletable: options.editable,
+      zIndex: (element.type === "frame" ? 0 : FRONT_BAND) + index,
+      style: Object.keys(style).length ? style : undefined,
+      data: { element, editable: options.editable, onTextChange: options.onTextChange },
+    };
+  });
 }

@@ -14,7 +14,7 @@ export function WikiEmptyState() {
   async function onCreate() {
     const title = window.prompt(t("pageTitle"));
     if (!title?.trim()) return;
-    const { slug } = await createPage({ title: title.trim(), parentId: null, proofingLanguage: locale === "en" ? "en-US" : "de-DE" });
+    const { slug } = await createPage({ title: title.trim(), parentId: null, proofingLanguage: locale === "en" ? "en-US" : "de-AT" });
     router.push(`/wiki/${slug}`);
     router.refresh();
   }

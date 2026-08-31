@@ -12,7 +12,7 @@ import StarterKit from "@tiptap/starter-kit";
 import Placeholder from "@tiptap/extension-placeholder";
 import TaskList from "@tiptap/extension-task-list";
 import TaskItem from "@tiptap/extension-task-item";
-import { Fragment, Slice } from "@tiptap/pm/model";
+import { DOMParser as ProseMirrorDOMParser, Fragment, Slice } from "@tiptap/pm/model";
 import { AlertCircle, AlignCenter, AlignLeft, AlignRight, ArrowLeftRight, Bold, BookMarked, CalendarClock, Captions, Check, ClipboardCheck, CloudOff, Code, Columns2, FileText, Heading1, Heading2, Heading3, Highlighter, ImagePlus, Italic, Keyboard, Languages, Layers3, Link2, List, ListOrdered, ListTree, ListTodo, MessageSquareText, Minus, MoreHorizontal, PanelRightClose, PanelRightOpen, Paperclip, Pilcrow, Quote, Redo2, RotateCcw, Rows3, Scan, ScissorsLineDashed, Search, Settings2, Strikethrough, Trash2, Underline as UnderlineIcon, Undo2, WifiOff, Workflow } from "lucide-react";
 import { addComment, restorePageRevision } from "../research-actions";
 import { Button } from "@/components/ui/button";
@@ -21,7 +21,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuShortcut, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuShortcut, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { createSlashCommandExtension, type SlashCommandDefinition } from "./slash-command-menu";
 import { CommentRail, type CommentRailHandle, type CommentThread } from "./comment-rail";
@@ -33,14 +33,18 @@ import { WikiShortcutsDialog } from "./wiki-shortcuts-dialog";
 import { EditorLinkPopover, EditorOutlineSheet, EditorSearchPanel, type OutlineItem } from "./editor-tools";
 import { mergeCommentThreadIds, normalizeImageRect, type CommentAnchor } from "../lib/comment-anchors";
 import { EditorSearchExtension } from "../lib/editor-search";
-import { collectSpellcheckParagraphs, createSpellcheckBatches, createSpellcheckExtension, getSpellcheckIssues, mapSpellcheckMatches, remapSpellcheckBatchMatches, replaceAllSpellcheckOccurrences, setSpellcheckIssues, type ProofingLanguage, type SpellcheckIssue, type SpellcheckResponseMatch } from "../lib/spellcheck";
+import { collectSpellcheckParagraphs, createSpellcheckBatches, createSpellcheckExtension, getSpellcheckIssues, mapSpellcheckMatches, nextProofingLanguage, PROOFING_LANGUAGES, remapSpellcheckBatchMatches, replaceAllSpellcheckOccurrences, setSpellcheckIssues, type ProofingLanguage, type SpellcheckIssue, type SpellcheckResponseMatch } from "../lib/spellcheck";
+import { disableMyWikiProofingRule, ignoreMyWikiProofingIssue, updateMyWikiProofingPicky } from "../wiki-preference-actions";
+import type { WikiProofingPrefsV1 } from "../lib/wiki-proofing-prefs";
 import { looksLikeMarkdown, parseMarkdownDocument } from "../lib/markdown-import";
+import { sanitizePastedHtml } from "../lib/paste-html";
 import { calculateWritingStats, type WritingStats } from "../lib/editor-writing";
 import { userMarkColorStyle, type UserMarkColor } from "@/lib/user-mark-colors";
 import { MermaidDiagram, MERMAID_PLACEHOLDER } from "./mermaid-extension";
 import { SuggestionDelete, SuggestionInsert, SuggestionMode } from "./suggestion-extension";
 import { acceptSuggestions, countSuggestions, rejectSuggestions } from "../lib/suggestions";
-import { DocumentExtensions, getDocumentPaginationBreaks, samePaginationBreaks, setDocumentPaginationBreaks, type DocumentPaginationBreak } from "./document-extension";
+import { DocumentExtensions, getDocumentPaginationBreaks, samePaginationBreaks, setDocumentNumberingConfig, setDocumentPaginationBreaks } from "./document-extension";
+import { computeDocumentPagination, type PaginationItem, type PaginationSplit } from "../lib/document-pagination";
 import { DocumentLayoutPanel } from "./document-layout-panel";
 import { WikiTypographyDialog, type WikiEditorPreferences } from "./wiki-typography-dialog";
 import {
@@ -132,6 +136,63 @@ const DOCUMENT_ZOOM_MAX = 200;
 // content snapshot wait out the burst instead of running per keystroke.
 const PAGINATION_TYPING_DELAY = 120;
 const CONTENT_SYNC_DELAY = 200;
+// Line geometry is only measured for blocks that actually reach a page edge, and
+// each such block moves the flow, so a couple of rounds settle the whole page.
+const PAGINATION_MEASURE_ROUNDS = 3;
+
+// Measures the line boxes of a text block and maps each line start back to a
+// document position, so a paragraph or code block can break between its lines.
+function measureTextLines(editor: Editor, element: HTMLElement, natural: (value: number) => number) {
+  const range = document.createRange();
+  const rectAt = (text: Text, offset: number) => {
+    if (offset < 0 || offset >= text.length) return null;
+    range.setStart(text, offset);
+    range.setEnd(text, offset + 1);
+    const rect = range.getBoundingClientRect();
+    return rect.height > 0 ? rect : null;
+  };
+  const splits: PaginationSplit[] = [];
+  const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    const text = node as Text;
+    if (!text.length || text.parentElement?.closest("[contenteditable=\"false\"]")) continue;
+    let offset = 0;
+    while (offset < text.length) {
+      const rect = rectAt(text, offset);
+      if (!rect) {
+        offset += 1;
+        continue;
+      }
+      const top = natural(rect.top);
+      const previous = splits[splits.length - 1];
+      // A line box can span several text nodes when marks interrupt it.
+      if (previous && Math.abs(previous.top - top) < 1) previous.bottom = Math.max(previous.bottom, natural(rect.bottom));
+      else splits.push({ position: editor.view.posAtDOM(text, offset), top, bottom: natural(rect.bottom) });
+      // Probing every character is too slow on a paragraph that fills a page, so
+      // the end of the line box is found by bisection instead.
+      let low = offset + 1;
+      let high = text.length;
+      while (low < high) {
+        const middle = Math.ceil((low + high) / 2);
+        const probe = rectAt(text, middle - 1);
+        if (probe && Math.abs(probe.top - rect.top) < 1) low = middle;
+        else high = middle - 1;
+      }
+      offset = Math.max(low, offset + 1);
+    }
+  }
+  return splits;
+}
+
+// ponytail: split tables between rows without repeating the header row on the
+// following page; the export renderers own that, this is the on-screen preview.
+function measureTableRows(editor: Editor, table: HTMLElement, natural: (value: number) => number) {
+  const rows = table.querySelectorAll<HTMLTableRowElement>(":scope > tr, :scope > tbody > tr");
+  return Array.from(rows, (row) => {
+    const rect = row.getBoundingClientRect();
+    return { position: Math.max(0, editor.view.posAtDOM(row, 0) - 1), top: natural(rect.top), bottom: natural(rect.bottom) };
+  });
+}
 
 function loadDocumentZoom() {
   if (typeof window === "undefined") return 100;
@@ -188,6 +249,7 @@ type WikiEditorProps = {
   pageContentVersion: number;
   initialContent: string;
   initialProofingLanguage: ProofingLanguage;
+  initialProofingPrefs: WikiProofingPrefsV1;
   initialDocumentMode: boolean;
   initialDocumentSettings: string;
   documentTemplates: StoredDocumentTemplate[];
@@ -721,6 +783,7 @@ export function WikiEditor({
   pageContentVersion,
   initialContent,
   initialProofingLanguage,
+  initialProofingPrefs,
   initialDocumentMode,
   initialDocumentSettings,
   documentTemplates,
@@ -801,7 +864,9 @@ export function WikiEditor({
   const proofingCache = useRef(new Map<string, CachedSpellcheckMatch[]>());
   const [proofingDictionary, setProofingDictionary] = useState<string[]>([]);
   const [proofingDictionaryLoaded, setProofingDictionaryLoaded] = useState(false);
-  const ignoredProofingIssues = useRef(new Set<string>());
+  const [proofingPicky, setProofingPicky] = useState(initialProofingPrefs.picky);
+  const ignoredProofingIssues = useRef(new Set<string>(initialProofingPrefs.ignoredIssueKeys));
+  const disabledProofingRuleIds = useRef(new Set<string>(initialProofingPrefs.disabledRuleIds));
   const [wikiShortcuts, setWikiShortcuts] = useState(loadWikiShortcutBindings);
   const [initialPreferences] = useState(loadEditorPreferences);
   const [statusVisible, setStatusVisible] = useState(initialPreferences.statusVisible); const [minimalToolbar, setMinimalToolbar] = useState(initialPreferences.minimalToolbar); const [typewriterMode, setTypewriterMode] = useState(initialPreferences.typewriterMode); const typewriterModeRef = useRef(initialPreferences.typewriterMode);
@@ -1107,6 +1172,9 @@ export function WikiEditor({
       setCommentsVisible(true);
       setCommentFocusRequest((value) => value + 1);
     }),
+    // The document layout panel's Content tab already has a target picker covering
+    // headings, figures, tables and annexes — open it rather than duplicating it here.
+    slash("crossReference", "wiki", Link2, () => setDocumentLayoutVisible(true)),
   ];
   const slashExtension = createSlashCommandExtension({ commands: slashCommands, ariaLabel: t("slash.ariaLabel"), emptyLabel: t("slash.empty") });
 
@@ -1132,22 +1200,37 @@ export function WikiEditor({
         const clipboard = event.clipboardData;
         if (!clipboard) return false;
         const plainText = clipboard.getData("text/plain");
-        if (clipboard.getData("text/html")) {
-          if (!plainText) return false;
+        // Raw markdown text takes priority over any HTML the clipboard also carries:
+        // many sources (browsers, note apps) wrap even a plain-text copy in an HTML
+        // format that adds no real structure, which used to make pasted "#### Heading"
+        // fall into the HTML branch below and show up as literal punctuation.
+        if (looksLikeMarkdown(plainText)) {
+          try {
+            const parsed = parseMarkdownDocument(plainText);
+            const nodes = (parsed.content ?? []).map((node) => view.state.schema.nodeFromJSON(node));
+            event.preventDefault();
+            view.dispatch(view.state.tr.replaceSelection(new Slice(Fragment.fromArray(nodes), 0, 0)).scrollIntoView());
+            return true;
+          } catch {
+            // Not actually parseable as markdown - fall through to HTML/plain-text handling.
+          }
+        }
+        const html = clipboard.getData("text/html");
+        if (html) {
+          // Sanitize first, then hand off to the schema's own DOMParser: it already
+          // keeps only the nodes/marks each extension's parseHTML() rule recognizes
+          // and silently drops everything else, so no hand-rolled HTML->Tiptap
+          // converter is needed here.
+          const { html: sanitized, hadImages } = sanitizePastedHtml(html);
+          const container = document.createElement("div");
+          container.innerHTML = sanitized;
+          const slice = ProseMirrorDOMParser.fromSchema(view.state.schema).parseSlice(container, { preserveWhitespace: true });
           event.preventDefault();
-          view.dispatch(view.state.tr.insertText(plainText).scrollIntoView());
+          view.dispatch(view.state.tr.replaceSelection(slice).scrollIntoView());
+          if (hadImages) toast.info(t("editor.paste.imagesDropped"));
           return true;
         }
-        if (!looksLikeMarkdown(plainText)) return false;
-        try {
-          const parsed = parseMarkdownDocument(plainText);
-          const nodes = (parsed.content ?? []).map((node) => view.state.schema.nodeFromJSON(node));
-          event.preventDefault();
-          view.dispatch(view.state.tr.replaceSelection(new Slice(Fragment.fromArray(nodes), 0, 0)).scrollIntoView());
-          return true;
-        } catch {
-          return false;
-        }
+        return false;
       },
       handleDrop(view, event) {
         const files = [...(event.dataTransfer?.files ?? [])].filter(isInlineImageFile).map(normalizeInlineImageFile);
@@ -1343,7 +1426,7 @@ export function WikiEditor({
       const matches: SpellcheckResponseMatch[] = [];
       for (const batch of createSpellcheckBatches(paragraphs)) {
         const uncachedItems = batch.items.filter((item) => {
-          const cached = proofingCache.current.get(`${proofingLanguage}\u0000${item.text}`);
+          const cached = proofingCache.current.get(`${proofingLanguage}\u0000${proofingPicky}\u0000${item.text}`);
           if (!cached) return true;
           matches.push(...cached.map((match) => ({ ...match, paragraph: item.paragraph, offset: item.offset + match.offset })));
           return false;
@@ -1357,6 +1440,7 @@ export function WikiEditor({
             paragraphs: requestBatch.items.map((item) => item.text),
             language: proofingLanguage,
             dictionary: proofingDictionary,
+            picky: proofingPicky,
           }),
           signal: activeController.signal,
         });
@@ -1374,7 +1458,7 @@ export function WikiEditor({
               ruleId: match.ruleId,
               replacements: match.replacements,
             }));
-          proofingCache.current.set(`${proofingLanguage}\u0000${item.text}`, itemMatches);
+          proofingCache.current.set(`${proofingLanguage}\u0000${proofingPicky}\u0000${item.text}`, itemMatches);
           if (proofingCache.current.size > 500) {
             const oldestKey = proofingCache.current.keys().next().value;
             if (typeof oldestKey === "string") proofingCache.current.delete(oldestKey);
@@ -1382,7 +1466,9 @@ export function WikiEditor({
         }
         matches.push(...remapSpellcheckBatchMatches(requestBatch, payload.matches));
       }
-      return mapSpellcheckMatches(paragraphs, matches).filter((issue) => !ignoredProofingIssues.current.has(proofingIssueKey(issue)));
+      return mapSpellcheckMatches(paragraphs, matches)
+        .filter((issue) => !ignoredProofingIssues.current.has(proofingIssueKey(issue)))
+        .filter((issue) => !disabledProofingRuleIds.current.has(issue.ruleId));
     };
 
     const check = async (checkGeneration: number) => {
@@ -1435,7 +1521,7 @@ export function WikiEditor({
       controller?.abort();
       editor.off("update", schedule);
     };
-  }, [editor, pageId, proofingDictionary, proofingDictionaryLoaded, proofingLanguage]);
+  }, [editor, pageId, proofingDictionary, proofingDictionaryLoaded, proofingLanguage, proofingPicky]);
   useEffect(() => {
     if (!editor) return;
     editor.view.dom.spellcheck = proofingStatus === "error";
@@ -1473,69 +1559,69 @@ export function WikiEditor({
       const marginTop = documentSettings.page.marginsMm.top * pixelsPerMm;
       const marginBottom = documentSettings.page.marginsMm.bottom * pixelsPerMm;
       const usableHeight = pageHeight - marginTop - marginBottom;
-      const cycle = pageHeight + pageGap;
       const canvasTop = canvas.getBoundingClientRect().top;
-      const breaks: DocumentPaginationBreak[] = [];
-      let accumulated = 0;
-      let forceNextPage = false;
-      let finalBottom = marginTop;
+      const natural = (value: number) => (value - canvasTop) / zoomFactor;
 
-      const paginationElements: HTMLElement[] = [];
+      const elements: HTMLElement[] = [];
+      const items: PaginationItem[] = [];
       const collectPaginationElements = (element: HTMLElement) => {
-        const elementHeight = element.getBoundingClientRect().height / zoomFactor;
+        if (element.classList.contains("wiki-document-auto-page-break")) return;
+        const rect = element.getBoundingClientRect();
+        const elementHeight = rect.height / zoomFactor;
         const canSplit = element.matches("ul, ol, li, blockquote, section[data-document-columns]");
         if (canSplit && elementHeight > usableHeight && element.children.length > 0) {
           for (const child of Array.from(element.children) as HTMLElement[]) collectPaginationElements(child);
           return;
         }
-        paginationElements.push(element);
+        const isTable = element.matches("table");
+        elements.push(element);
+        items.push({
+          position: Math.max(0, editor.view.posAtDOM(element, 0) - 1),
+          top: natural(rect.top),
+          bottom: natural(rect.bottom),
+          kind: element.tagName === "LI" ? "listItem" : "block",
+          splitKind: isTable ? "tableRow" : "inline",
+          splittable: isTable || element.matches("p, pre, li, blockquote"),
+          pageBreak: element.hasAttribute("data-document-page-break"),
+          heading: /^H[1-6]$/.test(element.tagName),
+          keepWithNext: element.hasAttribute("data-keep-with-next"),
+          keepTogether: element.hasAttribute("data-keep-together"),
+        });
       };
       for (const element of Array.from(proseMirror.children) as HTMLElement[]) collectPaginationElements(element);
 
-      for (const element of paginationElements) {
-        if (element.classList.contains("wiki-document-auto-page-break")) continue;
-        if (element.hasAttribute("data-document-page-break")) {
-          forceNextPage = true;
-          continue;
+      const geometry = { pageHeight, pageGap, marginTop, marginBottom };
+      let plan = computeDocumentPagination(items, geometry);
+      // Line geometry is expensive, so it is only measured for the blocks the
+      // plan reports as reaching a page edge, and the plan is then redone.
+      for (let round = 0; round < PAGINATION_MEASURE_ROUNDS && plan.measure.length; round += 1) {
+        let measured = false;
+        for (const index of plan.measure) {
+          const element = elements[index];
+          if (items[index].splits || !element) continue;
+          try {
+            items[index] = {
+              ...items[index],
+              splits: element.matches("table")
+                ? measureTableRows(editor, element, natural)
+                : measureTextLines(editor, element, natural),
+            };
+          } catch {
+            items[index] = { ...items[index], splits: [] };
+          }
+          measured = true;
         }
-        const rect = element.getBoundingClientRect();
-        const naturalTop = (rect.top - canvasTop) / zoomFactor;
-        const naturalBottom = (rect.bottom - canvasTop) / zoomFactor;
-        let flowTop = naturalTop + accumulated;
-        let flowBottom = naturalBottom + accumulated;
-        let pageIndex = Math.max(0, Math.floor(flowTop / cycle));
-        const pageStart = pageIndex * cycle;
-        const contentStart = pageStart + marginTop;
-        const contentEnd = pageStart + pageHeight - marginBottom;
-        let offset = 0;
-
-        if (forceNextPage) {
-          offset = (pageIndex + 1) * cycle + marginTop - flowTop;
-          forceNextPage = false;
-        } else if (flowTop < contentStart) {
-          offset = contentStart - flowTop;
-        } else if (flowBottom > contentEnd + 1 && rect.height / zoomFactor <= usableHeight) {
-          offset = (pageIndex + 1) * cycle + marginTop - flowTop;
-        }
-
-        if (offset > 0.5) {
-          const position = Math.max(0, editor.view.posAtDOM(element, 0) - 1);
-          pageIndex = Math.max(1, Math.floor((flowTop + offset) / cycle));
-          breaks.push({ position, height: offset, page: pageIndex + 1, kind: element.tagName === "LI" ? "listItem" : "block" });
-          accumulated += offset;
-          flowTop += offset;
-          flowBottom += offset;
-        }
-        finalBottom = Math.max(finalBottom, flowBottom);
+        if (!measured) break;
+        plan = computeDocumentPagination(items, geometry);
       }
 
       // Re-dispatching an unchanged set would rebuild every spacer widget for nothing.
-      if (samePaginationBreaks(previousBreaks, breaks)) {
+      if (samePaginationBreaks(previousBreaks, plan.breaks)) {
         if (previousBreaks.length) setDocumentPaginationBreaks(editor, previousBreaks);
       } else {
-        setDocumentPaginationBreaks(editor, breaks);
+        setDocumentPaginationBreaks(editor, plan.breaks);
       }
-      setDocumentPageCount(Math.max(1, Math.floor((finalBottom + marginBottom) / cycle) + 1));
+      setDocumentPageCount(plan.pageCount);
     };
 
     const schedule = (delay = 0) => {
@@ -1591,6 +1677,19 @@ export function WikiEditor({
   useEffect(() => { window.localStorage.setItem(commentsPreferenceKey, String(commentsVisible)); }, [commentsPreferenceKey, commentsVisible]);
   useEffect(() => { window.localStorage.setItem(layoutPreferenceKey, String(documentLayoutVisible)); }, [documentLayoutVisible, layoutPreferenceKey]);
   useEffect(() => { window.localStorage.setItem(DOCUMENT_ZOOM_KEY, String(documentZoom)); }, [documentZoom]);
+  // Figure/table numbers and cross-reference labels shown live in the canvas use the
+  // document's own citation language, matching the word the PDF/DOCX export picks —
+  // and caption numbering only shows where the export shows it (index enabled).
+  useEffect(() => {
+    if (!editor) return;
+    const german = citationLocale.toLocaleLowerCase().startsWith("de");
+    setDocumentNumberingConfig(editor, {
+      figureLabel: german ? "Abbildung" : "Figure",
+      tableLabel: german ? "Tabelle" : "Table",
+      numberFigures: documentSettings.figures.enabled,
+      numberTables: documentSettings.tables.enabled,
+    });
+  }, [citationLocale, documentSettings.figures.enabled, documentSettings.tables.enabled, editor]);
   useLayoutEffect(() => {
     const anchor = zoomAnchor.current;
     appliedZoom.current = documentZoom;
@@ -2133,9 +2232,9 @@ export function WikiEditor({
     location.reload();
   }
 
-  async function toggleProofingLanguage() {
+  async function cycleProofingLanguage() {
     const previous = proofingLanguage;
-    const next: ProofingLanguage = previous === "de-DE" ? "en-US" : "de-DE";
+    const next = nextProofingLanguage(previous);
     setProofingSaving(true);
     setProofingDictionaryLoaded(false);
     setProofingDictionary([]);
@@ -2157,11 +2256,34 @@ export function WikiEditor({
     }
   }
 
+  async function toggleProofingPicky() {
+    const previous = proofingPicky;
+    const next = !previous;
+    setProofingPicky(next);
+    try {
+      await updateMyWikiProofingPicky(next);
+    } catch {
+      setProofingPicky(previous);
+      toast.error(t("editor.proofing.saveFailed"));
+    }
+  }
+
   function ignoreCurrentProofingIssue() {
     if (!spellcheckIssue) return;
-    ignoredProofingIssues.current.add(proofingIssueKey(spellcheckIssue.issue));
-    setSpellcheckIssues(activeEditor, getSpellcheckIssues(activeEditor).filter((issue) => proofingIssueKey(issue) !== proofingIssueKey(spellcheckIssue.issue)));
+    const key = proofingIssueKey(spellcheckIssue.issue);
+    ignoredProofingIssues.current.add(key);
+    setSpellcheckIssues(activeEditor, getSpellcheckIssues(activeEditor).filter((issue) => proofingIssueKey(issue) !== key));
     setSpellcheckIssue(null);
+    void ignoreMyWikiProofingIssue(key).catch(() => {});
+  }
+
+  function disableCurrentProofingRule() {
+    if (!spellcheckIssue?.issue.ruleId) return;
+    const { ruleId } = spellcheckIssue.issue;
+    disabledProofingRuleIds.current.add(ruleId);
+    setSpellcheckIssues(activeEditor, getSpellcheckIssues(activeEditor).filter((issue) => issue.ruleId !== ruleId));
+    setSpellcheckIssue(null);
+    void disableMyWikiProofingRule(ruleId).catch(() => {});
   }
 
   async function addCurrentWordToDictionary() {
@@ -2219,8 +2341,10 @@ export function WikiEditor({
     conflict: { label: t("editConflict"), icon: <CloudOff className="size-3.5" />, className: "text-amber-700 dark:text-amber-400" },
   }[saveState];
   const shortcutLabel = (action: WikiShortcutAction) => displayShortcut(wikiShortcuts[action], { ctrl: t("shortcuts.keys.ctrl"), delete: t("shortcuts.keys.delete") });
-  const proofingLanguageLabel = proofingLanguage === "de-DE" ? t("editor.proofing.languages.de") : t("editor.proofing.languages.en");
-  const nextProofingLanguageLabel = proofingLanguage === "de-DE" ? t("editor.proofing.languages.en") : t("editor.proofing.languages.de");
+  const proofingLanguageNames: Record<ProofingLanguage, string> = { "de-DE": t("editor.proofing.languages.de"), "de-AT": t("editor.proofing.languages.deAt"), "en-US": t("editor.proofing.languages.en") };
+  const proofingLanguageAbbreviations: Record<ProofingLanguage, string> = { "de-DE": "DE", "de-AT": "AT", "en-US": "EN" };
+  const proofingLanguageLabel = proofingLanguageNames[proofingLanguage];
+  const nextProofingLanguageLabel = proofingLanguageNames[nextProofingLanguage(proofingLanguage)];
   const proofingButtonTitle = proofingStatus === "error"
     ? t("editor.proofing.browserFallback")
     : t("editor.proofing.switch", { language: proofingLanguageLabel, nextLanguage: nextProofingLanguageLabel });
@@ -2287,7 +2411,8 @@ export function WikiEditor({
     <ToolbarMenu label={t("editor.toolbar.more")} icon={<MoreHorizontal className="size-4" />}>
       <DropdownMenuGroup>
         <DropdownMenuLabel>{t("editor.toolbar.groups.review")}</DropdownMenuLabel>
-        <DropdownMenuItem className="xl:hidden" title={proofingButtonTitle} disabled={proofingSaving} onClick={() => void toggleProofingLanguage()}><Languages />{proofingLanguageLabel}<span className="ml-auto text-xs text-muted-foreground">{proofingLanguage === "de-DE" ? "DE → EN" : "EN → DE"}</span></DropdownMenuItem>
+        <DropdownMenuItem className="xl:hidden" title={proofingButtonTitle} disabled={proofingSaving} onClick={() => void cycleProofingLanguage()}><Languages />{proofingLanguageLabel}<span className="ml-auto text-xs text-muted-foreground">{proofingLanguageAbbreviations[proofingLanguage]} → {proofingLanguageAbbreviations[nextProofingLanguage(proofingLanguage)]}</span></DropdownMenuItem>
+        <DropdownMenuCheckboxItem checked={proofingPicky} onCheckedChange={() => void toggleProofingPicky()}><Settings2 />{t("editor.proofing.picky")}</DropdownMenuCheckboxItem>
         <DropdownMenuItem onClick={() => setSuggesting((value) => !value)}><ScissorsLineDashed />{suggesting ? t("suggestions.leaveMode") : t("suggestions.enterMode")}</DropdownMenuItem>
         {(suggestionCounts.inserted > 0 || suggestionCounts.deleted > 0) && <>
           <DropdownMenuItem onClick={() => resolveSuggestions(true)}><Check />{t("suggestions.acceptAll", { count: suggestionCounts.inserted + suggestionCounts.deleted })}</DropdownMenuItem>
@@ -2389,6 +2514,7 @@ export function WikiEditor({
       <div
         className={`wiki-editor-surface${documentMode ? " wiki-document-canvas" : ""}`}
         data-margin-guides={documentSettings.page.showMarginGuides ? "true" : "false"}
+        data-numbered-headings={documentMode && documentSettings.page.numberedHeadings ? "true" : "false"}
         style={documentMode ? documentCanvasStyle : editorTypographyStyle}
       >
         {documentMode && Array.from({ length: visibleDocumentPages }, (_, index) => <div key={index} className="wiki-document-page-sheet" style={{ top: `calc(${index} * (var(--document-paper-height) + var(--document-page-gap)))` }} aria-hidden="true" />)}
@@ -2430,21 +2556,23 @@ export function WikiEditor({
       </div>
       {spellcheckIssue && <div role="dialog" aria-label={t("editor.proofing.dialog")} className="fixed z-50 max-h-[min(28rem,calc(100vh-2rem))] w-72 overflow-y-auto rounded-lg border bg-popover p-2 shadow-lg" style={{ left: Math.min(spellcheckIssue.rect.left, window.innerWidth - 304), top: Math.min(spellcheckIssue.rect.bottom + 8, window.innerHeight - 210) }}>
         <p className="px-2 pb-1 text-xs font-medium">{t(spellcheckIssue.issue.kind === "spelling" ? "editor.proofing.types.spelling" : "editor.proofing.types.writing")}{spellcheckIssue.issue.category && <span className="font-normal text-muted-foreground"> · {spellcheckIssue.issue.category}</span>}</p>
+        <p className="px-2 pb-1 break-words font-mono text-xs">{activeEditor.state.doc.textBetween(spellcheckIssue.issue.from, spellcheckIssue.issue.to)}</p>
         <p className="px-2 pb-1 text-xs text-muted-foreground">{spellcheckIssue.issue.message}</p>
         {spellcheckIssue.issue.replacements.length ? spellcheckIssue.issue.replacements.map((replacement) => <Button key={replacement} type="button" variant="ghost" size="sm" className="w-full justify-start" onClick={() => replaceCurrentProofingIssue(replacement)}>{replacement}</Button>) : <p className="px-2 py-1 text-xs text-muted-foreground">{t("editor.proofing.noReplacement")}</p>}
         <div className="mt-1 border-t pt-1">
           {spellcheckIssue.issue.replacements[0] && <Button type="button" variant="ghost" size="sm" className="w-full justify-start" onClick={() => replaceAllCurrentProofingIssue(spellcheckIssue.issue.replacements[0])}>{t("editor.proofing.replaceAll")}</Button>}
           <Button type="button" variant="ghost" size="sm" className="w-full justify-start" onClick={ignoreCurrentProofingIssue}>{t("editor.proofing.ignore")}</Button>
           {spellcheckIssue.issue.kind === "spelling" && <Button type="button" variant="ghost" size="sm" className="w-full justify-start" onClick={() => void addCurrentWordToDictionary()}>{t("editor.proofing.addToDictionary")}</Button>}
+          {spellcheckIssue.issue.ruleId && <Button type="button" variant="ghost" size="sm" className="w-full justify-start" onClick={disableCurrentProofingRule}>{t("editor.proofing.disableRule")}</Button>}
           <Button type="button" variant="ghost" size="sm" className="w-full justify-start" onClick={() => setSpellcheckIssue(null)}>{t("editor.proofing.close")}</Button>
         </div>
       </div>}
       <CommentAnchorOverlay visible={commentsVisible} comments={commentThreads} editor={editor} rootRef={editorRootRef} activeThreadId={activeThreadId} onActiveThreadChange={setActiveThreadId} />
     </div>
     <aside data-testid="editor-side-tools" aria-label={t("editor.toolbar.sideTools")} className="sticky top-16 hidden w-32 flex-col gap-2 rounded-xl border bg-background/95 p-2 shadow-sm backdrop-blur xl:flex">
-      <Button type="button" data-testid="proofing-language-toggle" variant="outline" className="h-auto w-full flex-col items-stretch gap-1.5 px-2 py-2" aria-label={proofingButtonTitle} disabled={proofingSaving} onClick={() => void toggleProofingLanguage()}>
+      <Button type="button" data-testid="proofing-language-toggle" variant="outline" className="h-auto w-full flex-col items-stretch gap-1.5 px-2 py-2" aria-label={proofingButtonTitle} disabled={proofingSaving} onClick={() => void cycleProofingLanguage()}>
         <span className="flex items-center gap-1.5 text-xs font-medium"><Languages className="size-4" />{t("editor.toolbar.language")}</span>
-        <span className="flex items-center justify-center gap-1 text-[10px]"><span className={proofingLanguage === "de-DE" ? "font-semibold text-foreground" : "text-muted-foreground"}>DE</span><ArrowLeftRight className="size-3 text-muted-foreground" /><span className={proofingLanguage === "en-US" ? "font-semibold text-foreground" : "text-muted-foreground"}>EN</span></span>
+        <span className="flex items-center justify-center gap-1 text-[10px]">{PROOFING_LANGUAGES.map((language, index) => <span key={language} className="flex items-center gap-1">{index > 0 && <ArrowLeftRight className="size-3 text-muted-foreground" />}<span className={proofingLanguage === language ? "font-semibold text-foreground" : "text-muted-foreground"}>{proofingLanguageAbbreviations[language]}</span></span>)}</span>
       </Button>
       <Button type="button" variant={outlineOpen ? "secondary" : "outline"} className="h-auto w-full justify-start gap-2 px-2 py-2 text-xs" aria-label={t("editor.outline.title")} aria-pressed={outlineOpen} onClick={() => setOutlineOpen(true)}><ListTree className="size-4" />{t("editor.toolbar.outline")}</Button>
       <Button type="button" variant={commentsVisible ? "secondary" : "outline"} className="h-auto w-full justify-start gap-2 px-2 py-2 text-xs" aria-label={commentsVisible ? t("hideComments") : t("showComments")} aria-pressed={commentsVisible} onClick={() => setCommentsVisible((value) => !value)}><MessageSquareText className="size-4" /><span className="min-w-0 flex-1 truncate text-left">{t("comments")}</span>{unresolvedCommentCount > 0 && <span className="rounded-full bg-muted px-1.5 py-0.5 text-[9px] tabular-nums">{unresolvedCommentCount}</span>}</Button>
