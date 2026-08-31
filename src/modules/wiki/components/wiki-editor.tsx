@@ -43,7 +43,7 @@ import { userMarkColorStyle, type UserMarkColor } from "@/lib/user-mark-colors";
 import { MermaidDiagram, MERMAID_PLACEHOLDER } from "./mermaid-extension";
 import { SuggestionDelete, SuggestionInsert, SuggestionMode } from "./suggestion-extension";
 import { acceptSuggestions, countSuggestions, rejectSuggestions } from "../lib/suggestions";
-import { DocumentExtensions, getDocumentPaginationBreaks, samePaginationBreaks, setDocumentNumberingConfig, setDocumentPaginationBreaks, type DocumentPaginationBreak } from "./document-extension";
+import { DocumentExtensions, getDocumentPaginationBreaks, samePaginationBreaks, setDocumentNumberingConfig, setDocumentPaginationBreaks } from "./document-extension";
 import { computeDocumentPagination, type PaginationItem, type PaginationSplit } from "../lib/document-pagination";
 import { DocumentLayoutPanel } from "./document-layout-panel";
 import { WikiTypographyDialog, type WikiEditorPreferences } from "./wiki-typography-dialog";
