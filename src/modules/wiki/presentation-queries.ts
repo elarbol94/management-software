@@ -2,7 +2,7 @@ import "server-only";
 
 import { desc, eq } from "drizzle-orm";
 import { db } from "@/db";
-import { user, wikiPresentations } from "@/db/schema";
+import { user, wikiPresentationRevisions, wikiPresentations } from "@/db/schema";
 import {
   normalizeSteps,
   parsePresentationElements,
@@ -47,3 +47,25 @@ export function getPresentation(id: string) {
 }
 
 export type PresentationRecord = NonNullable<ReturnType<typeof getPresentation>>;
+
+/**
+ * The same window the page history shows: the newest 30 snapshots. Older ones stay in the
+ * table — nothing prunes them — they are simply out of reach of the list.
+ */
+export function listPresentationRevisions(presentationId: string) {
+  return db
+    .select({
+      id: wikiPresentationRevisions.id,
+      createdAt: wikiPresentationRevisions.createdAt,
+      createdByName: user.name,
+    })
+    .from(wikiPresentationRevisions)
+    .innerJoin(user, eq(wikiPresentationRevisions.createdBy, user.id))
+    .where(eq(wikiPresentationRevisions.presentationId, presentationId))
+    .orderBy(desc(wikiPresentationRevisions.createdAt))
+    .limit(30)
+    .all()
+    .map((row) => ({ ...row, createdAt: row.createdAt.getTime() }));
+}
+
+export type PresentationRevisionItem = ReturnType<typeof listPresentationRevisions>[number];

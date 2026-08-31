@@ -1,8 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
+  PRESENTATION_LEASE_TIMEOUT_MS,
+  PRESENTATION_REVISION_THROTTLE_MS,
   elementBounds,
+  isLeaseHeldByOther,
   moveStep,
   normalizeSteps,
+  shouldSnapshotRevision,
   stepLabel,
   stepTarget,
   unionBounds,
@@ -97,5 +101,44 @@ describe("presentation step labels", () => {
 
   it("collapses whitespace in a text element's own content", () => {
     expect(stepLabel(text("a", "Zwei\n  Zeilen"), 0)).toBe("Zwei Zeilen");
+  });
+});
+
+describe("presentation revision throttle", () => {
+  const now = 1_700_000_000_000;
+
+  it("always snapshots the first save", () => {
+    expect(shouldSnapshotRevision(null, now)).toBe(true);
+  });
+
+  it("skips a snapshot inside the throttle window", () => {
+    expect(shouldSnapshotRevision(now - PRESENTATION_REVISION_THROTTLE_MS, now)).toBe(false);
+    expect(shouldSnapshotRevision(now - 1_000, now)).toBe(false);
+  });
+
+  it("snapshots again once the window has passed", () => {
+    expect(shouldSnapshotRevision(now - PRESENTATION_REVISION_THROTTLE_MS - 1, now)).toBe(true);
+  });
+});
+
+describe("presentation edit lease", () => {
+  const now = 1_700_000_000_000;
+  const lease = (sessionId: string, heartbeatAt: number) => ({ sessionId, heartbeatAt });
+
+  it("is free when nobody holds it", () => {
+    expect(isLeaseHeldByOther(null, "mine", now)).toBe(false);
+  });
+
+  it("never locks out the session that holds it", () => {
+    expect(isLeaseHeldByOther(lease("mine", now), "mine", now)).toBe(false);
+  });
+
+  it("locks out another live session", () => {
+    expect(isLeaseHeldByOther(lease("theirs", now - 10_000), "mine", now)).toBe(true);
+  });
+
+  it("releases an expired lease", () => {
+    expect(isLeaseHeldByOther(lease("theirs", now - PRESENTATION_LEASE_TIMEOUT_MS), "mine", now)).toBe(true);
+    expect(isLeaseHeldByOther(lease("theirs", now - PRESENTATION_LEASE_TIMEOUT_MS - 1), "mine", now)).toBe(false);
   });
 });

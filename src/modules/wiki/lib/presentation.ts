@@ -143,6 +143,28 @@ export function stepTarget(
   return elements.find((element) => element.id === step.elementId) ?? null;
 }
 
+/**
+ * Revision and lease policy, copied from the wiki page editor so both editors behave the
+ * same: one automatic snapshot per author per five minutes, and a lease that dies sixty
+ * seconds after the last heartbeat.
+ */
+export const PRESENTATION_REVISION_THROTTLE_MS = 5 * 60_000;
+export const PRESENTATION_LEASE_TIMEOUT_MS = 60_000;
+
+/** A burst of autosaves must leave one snapshot, not one per keystroke pause. */
+export function shouldSnapshotRevision(lastRevisionAt: number | null, now: number): boolean {
+  return lastRevisionAt === null || now - lastRevisionAt > PRESENTATION_REVISION_THROTTLE_MS;
+}
+
+/** True while somebody else is actively editing; a lease past its timeout is free to take. */
+export function isLeaseHeldByOther(
+  lease: { sessionId: string; heartbeatAt: number } | null,
+  sessionId: string,
+  now: number,
+): boolean {
+  return Boolean(lease && lease.sessionId !== sessionId && now - lease.heartbeatAt <= PRESENTATION_LEASE_TIMEOUT_MS);
+}
+
 export function stepLabel(element: PresentationElement, index: number): string {
   const raw =
     element.type === "frame" ? element.content.label
