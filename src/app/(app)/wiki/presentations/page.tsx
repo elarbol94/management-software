@@ -20,7 +20,10 @@ export default async function PresentationsPage() {
           <h1 className="text-3xl font-semibold tracking-tight">{t("presentations.title")}</h1>
           <p className="mt-1 text-sm text-muted-foreground">{t("presentations.description")}</p>
         </div>
-        <NewPresentationForm />
+        <div className="flex items-center gap-4">
+          <Link href="/wiki/presentations/follow" className="text-sm font-medium text-indigo-600">{t("presentations.joinLive")}</Link>
+          <NewPresentationForm />
+        </div>
       </header>
 
       {presentations.length === 0 ? (

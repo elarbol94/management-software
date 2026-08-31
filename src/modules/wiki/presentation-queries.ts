@@ -2,7 +2,8 @@ import "server-only";
 
 import { desc, eq } from "drizzle-orm";
 import { db } from "@/db";
-import { user, wikiPresentationRevisions, wikiPresentations } from "@/db/schema";
+import { user, wikiPresentationLiveSessions, wikiPresentationRevisions, wikiPresentations } from "@/db/schema";
+import { isLiveSessionStale } from "./lib/live-session";
 import {
   normalizeSteps,
   parsePresentationCanvas,
@@ -71,3 +72,33 @@ export function listPresentationRevisions(presentationId: string) {
 }
 
 export type PresentationRevisionItem = ReturnType<typeof listPresentationRevisions>[number];
+
+/**
+ * The live session a viewer's join code points at, or null once the host stopped
+ * heartbeating. Stale rows are left in place: the next start for that presentation
+ * overwrites the row anyway.
+ */
+export function getLiveSessionByCode(code: string) {
+  const row = db
+    .select({
+      presentationId: wikiPresentationLiveSessions.presentationId,
+      code: wikiPresentationLiveSessions.code,
+      stepIndex: wikiPresentationLiveSessions.stepIndex,
+      heartbeatAt: wikiPresentationLiveSessions.heartbeatAt,
+      hostName: user.name,
+    })
+    .from(wikiPresentationLiveSessions)
+    .leftJoin(user, eq(wikiPresentationLiveSessions.hostUserId, user.id))
+    .where(eq(wikiPresentationLiveSessions.code, code))
+    .get();
+  if (!row) return null;
+  return {
+    presentationId: row.presentationId,
+    code: row.code,
+    stepIndex: row.stepIndex,
+    hostName: row.hostName ?? "",
+    live: !isLiveSessionStale(row.heartbeatAt.getTime(), Date.now()),
+  };
+}
+
+export type PresentationLiveSession = NonNullable<ReturnType<typeof getLiveSessionByCode>>;
