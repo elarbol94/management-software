@@ -1,13 +1,9 @@
 import { Extension, Mark, Node, mergeAttributes, type Editor } from "@tiptap/core";
 import { Plugin, PluginKey } from "@tiptap/pm/state";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
+import type { DocumentPaginationBreak } from "../lib/document-pagination";
 
-export type DocumentPaginationBreak = {
-  position: number;
-  height: number;
-  page: number;
-  kind?: "block" | "listItem";
-};
+export type { DocumentPaginationBreak, DocumentPaginationBreakKind } from "../lib/document-pagination";
 
 const documentPaginationKey = new PluginKey<DocumentPaginationBreak[]>("documentPagination");
 
@@ -56,12 +52,26 @@ const DocumentPagination = Extension.create({
         decorations(state) {
           const breaks = documentPaginationKey.getState(state) ?? [];
           return DecorationSet.create(state.doc, breaks.map((item) => Decoration.widget(item.position, () => {
-            const spacer = document.createElement(item.kind === "listItem" ? "li" : "div");
+            const height = Math.max(0, item.height);
+            // Breaks inside a paragraph, code block or table need a spacer the
+            // surrounding formatting context accepts, so the element follows the kind.
+            const tag = item.kind === "listItem" ? "li" : item.kind === "inline" ? "span" : item.kind === "tableRow" ? "tr" : "div";
+            const spacer = document.createElement(tag);
             spacer.className = "wiki-document-auto-page-break";
             spacer.contentEditable = "false";
             spacer.dataset.page = String(item.page);
-            spacer.style.height = `${Math.max(0, item.height)}px`;
             spacer.setAttribute("aria-hidden", "true");
+            if (item.kind === "tableRow") {
+              const cell = document.createElement("td");
+              cell.colSpan = 100;
+              cell.style.height = `${height}px`;
+              cell.style.padding = "0";
+              cell.style.border = "0";
+              spacer.append(cell);
+            } else {
+              if (item.kind === "inline") spacer.style.display = "block";
+              spacer.style.height = `${height}px`;
+            }
             return spacer;
           }, { key: `page-${item.page}-${item.position}-${Math.round(item.height)}-${item.kind ?? "block"}`, side: -1 })));
         },

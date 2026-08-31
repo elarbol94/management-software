@@ -122,6 +122,15 @@ describe("computeDocumentPagination", () => {
     expect(plan.measure).toContain(1);
   });
 
+  it("asks for no line geometry while everything fits on the page", () => {
+    const plan = computeDocumentPagination([
+      block({ position: 0, top: 100, bottom: 300, heading: true }),
+      block({ position: 10, top: 300, bottom: 700, splittable: true }),
+      block({ position: 20, top: 700, bottom: 900, splittable: true }),
+    ], geometry);
+    expect(plan).toEqual({ breaks: [], pageCount: 1, measure: [] });
+  });
+
   it("starts the block after an explicit page break on a new page", () => {
     const plan = computeDocumentPagination([
       block({ position: 0, top: 100, bottom: 200 }),

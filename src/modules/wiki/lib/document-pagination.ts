@@ -88,7 +88,7 @@ export function computeDocumentPagination(
 
   // A heading (or an explicit keepWithNext block) must stay with the first lines
   // of what follows it, so placement looks at the chain rather than the block.
-  const chainBottom = (index: number) => {
+  const chainBottom = (index: number, limit: number) => {
     let bottom = retainedBottom(items[index]);
     let cursor = index;
     for (let step = 0; step < KEEP_CHAIN_LOOKAHEAD; step += 1) {
@@ -96,6 +96,9 @@ export function computeDocumentPagination(
       const next = items[cursor + 1];
       if (!next || next.pageBreak) break;
       if (!current.keepWithNext && !current.heading) break;
+      // The block after it already fits on this page, so there is nothing to keep
+      // together - and no reason to pay for measuring its lines.
+      if (next.bottom <= limit) break;
       if (next.splittable && !next.splits) measure.add(cursor + 1);
       const nextBottom = retainedBottom(next);
       // Moving the chain onto a fresh page only helps if the chain fits there.
@@ -126,7 +129,7 @@ export function computeDocumentPagination(
       offset = contentStartOf(page + 1) - flowTop;
     } else if (flowTop < contentStart) {
       offset = contentStart - flowTop;
-    } else if (chainBottom(index) + accumulated > contentEnd + TOLERANCE) {
+    } else if (chainBottom(index, contentEnd - accumulated + TOLERANCE) + accumulated > contentEnd + TOLERANCE) {
       // An unsplittable block taller than a page can never be placed; moving it
       // would only leave an empty page behind it.
       if (points.length || height <= usableHeight) offset = contentStartOf(page + 1) - flowTop;
