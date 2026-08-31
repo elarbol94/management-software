@@ -3032,10 +3032,30 @@
       "frameLabel": "Beschriftung",
       "colorDefault": "Standardfarbe",
       "colorNamed": "Farbe {color}",
+      "addShape": "Form",
+      "rotation": "Drehung (Grad)",
+      "bringToFront": "Nach vorne holen",
+      "sendToBack": "Nach hinten stellen",
+      "duplicateElement": "Element duplizieren",
+      "elementBackground": "Hintergrund des Elements",
+      "canvas": "Canvas",
+      "canvasBackground": "Canvas-Hintergrund",
+      "clearColor": "Farbe zurücksetzen",
+      "fill": "Füllung",
+      "stroke": "Linie",
+      "strokeWidth": "Linienstärke",
+      "opacity": "Deckkraft",
+      "shapeKinds": {
+        "rect": "Rechteck",
+        "ellipse": "Ellipse",
+        "arrow": "Pfeil",
+        "line": "Linie"
+      },
       "elementTypes": {
         "text": "Text",
         "image": "Bild",
-        "frame": "Rahmen"
+        "frame": "Rahmen",
+        "shape": "Form"
       },
       "frameShapes": {
         "rect": "Rechteck",

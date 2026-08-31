@@ -16,7 +16,7 @@ import {
   PRESENTATION_LEASE_TIMEOUT_MS,
   isLeaseHeldByOther,
   normalizeSteps,
-  parsePresentationElements,
+  parsePresentationCanvas,
   parsePresentationSteps,
   presentationElementsSchema,
   presentationStepsSchema,
@@ -155,6 +155,7 @@ export async function savePresentation(input: {
   elements: unknown;
   steps: unknown;
   sessionId?: string;
+  background?: unknown;
 }) {
   const currentUser = await requireUserOrThrow();
   const data = z
@@ -163,6 +164,7 @@ export async function savePresentation(input: {
       elements: presentationElementsSchema,
       steps: presentationStepsSchema,
       sessionId: sessionSchema.optional(),
+      background: z.string().max(32).default(""),
     })
     .parse(input);
   const current = db.select().from(wikiPresentations).where(eq(wikiPresentations.id, data.id)).get();
@@ -174,7 +176,8 @@ export async function savePresentation(input: {
     snapshotPresentation(current, currentUser.id);
     db.update(wikiPresentations)
       .set({
-        elementsJson: JSON.stringify(data.elements),
+        // The envelope form; `parsePresentationCanvas` still reads the older bare array.
+        elementsJson: JSON.stringify({ elements: data.elements, background: data.background }),
         // Steps pointing at deleted elements are dropped here, so a saved path is always
         // one the player can actually fly.
         pathJson: JSON.stringify(normalizeSteps(data.steps, data.elements)),
@@ -205,14 +208,14 @@ export async function restorePresentationRevision(input: { revisionId: string })
     .get();
   if (!current) throw new Error("Presentation not found");
 
-  const elements = parsePresentationElements(revision.elementsJson);
-  const steps = normalizeSteps(parsePresentationSteps(revision.pathJson), elements);
+  const canvas = parsePresentationCanvas(revision.elementsJson);
+  const steps = normalizeSteps(parsePresentationSteps(revision.pathJson), canvas.elements);
   db.transaction(() => {
     snapshotPresentation(current, currentUser.id, true);
     db.update(wikiPresentations)
       .set({
         title: revision.title,
-        elementsJson: JSON.stringify(elements),
+        elementsJson: JSON.stringify(canvas),
         pathJson: JSON.stringify(steps),
         updatedBy: currentUser.id,
         updatedAt: new Date(),

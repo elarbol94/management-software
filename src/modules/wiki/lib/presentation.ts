@@ -9,8 +9,11 @@ import { z } from "zod";
 export const presentationFrameShapes = ["rect", "circle", "none"] as const;
 export type PresentationFrameShape = (typeof presentationFrameShapes)[number];
 
-export const presentationElementTypes = ["text", "image", "frame"] as const;
+export const presentationElementTypes = ["text", "image", "frame", "shape"] as const;
 export type PresentationElementType = (typeof presentationElementTypes)[number];
+
+export const presentationShapeKinds = ["rect", "ellipse", "arrow", "line"] as const;
+export type PresentationShapeKind = (typeof presentationShapeKinds)[number];
 
 const geometrySchema = {
   id: z.string().min(1).max(64),
@@ -19,6 +22,8 @@ const geometrySchema = {
   width: z.number().finite().min(20).max(20_000),
   height: z.number().finite().min(20).max(20_000),
   rotation: z.number().finite().min(-360).max(360).default(0),
+  /** Optional so every presentation saved before backgrounds existed still parses. */
+  background: z.string().max(32).optional(),
 };
 
 const textElementSchema = z.object({
@@ -52,15 +57,30 @@ const frameElementSchema = z.object({
   }),
 });
 
+/** Empty `fill`/`stroke` mean "no fill" and "follow the theme", so shapes read on both. */
+const shapeElementSchema = z.object({
+  ...geometrySchema,
+  type: z.literal("shape"),
+  content: z.object({
+    shape: z.enum(presentationShapeKinds).default("rect"),
+    fill: z.string().max(32).default(""),
+    stroke: z.string().max(32).default(""),
+    strokeWidth: z.number().finite().min(0).max(200).default(2),
+    opacity: z.number().finite().min(0).max(1).default(1),
+  }),
+});
+
 export const presentationElementSchema = z.discriminatedUnion("type", [
   textElementSchema,
   imageElementSchema,
   frameElementSchema,
+  shapeElementSchema,
 ]);
 export type PresentationElement = z.infer<typeof presentationElementSchema>;
 export type PresentationTextElement = z.infer<typeof textElementSchema>;
 export type PresentationImageElement = z.infer<typeof imageElementSchema>;
 export type PresentationFrameElement = z.infer<typeof frameElementSchema>;
+export type PresentationShapeElement = z.infer<typeof shapeElementSchema>;
 
 export const presentationStepSchema = z.object({
   id: z.string().min(1).max(64),
@@ -76,12 +96,62 @@ export type PresentationBounds = { x: number; y: number; width: number; height: 
 /** Padding around a step target, as a share of the target's size. */
 export const PRESENTATION_CAMERA_PADDING = 0.12;
 
-export function parsePresentationElements(json: string): PresentationElement[] {
+/**
+ * The canvas column used to hold a bare element array. It now holds an envelope that can
+ * also carry canvas-wide settings, and the bare array stays readable so presentations
+ * saved before the envelope existed keep opening.
+ */
+export const presentationCanvasSchema = z.union([
+  z.object({
+    elements: presentationElementsSchema,
+    background: z.string().max(32).default(""),
+  }),
+  presentationElementsSchema.transform((elements) => ({ elements, background: "" })),
+]);
+export type PresentationCanvas = z.infer<typeof presentationCanvasSchema>;
+
+export function parsePresentationCanvas(json: string): PresentationCanvas {
   try {
-    return presentationElementsSchema.parse(JSON.parse(json));
+    return presentationCanvasSchema.parse(JSON.parse(json));
   } catch {
-    return [];
+    return { elements: [], background: "" };
   }
+}
+
+/**
+ * Z-order is the order of the array: the last element of its band paints on top. Frames
+ * keep their own band behind everything else (see `elementsToNodes`), so bringing a frame
+ * to the front raises it above other frames, not above the content sitting inside it.
+ */
+export function reorderElement(
+  elements: PresentationElement[],
+  id: string,
+  to: "front" | "back",
+): PresentationElement[] {
+  const index = elements.findIndex((element) => element.id === id);
+  if (index < 0) return elements;
+  const rest = elements.filter((element) => element.id !== id);
+  return to === "front" ? [...rest, elements[index]] : [elements[index], ...rest];
+}
+
+/** Offset so the copy is visibly its own element rather than hiding under the original. */
+export const PRESENTATION_DUPLICATE_OFFSET = 24;
+
+export function duplicateElement(
+  elements: PresentationElement[],
+  id: string,
+  newId: string,
+): { elements: PresentationElement[]; element: PresentationElement | null } {
+  const source = elements.find((element) => element.id === id);
+  if (!source) return { elements, element: null };
+  const copy: PresentationElement = {
+    ...source,
+    id: newId,
+    x: source.x + PRESENTATION_DUPLICATE_OFFSET,
+    y: source.y + PRESENTATION_DUPLICATE_OFFSET,
+    content: { ...source.content },
+  } as PresentationElement;
+  return { elements: [...elements, copy], element: copy };
 }
 
 export function parsePresentationSteps(json: string): PresentationStep[] {
@@ -169,7 +239,9 @@ export function stepLabel(element: PresentationElement, index: number): string {
   const raw =
     element.type === "frame" ? element.content.label
       : element.type === "text" ? element.content.text
-        : element.content.alt;
+        : element.type === "image" ? element.content.alt
+          // A shape has no words of its own, so it is named by its position in the path.
+          : "";
   const trimmed = raw.trim().replace(/\s+/g, " ");
   return trimmed ? trimmed.slice(0, 60) : `${index + 1}`;
 }
