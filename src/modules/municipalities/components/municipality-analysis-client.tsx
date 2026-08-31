@@ -1633,7 +1633,10 @@ function AnalysisEditor({ analysis, analyses, metrics }: { analysis: AnalysisRec
               maxZoom={2}
               fitView={!graph.nodes.length}
               deleteKeyCode={["Backspace", "Delete"]}
-              selectionOnDrag
+              // Dragging the empty canvas pans it, which React Flow takes as reason enough
+              // to ignore `selectionOnDrag` entirely — it was never in effect. Holding
+              // shift while dragging draws the selection box instead, and partial mode
+              // means a card only has to be touched by it, not enclosed.
               selectionMode={SelectionMode.Partial}
               onPaneClick={() => { selectedNodeIdsRef.current = []; setSelectedNodeIds([]); if (graphRef.current.selectedNodeId) commitOperations([{ version: ANALYSIS_OPERATION_VERSION, type: "set-selected-node", nodeId: null }], { recordHistory: false }); }}
               onDragOver={(event) => { if (event.dataTransfer.types.includes(OPERATOR_DRAG_TYPE)) { event.preventDefault(); event.dataTransfer.dropEffect = "copy"; } }}

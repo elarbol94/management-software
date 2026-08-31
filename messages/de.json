@@ -490,7 +490,7 @@
     "studioWidth": "Breite",
     "studioHeight": "Höhe",
     "studioDeleteNode": "Baustein löschen",
-    "studioSelectProperties": "Wähle einen Baustein, um Titel, Abmessungen und weitere Eigenschaften zu bearbeiten.",
+    "studioSelectProperties": "Wähle einen Baustein, um Titel, Abmessungen und weitere Eigenschaften zu bearbeiten. Mit gedrückter Umschalttaste ziehst du einen Auswahlrahmen auf, mit Strg beziehungsweise Cmd wählst du einzelne Bausteine dazu.",
     "studioMultiResult": "Das Ergebnis ist deaktiviert, solange mehrere Bausteine ausgewählt sind.",
     "studioNoteNoResult": "Notizen dokumentieren die Analyse und liefern kein Ergebnis.",
     "studioOpenPalette": "Bibliothek öffnen",
