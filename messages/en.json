@@ -2186,6 +2186,7 @@
       "proofing": {
         "languages": {
           "de": "German",
+          "deAt": "German (Austria)",
           "en": "English"
         },
         "switch": "Proofing language: {language}. Switch to {nextLanguage}.",
@@ -2193,6 +2194,7 @@
         "unavailable": "Spelling and grammar checking is currently unavailable",
         "browserFallback": "Fast browser proofing is active. Advanced grammar checking is currently unavailable.",
         "saveFailed": "The proofing language could not be saved.",
+        "picky": "Stricter proofing",
         "dialog": "Correction suggestions",
         "types": {
           "spelling": "Spelling",
@@ -2202,6 +2204,7 @@
         "replaceAll": "Replace all matching occurrences",
         "ignore": "Ignore this suggestion",
         "addToDictionary": "Add to shared dictionary",
+        "disableRule": "Disable rule",
         "dictionaryAdded": "“{word}” was added to the dictionary.",
         "dictionaryFailed": "The word could not be added to the dictionary.",
         "replacedAll": "{count, plural, one {# occurrence replaced} other {# occurrences replaced}}",

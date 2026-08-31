@@ -29,6 +29,40 @@ describe("POST /api/wiki/spellcheck", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("accepts de-AT as a supported proofing language", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ matches: [] }), { status: 200 }));
+    const response = await POST(new Request("http://test/api/wiki/spellcheck", {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ paragraphs: ["Text"], language: "de-AT" }),
+    }));
+    expect(response.status).toBe(200);
+    expect((fetchMock.mock.calls[0][1]?.body as URLSearchParams).get("language")).toBe("de-AT");
+  });
+
+  it("rejects a non-boolean picky flag", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+    const response = await POST(new Request("http://test/api/wiki/spellcheck", {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ paragraphs: ["Text"], language: "en-US", picky: "yes" }),
+    }));
+    expect(response.status).toBe(400);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("forwards picky mode as LanguageTool's level parameter", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ matches: [] }), { status: 200 }));
+    await POST(new Request("http://test/api/wiki/spellcheck", {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ paragraphs: ["Text"], language: "en-US", picky: true }),
+    }));
+    expect((fetchMock.mock.calls[0][1]?.body as URLSearchParams).get("level")).toBe("picky");
+  });
+
+  it("caches picky and default-level results for the same text separately", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ matches: [] }), { status: 200 }));
+    const body = (picky: boolean) => JSON.stringify({ paragraphs: ["Same text"], language: "en-US", picky });
+    await POST(new Request("http://test/api/wiki/spellcheck", { method: "POST", headers: { "content-type": "application/json" }, body: body(false) }));
+    await POST(new Request("http://test/api/wiki/spellcheck", { method: "POST", headers: { "content-type": "application/json" }, body: body(true) }));
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it("proxies authenticated paragraphs and normalizes spelling and writing issues", async () => {
     const replacements = Array.from({ length: 7 }, (_, index) => ({ value: "word-" + index }));
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ matches: [

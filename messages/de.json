@@ -2186,6 +2186,7 @@
       "proofing": {
         "languages": {
           "de": "Deutsch",
+          "deAt": "Deutsch (Österreich)",
           "en": "Englisch"
         },
         "switch": "Prüfsprache: {language}. Zu {nextLanguage} wechseln.",
@@ -2193,6 +2194,7 @@
         "unavailable": "Rechtschreib- und Grammatikprüfung momentan nicht erreichbar",
         "browserFallback": "Schnelle Browserprüfung aktiv. Die erweiterte Grammatikprüfung ist momentan nicht erreichbar.",
         "saveFailed": "Die Prüfsprache konnte nicht gespeichert werden.",
+        "picky": "Strengere Prüfung",
         "dialog": "Korrekturvorschläge",
         "types": {
           "spelling": "Rechtschreibung",
@@ -2202,6 +2204,7 @@
         "replaceAll": "Alle gleichen Stellen ersetzen",
         "ignore": "Diesen Hinweis ignorieren",
         "addToDictionary": "Zum gemeinsamen Wörterbuch hinzufügen",
+        "disableRule": "Regel deaktivieren",
         "dictionaryAdded": "„{word}“ wurde zum Wörterbuch hinzugefügt.",
         "dictionaryFailed": "Das Wort konnte nicht zum Wörterbuch hinzugefügt werden.",
         "replacedAll": "{count, plural, one {# Stelle ersetzt} other {# Stellen ersetzt}}",

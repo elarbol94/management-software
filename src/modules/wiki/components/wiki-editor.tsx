@@ -21,7 +21,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuShortcut, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuShortcut, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { createSlashCommandExtension, type SlashCommandDefinition } from "./slash-command-menu";
 import { CommentRail, type CommentRailHandle, type CommentThread } from "./comment-rail";
@@ -33,7 +33,9 @@ import { WikiShortcutsDialog } from "./wiki-shortcuts-dialog";
 import { EditorLinkPopover, EditorOutlineSheet, EditorSearchPanel, type OutlineItem } from "./editor-tools";
 import { mergeCommentThreadIds, normalizeImageRect, type CommentAnchor } from "../lib/comment-anchors";
 import { EditorSearchExtension } from "../lib/editor-search";
-import { collectSpellcheckParagraphs, createSpellcheckBatches, createSpellcheckExtension, getSpellcheckIssues, mapSpellcheckMatches, remapSpellcheckBatchMatches, replaceAllSpellcheckOccurrences, setSpellcheckIssues, type ProofingLanguage, type SpellcheckIssue, type SpellcheckResponseMatch } from "../lib/spellcheck";
+import { collectSpellcheckParagraphs, createSpellcheckBatches, createSpellcheckExtension, getSpellcheckIssues, mapSpellcheckMatches, nextProofingLanguage, PROOFING_LANGUAGES, remapSpellcheckBatchMatches, replaceAllSpellcheckOccurrences, setSpellcheckIssues, type ProofingLanguage, type SpellcheckIssue, type SpellcheckResponseMatch } from "../lib/spellcheck";
+import { disableMyWikiProofingRule, ignoreMyWikiProofingIssue, updateMyWikiProofingPicky } from "../wiki-preference-actions";
+import type { WikiProofingPrefsV1 } from "../lib/wiki-proofing-prefs";
 import { looksLikeMarkdown, parseMarkdownDocument } from "../lib/markdown-import";
 import { calculateWritingStats, type WritingStats } from "../lib/editor-writing";
 import { userMarkColorStyle, type UserMarkColor } from "@/lib/user-mark-colors";
@@ -246,6 +248,7 @@ type WikiEditorProps = {
   pageContentVersion: number;
   initialContent: string;
   initialProofingLanguage: ProofingLanguage;
+  initialProofingPrefs: WikiProofingPrefsV1;
   initialDocumentMode: boolean;
   initialDocumentSettings: string;
   documentTemplates: StoredDocumentTemplate[];
@@ -779,6 +782,7 @@ export function WikiEditor({
   pageContentVersion,
   initialContent,
   initialProofingLanguage,
+  initialProofingPrefs,
   initialDocumentMode,
   initialDocumentSettings,
   documentTemplates,
@@ -859,7 +863,9 @@ export function WikiEditor({
   const proofingCache = useRef(new Map<string, CachedSpellcheckMatch[]>());
   const [proofingDictionary, setProofingDictionary] = useState<string[]>([]);
   const [proofingDictionaryLoaded, setProofingDictionaryLoaded] = useState(false);
-  const ignoredProofingIssues = useRef(new Set<string>());
+  const [proofingPicky, setProofingPicky] = useState(initialProofingPrefs.picky);
+  const ignoredProofingIssues = useRef(new Set<string>(initialProofingPrefs.ignoredIssueKeys));
+  const disabledProofingRuleIds = useRef(new Set<string>(initialProofingPrefs.disabledRuleIds));
   const [wikiShortcuts, setWikiShortcuts] = useState(loadWikiShortcutBindings);
   const [initialPreferences] = useState(loadEditorPreferences);
   const [statusVisible, setStatusVisible] = useState(initialPreferences.statusVisible); const [minimalToolbar, setMinimalToolbar] = useState(initialPreferences.minimalToolbar); const [typewriterMode, setTypewriterMode] = useState(initialPreferences.typewriterMode); const typewriterModeRef = useRef(initialPreferences.typewriterMode);
@@ -1401,7 +1407,7 @@ export function WikiEditor({
       const matches: SpellcheckResponseMatch[] = [];
       for (const batch of createSpellcheckBatches(paragraphs)) {
         const uncachedItems = batch.items.filter((item) => {
-          const cached = proofingCache.current.get(`${proofingLanguage}\u0000${item.text}`);
+          const cached = proofingCache.current.get(`${proofingLanguage}\u0000${proofingPicky}\u0000${item.text}`);
           if (!cached) return true;
           matches.push(...cached.map((match) => ({ ...match, paragraph: item.paragraph, offset: item.offset + match.offset })));
           return false;
@@ -1415,6 +1421,7 @@ export function WikiEditor({
             paragraphs: requestBatch.items.map((item) => item.text),
             language: proofingLanguage,
             dictionary: proofingDictionary,
+            picky: proofingPicky,
           }),
           signal: activeController.signal,
         });
@@ -1432,7 +1439,7 @@ export function WikiEditor({
               ruleId: match.ruleId,
               replacements: match.replacements,
             }));
-          proofingCache.current.set(`${proofingLanguage}\u0000${item.text}`, itemMatches);
+          proofingCache.current.set(`${proofingLanguage}\u0000${proofingPicky}\u0000${item.text}`, itemMatches);
           if (proofingCache.current.size > 500) {
             const oldestKey = proofingCache.current.keys().next().value;
             if (typeof oldestKey === "string") proofingCache.current.delete(oldestKey);
@@ -1440,7 +1447,9 @@ export function WikiEditor({
         }
         matches.push(...remapSpellcheckBatchMatches(requestBatch, payload.matches));
       }
-      return mapSpellcheckMatches(paragraphs, matches).filter((issue) => !ignoredProofingIssues.current.has(proofingIssueKey(issue)));
+      return mapSpellcheckMatches(paragraphs, matches)
+        .filter((issue) => !ignoredProofingIssues.current.has(proofingIssueKey(issue)))
+        .filter((issue) => !disabledProofingRuleIds.current.has(issue.ruleId));
     };
 
     const check = async (checkGeneration: number) => {
@@ -1493,7 +1502,7 @@ export function WikiEditor({
       controller?.abort();
       editor.off("update", schedule);
     };
-  }, [editor, pageId, proofingDictionary, proofingDictionaryLoaded, proofingLanguage]);
+  }, [editor, pageId, proofingDictionary, proofingDictionaryLoaded, proofingLanguage, proofingPicky]);
   useEffect(() => {
     if (!editor) return;
     editor.view.dom.spellcheck = proofingStatus === "error";
@@ -2191,9 +2200,9 @@ export function WikiEditor({
     location.reload();
   }
 
-  async function toggleProofingLanguage() {
+  async function cycleProofingLanguage() {
     const previous = proofingLanguage;
-    const next: ProofingLanguage = previous === "de-DE" ? "en-US" : "de-DE";
+    const next = nextProofingLanguage(previous);
     setProofingSaving(true);
     setProofingDictionaryLoaded(false);
     setProofingDictionary([]);
@@ -2215,11 +2224,34 @@ export function WikiEditor({
     }
   }
 
+  async function toggleProofingPicky() {
+    const previous = proofingPicky;
+    const next = !previous;
+    setProofingPicky(next);
+    try {
+      await updateMyWikiProofingPicky(next);
+    } catch {
+      setProofingPicky(previous);
+      toast.error(t("editor.proofing.saveFailed"));
+    }
+  }
+
   function ignoreCurrentProofingIssue() {
     if (!spellcheckIssue) return;
-    ignoredProofingIssues.current.add(proofingIssueKey(spellcheckIssue.issue));
-    setSpellcheckIssues(activeEditor, getSpellcheckIssues(activeEditor).filter((issue) => proofingIssueKey(issue) !== proofingIssueKey(spellcheckIssue.issue)));
+    const key = proofingIssueKey(spellcheckIssue.issue);
+    ignoredProofingIssues.current.add(key);
+    setSpellcheckIssues(activeEditor, getSpellcheckIssues(activeEditor).filter((issue) => proofingIssueKey(issue) !== key));
     setSpellcheckIssue(null);
+    void ignoreMyWikiProofingIssue(key).catch(() => {});
+  }
+
+  function disableCurrentProofingRule() {
+    if (!spellcheckIssue?.issue.ruleId) return;
+    const { ruleId } = spellcheckIssue.issue;
+    disabledProofingRuleIds.current.add(ruleId);
+    setSpellcheckIssues(activeEditor, getSpellcheckIssues(activeEditor).filter((issue) => issue.ruleId !== ruleId));
+    setSpellcheckIssue(null);
+    void disableMyWikiProofingRule(ruleId).catch(() => {});
   }
 
   async function addCurrentWordToDictionary() {
@@ -2277,8 +2309,10 @@ export function WikiEditor({
     conflict: { label: t("editConflict"), icon: <CloudOff className="size-3.5" />, className: "text-amber-700 dark:text-amber-400" },
   }[saveState];
   const shortcutLabel = (action: WikiShortcutAction) => displayShortcut(wikiShortcuts[action], { ctrl: t("shortcuts.keys.ctrl"), delete: t("shortcuts.keys.delete") });
-  const proofingLanguageLabel = proofingLanguage === "de-DE" ? t("editor.proofing.languages.de") : t("editor.proofing.languages.en");
-  const nextProofingLanguageLabel = proofingLanguage === "de-DE" ? t("editor.proofing.languages.en") : t("editor.proofing.languages.de");
+  const proofingLanguageNames: Record<ProofingLanguage, string> = { "de-DE": t("editor.proofing.languages.de"), "de-AT": t("editor.proofing.languages.deAt"), "en-US": t("editor.proofing.languages.en") };
+  const proofingLanguageAbbreviations: Record<ProofingLanguage, string> = { "de-DE": "DE", "de-AT": "AT", "en-US": "EN" };
+  const proofingLanguageLabel = proofingLanguageNames[proofingLanguage];
+  const nextProofingLanguageLabel = proofingLanguageNames[nextProofingLanguage(proofingLanguage)];
   const proofingButtonTitle = proofingStatus === "error"
     ? t("editor.proofing.browserFallback")
     : t("editor.proofing.switch", { language: proofingLanguageLabel, nextLanguage: nextProofingLanguageLabel });
@@ -2345,7 +2379,8 @@ export function WikiEditor({
     <ToolbarMenu label={t("editor.toolbar.more")} icon={<MoreHorizontal className="size-4" />}>
       <DropdownMenuGroup>
         <DropdownMenuLabel>{t("editor.toolbar.groups.review")}</DropdownMenuLabel>
-        <DropdownMenuItem className="xl:hidden" title={proofingButtonTitle} disabled={proofingSaving} onClick={() => void toggleProofingLanguage()}><Languages />{proofingLanguageLabel}<span className="ml-auto text-xs text-muted-foreground">{proofingLanguage === "de-DE" ? "DE → EN" : "EN → DE"}</span></DropdownMenuItem>
+        <DropdownMenuItem className="xl:hidden" title={proofingButtonTitle} disabled={proofingSaving} onClick={() => void cycleProofingLanguage()}><Languages />{proofingLanguageLabel}<span className="ml-auto text-xs text-muted-foreground">{proofingLanguageAbbreviations[proofingLanguage]} → {proofingLanguageAbbreviations[nextProofingLanguage(proofingLanguage)]}</span></DropdownMenuItem>
+        <DropdownMenuCheckboxItem checked={proofingPicky} onCheckedChange={() => void toggleProofingPicky()}><Settings2 />{t("editor.proofing.picky")}</DropdownMenuCheckboxItem>
         <DropdownMenuItem onClick={() => setSuggesting((value) => !value)}><ScissorsLineDashed />{suggesting ? t("suggestions.leaveMode") : t("suggestions.enterMode")}</DropdownMenuItem>
         {(suggestionCounts.inserted > 0 || suggestionCounts.deleted > 0) && <>
           <DropdownMenuItem onClick={() => resolveSuggestions(true)}><Check />{t("suggestions.acceptAll", { count: suggestionCounts.inserted + suggestionCounts.deleted })}</DropdownMenuItem>
@@ -2488,21 +2523,23 @@ export function WikiEditor({
       </div>
       {spellcheckIssue && <div role="dialog" aria-label={t("editor.proofing.dialog")} className="fixed z-50 max-h-[min(28rem,calc(100vh-2rem))] w-72 overflow-y-auto rounded-lg border bg-popover p-2 shadow-lg" style={{ left: Math.min(spellcheckIssue.rect.left, window.innerWidth - 304), top: Math.min(spellcheckIssue.rect.bottom + 8, window.innerHeight - 210) }}>
         <p className="px-2 pb-1 text-xs font-medium">{t(spellcheckIssue.issue.kind === "spelling" ? "editor.proofing.types.spelling" : "editor.proofing.types.writing")}{spellcheckIssue.issue.category && <span className="font-normal text-muted-foreground"> · {spellcheckIssue.issue.category}</span>}</p>
+        <p className="px-2 pb-1 break-words font-mono text-xs">{activeEditor.state.doc.textBetween(spellcheckIssue.issue.from, spellcheckIssue.issue.to)}</p>
         <p className="px-2 pb-1 text-xs text-muted-foreground">{spellcheckIssue.issue.message}</p>
         {spellcheckIssue.issue.replacements.length ? spellcheckIssue.issue.replacements.map((replacement) => <Button key={replacement} type="button" variant="ghost" size="sm" className="w-full justify-start" onClick={() => replaceCurrentProofingIssue(replacement)}>{replacement}</Button>) : <p className="px-2 py-1 text-xs text-muted-foreground">{t("editor.proofing.noReplacement")}</p>}
         <div className="mt-1 border-t pt-1">
           {spellcheckIssue.issue.replacements[0] && <Button type="button" variant="ghost" size="sm" className="w-full justify-start" onClick={() => replaceAllCurrentProofingIssue(spellcheckIssue.issue.replacements[0])}>{t("editor.proofing.replaceAll")}</Button>}
           <Button type="button" variant="ghost" size="sm" className="w-full justify-start" onClick={ignoreCurrentProofingIssue}>{t("editor.proofing.ignore")}</Button>
           {spellcheckIssue.issue.kind === "spelling" && <Button type="button" variant="ghost" size="sm" className="w-full justify-start" onClick={() => void addCurrentWordToDictionary()}>{t("editor.proofing.addToDictionary")}</Button>}
+          {spellcheckIssue.issue.ruleId && <Button type="button" variant="ghost" size="sm" className="w-full justify-start" onClick={disableCurrentProofingRule}>{t("editor.proofing.disableRule")}</Button>}
           <Button type="button" variant="ghost" size="sm" className="w-full justify-start" onClick={() => setSpellcheckIssue(null)}>{t("editor.proofing.close")}</Button>
         </div>
       </div>}
       <CommentAnchorOverlay visible={commentsVisible} comments={commentThreads} editor={editor} rootRef={editorRootRef} activeThreadId={activeThreadId} onActiveThreadChange={setActiveThreadId} />
     </div>
     <aside data-testid="editor-side-tools" aria-label={t("editor.toolbar.sideTools")} className="sticky top-16 hidden w-32 flex-col gap-2 rounded-xl border bg-background/95 p-2 shadow-sm backdrop-blur xl:flex">
-      <Button type="button" data-testid="proofing-language-toggle" variant="outline" className="h-auto w-full flex-col items-stretch gap-1.5 px-2 py-2" aria-label={proofingButtonTitle} disabled={proofingSaving} onClick={() => void toggleProofingLanguage()}>
+      <Button type="button" data-testid="proofing-language-toggle" variant="outline" className="h-auto w-full flex-col items-stretch gap-1.5 px-2 py-2" aria-label={proofingButtonTitle} disabled={proofingSaving} onClick={() => void cycleProofingLanguage()}>
         <span className="flex items-center gap-1.5 text-xs font-medium"><Languages className="size-4" />{t("editor.toolbar.language")}</span>
-        <span className="flex items-center justify-center gap-1 text-[10px]"><span className={proofingLanguage === "de-DE" ? "font-semibold text-foreground" : "text-muted-foreground"}>DE</span><ArrowLeftRight className="size-3 text-muted-foreground" /><span className={proofingLanguage === "en-US" ? "font-semibold text-foreground" : "text-muted-foreground"}>EN</span></span>
+        <span className="flex items-center justify-center gap-1 text-[10px]">{PROOFING_LANGUAGES.map((language, index) => <span key={language} className="flex items-center gap-1">{index > 0 && <ArrowLeftRight className="size-3 text-muted-foreground" />}<span className={proofingLanguage === language ? "font-semibold text-foreground" : "text-muted-foreground"}>{proofingLanguageAbbreviations[language]}</span></span>)}</span>
       </Button>
       <Button type="button" variant={outlineOpen ? "secondary" : "outline"} className="h-auto w-full justify-start gap-2 px-2 py-2 text-xs" aria-label={t("editor.outline.title")} aria-pressed={outlineOpen} onClick={() => setOutlineOpen(true)}><ListTree className="size-4" />{t("editor.toolbar.outline")}</Button>
       <Button type="button" variant={commentsVisible ? "secondary" : "outline"} className="h-auto w-full justify-start gap-2 px-2 py-2 text-xs" aria-label={commentsVisible ? t("hideComments") : t("showComments")} aria-pressed={commentsVisible} onClick={() => setCommentsVisible((value) => !value)}><MessageSquareText className="size-4" /><span className="min-w-0 flex-1 truncate text-left">{t("comments")}</span>{unresolvedCommentCount > 0 && <span className="rounded-full bg-muted px-1.5 py-0.5 text-[9px] tabular-nums">{unresolvedCommentCount}</span>}</Button>
