@@ -38,6 +38,7 @@ import {
   ArrowUpToLine,
   Check,
   Copy,
+  FileDown,
   GripVertical,
   History,
   ImagePlus,
@@ -632,6 +633,16 @@ function Editor({
           {saveIndicator}
           <Button type="button" variant="outline" size="sm" onClick={() => void persist(elements, steps, background, settings)} disabled={saveState === "saving" || readOnly}>
             <Save className="size-3.5" />{t("presentations.save")}
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={!steps.length}
+            // The print view reads the saved canvas, so a new tab shows the last save.
+            render={<a href={`/print/presentations/${presentation.id}`} target="_blank" rel="noopener noreferrer" />}
+          >
+            <FileDown className="size-3.5" />{t("presentations.exportPdf")}
           </Button>
           <Button type="button" size="sm" disabled={!steps.length} render={<Link href={`/wiki/presentations/${presentation.id}/present`} />}>
             <Play className="size-3.5" />{t("presentations.present")}

@@ -47,6 +47,7 @@ export default async function PresentationsPage() {
               <div className="mt-3 flex items-center gap-3 text-xs">
                 <Link href={`/wiki/presentations/${presentation.id}`} className="font-medium text-indigo-600">{t("edit")}</Link>
                 <Link href={`/wiki/presentations/${presentation.id}/present`} className="font-medium text-indigo-600">{t("presentations.present")}</Link>
+                <a href={`/print/presentations/${presentation.id}`} target="_blank" rel="noopener noreferrer" className="font-medium text-indigo-600">{t("presentations.exportPdf")}</a>
                 {presentation.updatedByName && <span className="ml-auto truncate text-muted-foreground">{presentation.updatedByName}</span>}
               </div>
             </li>
