@@ -36,8 +36,10 @@ import { CSS } from "@dnd-kit/utilities";
 import {
   Check,
   GripVertical,
+  History,
   ImagePlus,
   Loader2,
+  Lock,
   Maximize2,
   Play,
   Plus,
@@ -53,8 +55,15 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
-import { renamePresentation, savePresentation } from "../presentation-actions";
-import type { PresentationRecord } from "../presentation-queries";
+import {
+  acquirePresentationEditLease,
+  heartbeatPresentationEditLease,
+  releasePresentationEditLease,
+  renamePresentation,
+  restorePresentationRevision,
+  savePresentation,
+} from "../presentation-actions";
+import type { PresentationRecord, PresentationRevisionItem } from "../presentation-queries";
 import {
   PRESENTATION_CAMERA_PADDING,
   elementBounds,
@@ -72,6 +81,8 @@ const COLORS = ["", "#6366f1", "#0d9488", "#f59e0b", "#e11d48", "#0ea5e9"] as co
 const AUTOSAVE_DELAY = 1_200;
 const CAMERA_DURATION = 700;
 const MAX_IMAGE_SIDE = 480;
+/** Well inside the server's lease timeout, so a live editor never looks abandoned. */
+const LEASE_HEARTBEAT_INTERVAL = 15_000;
 
 type SaveState = "idle" | "unsaved" | "saving" | "saved" | "error";
 
@@ -81,6 +92,7 @@ function StepRow({
   active,
   label,
   missing,
+  readOnly,
   onSelect,
   onRemove,
   removeLabel,
@@ -90,6 +102,7 @@ function StepRow({
   active: boolean;
   label: string;
   missing: boolean;
+  readOnly: boolean;
   onSelect: () => void;
   onRemove: () => void;
   removeLabel: string;
@@ -104,7 +117,13 @@ function StepRow({
         active && "border-indigo-500 bg-indigo-50 dark:bg-indigo-950/40",
       )}
     >
-      <button type="button" className="cursor-grab touch-none rounded p-0.5 text-muted-foreground" {...attributes} {...listeners}>
+      <button
+        type="button"
+        disabled={readOnly}
+        className="cursor-grab touch-none rounded p-0.5 text-muted-foreground disabled:cursor-default disabled:opacity-40"
+        {...attributes}
+        {...listeners}
+      >
         <GripVertical className="size-4" />
       </button>
       <span className="w-5 shrink-0 text-right text-xs tabular-nums text-muted-foreground">{index + 1}</span>
@@ -116,21 +135,31 @@ function StepRow({
       >
         {label}
       </button>
-      <Button type="button" variant="ghost" size="icon-sm" aria-label={removeLabel} onClick={onRemove}>
+      <Button type="button" variant="ghost" size="icon-sm" disabled={readOnly} aria-label={removeLabel} onClick={onRemove}>
         <X className="size-3.5" />
       </Button>
     </li>
   );
 }
 
-function Editor({ presentation }: { presentation: PresentationRecord }) {
+function Editor({
+  presentation,
+  revisions,
+}: {
+  presentation: PresentationRecord;
+  revisions: PresentationRevisionItem[];
+}) {
   const t = useTranslations("wiki");
   const router = useRouter();
   const reactFlow = useReactFlow<PresentationNode>();
   const { resolvedTheme } = useTheme();
   const canvasRef = useRef<HTMLDivElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
+  const sessionId = useRef(globalThis.crypto.randomUUID());
 
+  const [lockedBy, setLockedBy] = useState<string | null>(null);
+  const [restoring, setRestoring] = useState<string | null>(null);
+  const readOnly = lockedBy !== null;
   const [title, setTitle] = useState(presentation.title);
   const [elements, setElements] = useState<PresentationElement[]>(presentation.elements);
   const [steps, setSteps] = useState<PresentationStep[]>(presentation.steps);
@@ -145,7 +174,19 @@ function Editor({ presentation }: { presentation: PresentationRecord }) {
     async (nextElements: PresentationElement[], nextSteps: PresentationStep[]) => {
       setSaveState("saving");
       try {
-        await savePresentation({ id: presentation.id, elements: nextElements, steps: nextSteps });
+        const result = await savePresentation({
+          id: presentation.id,
+          elements: nextElements,
+          steps: nextSteps,
+          sessionId: sessionId.current,
+        });
+        // Someone took over while this tab was editing: stop writing rather than
+        // overwriting their canvas with a stale one.
+        if (result.locked) {
+          setLockedBy(result.holderName);
+          setSaveState("error");
+          return;
+        }
         setSaveState("saved");
       } catch {
         setSaveState("error");
@@ -158,10 +199,40 @@ function Editor({ presentation }: { presentation: PresentationRecord }) {
   // Debounced autosave: every edit marks the canvas unsaved, and the last edit of a
   // burst is the one that writes.
   useEffect(() => {
-    if (saveState !== "unsaved") return;
+    if (saveState !== "unsaved" || readOnly) return;
     const timer = setTimeout(() => void persist(elements, steps), AUTOSAVE_DELAY);
     return () => clearTimeout(timer);
-  }, [saveState, elements, steps, persist]);
+  }, [saveState, elements, steps, persist, readOnly]);
+
+  // Edit lease: claim it on open, keep it warm while the tab lives, hand it back on exit.
+  // A missed release is harmless — the lease expires on its own.
+  useEffect(() => {
+    const session = sessionId.current;
+    let disposed = false;
+    const claim = () => {
+      void acquirePresentationEditLease({ id: presentation.id, sessionId: session })
+        .then((result) => {
+          if (!disposed) setLockedBy(result.editable ? null : result.holderName);
+        })
+        .catch(() => undefined);
+    };
+    claim();
+    const timer = window.setInterval(() => {
+      if (disposed) return;
+      // While locked out, keep asking: the holder's lease expires and this tab takes over
+      // without the author having to reload.
+      void heartbeatPresentationEditLease({ id: presentation.id, sessionId: session })
+        .then((result) => {
+          if (!disposed && !result.editable) claim();
+        })
+        .catch(() => undefined);
+    }, LEASE_HEARTBEAT_INTERVAL);
+    return () => {
+      disposed = true;
+      window.clearInterval(timer);
+      void releasePresentationEditLease({ id: presentation.id, sessionId: session }).catch(() => undefined);
+    };
+  }, [presentation.id]);
 
   useEffect(() => {
     if (saveState !== "unsaved" && saveState !== "saving") return;
@@ -183,8 +254,8 @@ function Editor({ presentation }: { presentation: PresentationRecord }) {
   );
 
   const nodes = useMemo(
-    () => elementsToNodes(elements, { editable: true, selectedId, onTextChange }),
-    [elements, selectedId, onTextChange],
+    () => elementsToNodes(elements, { editable: !readOnly, selectedId, onTextChange }),
+    [elements, selectedId, onTextChange, readOnly],
   );
 
   const onNodesChange = useCallback((changes: NodeChange<PresentationNode>[]) => {
@@ -313,14 +384,14 @@ function Editor({ presentation }: { presentation: PresentationRecord }) {
 
   const onStepDragEnd = useCallback((event: DragEndEvent) => {
     const { active, over } = event;
-    if (!over || active.id === over.id) return;
+    if (readOnly || !over || active.id === over.id) return;
     setSteps((current) => {
       const from = current.findIndex((step) => step.id === active.id);
       const to = current.findIndex((step) => step.id === over.id);
       return moveStep(current, from, to);
     });
     setSaveState("unsaved");
-  }, []);
+  }, [readOnly]);
 
   const saveIndicator = {
     idle: null,
@@ -359,6 +430,7 @@ function Editor({ presentation }: { presentation: PresentationRecord }) {
         <Input
           value={title}
           maxLength={200}
+          disabled={readOnly}
           aria-label={t("presentations.presentationTitle")}
           className="h-8 w-56 font-medium"
           onChange={(event) => setTitle(event.target.value)}
@@ -374,12 +446,12 @@ function Editor({ presentation }: { presentation: PresentationRecord }) {
           }}
         />
         <span className="mx-1 h-5 w-px bg-border" />
-        <Button type="button" variant="outline" size="sm" onClick={addText}><Type className="size-3.5" />{t("presentations.addText")}</Button>
-        <Button type="button" variant="outline" size="sm" disabled={uploading} onClick={() => imageInputRef.current?.click()}>
+        <Button type="button" variant="outline" size="sm" disabled={readOnly} onClick={addText}><Type className="size-3.5" />{t("presentations.addText")}</Button>
+        <Button type="button" variant="outline" size="sm" disabled={uploading || readOnly} onClick={() => imageInputRef.current?.click()}>
           {uploading ? <Loader2 className="size-3.5 animate-spin" /> : <ImagePlus className="size-3.5" />}
           {t("presentations.addImage")}
         </Button>
-        <Button type="button" variant="outline" size="sm" onClick={addFrame}><Square className="size-3.5" />{t("presentations.addFrame")}</Button>
+        <Button type="button" variant="outline" size="sm" disabled={readOnly} onClick={addFrame}><Square className="size-3.5" />{t("presentations.addFrame")}</Button>
         <input
           ref={imageInputRef}
           hidden
@@ -396,7 +468,7 @@ function Editor({ presentation }: { presentation: PresentationRecord }) {
         </Button>
         <div className="ml-auto flex items-center gap-2 text-xs">
           {saveIndicator}
-          <Button type="button" variant="outline" size="sm" onClick={() => void persist(elements, steps)} disabled={saveState === "saving"}>
+          <Button type="button" variant="outline" size="sm" onClick={() => void persist(elements, steps)} disabled={saveState === "saving" || readOnly}>
             <Save className="size-3.5" />{t("presentations.save")}
           </Button>
           <Button type="button" size="sm" disabled={!steps.length} render={<Link href={`/wiki/presentations/${presentation.id}/present`} />}>
@@ -404,6 +476,13 @@ function Editor({ presentation }: { presentation: PresentationRecord }) {
           </Button>
         </div>
       </header>
+
+      {readOnly && (
+        <div className="flex items-center gap-2 border-b border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100">
+          <Lock className="size-4 shrink-0" />
+          <span>{lockedBy ? t("presentations.lockedBy", { name: lockedBy }) : t("presentations.locked")}</span>
+        </div>
+      )}
 
       <div className="flex min-h-0 flex-1">
         <div ref={canvasRef} className="relative min-w-0 flex-1">
@@ -418,7 +497,8 @@ function Editor({ presentation }: { presentation: PresentationRecord }) {
             minZoom={0.02}
             maxZoom={8}
             nodesConnectable={false}
-            deleteKeyCode={["Backspace", "Delete"]}
+            nodesDraggable={!readOnly}
+            deleteKeyCode={readOnly ? null : ["Backspace", "Delete"]}
             selectionOnDrag={false}
             panOnDrag
             onPaneClick={() => setSelectedId(null)}
@@ -460,6 +540,7 @@ function Editor({ presentation }: { presentation: PresentationRecord }) {
                         index={index}
                         active={activeStepId === step.id}
                         missing={!target}
+                        readOnly={readOnly}
                         label={target ? stepLabel(target, index) : t("presentations.missingStep")}
                         removeLabel={t("presentations.removeStep")}
                         onSelect={() => {
@@ -626,16 +707,63 @@ function Editor({ presentation }: { presentation: PresentationRecord }) {
               )}
             </section>
           )}
+
+          <section className="mt-5 border-t pt-4">
+            <h2 className="flex items-center gap-1.5 text-xs font-semibold tracking-wide uppercase">
+              <History className="size-3.5" />{t("presentations.history")}
+            </h2>
+            {revisions.length === 0 ? (
+              <p className="mt-2 text-xs text-muted-foreground">{t("presentations.noRevisions")}</p>
+            ) : (
+              <ul className="mt-2 space-y-1">
+                {revisions.map((revision) => (
+                  <li key={revision.id} className="flex items-center gap-2 rounded-md border bg-card px-2 py-1.5 text-xs">
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate">{new Date(revision.createdAt).toLocaleString()}</span>
+                      <span className="block truncate text-muted-foreground">{revision.createdByName}</span>
+                    </span>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="xs"
+                      disabled={readOnly || restoring !== null}
+                      onClick={async () => {
+                        if (!confirm(t("presentations.restoreConfirm"))) return;
+                        setRestoring(revision.id);
+                        try {
+                          await restorePresentationRevision({ revisionId: revision.id });
+                          // The canvas lives in component state, so the restored version
+                          // only shows after a full reload.
+                          window.location.reload();
+                        } catch {
+                          setRestoring(null);
+                          toast.error(t("presentations.restoreFailed"));
+                        }
+                      }}
+                    >
+                      {restoring === revision.id ? <Loader2 className="size-3.5 animate-spin" /> : t("presentations.restore")}
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
         </aside>
       </div>
     </div>
   );
 }
 
-export function PresentationEditor({ presentation }: { presentation: PresentationRecord }) {
+export function PresentationEditor({
+  presentation,
+  revisions,
+}: {
+  presentation: PresentationRecord;
+  revisions: PresentationRevisionItem[];
+}) {
   return (
     <ReactFlowProvider>
-      <Editor key={presentation.id} presentation={presentation} />
+      <Editor key={presentation.id} presentation={presentation} revisions={revisions} />
     </ReactFlowProvider>
   );
 }

@@ -3052,7 +3052,14 @@
         "saving": "Speichert…",
         "saved": "Gespeichert",
         "error": "Fehler"
-      }
+      },
+      "locked": "Jemand anderes bearbeitet diese Präsentation gerade. Ansehen ist möglich, Änderungen werden nicht gespeichert.",
+      "lockedBy": "{name} bearbeitet diese Präsentation gerade. Ansehen ist möglich, Änderungen werden nicht gespeichert.",
+      "history": "Versionen",
+      "noRevisions": "Noch keine Versionen. Beim Speichern wird jeweils eine Version behalten.",
+      "restore": "Wiederherstellen",
+      "restoreConfirm": "Diese Version wiederherstellen? Der aktuelle Stand wird vorher als Version gesichert.",
+      "restoreFailed": "Die Version konnte nicht wiederhergestellt werden."
     }
   },
   "settings": {

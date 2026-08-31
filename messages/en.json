@@ -3050,7 +3050,14 @@
         "saving": "Saving…",
         "saved": "Saved",
         "error": "Error"
-      }
+      },
+      "locked": "Someone else is editing this presentation. You can look around, but changes are not saved.",
+      "lockedBy": "{name} is editing this presentation. You can look around, but changes are not saved.",
+      "history": "History",
+      "noRevisions": "No versions yet. A version is kept whenever you save.",
+      "restore": "Restore",
+      "restoreConfirm": "Restore this version? The current state is saved as a version first.",
+      "restoreFailed": "The version could not be restored."
     }
   },
   "settings": {
