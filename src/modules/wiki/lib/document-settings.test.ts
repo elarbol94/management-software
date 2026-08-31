@@ -73,4 +73,21 @@ describe("document settings", () => {
     });
     expect(resolveDocumentToken("{title} · {applicant}", settings, { title: "Proposal" })).toBe("Proposal · Ada");
   });
+
+  it("accepts a reference to a captioned figure or table, and flags one to neither", () => {
+    const issues = collectDocumentPreflightIssues({
+      type: "doc",
+      content: [
+        { type: "commentableImage", attrs: { nodeId: "figure-1", src: "data:image/png;base64,AA==", caption: "Revenue", includeInFigureIndex: true } },
+        { type: "markdownTable", attrs: { tableId: "table-1", caption: "Key results", includeInTableIndex: true } },
+        { type: "commentableImage", attrs: { nodeId: "figure-2", src: "data:image/png;base64,AA==", caption: "", includeInFigureIndex: true } },
+        { type: "crossReference", attrs: { targetId: "figure-1" } },
+        { type: "crossReference", attrs: { targetId: "table-1" } },
+        // An image with no caption gets no anchor in the export, so a reference to it is genuinely broken.
+        { type: "crossReference", attrs: { targetId: "figure-2" } },
+      ],
+    }, DEFAULT_DOCUMENT_SETTINGS);
+    expect(issues.filter((issue) => issue.code === "broken-cross-reference")).toHaveLength(1);
+    expect(issues.find((issue) => issue.code === "broken-cross-reference")?.message).toContain("figure-2");
+  });
 });

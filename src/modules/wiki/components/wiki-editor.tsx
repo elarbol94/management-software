@@ -43,7 +43,7 @@ import { userMarkColorStyle, type UserMarkColor } from "@/lib/user-mark-colors";
 import { MermaidDiagram, MERMAID_PLACEHOLDER } from "./mermaid-extension";
 import { SuggestionDelete, SuggestionInsert, SuggestionMode } from "./suggestion-extension";
 import { acceptSuggestions, countSuggestions, rejectSuggestions } from "../lib/suggestions";
-import { DocumentExtensions, getDocumentPaginationBreaks, samePaginationBreaks, setDocumentPaginationBreaks } from "./document-extension";
+import { DocumentExtensions, getDocumentPaginationBreaks, samePaginationBreaks, setDocumentNumberingConfig, setDocumentPaginationBreaks, type DocumentPaginationBreak } from "./document-extension";
 import { computeDocumentPagination, type PaginationItem, type PaginationSplit } from "../lib/document-pagination";
 import { DocumentLayoutPanel } from "./document-layout-panel";
 import { WikiTypographyDialog, type WikiEditorPreferences } from "./wiki-typography-dialog";
@@ -1172,6 +1172,9 @@ export function WikiEditor({
       setCommentsVisible(true);
       setCommentFocusRequest((value) => value + 1);
     }),
+    // The document layout panel's Content tab already has a target picker covering
+    // headings, figures, tables and annexes — open it rather than duplicating it here.
+    slash("crossReference", "wiki", Link2, () => setDocumentLayoutVisible(true)),
   ];
   const slashExtension = createSlashCommandExtension({ commands: slashCommands, ariaLabel: t("slash.ariaLabel"), emptyLabel: t("slash.empty") });
 
@@ -1674,6 +1677,19 @@ export function WikiEditor({
   useEffect(() => { window.localStorage.setItem(commentsPreferenceKey, String(commentsVisible)); }, [commentsPreferenceKey, commentsVisible]);
   useEffect(() => { window.localStorage.setItem(layoutPreferenceKey, String(documentLayoutVisible)); }, [documentLayoutVisible, layoutPreferenceKey]);
   useEffect(() => { window.localStorage.setItem(DOCUMENT_ZOOM_KEY, String(documentZoom)); }, [documentZoom]);
+  // Figure/table numbers and cross-reference labels shown live in the canvas use the
+  // document's own citation language, matching the word the PDF/DOCX export picks —
+  // and caption numbering only shows where the export shows it (index enabled).
+  useEffect(() => {
+    if (!editor) return;
+    const german = citationLocale.toLocaleLowerCase().startsWith("de");
+    setDocumentNumberingConfig(editor, {
+      figureLabel: german ? "Abbildung" : "Figure",
+      tableLabel: german ? "Tabelle" : "Table",
+      numberFigures: documentSettings.figures.enabled,
+      numberTables: documentSettings.tables.enabled,
+    });
+  }, [citationLocale, documentSettings.figures.enabled, documentSettings.tables.enabled, editor]);
   useLayoutEffect(() => {
     const anchor = zoomAnchor.current;
     appliedZoom.current = documentZoom;

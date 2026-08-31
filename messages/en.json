@@ -2693,6 +2693,18 @@
             "kommentar"
           ]
         },
+        "crossReference": {
+          "label": "Cross-reference",
+          "description": "Reference a heading, figure, table or annex",
+          "keywords": [
+            "reference",
+            "cross-reference",
+            "figure",
+            "table",
+            "annex",
+            "verweis"
+          ]
+        },
         "mermaidDiagram": {
           "label": "Mermaid diagram",
           "description": "Write a diagram as text",
