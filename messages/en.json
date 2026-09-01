@@ -3022,6 +3022,7 @@
       "addFrame": "Frame",
       "newTextPlaceholder": "New text",
       "overview": "Overview",
+      "spotlight": "Spotlight cursor",
       "save": "Save",
       "present": "Present",
       "exportPdf": "Export PDF",
@@ -3129,7 +3130,8 @@
         "ease": "Ease",
         "ease-in": "Ease in",
         "ease-out": "Ease out",
-        "ease-in-out": "Ease in-out"
+        "ease-in-out": "Ease in-out",
+        "ease-out-back": "Pop"
       },
       "stepDuration": "Stop duration (s)",
       "stepDurationHint": "Empty uses the default duration.",

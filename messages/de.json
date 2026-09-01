@@ -3024,6 +3024,7 @@
       "addFrame": "Rahmen",
       "newTextPlaceholder": "Neuer Text",
       "overview": "Übersicht",
+      "spotlight": "Spotlight-Cursor",
       "save": "Speichern",
       "present": "Präsentieren",
       "exportPdf": "PDF-Export",
@@ -3131,7 +3132,8 @@
         "ease": "Sanft",
         "ease-in": "Einschwingend",
         "ease-out": "Ausschwingend",
-        "ease-in-out": "Ein-/ausschwingend"
+        "ease-in-out": "Ein-/ausschwingend",
+        "ease-out-back": "Schwung"
       },
       "stepDuration": "Stationsdauer (s)",
       "stepDurationHint": "Leer verwendet die Standarddauer.",
