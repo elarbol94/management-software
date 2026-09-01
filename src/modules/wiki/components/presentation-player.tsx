@@ -7,7 +7,7 @@ import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { useTheme } from "next-themes";
 import { ReactFlow, ReactFlowProvider, useReactFlow } from "@xyflow/react";
-import { ChevronLeft, ChevronRight, Maximize, Minimize, NotebookText, Pause, Play, Scan, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Maximize, Minimize, NotebookText, Pause, Play, Scan, Spotlight, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   PRESENTATION_CAMERA_PADDING,
@@ -20,6 +20,11 @@ import {
 import { parsePresenterMessage, presenterChannelName } from "../lib/presenter";
 import type { PresentationRecord } from "../presentation-queries";
 import { elementsToNodes, presentationNodeTypes, type PresentationNode } from "./presentation-canvas";
+
+// How long a free pan/zoom gesture is left alone before the camera snaps back to the
+// current step's framing. Short enough that the view doesn't stay adrift, long enough
+// that a pause mid-gesture (lifting fingers to reposition) doesn't get cut off.
+const GESTURE_SNAP_BACK_MS = 900;
 
 function Player({ presentation }: { presentation: PresentationRecord }) {
   const t = useTranslations("wiki");
@@ -63,6 +68,41 @@ function Player({ presentation }: { presentation: PresentationRecord }) {
     },
     [elements, overview, reactFlow, steps, cameraDuration, cameraEase],
   );
+
+  // Presenter-side pinch/wheel zoom and free pan: ReactFlow's own pane already implements
+  // the pointer/touch gesture handling (zoomOnPinch, zoomOnScroll, panOnDrag below), so the
+  // only piece left to build is "snap back once the presenter lets go" — a short idle timer
+  // armed on every real user-driven viewport change and cleared by the next step's flight.
+  const snapBackTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const clearSnapBack = useCallback(() => {
+    if (snapBackTimer.current) {
+      clearTimeout(snapBackTimer.current);
+      snapBackTimer.current = null;
+    }
+  }, []);
+  const scheduleSnapBack = useCallback(() => {
+    clearSnapBack();
+    snapBackTimer.current = setTimeout(() => flyTo(index), GESTURE_SNAP_BACK_MS);
+  }, [clearSnapBack, flyTo, index]);
+  // ReactFlow reports its own programmatic moves (flyTo/fitView) with a null event, and only
+  // a real mouse/touch/wheel interaction with a populated one — exactly the distinction
+  // needed to tell "the presenter is gesturing" from "we just flew the camera ourselves".
+  const onGestureStart = useCallback(
+    (event: MouseEvent | TouchEvent | null) => {
+      if (event) clearSnapBack();
+    },
+    [clearSnapBack],
+  );
+  const onGestureEnd = useCallback(
+    (event: MouseEvent | TouchEvent | null) => {
+      if (event) scheduleSnapBack();
+    },
+    [scheduleSnapBack],
+  );
+  // A step change already re-frames the camera (the flyTo effect below); any snap-back
+  // still pending from a gesture on the previous step would otherwise fire later and fly
+  // to a stale index.
+  useEffect(() => clearSnapBack, [index, clearSnapBack]);
 
   // Autoplay: advance to the next step after its effective duration elapses, looping
   // back to the start (or stopping) once the path runs out.
@@ -171,6 +211,35 @@ function Player({ presentation }: { presentation: PresentationRecord }) {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [move, overview, presentation.id, router]);
 
+  // Its own listener, kept separate from the step-navigation one above: zoom is
+  // presenter-local camera state, unrelated to whichever step index is currently shown.
+  useEffect(() => {
+    const onZoomKeyDown = (event: KeyboardEvent) => {
+      if (!["+", "=", "-", "_"].includes(event.key)) return;
+      event.preventDefault();
+      const zooming = event.key === "-" || event.key === "_" ? reactFlow.zoomOut : reactFlow.zoomIn;
+      void zooming({ duration: 150 });
+      scheduleSnapBack();
+    };
+    window.addEventListener("keydown", onZoomKeyDown);
+    return () => window.removeEventListener("keydown", onZoomKeyDown);
+  }, [reactFlow, scheduleSnapBack]);
+
+  // Spotlight/laser-pointer overlay: a presenter toggle, purely cosmetic. The pointer
+  // position is written straight to the overlay's own CSS variables instead of React state
+  // so mouse movement never triggers a render.
+  const [spotlight, setSpotlight] = useState(false);
+  const spotlightRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!spotlight) return;
+    const onPointerMove = (event: PointerEvent) => {
+      spotlightRef.current?.style.setProperty("--spotlight-x", `${event.clientX}px`);
+      spotlightRef.current?.style.setProperty("--spotlight-y", `${event.clientY}px`);
+    };
+    window.addEventListener("pointermove", onPointerMove);
+    return () => window.removeEventListener("pointermove", onPointerMove);
+  }, [spotlight]);
+
   const toggleFullscreen = useCallback(() => {
     if (document.fullscreenElement) void document.exitFullscreen();
     else void containerRef.current?.requestFullscreen();
@@ -197,14 +266,36 @@ function Player({ presentation }: { presentation: PresentationRecord }) {
         nodesConnectable={false}
         nodesFocusable={false}
         elementsSelectable={false}
-        panOnDrag={false}
+        // Free camera while presenting: drag to pan, wheel/pinch to zoom, both bounded by
+        // minZoom/maxZoom above. onMoveStart/onMoveEnd arm the snap-back defined earlier —
+        // ReactFlow itself already tells apart a real gesture from our own flyTo calls.
+        panOnDrag
         panOnScroll={false}
-        zoomOnScroll={false}
-        zoomOnPinch={false}
+        zoomOnScroll
+        zoomOnPinch
         zoomOnDoubleClick={false}
+        onMoveStart={onGestureStart}
+        onMoveEnd={onGestureEnd}
         preventScrolling
         proOptions={{ hideAttribution: false }}
       />
+
+      {spotlight && (
+        <div
+          ref={spotlightRef}
+          aria-hidden
+          className="pointer-events-none fixed inset-0 z-40"
+          style={{
+            background:
+              "radial-gradient(circle 180px at var(--spotlight-x, 50%) var(--spotlight-y, 50%), transparent 0%, transparent 55%, rgb(0 0 0 / 0.55) 100%)",
+          }}
+        >
+          <div
+            className="absolute size-3 -translate-x-1/2 -translate-y-1/2 rounded-full bg-red-500 shadow-[0_0_14px_4px_rgba(239,68,68,0.85)]"
+            style={{ left: "var(--spotlight-x, 50%)", top: "var(--spotlight-y, 50%)" }}
+          />
+        </div>
+      )}
 
       {playing && steps.length > 0 && (
         // Progress hint for the running step: a bar that fills over its effective duration.
@@ -245,6 +336,16 @@ function Player({ presentation }: { presentation: PresentationRecord }) {
           <span className="mx-1 h-5 w-px bg-border" />
           <Button type="button" variant="ghost" size="icon-sm" aria-label={t("presentations.overview")} onClick={() => overview()}>
             <Scan className="size-4" />
+          </Button>
+          <Button
+            type="button"
+            variant={spotlight ? "secondary" : "ghost"}
+            size="icon-sm"
+            aria-label={t("presentations.spotlight")}
+            aria-pressed={spotlight}
+            onClick={() => setSpotlight((current) => !current)}
+          >
+            <Spotlight className="size-4" />
           </Button>
           <Button type="button" variant="ghost" size="icon-sm" aria-label={t("presentations.fullscreen")} onClick={toggleFullscreen}>
             {fullscreen ? <Minimize className="size-4" /> : <Maximize className="size-4" />}

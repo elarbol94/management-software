@@ -13,6 +13,7 @@ import {
   moveStep,
   normalizeSteps,
   parsePresentationCanvas,
+  presentationCameraEasingFns,
   reorderElement,
   resolveStepDuration,
   shouldSnapshotRevision,
@@ -230,6 +231,24 @@ describe("presentation page export transform", () => {
       x: PRESENTATION_PAGE_SIZE.width / 2,
       y: PRESENTATION_PAGE_SIZE.height / 2,
     });
+  });
+});
+
+describe("presentation camera easing", () => {
+  it("keeps every easing curve anchored at its endpoints", () => {
+    for (const ease of Object.values(presentationCameraEasingFns)) {
+      expect(ease(0)).toBeCloseTo(0, 5);
+      expect(ease(1)).toBeCloseTo(1, 5);
+    }
+  });
+
+  it("gives the new back-ease transition a distinct overshoot feel", () => {
+    const ease = presentationCameraEasingFns["ease-out-back"];
+    // Somewhere near the end it swings past 1 before settling — the "pop" that sets it
+    // apart from the other, purely monotonic curves.
+    const overshoots = Array.from({ length: 20 }, (_, i) => ease((i + 1) / 20)).some((value) => value > 1);
+    expect(overshoots).toBe(true);
+    expect(presentationCameraEasingFns["ease-in-out"](0.9)).toBeLessThanOrEqual(1);
   });
 });
 

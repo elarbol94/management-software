@@ -95,7 +95,7 @@ export type PresentationStep = z.infer<typeof presentationStepSchema>;
 export const presentationElementsSchema = presentationElementSchema.array().max(500);
 export const presentationStepsSchema = presentationStepSchema.array().max(500);
 
-export const presentationCameraEasings = ["linear", "ease", "ease-in", "ease-out", "ease-in-out"] as const;
+export const presentationCameraEasings = ["linear", "ease", "ease-in", "ease-out", "ease-in-out", "ease-out-back"] as const;
 export type PresentationCameraEasing = (typeof presentationCameraEasings)[number];
 
 /** Playback settings for one presentation: autoplay pacing plus the camera curve shared
@@ -117,6 +117,9 @@ export const presentationCameraEasingFns: Record<PresentationCameraEasing, (t: n
   "ease-in": (t) => t * t,
   "ease-out": (t) => t * (2 - t),
   "ease-in-out": (t) => (t < 0.5 ? 2 * t * t : 1 - ((-2 * t + 2) ** 2) / 2),
+  // Standard "easeOutBack" curve (easings.net): overshoots past 1 before settling, giving
+  // step transitions a slight camera "pop" instead of a flat glide.
+  "ease-out-back": (t) => 1 + 2.70158 * (t - 1) ** 3 + 1.70158 * (t - 1) ** 2,
 };
 
 export type PresentationBounds = { x: number; y: number; width: number; height: number };
