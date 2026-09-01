@@ -170,6 +170,15 @@ describe("municipality investment HTML", () => {
     expect(html).not.toContain('src="http');
   });
 
+  it("blockifies the chart bar fill so the exported bars are visible", () => {
+    const html = renderMunicipalityInvestmentHtml(fixtureData(), "de");
+    // .bar-fill is a <span> inside a <span> track, so without display:block the
+    // width/height the script sets on it are ignored and only the numbers show.
+    expect(html).toMatch(/\.bar-fill\{[^}]*display:block/);
+    expect(html).toMatch(/\.truncate\{[^}]*overflow:hidden/);
+    expect(html).toContain("fill.style.width=");
+  });
+
   it("adds a year selector and year deep links to the municipality index", () => {
     const data = fixtureData();
     const index: MunicipalityInvestmentIndex = {
