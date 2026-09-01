@@ -3,14 +3,17 @@ import { getTranslations } from "next-intl/server";
 import { Presentation } from "lucide-react";
 import { requireUser } from "@/lib/auth";
 import { listPresentations } from "@/modules/wiki/presentation-queries";
+import { listPagesFlat } from "@/modules/wiki/queries";
 import {
   DeletePresentationButton,
   NewPresentationForm,
+  NewPresentationFromWikiPage,
 } from "@/modules/wiki/components/presentation-list-actions";
 
 export default async function PresentationsPage() {
   const [, t] = await Promise.all([requireUser(), getTranslations("wiki")]);
   const presentations = listPresentations();
+  const wikiPages = listPagesFlat();
 
   return (
     <div className="p-5 md:p-8">
@@ -20,7 +23,10 @@ export default async function PresentationsPage() {
           <h1 className="text-3xl font-semibold tracking-tight">{t("presentations.title")}</h1>
           <p className="mt-1 text-sm text-muted-foreground">{t("presentations.description")}</p>
         </div>
-        <NewPresentationForm />
+        <div className="flex items-center gap-2">
+          <NewPresentationFromWikiPage pages={wikiPages} />
+          <NewPresentationForm />
+        </div>
       </header>
 
       {presentations.length === 0 ? (

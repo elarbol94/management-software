@@ -3044,6 +3044,10 @@
       "createFailed": "Die Präsentation konnte nicht angelegt werden.",
       "chooseTemplate": "Vorlage wählen",
       "chooseTemplateDescription": "Beginne mit einem leeren Canvas oder einer der integrierten Vorlagen.",
+      "fromWikiPage": "Aus Wiki-Seite",
+      "fromWikiPageDescription": "Baut einen Start-Canvas aus der Überschriftenstruktur einer Seite: Jede Überschrift wird zu einem Rahmen, verschachtelt wie die Gliederung.",
+      "wikiPage": "Wiki-Seite",
+      "includeImages": "Eingebettete Bilder übernehmen",
       "templates": {
         "blank": "Leer",
         "timeline": "Zeitleiste",

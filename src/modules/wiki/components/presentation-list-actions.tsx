@@ -3,10 +3,12 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
-import { Loader2, Plus, Trash2 } from "lucide-react";
+import { FileText, Loader2, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
   Dialog,
   DialogContent,
@@ -14,8 +16,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
-import { createPresentation, deletePresentation } from "../presentation-actions";
+import { createPresentation, createPresentationFromWikiPage, deletePresentation } from "../presentation-actions";
 import { presentationTemplateIds, type PresentationTemplateId } from "../lib/presentation-templates";
 
 /**
@@ -187,6 +190,70 @@ export function NewPresentationForm() {
                 </TemplateCard>
               );
             })}
+          </div>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
+export function NewPresentationFromWikiPage({ pages }: { pages: Array<{ id: string; title: string }> }) {
+  const t = useTranslations("wiki");
+  const router = useRouter();
+  const [open, setOpen] = useState(false);
+  const [pageId, setPageId] = useState<string>(pages[0]?.id ?? "");
+  const [includeImages, setIncludeImages] = useState(true);
+  const [busy, setBusy] = useState(false);
+
+  const create = async () => {
+    if (!pageId) return;
+    setBusy(true);
+    try {
+      const { id } = await createPresentationFromWikiPage({ pageId, includeImages });
+      router.push(`/wiki/presentations/${id}`);
+    } catch {
+      toast.error(t("presentations.createFailed"));
+      setBusy(false);
+    }
+  };
+
+  return (
+    <>
+      <Button type="button" variant="outline" size="sm" disabled={!pages.length} onClick={() => setOpen(true)}>
+        <FileText className="size-3.5" />
+        {t("presentations.fromWikiPage")}
+      </Button>
+
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>{t("presentations.fromWikiPage")}</DialogTitle>
+            <DialogDescription>{t("presentations.fromWikiPageDescription")}</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-1.5">
+              <Label htmlFor="from-wiki-page-select">{t("presentations.wikiPage")}</Label>
+              <Select value={pageId} onValueChange={(value) => setPageId(value ?? "")}>
+                <SelectTrigger id="from-wiki-page-select" className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {pages.map((page) => (
+                    <SelectItem key={page.id} value={page.id}>
+                      {page.title}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <label className="flex items-center gap-2 text-sm">
+              <Checkbox checked={includeImages} onCheckedChange={(checked) => setIncludeImages(checked === true)} />
+              {t("presentations.includeImages")}
+            </label>
+            <Button type="button" className="w-full" disabled={busy || !pageId} onClick={() => void create()}>
+              {busy ? <Loader2 className="size-3.5 animate-spin" /> : <Plus className="size-3.5" />}
+              {t("presentations.new")}
+            </Button>
           </div>
         </DialogContent>
       </Dialog>

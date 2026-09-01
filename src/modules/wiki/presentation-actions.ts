@@ -6,6 +6,7 @@ import { revalidatePath } from "next/cache";
 import { db } from "@/db";
 import {
   user,
+  wikiPages,
   wikiPresentationEditLeases,
   wikiPresentationRevisions,
   wikiPresentations,
@@ -24,6 +25,7 @@ import {
   presentationStepsSchema,
   shouldSnapshotRevision,
 } from "./lib/presentation";
+import { presentationFromWikiPage } from "./lib/presentation-from-wiki";
 import { presentationTemplateIds, presentationTemplates } from "./lib/presentation-templates";
 
 const idSchema = z.string().min(1).max(64);
@@ -52,6 +54,38 @@ export async function createPresentation(input: { title: string; templateId?: st
       ...(template
         ? { elementsJson: JSON.stringify(template.elements), pathJson: JSON.stringify(template.steps) }
         : {}),
+    })
+    .returning({ id: wikiPresentations.id })
+    .get();
+  revalidatePresentations();
+  return { id: row.id };
+}
+
+/**
+ * Seeds a new presentation from a wiki page's heading outline instead of a built-in
+ * template: same insert as `createPresentation`, just with `presentationFromWikiPage`
+ * standing in for a static template.
+ */
+export async function createPresentationFromWikiPage(input: { pageId: string; includeImages?: boolean }) {
+  const currentUser = await requireUserOrThrow();
+  const { pageId, includeImages } = z
+    .object({ pageId: idSchema, includeImages: z.boolean().optional() })
+    .parse(input);
+  const page = db
+    .select({ title: wikiPages.title, contentJson: wikiPages.contentJson })
+    .from(wikiPages)
+    .where(eq(wikiPages.id, pageId))
+    .get();
+  if (!page) throw new Error("Page not found");
+  const { elements, steps } = presentationFromWikiPage(page, { includeImages });
+  const row = db
+    .insert(wikiPresentations)
+    .values({
+      title: page.title,
+      createdBy: currentUser.id,
+      updatedBy: currentUser.id,
+      elementsJson: JSON.stringify(elements),
+      pathJson: JSON.stringify(steps),
     })
     .returning({ id: wikiPresentations.id })
     .get();

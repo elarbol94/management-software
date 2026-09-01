@@ -3042,6 +3042,10 @@
       "createFailed": "The presentation could not be created.",
       "chooseTemplate": "Choose a template",
       "chooseTemplateDescription": "Start from a blank canvas or one of the built-in layouts.",
+      "fromWikiPage": "From wiki page",
+      "fromWikiPageDescription": "Build a starting canvas from a page's heading outline: each heading becomes a frame, nested the way the outline nests.",
+      "wikiPage": "Wiki page",
+      "includeImages": "Include embedded images",
       "templates": {
         "blank": "Blank",
         "timeline": "Timeline",
