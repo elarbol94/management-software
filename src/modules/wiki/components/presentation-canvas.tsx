@@ -3,7 +3,7 @@
 import { useState, type CSSProperties } from "react";
 import { NodeResizer, type Node, type NodeProps } from "@xyflow/react";
 import { cn } from "@/lib/utils";
-import type { PresentationElement } from "../lib/presentation";
+import { PRESENTATION_MIN_ELEMENT_SIZE, type PresentationElement } from "../lib/presentation";
 
 /**
  * The node types are shared by the editor and the player: what a reader sees while
@@ -13,21 +13,21 @@ import type { PresentationElement } from "../lib/presentation";
 export type PresentationNodeData = {
   element: PresentationElement;
   editable: boolean;
+  /** False while several elements are selected: the group is resized as a whole instead. */
+  resizable?: boolean;
   onTextChange?: (id: string, text: string) => void;
   [key: string]: unknown;
 };
 
 export type PresentationNode = Node<PresentationNodeData, "text" | "image" | "frame" | "shape">;
 
-const MIN_SIZE = 40;
-
 function Resizer({ selected, editable }: { selected: boolean; editable: boolean }) {
   if (!editable) return null;
   return (
     <NodeResizer
       isVisible={selected}
-      minWidth={MIN_SIZE}
-      minHeight={MIN_SIZE}
+      minWidth={PRESENTATION_MIN_ELEMENT_SIZE}
+      minHeight={PRESENTATION_MIN_ELEMENT_SIZE}
       maxWidth={20_000}
       maxHeight={20_000}
       color="var(--color-indigo-500)"
@@ -49,7 +49,7 @@ function TextNode({ data, selected }: NodeProps<PresentationNode>) {
         data.editable && selected && "ring-2 ring-indigo-500/60",
       )}
     >
-      <Resizer selected={Boolean(selected)} editable={data.editable} />
+      <Resizer selected={Boolean(selected)} editable={data.editable && data.resizable !== false} />
       {editing && data.editable ? (
         <textarea
           autoFocus
@@ -90,7 +90,7 @@ function ImageNode({ data, selected }: NodeProps<PresentationNode>) {
         data.editable && selected && "ring-2 ring-indigo-500/60",
       )}
     >
-      <Resizer selected={Boolean(selected)} editable={data.editable} />
+      <Resizer selected={Boolean(selected)} editable={data.editable && data.resizable !== false} />
       {/* Served by the existing attachment route, which enforces the session check. */}
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
@@ -123,7 +123,7 @@ function FrameNode({ data, selected }: NodeProps<PresentationNode>) {
       )}
       style={shape !== "none" && color ? { borderColor: color } : undefined}
     >
-      <Resizer selected={Boolean(selected)} editable={data.editable} />
+      <Resizer selected={Boolean(selected)} editable={data.editable && data.resizable !== false} />
       {label && (
         <span
           className="pointer-events-none absolute -top-6 left-0 truncate text-sm font-medium"
@@ -161,7 +161,7 @@ function ShapeNode({ data, selected }: NodeProps<PresentationNode>) {
         data.editable && selected && "ring-2 ring-indigo-500/60",
       )}
     >
-      <Resizer selected={Boolean(selected)} editable={data.editable} />
+      <Resizer selected={Boolean(selected)} editable={data.editable && data.resizable !== false} />
       <svg
         width="100%"
         height="100%"
@@ -224,7 +224,7 @@ export function elementsToNodes(
   elements: PresentationElement[],
   options: {
     editable: boolean;
-    selectedId?: string | null;
+    selectedIds?: Set<string>;
     onTextChange?: (id: string, text: string) => void;
     /** Ids currently hidden so they can fade in — the player's step-arrival entrance. */
     enteringIds?: Set<string>;
@@ -246,14 +246,19 @@ export function elementsToNodes(
       position: { x: element.x, y: element.y },
       width: element.width,
       height: element.height,
-      selected: options.editable ? element.id === options.selectedId : false,
+      selected: options.editable ? Boolean(options.selectedIds?.has(element.id)) : false,
       draggable: options.editable,
       selectable: options.editable,
       connectable: false,
       deletable: options.editable,
       zIndex: (element.type === "frame" ? 0 : FRONT_BAND) + index,
       style: Object.keys(style).length ? style : undefined,
-      data: { element, editable: options.editable, onTextChange: options.onTextChange },
+      data: {
+        element,
+        editable: options.editable,
+        resizable: options.selectedIds?.size === 1,
+        onTextChange: options.onTextChange,
+      },
     };
   });
 }

@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   PRESENTATION_CAMERA_PADDING,
+  PRESENTATION_HISTORY_COALESCE_MS,
+  PRESENTATION_HISTORY_LIMIT,
   PRESENTATION_LEASE_TIMEOUT_MS,
+  PRESENTATION_MIN_ELEMENT_SIZE,
   PRESENTATION_PAGE_SIZE,
   PRESENTATION_REVISION_THROTTLE_MS,
   defaultPresentationSettings,
@@ -9,16 +12,24 @@ import {
   elementBounds,
   elementsWithinStep,
   fitBoundsToPage,
+  initialPresentationCanvasState,
   isLeaseHeldByOther,
   moveStep,
+  normalizeRotation,
   normalizeSteps,
   parsePresentationCanvas,
+  presentationCanvasReducer,
   reorderElement,
+  retargetStep,
+  rotateElements,
+  scaleElements,
   resolveStepDuration,
   shouldSnapshotRevision,
+  snapBounds,
   stepLabel,
   stepTarget,
   unionBounds,
+  type PresentationCanvasState,
   type PresentationElement,
   type PresentationStep,
 } from "./presentation";
@@ -344,5 +355,202 @@ describe("step entrance grouping", () => {
   it("includes at least the target itself when nothing else is nested inside it", () => {
     const target = text("solo", "Hello");
     expect(elementsWithinStep(target, [target]).map((element) => element.id)).toEqual(["solo"]);
+  });
+});
+
+describe("alignment snapping", () => {
+  const box = (x: number, y: number, width = 100, height = 100) => ({ x, y, width, height });
+
+  it("pulls a dragged element flush to another element's edge", () => {
+    const result = snapBounds(box(0, 0), box(304, 0), [box(300, 500)], 6);
+    expect(result.bounds.x).toBe(300);
+    expect(result.guides).toContainEqual(expect.objectContaining({ axis: "x", position: 300 }));
+  });
+
+  it("aligns centres, and prefers the nearer line when both are in range", () => {
+    // Left edge is 5 away from the target's left, centre is 1 away from its centre.
+    const result = snapBounds(box(0, 0), box(295, 0), [box(300, 0, 90, 100)], 6);
+    expect(result.bounds.x + result.bounds.width / 2).toBe(345);
+  });
+
+  it("leaves a drag alone when nothing is within reach", () => {
+    const result = snapBounds(box(0, 0), box(340, 0), [box(300, 500)], 6);
+    expect(result.bounds).toEqual(box(340, 0));
+    expect(result.guides).toEqual([]);
+  });
+
+  it("snaps into and back out of a frame's edge", () => {
+    const frameBox = box(0, 0, 800, 600);
+    const inside = snapBounds(box(1000, 1000, 100, 100), box(4, 3, 100, 100), [frameBox], 6).bounds;
+    expect(inside).toEqual(box(0, 0));
+    const out = snapBounds(inside, box(60, 60, 100, 100), [frameBox], 6).bounds;
+    expect(out).toEqual(box(60, 60));
+  });
+
+  it("moves only the dragged edge while resizing", () => {
+    // Right edge dragged to 297; the target's left edge at 300 pulls it, x stays put.
+    const result = snapBounds(box(100, 100, 100, 100), box(100, 100, 197, 100), [box(300, 100)], 6);
+    expect(result.bounds).toEqual(box(100, 100, 200, 100));
+  });
+
+  it("keeps the far edge still when the near edge snaps during a resize", () => {
+    const result = snapBounds(box(100, 0, 400, 100), box(304, 0, 196, 100), [box(300, 0)], 6);
+    expect(result.bounds.x).toBe(300);
+    expect(result.bounds.x + result.bounds.width).toBe(500);
+  });
+
+  it("never resizes below the minimum element size", () => {
+    const result = snapBounds(box(0, 0, 100, 100), box(0, 0, 42, 100), [box(0, 0, 20, 100)], 30);
+    expect(result.bounds.width).toBe(PRESENTATION_MIN_ELEMENT_SIZE);
+  });
+});
+
+describe("selection transforms", () => {
+  it("spins a single element in place", () => {
+    const element = { ...frame("a", 0, 0, 100, 200), rotation: 10 };
+    const [rotated] = rotateElements([element], new Set(["a"]), 35, { x: 50, y: 100 });
+    expect(rotated.rotation).toBe(45);
+    expect(rotated.x).toBeCloseTo(0);
+    expect(rotated.y).toBeCloseTo(0);
+  });
+
+  it("orbits a group around the shared centre", () => {
+    const elements = [frame("a", 0, 0, 100, 100), frame("b", 200, 0, 100, 100)];
+    const rotated = rotateElements(elements, new Set(["a", "b"]), 90, { x: 150, y: 50 });
+    // A quarter turn about the midpoint swaps the two horizontally-placed boxes vertically.
+    expect(rotated[0].x).toBeCloseTo(100);
+    expect(rotated[0].y).toBeCloseTo(-100);
+    expect(rotated[1].rotation).toBe(90);
+  });
+
+  it("leaves unselected elements untouched", () => {
+    const elements = [frame("a", 0, 0, 100, 100), frame("b", 500, 500, 100, 100)];
+    expect(rotateElements(elements, new Set(["a"]), 90, { x: 50, y: 50 })[1]).toBe(elements[1]);
+    expect(scaleElements(elements, new Set(["a"]), { x: 0, y: 0 }, 2, 2)[1]).toBe(elements[1]);
+  });
+
+  it("wraps rotation into the schema's window", () => {
+    expect(normalizeRotation(370)).toBe(10);
+    expect(normalizeRotation(-370)).toBe(-10);
+    expect(normalizeRotation(180)).toBe(-180);
+  });
+
+  it("scales a group about the held corner", () => {
+    const elements = [frame("a", 100, 100, 100, 100), frame("b", 300, 100, 100, 100)];
+    const scaled = scaleElements(elements, new Set(["a", "b"]), { x: 100, y: 100 }, 2, 0.5);
+    expect(scaled[0]).toMatchObject({ x: 100, y: 100, width: 200, height: 50 });
+    expect(scaled[1]).toMatchObject({ x: 500, y: 100, width: 200, height: 50 });
+  });
+
+  it("refuses a degenerate scale rather than collapsing the canvas", () => {
+    const elements = [frame("a", 0, 0, 100, 100)];
+    expect(scaleElements(elements, new Set(["a"]), { x: 0, y: 0 }, 0, 1)).toBe(elements);
+  });
+});
+
+describe("step retargeting", () => {
+  it("points a step at another element while keeping its notes and duration", () => {
+    const original: PresentationStep[] = [{ id: "s0", elementId: "a", durationMs: 3_000, notes: "hi" }];
+    expect(retargetStep(original, "s0", "b")).toEqual([{ id: "s0", elementId: "b", durationMs: 3_000, notes: "hi" }]);
+  });
+
+  it("ignores an unknown step", () => {
+    expect(retargetStep(steps("a"), "nope", "b")).toEqual(steps("a"));
+  });
+});
+
+describe("canvas history", () => {
+  const start = () => initialPresentationCanvasState([frame("a", 0, 0, 100, 100)], steps("a"));
+  const move = (state: PresentationCanvasState, x: number, at: number) =>
+    presentationCanvasReducer(state, {
+      type: "geometry", at, gesture: true, tolerance: 6, changes: [{ id: "a", x, y: 0 }],
+    });
+
+  it("undoes and redoes an edit", () => {
+    const moved = move(start(), 400, 1_000);
+    expect(moved.elements[0].x).toBe(400);
+    expect(moved.dirty).toBe(true);
+    const undone = presentationCanvasReducer(moved, { type: "undo" });
+    expect(undone.elements[0].x).toBe(0);
+    expect(presentationCanvasReducer(undone, { type: "redo" }).elements[0].x).toBe(400);
+  });
+
+  it("folds one drag into a single undo step", () => {
+    let state = start();
+    for (let frameIndex = 1; frameIndex <= 10; frameIndex += 1) state = move(state, frameIndex * 40, 1_000 + frameIndex * 16);
+    expect(state.past).toHaveLength(1);
+    expect(presentationCanvasReducer(state, { type: "undo" }).elements[0].x).toBe(0);
+  });
+
+  it("opens a new undo step once the author pauses", () => {
+    const first = move(start(), 400, 1_000);
+    expect(move(first, 800, 1_000 + PRESENTATION_HISTORY_COALESCE_MS + 1).past).toHaveLength(2);
+  });
+
+  it("drops the redo stack as soon as a new edit lands", () => {
+    const undone = presentationCanvasReducer(move(start(), 400, 1_000), { type: "undo" });
+    expect(undone.future).toHaveLength(1);
+    expect(move(undone, 90, 2_000).future).toEqual([]);
+  });
+
+  it("caps the stack rather than growing without bound", () => {
+    let state = start();
+    for (let step = 1; step <= PRESENTATION_HISTORY_LIMIT + 20; step += 1) {
+      state = move(state, step, step * (PRESENTATION_HISTORY_COALESCE_MS + 1));
+    }
+    expect(state.past).toHaveLength(PRESENTATION_HISTORY_LIMIT);
+  });
+
+  it("does nothing at the ends of the stack", () => {
+    const state = start();
+    expect(presentationCanvasReducer(state, { type: "undo" })).toBe(state);
+    expect(presentationCanvasReducer(state, { type: "redo" })).toBe(state);
+  });
+
+  it("ignores the dimensions the canvas measures on mount", () => {
+    const state = start();
+    const measured = presentationCanvasReducer(state, {
+      type: "geometry", at: 1_000, gesture: false, tolerance: 6,
+      changes: [{ id: "a", width: 100.2, height: 99.8 }],
+    });
+    expect(measured).toBe(state);
+    expect(measured.dirty).toBe(false);
+  });
+
+  it("stays clean only while the saved canvas is still the current one", () => {
+    const moved = move(start(), 400, 1_000);
+    expect(presentationCanvasReducer(moved, { type: "saved", elements: moved.elements, steps: moved.steps }).dirty).toBe(false);
+    const later = move(moved, 900, 5_000);
+    expect(presentationCanvasReducer(later, { type: "saved", elements: moved.elements, steps: moved.steps }).dirty).toBe(true);
+  });
+
+  it("snaps a dragged element to a neighbour and reports the guide", () => {
+    const state = initialPresentationCanvasState(
+      [frame("a", 0, 0, 100, 100), frame("b", 400, 0, 100, 100)],
+      [],
+    );
+    const dragged = move(state, 396, 1_000);
+    expect(dragged.elements[0].x).toBe(400);
+    // Both boxes sit at y = 0, so the horizontal edges line up as well.
+    expect(dragged.guides).toContainEqual(expect.objectContaining({ axis: "x", position: 400 }));
+    expect(dragged.guides).toContainEqual(expect.objectContaining({ axis: "y", position: 0 }));
+    // The gesture ending clears the guides without touching the canvas.
+    const released = presentationCanvasReducer(dragged, {
+      type: "geometry", at: 1_100, gesture: false, tolerance: 6, changes: [{ id: "a", x: 400, y: 0 }],
+    });
+    expect(released.guides).toEqual([]);
+    expect(released.elements).toBe(dragged.elements);
+  });
+
+  it("moves a whole selection by the same offset", () => {
+    const state = initialPresentationCanvasState(
+      [frame("a", 0, 0, 100, 100), frame("b", 200, 0, 100, 100)],
+      [],
+    );
+    const dragged = presentationCanvasReducer(state, {
+      type: "geometry", at: 1_000, gesture: true, tolerance: 6,
+      changes: [{ id: "a", x: 50, y: 30 }, { id: "b", x: 250, y: 30 }],
+    });
+    expect(dragged.elements.map((element) => [element.x, element.y])).toEqual([[50, 30], [250, 30]]);
   });
 });

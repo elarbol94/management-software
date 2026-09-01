@@ -204,12 +204,13 @@ export function elementBounds(element: PresentationElement): PresentationBounds 
   return { x: element.x, y: element.y, width: element.width, height: element.height };
 }
 
-export function unionBounds(elements: PresentationElement[]): PresentationBounds | null {
-  if (!elements.length) return null;
-  const left = Math.min(...elements.map((element) => element.x));
-  const top = Math.min(...elements.map((element) => element.y));
-  const right = Math.max(...elements.map((element) => element.x + element.width));
-  const bottom = Math.max(...elements.map((element) => element.y + element.height));
+/** Takes anything box-shaped, so a selection of elements and a set of raw boxes both work. */
+export function unionBounds(boxes: PresentationBounds[]): PresentationBounds | null {
+  if (!boxes.length) return null;
+  const left = Math.min(...boxes.map((box) => box.x));
+  const top = Math.min(...boxes.map((box) => box.y));
+  const right = Math.max(...boxes.map((box) => box.x + box.width));
+  const bottom = Math.max(...boxes.map((box) => box.y + box.height));
   return { x: left, y: top, width: right - left, height: bottom - top };
 }
 
@@ -320,6 +321,345 @@ export function elementsWithinStep(
       box.y + box.height <= bounds.y + bounds.height
     );
   });
+}
+
+/** Retargeting a step keeps its id, duration and notes — only the camera target moves. */
+export function retargetStep(
+  steps: PresentationStep[],
+  stepId: string,
+  elementId: string,
+): PresentationStep[] {
+  return steps.map((step) => (step.id === stepId ? { ...step, elementId } : step));
+}
+
+/** Smallest box an element may be dragged or scaled down to, shared with the canvas resizer. */
+export const PRESENTATION_MIN_ELEMENT_SIZE = 40;
+
+/** Snap distance in *screen* pixels; the caller divides by the zoom to get canvas units,
+ * so the pull feels the same however far the author has zoomed out. */
+export const PRESENTATION_SNAP_TOLERANCE = 6;
+
+/** One alignment line to draw: `position` on `axis`, spanning `start`..`end` across it. */
+export type SnapGuide = { axis: "x" | "y"; position: number; start: number; end: number };
+
+/** The three lines an edge can align to on one axis: near edge, centre, far edge. */
+function linesOf(start: number, size: number): [number, number, number] {
+  return [start, start + size / 2, start + size];
+}
+
+/**
+ * One axis of the snap. A pure move offers all three of its own lines and shifts the whole
+ * box; a resize offers only the edges that actually moved and drags just that edge, so
+ * snapping the right edge never pulls the left one along.
+ */
+function snapAxis(
+  prev: { start: number; size: number },
+  next: { start: number; size: number },
+  targets: { start: number; size: number }[],
+  threshold: number,
+): { start: number; size: number; line: number | null } {
+  const resized = Math.abs(next.size - prev.size) > 0.01;
+  const sources = resized
+    ? [
+      ...(Math.abs(next.start - prev.start) > 0.01 ? [next.start] : []),
+      ...(Math.abs(next.start + next.size - (prev.start + prev.size)) > 0.01 ? [next.start + next.size] : []),
+    ]
+    : linesOf(next.start, next.size);
+
+  let best: { delta: number; line: number; source: number } | null = null;
+  for (const source of sources) {
+    for (const target of targets) {
+      for (const line of linesOf(target.start, target.size)) {
+        const delta = line - source;
+        if (Math.abs(delta) <= threshold && (!best || Math.abs(delta) < Math.abs(best.delta))) {
+          best = { delta, line, source };
+        }
+      }
+    }
+  }
+  if (!best) return { start: next.start, size: next.size, line: null };
+  if (!resized) return { start: next.start + best.delta, size: next.size, line: best.line };
+  if (best.source === next.start) {
+    const far = next.start + next.size;
+    const size = Math.max(far - (next.start + best.delta), PRESENTATION_MIN_ELEMENT_SIZE);
+    return { start: far - size, size, line: best.line };
+  }
+  return { start: next.start, size: Math.max(next.size + best.delta, PRESENTATION_MIN_ELEMENT_SIZE), line: best.line };
+}
+
+/**
+ * Align a dragged or resized box to the edges and centres of the boxes that stayed put.
+ * `prev` is what the box looked like before this gesture step, which is the only way to
+ * tell a move from a resize — and a frame is just another target, so an element snaps
+ * flush into a frame and back out of it with no special case.
+ */
+export function snapBounds(
+  prev: PresentationBounds,
+  next: PresentationBounds,
+  targets: PresentationBounds[],
+  threshold: number,
+): { bounds: PresentationBounds; guides: SnapGuide[] } {
+  const horizontal = snapAxis(
+    { start: prev.x, size: prev.width },
+    { start: next.x, size: next.width },
+    targets.map((target) => ({ start: target.x, size: target.width })),
+    threshold,
+  );
+  const vertical = snapAxis(
+    { start: prev.y, size: prev.height },
+    { start: next.y, size: next.height },
+    targets.map((target) => ({ start: target.y, size: target.height })),
+    threshold,
+  );
+  const bounds = { x: horizontal.start, y: vertical.start, width: horizontal.size, height: vertical.size };
+
+  const guides: SnapGuide[] = [];
+  if (horizontal.line !== null) {
+    const matched = targets.filter((target) => linesOf(target.x, target.width).some((line) => Math.abs(line - horizontal.line!) < 0.01));
+    guides.push({
+      axis: "x",
+      position: horizontal.line,
+      start: Math.min(bounds.y, ...matched.map((target) => target.y)),
+      end: Math.max(bounds.y + bounds.height, ...matched.map((target) => target.y + target.height)),
+    });
+  }
+  if (vertical.line !== null) {
+    const matched = targets.filter((target) => linesOf(target.y, target.height).some((line) => Math.abs(line - vertical.line!) < 0.01));
+    guides.push({
+      axis: "y",
+      position: vertical.line,
+      start: Math.min(bounds.x, ...matched.map((target) => target.x)),
+      end: Math.max(bounds.x + bounds.width, ...matched.map((target) => target.x + target.width)),
+    });
+  }
+  return { bounds, guides };
+}
+
+/** Sub-pixel geometry is measurement noise from the renderer, not an edit. */
+const GEOMETRY_EPSILON = 0.5;
+
+/** One element's new geometry as the canvas reports it; absent fields keep their value. */
+export type PresentationGeometryChange = {
+  id: string;
+  x?: number;
+  y?: number;
+  width?: number;
+  height?: number;
+};
+
+/**
+ * Apply a batch of drag/resize changes with snapping. The batch is treated as one gesture:
+ * the moving elements are aligned as a single box against everything that stayed put, so a
+ * group keeps its arrangement and a lone element snaps on its own edges and centre.
+ */
+export function applyGeometryChanges(
+  elements: PresentationElement[],
+  changes: PresentationGeometryChange[],
+  tolerance: number,
+): { elements: PresentationElement[]; guides: SnapGuide[] } {
+  const byId = new Map(changes.map((change) => [change.id, change]));
+  const moving = new Map<string, PresentationBounds>();
+  for (const element of elements) {
+    const change = byId.get(element.id);
+    if (!change) continue;
+    moving.set(element.id, {
+      x: change.x ?? element.x,
+      y: change.y ?? element.y,
+      width: change.width ?? element.width,
+      height: change.height ?? element.height,
+    });
+  }
+  const before = unionBounds(elements.filter((element) => moving.has(element.id)));
+  const after = unionBounds([...moving.values()]);
+  if (!before || !after) return { elements, guides: [] };
+
+  const targets = elements.filter((element) => !moving.has(element.id)).map(elementBounds);
+  const snapped = snapBounds(before, after, targets, tolerance);
+  // Only a resize changes the box's size, and a canvas resizes one element at a time, so
+  // the snapped union *is* that element's box. A move shifts every mover by the same amount.
+  const resizing = moving.size === 1
+    && (Math.abs(snapped.bounds.width - before.width) > 0.01 || Math.abs(snapped.bounds.height - before.height) > 0.01);
+  const dx = snapped.bounds.x - after.x;
+  const dy = snapped.bounds.y - after.y;
+
+  let touched = false;
+  const next = elements.map((element) => {
+    const box = moving.get(element.id);
+    if (!box) return element;
+    const target = resizing ? snapped.bounds : { ...box, x: box.x + dx, y: box.y + dy };
+    if (
+      Math.abs(target.x - element.x) < GEOMETRY_EPSILON
+      && Math.abs(target.y - element.y) < GEOMETRY_EPSILON
+      && Math.abs(target.width - element.width) < GEOMETRY_EPSILON
+      && Math.abs(target.height - element.height) < GEOMETRY_EPSILON
+    ) return element;
+    touched = true;
+    return { ...element, x: target.x, y: target.y, width: target.width, height: target.height };
+  });
+  return { elements: touched ? next : elements, guides: snapped.guides };
+}
+
+/**
+ * Undo/redo for one editing session. A drag reports an edit per frame, so edits closer
+ * together than the coalescing window fold into a single undo step; the stack is capped
+ * because a canvas snapshot is the whole element array.
+ */
+export const PRESENTATION_HISTORY_COALESCE_MS = 350;
+export const PRESENTATION_HISTORY_LIMIT = 50;
+
+export type PresentationSnapshot = { elements: PresentationElement[]; steps: PresentationStep[] };
+
+export type PresentationCanvasState = PresentationSnapshot & {
+  /** Alignment lines to draw for the gesture in progress. */
+  guides: SnapGuide[];
+  past: PresentationSnapshot[];
+  future: PresentationSnapshot[];
+  /** Set by every edit, cleared once that exact canvas has been written to the server. */
+  dirty: boolean;
+  editedAt: number;
+};
+
+export type PresentationCanvasAction =
+  | {
+    type: "edit";
+    at: number;
+    elements?: (current: PresentationElement[]) => PresentationElement[];
+    steps?: (current: PresentationStep[]) => PresentationStep[];
+  }
+  | { type: "geometry"; at: number; changes: PresentationGeometryChange[]; tolerance: number; gesture: boolean }
+  | { type: "undo" }
+  | { type: "redo" }
+  /** Marks the canvas clean, but only if it is still the one that was saved. */
+  | { type: "saved"; elements: PresentationElement[]; steps: PresentationStep[] }
+  /** Background and playback settings live outside the canvas but still need saving. */
+  | { type: "touch" };
+
+export function initialPresentationCanvasState(
+  elements: PresentationElement[],
+  steps: PresentationStep[],
+): PresentationCanvasState {
+  return { elements, steps, guides: [], past: [], future: [], dirty: false, editedAt: 0 };
+}
+
+function commitCanvas(
+  state: PresentationCanvasState,
+  elements: PresentationElement[],
+  steps: PresentationStep[],
+  at: number,
+): PresentationCanvasState {
+  if (elements === state.elements && steps === state.steps) return state;
+  const coalesce = state.past.length > 0 && at - state.editedAt <= PRESENTATION_HISTORY_COALESCE_MS;
+  return {
+    ...state,
+    elements,
+    steps,
+    dirty: true,
+    editedAt: at,
+    past: coalesce ? state.past : [...state.past, { elements: state.elements, steps: state.steps }].slice(-PRESENTATION_HISTORY_LIMIT),
+    future: coalesce ? state.future : [],
+  };
+}
+
+function travelCanvas(state: PresentationCanvasState, direction: "undo" | "redo"): PresentationCanvasState {
+  const source = direction === "undo" ? state.past : state.future;
+  if (!source.length) return state;
+  const snapshot = source[source.length - 1];
+  const current: PresentationSnapshot = { elements: state.elements, steps: state.steps };
+  return {
+    ...state,
+    elements: snapshot.elements,
+    steps: snapshot.steps,
+    guides: [],
+    past: direction === "undo" ? source.slice(0, -1) : [...state.past, current],
+    future: direction === "undo" ? [...state.future, current] : source.slice(0, -1),
+    dirty: true,
+    // The next edit opens its own undo step rather than coalescing into the one just undone.
+    editedAt: 0,
+  };
+}
+
+export function presentationCanvasReducer(
+  state: PresentationCanvasState,
+  action: PresentationCanvasAction,
+): PresentationCanvasState {
+  switch (action.type) {
+    case "edit":
+      return commitCanvas(
+        state,
+        action.elements ? action.elements(state.elements) : state.elements,
+        action.steps ? action.steps(state.steps) : state.steps,
+        action.at,
+      );
+    case "geometry": {
+      const result = applyGeometryChanges(state.elements, action.changes, action.tolerance);
+      const next = commitCanvas(state, result.elements, state.steps, action.at);
+      const guides = action.gesture ? result.guides : [];
+      if (next === state && !guides.length && !state.guides.length) return state;
+      return { ...next, guides };
+    }
+    case "undo":
+    case "redo":
+      return travelCanvas(state, action.type);
+    case "saved":
+      return state.elements === action.elements && state.steps === action.steps ? { ...state, dirty: false } : state;
+    case "touch":
+      return state.dirty ? state : { ...state, dirty: true };
+  }
+}
+
+/** Rotation stays in the schema's [-360, 360] window and reads as the shortest turn. */
+export function normalizeRotation(degrees: number): number {
+  return Math.round((((degrees + 180) % 360) + 360) % 360) - 180;
+}
+
+/**
+ * Turn a selection around one point: every element spins on its own centre *and* orbits
+ * the shared centre, so a group keeps its arrangement. For a single element the two
+ * centres coincide and it simply spins in place.
+ */
+export function rotateElements(
+  elements: PresentationElement[],
+  ids: Set<string>,
+  deltaDegrees: number,
+  center: { x: number; y: number },
+): PresentationElement[] {
+  const radians = (deltaDegrees * Math.PI) / 180;
+  const cos = Math.cos(radians);
+  const sin = Math.sin(radians);
+  return elements.map((element) => {
+    if (!ids.has(element.id)) return element;
+    const dx = element.x + element.width / 2 - center.x;
+    const dy = element.y + element.height / 2 - center.y;
+    return {
+      ...element,
+      x: center.x + dx * cos - dy * sin - element.width / 2,
+      y: center.y + dx * sin + dy * cos - element.height / 2,
+      rotation: normalizeRotation(element.rotation + deltaDegrees),
+    };
+  });
+}
+
+/** Scale a selection about `origin` (the anchor corner held still by the drag). */
+export function scaleElements(
+  elements: PresentationElement[],
+  ids: Set<string>,
+  origin: { x: number; y: number },
+  scaleX: number,
+  scaleY: number,
+): PresentationElement[] {
+  if (!(scaleX > 0) || !(scaleY > 0)) return elements;
+  // ponytail: the box scales, the font size does not — same as single-element resize.
+  return elements.map((element) =>
+    ids.has(element.id)
+      ? {
+        ...element,
+        x: origin.x + (element.x - origin.x) * scaleX,
+        y: origin.y + (element.y - origin.y) * scaleY,
+        width: Math.max(element.width * scaleX, PRESENTATION_MIN_ELEMENT_SIZE),
+        height: Math.max(element.height * scaleY, PRESENTATION_MIN_ELEMENT_SIZE),
+      }
+      : element,
+  );
 }
 
 export function stepLabel(element: PresentationElement, index: number): string {
