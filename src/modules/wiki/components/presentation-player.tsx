@@ -100,7 +100,14 @@ function Player({ presentation, follow }: { presentation: PresentationRecord; fo
   // needed to tell "the presenter is gesturing" from "we just flew the camera ourselves".
   const onGestureStart = useCallback(
     (event: MouseEvent | TouchEvent | null) => {
-      if (event) clearSnapBack();
+      if (event) {
+        // Ctrl+click never starts a d3 gesture (createFilter rejects ctrlKey mousedowns), so
+        // onMoveEnd never fires to consume a suppression flag set by that same click's
+        // onNodeClick — left true, it would swallow the *next* real gesture's snap-back.
+        // move-start always precedes node-click, so clearing it here is ordering-safe.
+        suppressSnapBack.current = false;
+        clearSnapBack();
+      }
     },
     [clearSnapBack],
   );
