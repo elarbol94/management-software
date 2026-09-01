@@ -281,6 +281,16 @@ export function stepTarget(
 }
 
 /**
+ * The step a clicked element should jump to — the click-to-jump counterpart of `stepTarget`.
+ * When several steps target the same element, the lowest-indexed one wins, matching the
+ * order the presenter walks the path in. Null means no step points here: a free-look click.
+ */
+export function stepIndexForElement(steps: PresentationStep[], elementId: string): number | null {
+  const index = steps.findIndex((step) => step.elementId === elementId);
+  return index === -1 ? null : index;
+}
+
+/**
  * Revision and lease policy, copied from the wiki page editor so both editors behave the
  * same: one automatic snapshot per author per five minutes, and a lease that dies sixty
  * seconds after the last heartbeat.

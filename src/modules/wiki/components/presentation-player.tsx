@@ -6,7 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { useTheme } from "next-themes";
-import { ReactFlow, ReactFlowProvider, useReactFlow } from "@xyflow/react";
+import { ReactFlow, ReactFlowProvider, useReactFlow, type NodeMouseHandler } from "@xyflow/react";
 import { ChevronLeft, ChevronRight, Maximize, Minimize, NotebookText, Pause, Play, Scan, Spotlight, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -15,6 +15,7 @@ import {
   elementsWithinStep,
   presentationCameraEasingFns,
   resolveStepDuration,
+  stepIndexForElement,
   stepTarget,
 } from "../lib/presentation";
 import { parsePresenterMessage, presenterChannelName } from "../lib/presenter";
@@ -134,6 +135,38 @@ function Player({ presentation, follow }: { presentation: PresentationRecord; fo
       setIndex((current) => Math.min(Math.max(current + delta, 0), Math.max(steps.length - 1, 0)));
     },
     [following, steps.length],
+  );
+
+  // The Prezi "click anything, you're there" jump: an element that some step targets goes
+  // through the normal setIndex path (status, notes, live broadcast, camera all follow); an
+  // element no step targets just gets a free fly, leaving the step index untouched.
+  const onElementClick = useCallback<NodeMouseHandler<PresentationNode>>(
+    (event, node) => {
+      // Never also register as the container's "click empty canvas" advance.
+      event.stopPropagation();
+      if (following) return;
+      // The pane's own onMoveEnd already armed a snap-back for this same click's mouseup
+      // (a click is a mousedown+mouseup, and ReactFlow reports that as a real gesture) —
+      // clear it before it can fly the camera back out from under this deliberate jump.
+      clearSnapBack();
+      setPlaying(false);
+      const target = node.data.element;
+      const matchedIndex = stepIndexForElement(steps, target.id);
+      if (matchedIndex !== null) {
+        setIndex(matchedIndex);
+        // Explicit, not left to the index-driven effect: clicking the CURRENT step's element
+        // leaves index unchanged, so that effect would never re-run and the click would do
+        // nothing visible.
+        flyTo(matchedIndex);
+        return;
+      }
+      void reactFlow.fitBounds(elementBounds(target), {
+        padding: PRESENTATION_CAMERA_PADDING,
+        duration: cameraDuration,
+        ease: cameraEase,
+      });
+    },
+    [following, clearSnapBack, steps, flyTo, reactFlow, cameraDuration, cameraEase],
   );
 
   // Remote follow (polled live session); the presenter-notes window keeps its own
@@ -285,6 +318,9 @@ function Player({ presentation, follow }: { presentation: PresentationRecord; fo
         nodesConnectable={false}
         nodesFocusable={false}
         elementsSelectable={false}
+        // Nodes stay unselectable/undraggable above; passing onNodeClick alone is what makes
+        // them clickable at all (ReactFlow otherwise sets pointer-events: none on them).
+        onNodeClick={onElementClick}
         // Free camera while presenting: drag to pan, wheel/pinch to zoom, both bounded by
         // minZoom/maxZoom above. onMoveStart/onMoveEnd arm the snap-back defined earlier —
         // ReactFlow itself already tells apart a real gesture from our own flyTo calls.

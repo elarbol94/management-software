@@ -64,6 +64,19 @@ test("create from a template, edit an element, add a step, then present and chec
   await notesField.blur();
   await expect(page.getByText("Gespeichert", { exact: true })).toBeVisible({ timeout: 15_000 });
 
+  // 3b. A second element deliberately left off the path, to exercise the click-to-jump
+  // "free look" case once presenting: clicking it must fly the camera there without
+  // touching the step index. Its id is minted client-side, so it is read back off the
+  // node's own data-testid rather than hard-coded.
+  const freeText = "Free element not on the path";
+  await page.getByRole("button", { name: "Text", exact: true }).click();
+  await contentField.fill(freeText);
+  await contentField.blur();
+  const freeNode = page.locator(".react-flow__node", { hasText: freeText });
+  await expect(freeNode).toBeVisible();
+  const freeElementId = (await freeNode.getAttribute("data-testid"))?.replace("rf__node-", "");
+  expect(freeElementId).toBeTruthy();
+
   // 4. Enter present mode; the template's 4 stops plus our new one make 5.
   await page.getByRole("link", { name: "Präsentieren", exact: true }).click();
   await page.waitForURL(/\/wiki\/presentations\/[^/]+\/present$/, { timeout: 30_000 });
@@ -85,6 +98,24 @@ test("create from a template, edit an element, add a step, then present and chec
   await expect(status).toHaveText("2 / 5");
 
   await player.getByRole("button", { name: "Übersicht" }).click();
+  await expect(status).toHaveText("2 / 5");
+
+  // Click-to-jump. The overview above put every element in view, which the checks below
+  // rely on: clicking the "Ask" frame (a step target) must move the player there through
+  // the normal setIndex path, same as Next/Previous; re-opening the overview between clicks
+  // keeps the next target reachable once the camera has flown in tight on the previous one.
+  await player.locator('[data-testid="rf__node-pitch-ask"]').click();
+  await expect(status).toHaveText("4 / 5");
+
+  // The free element is not a step target, so clicking it only flies the camera there --
+  // the status must stay put.
+  await player.getByRole("button", { name: "Übersicht" }).click();
+  await player.locator(`[data-testid="rf__node-${freeElementId}"]`).click();
+  await expect(status).toHaveText("4 / 5");
+
+  // Back to "Problem" so the walk below starts from the same step it always did.
+  await player.getByRole("button", { name: "Übersicht" }).click();
+  await player.locator('[data-testid="rf__node-pitch-problem"]').click();
   await expect(status).toHaveText("2 / 5");
 
   const fullscreenToggle = player.getByRole("button", { name: "Vollbild" });

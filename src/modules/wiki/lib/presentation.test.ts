@@ -27,6 +27,7 @@ import {
   resolveStepDuration,
   shouldSnapshotRevision,
   snapBounds,
+  stepIndexForElement,
   stepLabel,
   stepTarget,
   unionBounds,
@@ -108,6 +109,16 @@ describe("presentation path ordering", () => {
   it("resolves a step to its element, or to nothing once it is gone", () => {
     expect(stepTarget({ id: "s0", elementId: "b" }, elements)?.id).toBe("b");
     expect(stepTarget({ id: "s0", elementId: "gone" }, elements)).toBeNull();
+  });
+
+  it("resolves a clicked element to the lowest-indexed step that targets it", () => {
+    expect(stepIndexForElement(steps("a", "b", "a"), "a")).toBe(0);
+    expect(stepIndexForElement(steps("a", "b", "a"), "b")).toBe(1);
+  });
+
+  it("finds no step for an element no step targets", () => {
+    expect(stepIndexForElement(steps("a", "b"), "c")).toBeNull();
+    expect(stepIndexForElement([], "a")).toBeNull();
   });
 });
 
