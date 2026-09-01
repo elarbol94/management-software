@@ -89,6 +89,12 @@ function Player({ presentation, follow }: { presentation: PresentationRecord; fo
     clearSnapBack();
     snapBackTimer.current = setTimeout(() => flyTo(index), GESTURE_SNAP_BACK_MS);
   }, [clearSnapBack, flyTo, index]);
+  // An element click's own mouseup reaches the pane's onMoveEnd (with a populated event,
+  // same as a real gesture) BEFORE the click's onNodeClick fires — @xyflow/system defers
+  // that callback to a setTimeout(..., 0) queued during mouseup, which a same-task click
+  // handler always runs ahead of. So a click can't clear a snap-back it hasn't armed yet;
+  // it has to tell onGestureEnd to skip arming one at all, ordering-independent either way.
+  const suppressSnapBack = useRef(false);
   // ReactFlow reports its own programmatic moves (flyTo/fitView) with a null event, and only
   // a real mouse/touch/wheel interaction with a populated one — exactly the distinction
   // needed to tell "the presenter is gesturing" from "we just flew the camera ourselves".
@@ -100,7 +106,12 @@ function Player({ presentation, follow }: { presentation: PresentationRecord; fo
   );
   const onGestureEnd = useCallback(
     (event: MouseEvent | TouchEvent | null) => {
-      if (event) scheduleSnapBack();
+      if (!event) return;
+      if (suppressSnapBack.current) {
+        suppressSnapBack.current = false;
+        return;
+      }
+      scheduleSnapBack();
     },
     [scheduleSnapBack],
   );
@@ -145,10 +156,12 @@ function Player({ presentation, follow }: { presentation: PresentationRecord; fo
       // Never also register as the container's "click empty canvas" advance.
       event.stopPropagation();
       if (following) return;
-      // The pane's own onMoveEnd already armed a snap-back for this same click's mouseup
-      // (a click is a mousedown+mouseup, and ReactFlow reports that as a real gesture) —
-      // clear it before it can fly the camera back out from under this deliberate jump.
-      clearSnapBack();
+      // The pane's own onMoveEnd (populated event, same as any real gesture) still fires for
+      // this same click's mouseup, and it fires AFTER this handler — @xyflow/system defers it
+      // to a setTimeout(..., 0) queued during mouseup, which this same-task click handler runs
+      // ahead of. Clearing snapBackTimer here would be clearing a timer that doesn't exist yet;
+      // flip a flag instead, for onGestureEnd to consume whenever it does run.
+      suppressSnapBack.current = true;
       setPlaying(false);
       const target = node.data.element;
       const matchedIndex = stepIndexForElement(steps, target.id);
@@ -166,7 +179,7 @@ function Player({ presentation, follow }: { presentation: PresentationRecord; fo
         ease: cameraEase,
       });
     },
-    [following, clearSnapBack, steps, flyTo, reactFlow, cameraDuration, cameraEase],
+    [following, steps, flyTo, reactFlow, cameraDuration, cameraEase],
   );
 
   // Remote follow (polled live session); the presenter-notes window keeps its own

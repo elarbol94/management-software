@@ -76,6 +76,10 @@ test("create from a template, edit an element, add a step, then present and chec
   await expect(freeNode).toBeVisible();
   const freeElementId = (await freeNode.getAttribute("data-testid"))?.replace("rf__node-", "");
   expect(freeElementId).toBeTruthy();
+  // "Präsentieren" below is a client-side navigation that unmounts the editor without
+  // flushing the autosave debounce, so this edit must actually be persisted first or
+  // /present (server-rendered from the DB) simply won't have the free element.
+  await expect(page.getByText("Gespeichert", { exact: true })).toBeVisible({ timeout: 15_000 });
 
   // 4. Enter present mode; the template's 4 stops plus our new one make 5.
   await page.getByRole("link", { name: "Präsentieren", exact: true }).click();
@@ -112,6 +116,16 @@ test("create from a template, edit an element, add a step, then present and chec
   await player.getByRole("button", { name: "Übersicht" }).click();
   await player.locator(`[data-testid="rf__node-${freeElementId}"]`).click();
   await expect(status).toHaveText("4 / 5");
+
+  // Regression: a free-look click must not leave a gesture snap-back armed behind it, or
+  // the camera flies back to the current step on its own ~900ms later with no further
+  // gesture involved. Give the click's own fly-to time to settle, then confirm the camera
+  // is still exactly where it landed well past that snap-back delay.
+  const viewport = player.locator(".react-flow__viewport");
+  await page.waitForTimeout(1_000);
+  const transformAfterClick = await viewport.getAttribute("style");
+  await page.waitForTimeout(1_500);
+  await expect(viewport).toHaveAttribute("style", transformAfterClick ?? "");
 
   // Back to "Problem" so the walk below starts from the same step it always did.
   await player.getByRole("button", { name: "Übersicht" }).click();
