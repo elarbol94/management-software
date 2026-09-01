@@ -1,5 +1,5 @@
 import { createId } from "@paralleldrive/cuid2";
-import { index, integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 import { user } from "@/db/core-schema";
 
 /**
@@ -56,4 +56,27 @@ export const wikiPresentationEditLeases = sqliteTable(
     heartbeatAt: integer("heartbeat_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
   },
   (table) => [index("wiki_presentation_edit_leases_heartbeat_idx").on(table.heartbeatAt)],
+);
+
+/**
+ * Where a running talk currently is, so viewers on other devices can follow along.
+ * Keyed by presentation like the edit lease above — one live session per presentation —
+ * with the short join code as the lookup a viewer types in.
+ *
+ * Only `stepIndex` is stored: every follower runs the same player over the same path, so
+ * the step is the camera. Nothing here needs the viewport itself.
+ */
+export const wikiPresentationLiveSessions = sqliteTable(
+  "wiki_presentation_live_sessions",
+  {
+    presentationId: text("presentation_id").primaryKey().references(() => wikiPresentations.id, { onDelete: "cascade" }),
+    code: text("code").notNull(),
+    hostUserId: text("host_user_id").notNull().references(() => user.id, { onDelete: "cascade" }),
+    stepIndex: integer("step_index").notNull().default(0),
+    startedAt: integer("started_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+    // Doubles as the heartbeat: the host refreshes it while presenting and a session
+    // whose host closed the tab simply ages out, like a stale edit lease.
+    heartbeatAt: integer("heartbeat_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [uniqueIndex("wiki_presentation_live_sessions_code_idx").on(table.code)],
 );

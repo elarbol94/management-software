@@ -20,8 +20,12 @@ import {
 import { parsePresenterMessage, presenterChannelName } from "../lib/presenter";
 import type { PresentationRecord } from "../presentation-queries";
 import { elementsToNodes, presentationNodeTypes, type PresentationNode } from "./presentation-canvas";
+import { PresentationFollowBadge, PresentationLiveControl, usePresentationFollower } from "./presentation-live";
 
-function Player({ presentation }: { presentation: PresentationRecord }) {
+/** Set when this player is a remote follower mirroring someone else's live session. */
+type FollowSource = { code: string; hostName: string };
+
+function Player({ presentation, follow }: { presentation: PresentationRecord; follow?: FollowSource }) {
   const t = useTranslations("wiki");
   const router = useRouter();
   const reactFlow = useReactFlow<PresentationNode>();
@@ -81,12 +85,24 @@ function Player({ presentation }: { presentation: PresentationRecord }) {
     return () => clearTimeout(timer);
   }, [playing, index, steps, settings]);
 
+  // A follower's camera belongs to the presenter, so every local way to move — clicking the
+  // canvas, the arrow keys, the control bar — routes through here and does nothing.
+  const following = Boolean(follow);
   const move = useCallback(
     (delta: number) => {
+      if (following) return;
       setIndex((current) => Math.min(Math.max(current + delta, 0), Math.max(steps.length - 1, 0)));
     },
+    [following, steps.length],
+  );
+
+  // Remote follow (polled live session); the presenter-notes window keeps its own
+  // BroadcastChannel path below untouched.
+  const applyRemoteStep = useCallback(
+    (stepIndex: number) => setIndex(Math.min(Math.max(stepIndex, 0), Math.max(steps.length - 1, 0))),
     [steps.length],
   );
+  const remoteLive = usePresentationFollower(follow?.code ?? null, applyRemoteStep);
 
   // Kept current without being an effect dependency, so the channel below is set up once
   // and can still answer a presenter window's "where are we" with the latest step.
@@ -160,7 +176,9 @@ function Player({ presentation }: { presentation: PresentationRecord }) {
       } else if (event.key === "ArrowLeft" || event.key === "PageUp") {
         event.preventDefault();
         move(-1);
-      } else if (event.key === "Home") {
+      } else if (event.key === "Home" && !following) {
+        // Followers are excluded: an overview here would stick until the presenter
+        // happens to change step, since the poll only re-frames on a new step.
         event.preventDefault();
         overview();
       } else if (event.key === "Escape" && !document.fullscreenElement) {
@@ -169,7 +187,7 @@ function Player({ presentation }: { presentation: PresentationRecord }) {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [move, overview, presentation.id, router]);
+  }, [following, move, overview, presentation.id, router]);
 
   const toggleFullscreen = useCallback(() => {
     if (document.fullscreenElement) void document.exitFullscreen();
@@ -218,6 +236,9 @@ function Player({ presentation }: { presentation: PresentationRecord }) {
         </div>
       )}
 
+      {following && <PresentationFollowBadge live={remoteLive} hostName={follow?.hostName ?? ""} />}
+
+      {!following && (
       <div
         className="absolute inset-x-0 bottom-0 flex items-center justify-center gap-2 p-4"
         onClick={(event) => event.stopPropagation()}
@@ -253,6 +274,7 @@ function Player({ presentation }: { presentation: PresentationRecord }) {
           <Button type="button" variant="ghost" size="icon-sm" aria-label={t("presentations.openPresenterView")} onClick={openPresenterView}>
             <NotebookText className="size-4" />
           </Button>
+          <PresentationLiveControl presentationId={presentation.id} stepIndex={index} />
           <Button
             type="button"
             variant="ghost"
@@ -264,14 +286,21 @@ function Player({ presentation }: { presentation: PresentationRecord }) {
           </Button>
         </div>
       </div>
+      )}
     </div>
   );
 }
 
-export function PresentationPlayer({ presentation }: { presentation: PresentationRecord }) {
+export function PresentationPlayer({
+  presentation,
+  follow,
+}: {
+  presentation: PresentationRecord;
+  follow?: FollowSource;
+}) {
   return (
     <ReactFlowProvider>
-      <Player presentation={presentation} />
+      <Player presentation={presentation} follow={follow} />
     </ReactFlowProvider>
   );
 }

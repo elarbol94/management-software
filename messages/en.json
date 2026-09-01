@@ -3138,7 +3138,22 @@
       "openPresenterView": "Open presenter view",
       "noNotes": "No notes for this stop",
       "nextStepPreview": "Next",
-      "noNextStep": "This is the last stop"
+      "noNextStep": "This is the last stop",
+      "liveStart": "Start live session",
+      "liveStop": "End live session",
+      "liveCopyLink": "Copy follow link",
+      "liveLinkCopied": "Follow link copied.",
+      "liveFailed": "The live session could not be changed.",
+      "joinLive": "Follow live",
+      "joinLiveDescription": "Enter the code the presenter is showing to follow the presentation on this device.",
+      "joinCode": "Join code",
+      "joinCodePlaceholder": "ABC234",
+      "joinSubmit": "Follow",
+      "following": "Following the live presentation",
+      "followingHost": "Following {name}",
+      "followEnded": "The live presentation has ended",
+      "followNotFound": "No live presentation for this code",
+      "followNotFoundDescription": "The session may have ended, or the code was mistyped. Try again with the code the presenter is showing."
     }
   },
   "settings": {
