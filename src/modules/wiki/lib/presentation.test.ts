@@ -13,7 +13,7 @@ import {
   elementsWithinStep,
   fitBoundsToPage,
   initialPresentationCanvasState,
-  isLeaseHeldByOther,
+  isLeaseHeld,
   moveStep,
   normalizeRotation,
   normalizeSteps,
@@ -315,23 +315,43 @@ describe("presentation revision throttle", () => {
 
 describe("presentation edit lease", () => {
   const now = 1_700_000_000_000;
-  const lease = (sessionId: string, heartbeatAt: number) => ({ sessionId, heartbeatAt });
+  const lease = (sessionId: string, heartbeatAt: number, userId = "them") => ({ sessionId, userId, heartbeatAt });
+  const mine = { sessionId: "mine", userId: "me" };
 
   it("is free when nobody holds it", () => {
-    expect(isLeaseHeldByOther(null, "mine", now)).toBe(false);
+    expect(isLeaseHeld(null, mine, now)).toBe(false);
   });
 
   it("never locks out the session that holds it", () => {
-    expect(isLeaseHeldByOther(lease("mine", now), "mine", now)).toBe(false);
+    expect(isLeaseHeld(lease("mine", now, "me"), mine, now)).toBe(false);
   });
 
   it("locks out another live session", () => {
-    expect(isLeaseHeldByOther(lease("theirs", now - 10_000), "mine", now)).toBe(true);
+    expect(isLeaseHeld(lease("theirs", now - 10_000), mine, now)).toBe(true);
   });
 
   it("releases an expired lease", () => {
-    expect(isLeaseHeldByOther(lease("theirs", now - PRESENTATION_LEASE_TIMEOUT_MS), "mine", now)).toBe(true);
-    expect(isLeaseHeldByOther(lease("theirs", now - PRESENTATION_LEASE_TIMEOUT_MS - 1), "mine", now)).toBe(false);
+    expect(isLeaseHeld(lease("theirs", now - PRESENTATION_LEASE_TIMEOUT_MS), mine, now)).toBe(true);
+    expect(isLeaseHeld(lease("theirs", now - PRESENTATION_LEASE_TIMEOUT_MS - 1), mine, now)).toBe(false);
+  });
+
+  // A reload mints a new sessionId, so the author's own stale lease must not lock them out.
+  it("lets the same user take over their own live lease", () => {
+    expect(isLeaseHeld(lease("old-tab", now - 10_000, "me"), { ...mine, takeover: true }, now)).toBe(false);
+  });
+
+  it("still honours the same user's live lease without takeover", () => {
+    expect(isLeaseHeld(lease("old-tab", now - 10_000, "me"), mine, now)).toBe(true);
+  });
+
+  it("never lets takeover steal another user's live lease", () => {
+    expect(isLeaseHeld(lease("theirs", now - 10_000, "them"), { ...mine, takeover: true }, now)).toBe(true);
+  });
+
+  it("frees an expired lease with or without takeover", () => {
+    const stale = lease("old-tab", now - PRESENTATION_LEASE_TIMEOUT_MS - 1, "them");
+    expect(isLeaseHeld(stale, mine, now)).toBe(false);
+    expect(isLeaseHeld(stale, { ...mine, takeover: true }, now)).toBe(false);
   });
 });
 

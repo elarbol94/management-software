@@ -162,3 +162,30 @@ test("create from a template, edit an element, add a step, then present and chec
   await player.getByRole("button", { name: "Präsentation beenden" }).click();
   await page.waitForURL(/\/wiki\/presentations\/[^/]+$/, { timeout: 30_000 });
 });
+
+/**
+ * A reload mints a new editor session while the previous page load's lease is still warm.
+ * The author must get their own lease back at once instead of watching a banner name them
+ * as the blocking editor for the next sixty seconds.
+ */
+test("reloading the editor keeps the author editable instead of locking them out on their own lease", async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  await login(page);
+
+  const title = `E2E Reload ${Date.now()}`;
+  await page.getByRole("textbox", { name: "Titel der Präsentation" }).fill(title);
+  await page.getByRole("button", { name: "Neu", exact: true }).click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole("button", { name: "Pitch", exact: true }).click();
+  await page.waitForURL(/\/wiki\/presentations\/[^/]+$/, { timeout: 30_000 });
+  await expect(page.getByRole("textbox", { name: "Titel der Präsentation" })).toHaveValue(title);
+
+  await page.reload();
+  await expect(page.getByRole("textbox", { name: "Titel der Präsentation" })).toHaveValue(title, { timeout: 30_000 });
+
+  await expect(page.getByRole("button", { name: "Text", exact: true })).toBeEnabled({ timeout: 30_000 });
+  await expect(page.getByText("bearbeitet diese Präsentation gerade")).toHaveCount(0);
+});
