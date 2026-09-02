@@ -336,6 +336,35 @@ export function elementsWithinStep(
   });
 }
 
+/**
+ * What a click on a canvas element means while presenting. A frame the presenter is
+ * already looking *inside* — the current step's own target, or any frame enclosing it —
+ * is the slide itself, so clicking it advances exactly like clicking empty canvas;
+ * Prezi-style decks that wrap everything in an overview frame would otherwise lose
+ * click-to-advance entirely. Anything else keeps click-to-jump ("look" when no step
+ * targets it). Containment is axis-aligned, matching `elementsWithinStep`.
+ */
+export type PresentationClickAction =
+  | { kind: "advance" }
+  | { kind: "jump"; index: number }
+  | { kind: "look" };
+
+export function elementClickAction(
+  steps: PresentationStep[],
+  elements: PresentationElement[],
+  currentIndex: number,
+  elementId: string,
+): PresentationClickAction {
+  const element = elements.find((candidate) => candidate.id === elementId);
+  const step = steps[currentIndex];
+  const current = element && step ? stepTarget(step, elements) : null;
+  if (element?.type === "frame" && current && elementsWithinStep(element, elements).some((within) => within.id === current.id)) {
+    return { kind: "advance" };
+  }
+  const matched = stepIndexForElement(steps, elementId);
+  return matched === null ? { kind: "look" } : { kind: "jump", index: matched };
+}
+
 /** Retargeting a step keeps its id, duration and notes — only the camera target moves. */
 export function retargetStep(
   steps: PresentationStep[],

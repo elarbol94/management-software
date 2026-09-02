@@ -12,10 +12,10 @@ import { Button } from "@/components/ui/button";
 import {
   PRESENTATION_CAMERA_PADDING,
   elementBounds,
+  elementClickAction,
   elementsWithinStep,
   presentationCameraEasingFns,
   resolveStepDuration,
-  stepIndexForElement,
   stepTarget,
 } from "../lib/presentation";
 import { parsePresenterMessage, presenterChannelName } from "../lib/presenter";
@@ -157,12 +157,22 @@ function Player({ presentation, follow }: { presentation: PresentationRecord; fo
 
   // The Prezi "click anything, you're there" jump: an element that some step targets goes
   // through the normal setIndex path (status, notes, live broadcast, camera all follow); an
-  // element no step targets just gets a free fly, leaving the step index untouched.
+  // element no step targets just gets a free fly, leaving the step index untouched. A click
+  // on the frame we are already looking inside is not a jump at all — see elementClickAction.
   const onElementClick = useCallback<NodeMouseHandler<PresentationNode>>(
     (event, node) => {
       // Never also register as the container's "click empty canvas" advance.
       event.stopPropagation();
       if (following) return;
+      const target = node.data.element;
+      const action = elementClickAction(steps, elements, index, target.id);
+      // Clicking the frame that fills the screen is a click "on the slide", not on an
+      // element: it advances exactly like empty canvas, which means no autoplay pause and
+      // no snap-back suppression either — the container's own advance does neither.
+      if (action.kind === "advance") {
+        move(1);
+        return;
+      }
       // The pane's own onMoveEnd (populated event, same as any real gesture) still fires for
       // this same click's mouseup, and it fires AFTER this handler — @xyflow/system defers it
       // to a setTimeout(..., 0) queued during mouseup, which this same-task click handler runs
@@ -170,14 +180,12 @@ function Player({ presentation, follow }: { presentation: PresentationRecord; fo
       // flip a flag instead, for onGestureEnd to consume whenever it does run.
       suppressSnapBack.current = true;
       setPlaying(false);
-      const target = node.data.element;
-      const matchedIndex = stepIndexForElement(steps, target.id);
-      if (matchedIndex !== null) {
-        setIndex(matchedIndex);
+      if (action.kind === "jump") {
+        setIndex(action.index);
         // Explicit, not left to the index-driven effect: clicking the CURRENT step's element
         // leaves index unchanged, so that effect would never re-run and the click would do
         // nothing visible.
-        flyTo(matchedIndex);
+        flyTo(action.index);
         return;
       }
       void reactFlow.fitBounds(elementBounds(target), {
@@ -186,7 +194,7 @@ function Player({ presentation, follow }: { presentation: PresentationRecord; fo
         ease: cameraEase,
       });
     },
-    [following, steps, flyTo, reactFlow, cameraDuration, cameraEase],
+    [following, steps, elements, index, move, flyTo, reactFlow, cameraDuration, cameraEase],
   );
 
   // Remote follow (polled live session); the presenter-notes window keeps its own

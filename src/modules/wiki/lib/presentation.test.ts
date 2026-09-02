@@ -10,6 +10,7 @@ import {
   defaultPresentationSettings,
   duplicateElement,
   elementBounds,
+  elementClickAction,
   elementsWithinStep,
   fitBoundsToPage,
   initialPresentationCanvasState,
@@ -385,6 +386,43 @@ describe("step entrance grouping", () => {
   it("includes at least the target itself when nothing else is nested inside it", () => {
     const target = text("solo", "Hello");
     expect(elementsWithinStep(target, [target]).map((element) => element.id)).toEqual(["solo"]);
+  });
+});
+
+describe("player element clicks", () => {
+  const outer = frame("outer", 0, 0, 400, 300, "Overview");
+  const inner = frame("inner", 50, 50, 100, 100, "Detail");
+  const far = frame("far", 1000, 1000, 200, 200, "Elsewhere");
+  const label = text("label", "Inside the current frame");
+  const elements = [outer, inner, far, label];
+
+  it("advances when the clicked frame is the current step's own target", () => {
+    // Clicking the frame filling the screen is a click "on the slide", not a re-frame.
+    expect(elementClickAction(steps("outer", "inner"), elements, 0, "outer")).toEqual({ kind: "advance" });
+  });
+
+  it("advances when the clicked frame merely contains the current step's target", () => {
+    // Containment wins over jump: the overview frame is step 1, but from inside it at
+    // step 2 a click still reads as "next", which is what enclosing-frame decks need.
+    expect(elementClickAction(steps("outer", "inner"), elements, 1, "outer")).toEqual({ kind: "advance" });
+  });
+
+  it("jumps when the clicked frame is a step target that does not contain the current one", () => {
+    expect(elementClickAction(steps("outer", "inner", "far"), elements, 1, "far")).toEqual({ kind: "jump", index: 2 });
+  });
+
+  it("jumps (re-frames) when the current step's target is clicked but is not a frame", () => {
+    expect(elementClickAction(steps("label", "far"), elements, 0, "label")).toEqual({ kind: "jump", index: 0 });
+  });
+
+  it("looks at an element no step targets, even inside the current frame", () => {
+    expect(elementClickAction(steps("outer", "inner"), elements, 0, "label")).toEqual({ kind: "look" });
+    expect(elementClickAction(steps("outer", "inner"), elements, 0, "far")).toEqual({ kind: "look" });
+  });
+
+  it("never advances without a current step to advance from", () => {
+    expect(elementClickAction([], elements, 0, "outer")).toEqual({ kind: "look" });
+    expect(elementClickAction(steps("gone"), elements, 0, "outer")).toEqual({ kind: "look" });
   });
 });
 
