@@ -8,19 +8,27 @@ import { expect, test, type Page } from "@playwright/test";
  */
 
 async function login(page: Page) {
-  let response = await page.request.post("/api/auth/sign-in/username", {
-    data: { username: "presentation-e2e", password: "super-secret-1" },
-  });
-  if (!response.ok()) {
+  // The shared admin account every other spec uses. `src/lib/auth.ts` forbids public signup
+  // once any user exists, so a spec-local account 403s in any run where another spec
+  // bootstrapped the admin first -- sign in if it is already there, bootstrap it if not.
+  const credentials = { username: "admin", password: "super-secret-1" };
+  let response = await page.request.post("/api/auth/sign-in/username", { data: credentials });
+  // The auth route can 404 for a moment while the dev server compiles it (see
+  // calendar.spec.ts), so retry the sign-in/bootstrap pair rather than either half alone.
+  for (let attempt = 0; !response.ok() && attempt < 3; attempt += 1) {
+    if (attempt > 0) await page.waitForTimeout(500);
     response = await page.request.post("/api/auth/sign-up/email", {
       data: {
-        name: "Presentation E2E",
-        username: "presentation-e2e",
-        displayUsername: "presentation-e2e",
-        email: "presentation-e2e@example.com",
+        name: "E2E Admin",
+        username: "admin",
+        displayUsername: "admin",
+        email: "admin@example.com",
         password: "super-secret-1",
       },
     });
+    if (!response.ok()) {
+      response = await page.request.post("/api/auth/sign-in/username", { data: credentials });
+    }
   }
   expect(response.ok()).toBe(true);
   await page.goto("/wiki/presentations");
