@@ -304,7 +304,8 @@ export function shouldSnapshotRevision(lastRevisionAt: number | null, now: numbe
 }
 
 /**
- * True while somebody else is actively editing; a lease past its timeout is free to take.
+ * True while a live lease blocks this claim: another session still inside the timeout,
+ * including another session of the same user unless the claim asks to take over.
  * A reload mints a fresh sessionId without releasing the old lease, so a claim may ask to
  * take over — which only works against the same user's lease, never another author's.
  */
