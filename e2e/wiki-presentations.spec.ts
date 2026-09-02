@@ -132,6 +132,13 @@ test("create from a template, edit an element, add a step, then present and chec
   await player.locator('[data-testid="rf__node-pitch-problem"]').click();
   await expect(status).toHaveText("2 / 5");
 
+  // "Problem" now fills the view, so a click mid-screen lands on that frame node rather
+  // than on empty canvas. Clicking the frame we are already looking inside must advance
+  // like an empty-canvas click, not re-frame it -- decks whose every node is enclosed by
+  // a frame would otherwise lose click-to-advance completely.
+  await player.locator('[data-testid="rf__node-pitch-problem"]').click();
+  await expect(status).toHaveText("3 / 5");
+
   const fullscreenToggle = player.getByRole("button", { name: "Vollbild" });
   await fullscreenToggle.click();
   await expect.poll(() => page.evaluate(() => Boolean(document.fullscreenElement))).toBe(true);
@@ -139,7 +146,6 @@ test("create from a template, edit an element, add a step, then present and chec
   await expect.poll(() => page.evaluate(() => Boolean(document.fullscreenElement))).toBe(false);
 
   // Walk to the last stop -- the one we just added -- before opening presenter notes.
-  await next.click();
   await next.click();
   await next.click();
   await expect(status).toHaveText("5 / 5");
