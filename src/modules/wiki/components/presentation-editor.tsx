@@ -393,6 +393,10 @@ function Editor({
           setLockedBy(result.holderName);
           dispatch({ type: "failed" });
           setStatus("error");
+          // The banner alone is easy to miss when the write was triggered by leaving.
+          toast.error(result.holderName
+            ? t("presentations.lockedBy", { name: result.holderName })
+            : t("presentations.locked"));
           return false;
         }
         dispatch({
@@ -764,6 +768,30 @@ function Editor({
   /** Present and PDF export both read the canvas back from the database, so both have to
    * wait for a pending edit to be written before they hand over. */
   const needsFlush = !readOnly && (canvas.dirty || status === "saving");
+  const presentHref = `/wiki/presentations/${presentation.id}/present`;
+  const printHref = `/print/presentations/${presentation.id}`;
+
+  /** Hands over to a page rendered from the saved canvas once the pending edit has landed.
+   * A tab that has to be new is opened inside the click -- opening it after the await is
+   * what popup blockers exist for -- and only then pointed at the target. A write that
+   * fails leaves the author here with their edit and the toast. */
+  const flushThen = (href: string, newTab: boolean) => {
+    const tab = newTab ? window.open("about:blank", "_blank") : null;
+    void flush().then((saved) => {
+      if (!newTab) {
+        if (saved) router.push(href);
+      } else if (tab) {
+        if (saved) tab.location.href = href;
+        else tab.close();
+      }
+    });
+  };
+  /** Middle-click never reaches onClick, and its default is the same new tab. */
+  const auxFlush = (href: string) => (event: React.MouseEvent) => {
+    if (!needsFlush || event.button !== 1) return;
+    event.preventDefault();
+    flushThen(href, true);
+  };
 
   const saveIndicator = {
     idle: null,
@@ -944,23 +972,17 @@ function Editor({
             size="sm"
             disabled={!steps.length}
             // The print view reads the saved canvas, so the pending edit has to land first.
-            // The tab is opened inside the click and pointed at the export afterwards --
-            // opening it after the await is what popup blockers exist for.
             render={(
               <a
-                href={`/print/presentations/${presentation.id}`}
+                href={printHref}
                 target="_blank"
                 rel="noopener noreferrer"
                 onClick={(event) => {
                   if (!needsFlush) return;
                   event.preventDefault();
-                  const tab = window.open("about:blank", "_blank");
-                  void flush().then((saved) => {
-                    if (!tab) return;
-                    if (saved) tab.location.href = `/print/presentations/${presentation.id}`;
-                    else tab.close();
-                  });
+                  flushThen(printHref, true);
                 }}
+                onAuxClick={auxFlush(printHref)}
               />
             )}
           >
@@ -971,18 +993,17 @@ function Editor({
             size="sm"
             disabled={!steps.length}
             // The player is server-rendered from the saved canvas, so the navigation waits
-            // for the write. A write that fails keeps the author here with their edit and
-            // the failure toast, rather than presenting a stale canvas.
+            // for the write, rather than presenting a stale canvas. A modifier click still
+            // means "new tab" -- it just gets one with the edit in it.
             render={(
               <Link
-                href={`/wiki/presentations/${presentation.id}/present`}
+                href={presentHref}
                 onClick={(event) => {
                   if (!needsFlush) return;
                   event.preventDefault();
-                  void flush().then((saved) => {
-                    if (saved) router.push(`/wiki/presentations/${presentation.id}/present`);
-                  });
+                  flushThen(presentHref, event.metaKey || event.ctrlKey || event.shiftKey);
                 }}
+                onAuxClick={auxFlush(presentHref)}
               />
             )}
           >
