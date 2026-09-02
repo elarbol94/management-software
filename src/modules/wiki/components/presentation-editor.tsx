@@ -99,6 +99,7 @@ import {
   unionBounds,
   type PresentationBounds,
   type PresentationCameraEasing,
+  type PresentationCanvasState,
   type PresentationElement,
   type PresentationGeometryChange,
   type PresentationSettings,
@@ -420,19 +421,27 @@ function Editor({
   const [canvas, dispatch] = useReducer(
     presentationCanvasReducer,
     presentation,
-    (source) => initialPresentationCanvasState(source.elements, source.steps),
+    (source) => initialPresentationCanvasState(source.elements, source.steps, source.background, source.settings),
   );
-  const { elements, steps, guides } = canvas;
-  const [background, setBackground] = useState(presentation.background);
-  const [settings, setSettings] = useState<PresentationSettings>(presentation.settings);
+  const { elements, steps, guides, background, settings } = canvas;
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [activeStepId, setActiveStepId] = useState<string | null>(null);
   const [status, setStatus] = useState<Exclude<SaveState, "unsaved">>("idle");
   const [uploading, setUploading] = useState(false);
 
   // "Unsaved" is not a state of its own: it is the canvas being dirty while nothing is
-  // in flight, which keeps the indicator honest even when an edit lands mid-save.
-  const saveState: SaveState = status === "saving" ? "saving" : canvas.dirty ? "unsaved" : status;
+  // in flight, which keeps the indicator honest even when an edit lands mid-save. A failed
+  // write outranks it, so the error stays on screen until the author edits again.
+  const saveState: SaveState = status === "saving"
+    ? "saving"
+    : canvas.failed ? "error" : canvas.dirty ? "unsaved" : status;
+
+  // The paths that leave the editor -- unmount, "Präsentieren", "PDF-Export" -- run outside
+  // React's data flow and need the canvas as it is at that moment, not as it was when they
+  // were wired up.
+  const latest = useRef({ canvas, readOnly });
+  /** The write in flight, so a flush can wait for it and land after it. */
+  const inFlight = useRef<Promise<boolean> | null>(null);
 
   const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
   const selection = useMemo(
@@ -456,47 +465,85 @@ function Editor({
     [],
   );
 
-  const persist = useCallback(
-    async (
-      nextElements: PresentationElement[],
-      nextSteps: PresentationStep[],
-      nextBackground: string,
-      nextSettings: PresentationSettings,
-    ) => {
+  /** Writes one canvas and reports whether it reached the database. Writes queue behind
+   * each other so a flush during a save cannot race the older canvas back over the newer. */
+  const persist = useCallback((state: PresentationCanvasState) => {
+    const write = async () => {
       setStatus("saving");
       try {
         const result = await savePresentation({
           id: presentation.id,
-          elements: nextElements,
-          steps: nextSteps,
-          background: nextBackground,
-          settings: nextSettings,
+          elements: state.elements,
+          steps: state.steps,
+          background: state.background,
+          settings: state.settings,
           sessionId: sessionId.current,
         });
         // Someone took over while this tab was editing: stop writing rather than
         // overwriting their canvas with a stale one.
         if (result.locked) {
           setLockedBy(result.holderName);
+          dispatch({ type: "failed" });
           setStatus("error");
-          return;
+          // The banner alone is easy to miss when the write was triggered by leaving.
+          toast.error(result.holderName
+            ? t("presentations.lockedBy", { name: result.holderName })
+            : t("presentations.locked"));
+          return false;
         }
-        dispatch({ type: "saved", elements: nextElements, steps: nextSteps });
+        dispatch({
+          type: "saved",
+          elements: state.elements,
+          steps: state.steps,
+          background: state.background,
+          settings: state.settings,
+        });
         setStatus("saved");
+        return true;
       } catch {
+        // Parked, not retried: the next edit clears `failed` and re-arms the autosave, so
+        // a server that is down produces one toast instead of one per debounce.
+        dispatch({ type: "failed" });
         setStatus("error");
         toast.error(t("presentations.saveFailed"));
+        return false;
       }
-    },
-    [presentation.id, t],
-  );
+    };
+    const next = (inFlight.current ?? Promise.resolve(true)).then(write, write);
+    inFlight.current = next;
+    return next;
+  }, [presentation.id, t]);
+
+  /** Writes whatever is on the canvas right now, waiting for a save already in flight.
+   * Used by every exit that would otherwise drop the pending debounce on the floor. Leaving
+   * mid-save with nothing further edited can repeat that same write once, which is a wasted
+   * request rather than a wrong one. */
+  const flush = useCallback(async () => {
+    await inFlight.current?.catch(() => false);
+    const current = latest.current;
+    if (current.readOnly || !current.canvas.dirty) return true;
+    return persist(current.canvas);
+  }, [persist]);
 
   // Debounced autosave: every edit marks the canvas unsaved, and the last edit of a
   // burst is the one that writes.
   useEffect(() => {
-    if (!canvas.dirty || readOnly || status === "saving") return;
-    const timer = setTimeout(() => void persist(elements, steps, background, settings), AUTOSAVE_DELAY);
+    if (!canvas.dirty || canvas.failed || readOnly || status === "saving") return;
+    const timer = setTimeout(() => void persist(canvas), AUTOSAVE_DELAY);
     return () => clearTimeout(timer);
-  }, [canvas.dirty, status, elements, steps, background, settings, persist, readOnly]);
+  }, [canvas, status, persist, readOnly]);
+
+  const flushRef = useRef(flush);
+  // Re-pointed after every commit, so the exits above see the canvas as it is now.
+  useEffect(() => {
+    latest.current = { canvas, readOnly };
+    flushRef.current = flush;
+  });
+
+  // Leaving the editor client-side (the breadcrumb, browser back) unmounts it mid-debounce,
+  // and nothing else would ever write that edit. Mount-lifetime effect on purpose: hanging
+  // this off the debounced effect's cleanup would save on every re-render instead.
+  useEffect(() => () => void flushRef.current().catch(() => undefined), []);
 
   // Edit lease: claim it on open, keep it warm while the tab lives, hand it back on exit.
   // A missed release is harmless — the lease expires on its own.
@@ -543,8 +590,7 @@ function Editor({
   );
 
   const updateSettings = useCallback((update: Partial<PresentationSettings>) => {
-    setSettings((current) => ({ ...current, ...update }));
-    dispatch({ type: "touch" });
+    dispatch({ type: "touch", settings: update });
   }, []);
 
   const updateStepDuration = useCallback(
@@ -811,6 +857,34 @@ function Editor({
     ));
   }, [commitSteps, readOnly]);
 
+  /** Present and PDF export both read the canvas back from the database, so both have to
+   * wait for a pending edit to be written before they hand over. */
+  const needsFlush = !readOnly && (canvas.dirty || status === "saving");
+  const presentHref = `/wiki/presentations/${presentation.id}/present`;
+  const printHref = `/print/presentations/${presentation.id}`;
+
+  /** Hands over to a page rendered from the saved canvas once the pending edit has landed.
+   * A tab that has to be new is opened inside the click -- opening it after the await is
+   * what popup blockers exist for -- and only then pointed at the target. A write that
+   * fails leaves the author here with their edit and the toast. */
+  const flushThen = (href: string, newTab: boolean) => {
+    const tab = newTab ? window.open("about:blank", "_blank") : null;
+    void flush().then((saved) => {
+      if (!newTab) {
+        if (saved) router.push(href);
+      } else if (tab) {
+        if (saved) tab.location.href = href;
+        else tab.close();
+      }
+    });
+  };
+  /** Middle-click never reaches onClick, and its default is the same new tab. */
+  const auxFlush = (href: string) => (event: React.MouseEvent) => {
+    if (!needsFlush || event.button !== 1) return;
+    event.preventDefault();
+    flushThen(href, true);
+  };
+
   const saveIndicator = {
     idle: null,
     unsaved: <span className="text-muted-foreground">{t("presentations.saveStates.unsaved")}</span>,
@@ -975,7 +1049,7 @@ function Editor({
         </Popover>
         <div className="ml-auto flex items-center gap-2 text-xs">
           {saveIndicator}
-          <Button type="button" variant="outline" size="sm" onClick={() => void persist(elements, steps, background, settings)} disabled={saveState === "saving" || readOnly}>
+          <Button type="button" variant="outline" size="sm" onClick={() => void persist(canvas)} disabled={saveState === "saving" || readOnly}>
             <Save className="size-3.5" />{t("presentations.save")}
           </Button>
           <Button
@@ -983,12 +1057,42 @@ function Editor({
             variant="outline"
             size="sm"
             disabled={!steps.length}
-            // The print view reads the saved canvas, so a new tab shows the last save.
-            render={<a href={`/print/presentations/${presentation.id}`} target="_blank" rel="noopener noreferrer" />}
+            // The print view reads the saved canvas, so the pending edit has to land first.
+            render={(
+              <a
+                href={printHref}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={(event) => {
+                  if (!needsFlush) return;
+                  event.preventDefault();
+                  flushThen(printHref, true);
+                }}
+                onAuxClick={auxFlush(printHref)}
+              />
+            )}
           >
             <FileDown className="size-3.5" />{t("presentations.exportPdf")}
           </Button>
-          <Button type="button" size="sm" disabled={!steps.length} render={<Link href={`/wiki/presentations/${presentation.id}/present`} />}>
+          <Button
+            type="button"
+            size="sm"
+            disabled={!steps.length}
+            // The player is server-rendered from the saved canvas, so the navigation waits
+            // for the write, rather than presenting a stale canvas. A modifier click still
+            // means "new tab" -- it just gets one with the edit in it.
+            render={(
+              <Link
+                href={presentHref}
+                onClick={(event) => {
+                  if (!needsFlush) return;
+                  event.preventDefault();
+                  flushThen(presentHref, event.metaKey || event.ctrlKey || event.shiftKey);
+                }}
+                onAuxClick={auxFlush(presentHref)}
+              />
+            )}
+          >
             <Play className="size-3.5" />{t("presentations.present")}
           </Button>
         </div>
@@ -1398,8 +1502,7 @@ function Editor({
             <h2 className="text-xs font-semibold tracking-wide uppercase">{t("presentations.canvas")}</h2>
             <div className="mt-3">
               {colorField(t("presentations.canvasBackground"), background, (color) => {
-                setBackground(color);
-                dispatch({ type: "touch" });
+                dispatch({ type: "touch", background: color });
               })}
             </div>
           </section>

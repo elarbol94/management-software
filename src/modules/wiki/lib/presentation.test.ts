@@ -550,9 +550,10 @@ describe("canvas history", () => {
 
   it("stays clean only while the saved canvas is still the current one", () => {
     const moved = move(start(), 400, 1_000);
-    expect(presentationCanvasReducer(moved, { type: "saved", elements: moved.elements, steps: moved.steps }).dirty).toBe(false);
+    const saved = { type: "saved", background: moved.background, settings: moved.settings } as const;
+    expect(presentationCanvasReducer(moved, { ...saved, elements: moved.elements, steps: moved.steps }).dirty).toBe(false);
     const later = move(moved, 900, 5_000);
-    expect(presentationCanvasReducer(later, { type: "saved", elements: moved.elements, steps: moved.steps }).dirty).toBe(true);
+    expect(presentationCanvasReducer(later, { ...saved, elements: moved.elements, steps: moved.steps }).dirty).toBe(true);
   });
 
   it("snaps a dragged element to a neighbour and reports the guide", () => {
@@ -586,6 +587,7 @@ describe("canvas history", () => {
   });
 });
 
+
 describe("parseSecondsInput", () => {
   const step = { min: 500, max: 120_000 };
   const camera = { min: 100, max: 5_000 };
@@ -608,5 +610,52 @@ describe("parseSecondsInput", () => {
     for (const raw of ["", "   ", "-", "1e", ".", "abc", "1,5", "Infinity"]) {
       expect(parseSecondsInput(raw, step)).toBeNull();
     }
+  });
+});
+
+
+describe("canvas save state", () => {
+  const start = () => initialPresentationCanvasState([frame("a", 0, 0, 100, 100)], steps("a"), "", defaultPresentationSettings);
+  const savedAction = (state: PresentationCanvasState) =>
+    ({ type: "saved", elements: state.elements, steps: state.steps, background: state.background, settings: state.settings }) as const;
+
+  it("clears dirty when the whole canvas is still the one that was written", () => {
+    const edited = presentationCanvasReducer(start(), { type: "touch", background: "#101828" });
+    expect(edited.dirty).toBe(true);
+    expect(presentationCanvasReducer(edited, savedAction(edited)).dirty).toBe(false);
+  });
+
+  it("stays dirty when the background changed while the save was in flight", () => {
+    const inFlight = presentationCanvasReducer(start(), { type: "touch", background: "#101828" });
+    const later = presentationCanvasReducer(inFlight, { type: "touch", background: "#e11d48" });
+    expect(presentationCanvasReducer(later, savedAction(inFlight)).dirty).toBe(true);
+  });
+
+  it("stays dirty when a playback setting changed while the save was in flight", () => {
+    const inFlight = start();
+    const later = presentationCanvasReducer(inFlight, { type: "touch", settings: { loop: true } });
+    expect(later.settings.loop).toBe(true);
+    expect(presentationCanvasReducer(later, savedAction(inFlight)).dirty).toBe(true);
+  });
+
+  it("blocks the autosave retry after a failed save", () => {
+    const edited = presentationCanvasReducer(start(), { type: "touch", background: "#101828" });
+    const failed = presentationCanvasReducer(edited, { type: "failed" });
+    expect(failed.failed).toBe(true);
+    expect(failed.dirty).toBe(true);
+    // The manual retry still works: a write that lands clears both, so the indicator
+    // leaves the error state.
+    expect(presentationCanvasReducer(failed, savedAction(failed))).toMatchObject({ dirty: false, failed: false });
+  });
+
+  it("re-arms the autosave on the next edit after a failure", () => {
+    const moved = presentationCanvasReducer(start(), {
+      type: "geometry", at: 1_000, gesture: false, tolerance: 6, changes: [{ id: "a", x: 400, y: 0 }],
+    });
+    const failed = presentationCanvasReducer(moved, { type: "failed" });
+    expect(presentationCanvasReducer(failed, { type: "touch", background: "#101828" }).failed).toBe(false);
+    expect(presentationCanvasReducer(failed, { type: "touch", settings: { loop: true } }).failed).toBe(false);
+    expect(presentationCanvasReducer(failed, { type: "edit", at: 2_000, steps: () => [] }).failed).toBe(false);
+    expect(presentationCanvasReducer(failed, { type: "undo" }).failed).toBe(false);
   });
 });

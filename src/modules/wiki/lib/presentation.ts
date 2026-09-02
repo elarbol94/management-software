@@ -536,12 +536,20 @@ export const PRESENTATION_HISTORY_LIMIT = 50;
 export type PresentationSnapshot = { elements: PresentationElement[]; steps: PresentationStep[] };
 
 export type PresentationCanvasState = PresentationSnapshot & {
+  /** Background and playback settings are saved with the canvas, so they belong to the
+   * same dirty/saved bookkeeping as the elements -- otherwise a background picked while a
+   * save is in flight looks saved and never reaches the server. */
+  background: string;
+  settings: PresentationSettings;
   /** Alignment lines to draw for the gesture in progress. */
   guides: SnapGuide[];
   past: PresentationSnapshot[];
   future: PresentationSnapshot[];
   /** Set by every edit, cleared once that exact canvas has been written to the server. */
   dirty: boolean;
+  /** The last write failed and nothing has been edited since: the autosave stays parked
+   * here instead of retrying the same doomed save every debounce. */
+  failed: boolean;
   editedAt: number;
 };
 
@@ -556,15 +564,24 @@ export type PresentationCanvasAction =
   | { type: "undo" }
   | { type: "redo" }
   /** Marks the canvas clean, but only if it is still the one that was saved. */
-  | { type: "saved"; elements: PresentationElement[]; steps: PresentationStep[] }
-  /** Background and playback settings live outside the canvas but still need saving. */
-  | { type: "touch" };
+  | {
+    type: "saved";
+    elements: PresentationElement[];
+    steps: PresentationStep[];
+    background: string;
+    settings: PresentationSettings;
+  }
+  /** Background and playback settings: edits that carry no undo step of their own. */
+  | { type: "touch"; background?: string; settings?: Partial<PresentationSettings> }
+  | { type: "failed" };
 
 export function initialPresentationCanvasState(
   elements: PresentationElement[],
   steps: PresentationStep[],
+  background = "",
+  settings: PresentationSettings = defaultPresentationSettings,
 ): PresentationCanvasState {
-  return { elements, steps, guides: [], past: [], future: [], dirty: false, editedAt: 0 };
+  return { elements, steps, background, settings, guides: [], past: [], future: [], dirty: false, failed: false, editedAt: 0 };
 }
 
 function commitCanvas(
@@ -580,6 +597,7 @@ function commitCanvas(
     elements,
     steps,
     dirty: true,
+    failed: false,
     editedAt: at,
     past: coalesce ? state.past : [...state.past, { elements: state.elements, steps: state.steps }].slice(-PRESENTATION_HISTORY_LIMIT),
     future: coalesce ? state.future : [],
@@ -599,6 +617,7 @@ function travelCanvas(state: PresentationCanvasState, direction: "undo" | "redo"
     past: direction === "undo" ? source.slice(0, -1) : [...state.past, current],
     future: direction === "undo" ? [...state.future, current] : source.slice(0, -1),
     dirty: true,
+    failed: false,
     // The next edit opens its own undo step rather than coalescing into the one just undone.
     editedAt: 0,
   };
@@ -626,10 +645,23 @@ export function presentationCanvasReducer(
     case "undo":
     case "redo":
       return travelCanvas(state, action.type);
-    case "saved":
-      return state.elements === action.elements && state.steps === action.steps ? { ...state, dirty: false } : state;
-    case "touch":
-      return state.dirty ? state : { ...state, dirty: true };
+    case "saved": {
+      // Anything the author changed while the write was in flight keeps the canvas dirty,
+      // so the follow-up autosave carries it to the server.
+      const current = state.elements === action.elements
+        && state.steps === action.steps
+        && state.background === action.background
+        && state.settings === action.settings;
+      return current ? { ...state, dirty: false, failed: false } : state;
+    }
+    case "touch": {
+      const background = action.background ?? state.background;
+      const settings = action.settings ? { ...state.settings, ...action.settings } : state.settings;
+      if (background === state.background && settings === state.settings) return state;
+      return { ...state, background, settings, dirty: true, failed: false };
+    }
+    case "failed":
+      return state.failed ? state : { ...state, failed: true };
   }
 }
 

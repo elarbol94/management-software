@@ -241,3 +241,36 @@ test("panel inputs: undo puts the canvas value back into the side panel", async 
   // Leaving a field alone is not an edit, so there is still nothing left to undo.
   await expect(undo).toBeDisabled();
 });
+
+
+/**
+ * Regression: "Präsentieren" is a client-side navigation that used to unmount the editor
+ * mid-autosave-debounce, so an edit made in the last ~1.2s never reached the database and
+ * the player -- which is server-rendered from it -- simply did not have it.
+ */
+test("presenting flushes the pending autosave instead of losing the last edit", async ({ page }) => {
+  test.setTimeout(120_000);
+  await login(page);
+
+  const title = `E2E Autosave ${Date.now()}`;
+
+  await page.getByRole("textbox", { name: "Titel der Präsentation" }).fill(title);
+  await page.getByRole("button", { name: "Neu", exact: true }).click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole("button", { name: "Pitch", exact: true }).click();
+  await page.waitForURL(/\/wiki\/presentations\/[^/]+$/, { timeout: 30_000 });
+  await expect(page.getByRole("textbox", { name: "Titel der Präsentation" })).toHaveValue(title);
+
+  // The point of the test: no wait for "Gespeichert" between the edit and the navigation.
+  const lateText = "Late edit that must survive presenting";
+  await page.getByRole("button", { name: "Text", exact: true }).click();
+  const contentField = page.getByRole("textbox", { name: "Text", exact: true });
+  await expect(contentField).toBeVisible();
+  await contentField.fill(lateText);
+  await contentField.blur();
+  await page.getByRole("link", { name: "Präsentieren", exact: true }).click();
+
+  await page.waitForURL(/\/wiki\/presentations\/[^/]+\/present$/, { timeout: 30_000 });
+  await expect(page.getByTestId("presentation-player").getByText(lateText)).toBeVisible({ timeout: 30_000 });
+});
