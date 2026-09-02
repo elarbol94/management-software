@@ -85,6 +85,7 @@ import {
   initialPresentationCanvasState,
   presentationCanvasReducer,
   elementBounds,
+  parseSecondsInput,
   moveStep,
   presentationCameraEasings,
   presentationFrameShapes,
@@ -170,6 +171,97 @@ function StepRow({
     </li>
   );
 }
+
+/**
+ * Every panel field holds a draft. It shows exactly what the author typed until the field
+ * is left -- or Enter is pressed on a single-line one -- and resyncs whenever the value on
+ * the canvas changes underneath it, which is what makes undo and redo visible in the panel.
+ * `normalise` turns a finished draft into the value that is actually stored, so a number
+ * field is clamped once instead of on every keystroke ("0.4" stays "0.4" while it is being
+ * typed), and returning the current value from it is how an unusable entry reverts. Only a
+ * value that really differs is committed: tabbing through the panel must not fill the undo
+ * stack or mark the canvas unsaved.
+ */
+function useDraft(value: string, onCommit: (next: string) => void, normalise: (raw: string) => string = (raw) => raw) {
+  const [draft, setDraft] = useState(value);
+  // Adjusting the draft while rendering rather than in an effect: React re-runs this
+  // component before touching the DOM, so an undo never flashes the stale text.
+  const [synced, setSynced] = useState(value);
+  if (synced !== value) {
+    setSynced(value);
+    setDraft(value);
+  }
+  return {
+    draft,
+    setDraft,
+    commit: () => {
+      const next = normalise(draft);
+      setDraft(next);
+      if (next !== value) onCommit(next);
+    },
+  };
+}
+
+type DraftFieldProps = {
+  value: string;
+  onCommit: (next: string) => void;
+};
+
+function DraftInput({
+  value,
+  onCommit,
+  normalise,
+  ...props
+}: DraftFieldProps & { normalise?: (raw: string) => string } & Omit<
+    React.ComponentProps<typeof Input>,
+    "value" | "onChange" | "onBlur" | "onKeyDown"
+  >) {
+  const field = useDraft(value, onCommit, normalise);
+  return (
+    <Input
+      {...props}
+      value={field.draft}
+      onChange={(event) => field.setDraft(event.currentTarget.value)}
+      onBlur={field.commit}
+      // Enter commits only here: in a textarea it is part of the text.
+      onKeyDown={(event) => {
+        if (event.key !== "Enter") return;
+        event.preventDefault();
+        field.commit();
+      }}
+    />
+  );
+}
+
+function DraftTextarea({
+  value,
+  onCommit,
+  ...props
+}: DraftFieldProps & Omit<React.ComponentProps<typeof Textarea>, "value" | "onChange" | "onBlur">) {
+  const field = useDraft(value, onCommit);
+  return (
+    <Textarea
+      {...props}
+      value={field.draft}
+      onChange={(event) => field.setDraft(event.currentTarget.value)}
+      onBlur={field.commit}
+    />
+  );
+}
+
+/** The schema's own bounds, so a duration field clamps to what the server will accept. */
+const STEP_DURATION_RANGE = { min: 500, max: 120_000 };
+const CAMERA_TRANSITION_RANGE = { min: 100, max: 5_000 };
+/** Durations are seconds on screen and milliseconds in the document. */
+const secondsText = (ms: number) => String(ms / 1000);
+const msFromSecondsText = (seconds: string) => Math.round(Number(seconds) * 1000);
+const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
+/** The plain number fields read like the duration ones: the entry clamped into range, or
+ * null when nothing usable was typed and the stored value should simply stay. */
+const parseNumberInput = (raw: string, min: number, max: number): number | null => {
+  const value = Number(raw.trim());
+  return raw.trim() && Number.isFinite(value) ? clamp(value, min, max) : null;
+};
 
 /** Alignment lines are drawn in canvas coordinates, so they stay glued to the elements
  * they describe while the author pans and zooms. */
@@ -839,18 +931,15 @@ function Editor({
           <PopoverContent className="w-72 space-y-3 p-3">
             <label className="block text-xs text-muted-foreground">
               {t("presentations.defaultStepDuration")}
-              <Input
+              <DraftInput
                 type="number"
                 min={0.5}
                 max={120}
                 step={0.5}
                 className="mt-1 h-8"
-                value={settings.defaultStepDurationMs / 1000}
-                onChange={(event) => {
-                  const seconds = Number(event.currentTarget.value);
-                  if (!Number.isFinite(seconds)) return;
-                  updateSettings({ defaultStepDurationMs: Math.round(Math.min(120, Math.max(0.5, seconds)) * 1000) });
-                }}
+                value={secondsText(settings.defaultStepDurationMs)}
+                normalise={(raw) => secondsText(parseSecondsInput(raw, STEP_DURATION_RANGE) ?? settings.defaultStepDurationMs)}
+                onCommit={(next) => updateSettings({ defaultStepDurationMs: msFromSecondsText(next) })}
               />
             </label>
             <label className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -859,18 +948,15 @@ function Editor({
             </label>
             <label className="block text-xs text-muted-foreground">
               {t("presentations.cameraTransition")}
-              <Input
+              <DraftInput
                 type="number"
                 min={0.1}
                 max={5}
                 step={0.1}
                 className="mt-1 h-8"
-                value={settings.cameraTransitionMs / 1000}
-                onChange={(event) => {
-                  const seconds = Number(event.currentTarget.value);
-                  if (!Number.isFinite(seconds)) return;
-                  updateSettings({ cameraTransitionMs: Math.round(Math.min(5, Math.max(0.1, seconds)) * 1000) });
-                }}
+                value={secondsText(settings.cameraTransitionMs)}
+                normalise={(raw) => secondsText(parseSecondsInput(raw, CAMERA_TRANSITION_RANGE) ?? settings.cameraTransitionMs)}
+                onCommit={(next) => updateSettings({ cameraTransitionMs: msFromSecondsText(next) })}
               />
             </label>
             <label className="block text-xs text-muted-foreground">
@@ -1025,34 +1111,33 @@ function Editor({
               )}
               <label className="block text-xs text-muted-foreground">
                 {t("presentations.stepDuration")}
-                <Input
+                <DraftInput
                   type="number"
                   min={0.5}
                   max={120}
                   step={0.5}
                   className="mt-1 h-8"
-                  placeholder={String(settings.defaultStepDurationMs / 1000)}
-                  value={activeStep.durationMs != null ? activeStep.durationMs / 1000 : ""}
-                  onChange={(event) => {
-                    const raw = event.currentTarget.value;
-                    if (!raw) return updateStepDuration(activeStep.id, undefined);
-                    const seconds = Number(raw);
-                    if (!Number.isFinite(seconds)) return;
-                    updateStepDuration(activeStep.id, Math.round(Math.min(120, Math.max(0.5, seconds)) * 1000));
+                  placeholder={secondsText(settings.defaultStepDurationMs)}
+                  value={activeStep.durationMs != null ? secondsText(activeStep.durationMs) : ""}
+                  // An empty field is not a bad entry here: it hands the step back to the default.
+                  normalise={(raw) => {
+                    const ms = raw.trim() ? (parseSecondsInput(raw, STEP_DURATION_RANGE) ?? activeStep.durationMs) : undefined;
+                    return ms == null ? "" : secondsText(ms);
                   }}
+                  onCommit={(next) => updateStepDuration(activeStep.id, next ? msFromSecondsText(next) : undefined)}
                 />
               </label>
               <p className="mt-1 text-[11px] text-muted-foreground">{t("presentations.stepDurationHint")}</p>
               <h2 className="mt-3 text-xs font-semibold tracking-wide uppercase">{t("presentations.speakerNotes")}</h2>
-              <Textarea
+              <DraftTextarea
                 key={activeStep.id}
                 aria-label={t("presentations.speakerNotes")}
-                defaultValue={activeStep.notes ?? ""}
+                value={activeStep.notes ?? ""}
                 maxLength={5_000}
                 rows={4}
                 className="mt-2"
                 placeholder={t("presentations.speakerNotesPlaceholder")}
-                onBlur={(event) => updateStepNotes(activeStep.id, event.currentTarget.value)}
+                onCommit={(notes) => updateStepNotes(activeStep.id, notes)}
               />
             </section>
           )}
@@ -1102,18 +1187,16 @@ function Editor({
               <div className="mt-3 space-y-2">
                 <label className="block text-xs text-muted-foreground">
                   {t("presentations.rotation")}
-                  <Input
+                  <DraftInput
                     type="number"
                     min={-360}
                     max={360}
                     step={5}
                     className="mt-1 h-8"
                     key={`${selected.id}-rotation`}
-                    defaultValue={selected.rotation}
-                    onBlur={(event) => {
-                      const value = Math.min(360, Math.max(-360, Math.round(Number(event.currentTarget.value) || 0)));
-                      updateElement(selected.id, (element) => ({ ...element, rotation: value }));
-                    }}
+                    value={String(selected.rotation)}
+                    normalise={(raw) => String(Math.round(parseNumberInput(raw, -360, 360) ?? selected.rotation))}
+                    onCommit={(next) => updateElement(selected.id, (element) => ({ ...element, rotation: Number(next) }))}
                   />
                 </label>
                 {colorField(t("presentations.elementBackground"), selected.background ?? "", (color) =>
@@ -1123,29 +1206,29 @@ function Editor({
 
               {selected.type === "text" && (
                 <div className="mt-3 space-y-3">
-                  <Textarea
+                  <DraftTextarea
                     key={selected.id}
                     aria-label={t("presentations.textContent")}
-                    defaultValue={selected.content.text}
+                    value={selected.content.text}
                     maxLength={5_000}
                     rows={4}
-                    onBlur={(event) => onTextChange(selected.id, event.currentTarget.value)}
+                    onCommit={(text) => onTextChange(selected.id, text)}
                   />
                   <label className="block text-xs text-muted-foreground">
                     {t("presentations.fontSize")}
-                    <Input
+                    <DraftInput
                       type="number"
                       min={8}
                       max={400}
                       className="mt-1 h-8"
                       key={`${selected.id}-size`}
-                      defaultValue={selected.content.fontSize}
-                      onBlur={(event) => {
-                        const value = Math.min(400, Math.max(8, Math.round(Number(event.currentTarget.value) || 32)));
+                      value={String(selected.content.fontSize)}
+                      normalise={(raw) => String(Math.round(parseNumberInput(raw, 8, 400) ?? selected.content.fontSize))}
+                      onCommit={(next) =>
                         updateElement(selected.id, (element) =>
-                          element.type === "text" ? { ...element, content: { ...element.content, fontSize: value } } : element,
-                        );
-                      }}
+                          element.type === "text" ? { ...element, content: { ...element.content, fontSize: Number(next) } } : element,
+                        )
+                      }
                     />
                   </label>
                   <div className="flex gap-1.5">
@@ -1188,17 +1271,16 @@ function Editor({
               {selected.type === "image" && (
                 <label className="mt-3 block text-xs text-muted-foreground">
                   {t("presentations.altText")}
-                  <Input
+                  <DraftInput
                     key={selected.id}
                     className="mt-1 h-8"
-                    defaultValue={selected.content.alt}
+                    value={selected.content.alt}
                     maxLength={500}
-                    onBlur={(event) => {
-                      const alt = event.currentTarget.value;
+                    onCommit={(alt) =>
                       updateElement(selected.id, (element) =>
                         element.type === "image" ? { ...element, content: { ...element.content, alt } } : element,
-                      );
-                    }}
+                      )
+                    }
                   />
                 </label>
               )}
@@ -1207,17 +1289,16 @@ function Editor({
                 <div className="mt-3 space-y-3">
                   <label className="block text-xs text-muted-foreground">
                     {t("presentations.frameLabel")}
-                    <Input
+                    <DraftInput
                       key={selected.id}
                       className="mt-1 h-8"
-                      defaultValue={selected.content.label}
+                      value={selected.content.label}
                       maxLength={200}
-                      onBlur={(event) => {
-                        const label = event.currentTarget.value;
+                      onCommit={(label) =>
                         updateElement(selected.id, (element) =>
                           element.type === "frame" ? { ...element, content: { ...element.content, label } } : element,
-                        );
-                      }}
+                        )
+                      }
                     />
                   </label>
                   <div className="flex gap-1.5">
@@ -1276,19 +1357,19 @@ function Editor({
                   )}
                   <label className="block text-xs text-muted-foreground">
                     {t("presentations.strokeWidth")}
-                    <Input
+                    <DraftInput
                       type="number"
                       min={0}
                       max={200}
                       className="mt-1 h-8"
                       key={`${selected.id}-stroke-width`}
-                      defaultValue={selected.content.strokeWidth}
-                      onBlur={(event) => {
-                        const strokeWidth = Math.min(200, Math.max(0, Number(event.currentTarget.value) || 0));
+                      value={String(selected.content.strokeWidth)}
+                      normalise={(raw) => String(parseNumberInput(raw, 0, 200) ?? selected.content.strokeWidth)}
+                      onCommit={(next) =>
                         updateElement(selected.id, (element) =>
-                          element.type === "shape" ? { ...element, content: { ...element.content, strokeWidth } } : element,
-                        );
-                      }}
+                          element.type === "shape" ? { ...element, content: { ...element.content, strokeWidth: Number(next) } } : element,
+                        )
+                      }
                     />
                   </label>
                   <label className="block text-xs text-muted-foreground">

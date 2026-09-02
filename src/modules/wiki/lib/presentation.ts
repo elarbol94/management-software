@@ -312,6 +312,19 @@ export function isLeaseHeldByOther(
   return Boolean(lease && lease.sessionId !== sessionId && now - lease.heartbeatAt <= PRESENTATION_LEASE_TIMEOUT_MS);
 }
 
+/**
+ * A duration field types seconds and stores milliseconds. The clamp happens once, here, on
+ * a finished entry -- clamping every keystroke is what turns a typed "0.4" into 0.14 --
+ * and `null` means "nothing usable was typed", which the editor reads as leaving the
+ * stored value alone rather than as a zero.
+ */
+export function parseSecondsInput(raw: string, range: { min: number; max: number }): number | null {
+  const trimmed = raw.trim();
+  const seconds = Number(trimmed);
+  if (!trimmed || !Number.isFinite(seconds)) return null;
+  return Math.round(Math.min(range.max, Math.max(range.min, seconds * 1000)));
+}
+
 /** A step's own duration wins over the presentation's default autoplay pacing. */
 export function resolveStepDuration(step: PresentationStep, settings: PresentationSettings): number {
   return step.durationMs ?? settings.defaultStepDurationMs;

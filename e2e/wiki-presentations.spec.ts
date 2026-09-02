@@ -162,3 +162,82 @@ test("create from a template, edit an element, add a step, then present and chec
   await player.getByRole("button", { name: "Präsentation beenden" }).click();
   await page.waitForURL(/\/wiki\/presentations\/[^/]+$/, { timeout: 30_000 });
 });
+
+/**
+ * The editor's side panel starts where the golden path's step 1 ends: a fresh Pitch
+ * presentation open in the editor.
+ */
+async function openNewPitchEditor(page: Page, title: string) {
+  await page.getByRole("textbox", { name: "Titel der Präsentation" }).fill(title);
+  await page.getByRole("button", { name: "Neu", exact: true }).click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole("button", { name: "Pitch", exact: true }).click();
+  await page.waitForURL(/\/wiki\/presentations\/[^/]+$/, { timeout: 30_000 });
+  await expect(page.getByRole("textbox", { name: "Titel der Präsentation" })).toHaveValue(title);
+}
+
+test("panel inputs: a playback duration is typed digit by digit and clamped only on commit", async ({ page }) => {
+  test.setTimeout(120_000);
+  await login(page);
+  await openNewPitchEditor(page, `E2E Panel Duration ${Date.now()}`);
+
+  await page.getByRole("button", { name: "Wiedergabeeinstellungen" }).click();
+  const duration = page.getByLabel("Standard-Stationsdauer (s)");
+  await expect(duration).toBeVisible();
+
+  // Typed rather than pasted, because the bug was per-keystroke: the "0" of "0.8" was
+  // clamped to the minimum "0.5" and the rest typed onto the end of it.
+  await duration.selectText();
+  await duration.pressSequentially("0.8");
+  await expect(duration).toHaveValue("0.8");
+  await duration.press("Tab");
+  await expect(duration).toHaveValue("0.8");
+
+  // Below the schema's minimum: clamped once, when the entry is finished.
+  await duration.fill("0.4");
+  await duration.press("Tab");
+  await expect(duration).toHaveValue("0.5");
+
+  // An empty field is not a duration, so the stored one stays.
+  await duration.fill("");
+  await duration.press("Tab");
+  await expect(duration).toHaveValue("0.5");
+
+  const camera = page.getByLabel("Kamera-Übergang (s)");
+  await camera.selectText();
+  await camera.pressSequentially("2.5");
+  await expect(camera).toHaveValue("2.5");
+  await camera.press("Tab");
+  await expect(camera).toHaveValue("2.5");
+});
+
+test("panel inputs: undo puts the canvas value back into the side panel", async ({ page }) => {
+  test.setTimeout(120_000);
+  await login(page);
+  await openNewPitchEditor(page, `E2E Panel Undo ${Date.now()}`);
+
+  // The Pitch template's title element, selected on the canvas so the panel edits it.
+  const titleNode = page.locator('[data-testid="rf__node-pitch-title"]');
+  await expect(titleNode).toBeVisible();
+  await titleNode.click();
+  const contentField = page.getByRole("textbox", { name: "Text", exact: true });
+  await expect(contentField).toHaveValue("Your Pitch");
+
+  await contentField.fill("Changed title");
+  await contentField.blur();
+  await expect(titleNode).toContainText("Changed title");
+
+  const undo = page.getByRole("button", { name: "Rückgängig" });
+  await undo.click();
+  await expect(titleNode).toContainText("Your Pitch");
+  // The panel used to keep showing the undone text, and re-applied it on the next blur.
+  await expect(contentField).toHaveValue("Your Pitch");
+
+  await contentField.click();
+  await contentField.blur();
+  await expect(contentField).toHaveValue("Your Pitch");
+  await expect(titleNode).toContainText("Your Pitch");
+  // Leaving a field alone is not an edit, so there is still nothing left to undo.
+  await expect(undo).toBeDisabled();
+});

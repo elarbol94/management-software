@@ -18,6 +18,7 @@ import {
   normalizeRotation,
   normalizeSteps,
   parsePresentationCanvas,
+  parseSecondsInput,
   presentationCameraEasingFns,
   presentationCanvasReducer,
   reorderElement,
@@ -582,5 +583,30 @@ describe("canvas history", () => {
       changes: [{ id: "a", x: 50, y: 30 }, { id: "b", x: 250, y: 30 }],
     });
     expect(dragged.elements.map((element) => [element.x, element.y])).toEqual([[50, 30], [250, 30]]);
+  });
+});
+
+describe("parseSecondsInput", () => {
+  const step = { min: 500, max: 120_000 };
+  const camera = { min: 100, max: 5_000 };
+
+  it("reads seconds as whole milliseconds", () => {
+    expect(parseSecondsInput("2.5", step)).toBe(2_500);
+    expect(parseSecondsInput("0.7", step)).toBe(700);
+    expect(parseSecondsInput(" 12 ", step)).toBe(12_000);
+  });
+
+  it("clamps into the field's range instead of rejecting", () => {
+    expect(parseSecondsInput("0.4", step)).toBe(500);
+    expect(parseSecondsInput("1e3", step)).toBe(120_000);
+    expect(parseSecondsInput("0.05", camera)).toBe(100);
+    expect(parseSecondsInput("5.5", camera)).toBe(5_000);
+    expect(parseSecondsInput("-3", camera)).toBe(100);
+  });
+
+  it("reports a half-typed or empty entry as nothing to commit", () => {
+    for (const raw of ["", "   ", "-", "1e", ".", "abc", "1,5", "Infinity"]) {
+      expect(parseSecondsInput(raw, step)).toBeNull();
+    }
   });
 });
