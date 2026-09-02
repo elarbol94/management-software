@@ -3155,6 +3155,7 @@
       "joinSubmit": "Folgen",
       "following": "Folgt der Live-Präsentation",
       "followingHost": "Folgt {name}",
+      "leaveFollow": "Verlassen",
       "followEnded": "Die Live-Präsentation ist beendet",
       "followNotFound": "Keine Live-Präsentation zu diesem Code",
       "followNotFoundDescription": "Die Sitzung ist möglicherweise beendet oder der Code wurde falsch eingegeben. Versuche es erneut mit dem Code, den der Vortragende anzeigt."

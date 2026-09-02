@@ -317,3 +317,59 @@ test("reloading the editor reclaims the author's own lease so edits still save",
   // The claim has certainly resolved by now, so an absent banner means an absent lock.
   await expect(page.getByText("bearbeitet diese Präsentation gerade")).toHaveCount(0);
 });
+
+
+/**
+ * Leaving a live session, from both ends. A follower needs a way out that does not depend
+ * on a keyboard and never lands them in the editor, and a presenter walking out of the
+ * player has to take the session with them instead of leaving followers frozen on the last
+ * stop until the staleness window closes.
+ */
+test("a follower leaves a live session from the badge, and the presenter exiting the player ends it", async ({
+  page,
+  context,
+}) => {
+  test.setTimeout(120_000);
+  await login(page);
+
+  const title = `E2E Live ${Date.now()}`;
+
+  // 1. A presentation to broadcast, same as the golden path's first step.
+  await page.getByRole("textbox", { name: "Titel der Präsentation" }).fill(title);
+  await page.getByRole("button", { name: "Neu", exact: true }).click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole("button", { name: "Pitch", exact: true }).click();
+  await page.waitForURL(/\/wiki\/presentations\/[^/]+$/, { timeout: 30_000 });
+  await expect(page.getByRole("textbox", { name: "Titel der Präsentation" })).toHaveValue(title);
+
+  // 2. Present it and start the live session; the code is shown on the copy-link chip.
+  await page.getByRole("link", { name: "Präsentieren", exact: true }).click();
+  await page.waitForURL(/\/wiki\/presentations\/[^/]+\/present$/, { timeout: 30_000 });
+  const player = page.getByTestId("presentation-player");
+  await player.getByRole("button", { name: "Live-Sitzung starten" }).click();
+  const codeChip = player.getByTitle("Follow-Link kopieren");
+  await expect(codeChip).toBeVisible({ timeout: 30_000 });
+  const code = (await codeChip.innerText()).trim();
+  expect(code).toMatch(/^[A-Z2-9]{6}$/);
+
+  // 3. A follower in a second tab of the same signed-in context.
+  const follower = await context.newPage();
+  await follower.goto(`/wiki/presentations/follow/${code}`);
+  const badge = follower.getByTestId("presentation-player").getByRole("status");
+  await expect(badge).toHaveText(/^Folgt/, { timeout: 30_000 });
+
+  // 4. The badge's own exit goes to the join screen -- never to the editor, which a
+  // follower has no business in and may not even be able to open.
+  await follower.getByRole("link", { name: "Verlassen" }).click();
+  await follower.waitForURL(/\/wiki\/presentations\/follow$/, { timeout: 30_000 });
+  await follower.close();
+
+  // 5. The presenter leaving the player ends the session, so a follower's next poll gets a
+  // 404 and reads "beendet" instead of a frozen live position for the next 45 seconds.
+  await player.getByRole("button", { name: "Präsentation beenden" }).click();
+  await page.waitForURL(/\/wiki\/presentations\/[^/]+$/, { timeout: 30_000 });
+  await expect
+    .poll(async () => (await page.request.get(`/api/wiki/presentations/live/${code}`)).status(), { timeout: 20_000 })
+    .toBe(404);
+});

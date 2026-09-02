@@ -1,11 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
-import { Radio, RadioTower } from "lucide-react";
+import { LogOut, Radio, RadioTower } from "lucide-react";
 import { toast } from "sonner";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
   LIVE_SESSION_CODE_LENGTH,
@@ -107,11 +108,33 @@ export function PresentationLiveControl({
     };
   }, [code, presentationId, stepIndex]);
 
+  // Leaving the player ends the talk. Without this a session outlives the tab that hosts
+  // it: followers keep getting `{live:true}` with a frozen stop until the 45s stale window
+  // closes, and the presenter re-entering the player is offered "start" over a row that is
+  // still live. The code is read through a ref from a mount-lifetime effect on purpose --
+  // an effect keyed on `code` would tear down (and stop) every time the code changes, which
+  // includes the manual stop that just deleted the row and a restart that replaced it.
+  const codeRef = useRef(code);
+  useEffect(() => {
+    codeRef.current = code;
+  }, [code]);
+  useEffect(
+    () => () => {
+      // Fire-and-forget: the component is already gone, and the heartbeat's staleness
+      // window is the fallback if this never lands (a closed tab runs no cleanup at all).
+      // Scoped to this tab's own code: a restart elsewhere has already replaced the row,
+      // and that newer session is not ours to end.
+      const code = codeRef.current;
+      if (code) void stopPresentationLiveSession({ presentationId, code }).catch(() => {});
+    },
+    [presentationId],
+  );
+
   const toggle = useCallback(async () => {
     setBusy(true);
     try {
       if (code) {
-        await stopPresentationLiveSession({ presentationId });
+        await stopPresentationLiveSession({ presentationId, code });
         setCode(null);
       } else {
         const started = await startPresentationLiveSession({ presentationId, stepIndex: stepRef.current });
@@ -194,16 +217,28 @@ export function PresentationJoinForm() {
   );
 }
 
-/** What a follower sees instead of the player controls: whose talk, and whether it is still running. */
+/**
+ * What a follower sees instead of the player controls: whose talk, whether it is still
+ * running, and the way out. The exit is a link rather than a keystroke because the player
+ * covers the whole viewport and Escape does not exist on a phone.
+ */
 export function PresentationFollowBadge({ live, hostName }: { live: boolean; hostName: string }) {
   const t = useTranslations("wiki");
   return (
     <div className="absolute inset-x-0 bottom-0 flex justify-center p-4">
-      <div className="flex items-center gap-2 rounded-full border bg-background/90 px-3 py-1.5 text-xs shadow-sm backdrop-blur" role="status" aria-live="polite">
+      <div className="flex items-center gap-2 rounded-full border bg-background/90 px-3 py-1.5 text-xs shadow-sm backdrop-blur">
         <span className={`size-2 rounded-full ${live ? "bg-indigo-500" : "bg-muted-foreground"}`} />
-        {live
-          ? hostName ? t("presentations.followingHost", { name: hostName }) : t("presentations.following")
-          : t("presentations.followEnded")}
+        {/* Only the status text is the live region: an announcement should not re-read the
+            exit link every time the session flips to ended. */}
+        <span role="status" aria-live="polite">
+          {live
+            ? hostName ? t("presentations.followingHost", { name: hostName }) : t("presentations.following")
+            : t("presentations.followEnded")}
+        </span>
+        <Link className={buttonVariants({ variant: "ghost", size: "xs" })} href="/wiki/presentations/follow">
+          <LogOut className="size-3" />
+          {t("presentations.leaveFollow")}
+        </Link>
       </div>
     </div>
   );

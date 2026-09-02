@@ -87,13 +87,20 @@ export async function publishPresentationLivePosition(input: {
   return { live: Boolean(updated) };
 }
 
-export async function stopPresentationLiveSession(input: { presentationId: string }) {
+/**
+ * End the host's own session. A caller that holds a code should pass it: restarting the
+ * talk in a second tab replaces the row with a new code, and without the code the first
+ * tab's exit would delete that replacement. Omitting it keeps the older "whatever session
+ * I host for this presentation" behaviour.
+ */
+export async function stopPresentationLiveSession(input: { presentationId: string; code?: string }) {
   const currentUser = await requireUserOrThrow();
-  const data = z.object({ presentationId: idSchema }).parse(input);
+  const data = z.object({ presentationId: idSchema, code: liveSessionCodeSchema.optional() }).parse(input);
   db.delete(wikiPresentationLiveSessions)
     .where(and(
       eq(wikiPresentationLiveSessions.presentationId, data.presentationId),
       eq(wikiPresentationLiveSessions.hostUserId, currentUser.id),
+      data.code ? eq(wikiPresentationLiveSessions.code, data.code) : undefined,
     ))
     .run();
   return { stopped: true as const };
