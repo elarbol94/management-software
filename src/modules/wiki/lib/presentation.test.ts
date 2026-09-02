@@ -407,6 +407,13 @@ describe("player element clicks", () => {
     expect(elementClickAction(steps("outer", "inner"), elements, 1, "outer")).toEqual({ kind: "advance" });
   });
 
+  it("advances when a decorative wrapper frame no step targets encloses the current target", () => {
+    // The common "from wiki page" shape: a frame drawn purely to group things, on no step
+    // at all. Without the containment rule it would fall through to a dead free-look click.
+    const wrapper = frame("wrapper", 25, 25, 200, 200, "Decoration");
+    expect(elementClickAction(steps("outer", "inner"), [...elements, wrapper], 1, "wrapper")).toEqual({ kind: "advance" });
+  });
+
   it("jumps when the clicked frame is a step target that does not contain the current one", () => {
     expect(elementClickAction(steps("outer", "inner", "far"), elements, 1, "far")).toEqual({ kind: "jump", index: 2 });
   });
