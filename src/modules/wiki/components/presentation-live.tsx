@@ -122,7 +122,10 @@ export function PresentationLiveControl({
     () => () => {
       // Fire-and-forget: the component is already gone, and the heartbeat's staleness
       // window is the fallback if this never lands (a closed tab runs no cleanup at all).
-      if (codeRef.current) void stopPresentationLiveSession({ presentationId }).catch(() => {});
+      // Scoped to this tab's own code: a restart elsewhere has already replaced the row,
+      // and that newer session is not ours to end.
+      const code = codeRef.current;
+      if (code) void stopPresentationLiveSession({ presentationId, code }).catch(() => {});
     },
     [presentationId],
   );
@@ -131,7 +134,7 @@ export function PresentationLiveControl({
     setBusy(true);
     try {
       if (code) {
-        await stopPresentationLiveSession({ presentationId });
+        await stopPresentationLiveSession({ presentationId, code });
         setCode(null);
       } else {
         const started = await startPresentationLiveSession({ presentationId, stepIndex: stepRef.current });
