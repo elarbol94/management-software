@@ -550,14 +550,16 @@ function Editor({
   useEffect(() => {
     const session = sessionId.current;
     let disposed = false;
-    const claim = () => {
-      void acquirePresentationEditLease({ id: presentation.id, sessionId: session })
+    const claim = (takeover = false) => {
+      void acquirePresentationEditLease({ id: presentation.id, sessionId: session, takeover })
         .then((result) => {
           if (!disposed) setLockedBy(result.editable ? null : result.holderName);
         })
         .catch(() => undefined);
     };
-    claim();
+    // A reload leaves the previous page load's lease behind for up to a minute, so the
+    // first claim takes over -- but only ever from this same user, enforced server-side.
+    claim(true);
     const timer = window.setInterval(() => {
       if (disposed) return;
       // While locked out, keep asking: the holder's lease expires and this tab takes over

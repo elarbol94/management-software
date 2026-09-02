@@ -303,13 +303,20 @@ export function shouldSnapshotRevision(lastRevisionAt: number | null, now: numbe
   return lastRevisionAt === null || now - lastRevisionAt > PRESENTATION_REVISION_THROTTLE_MS;
 }
 
-/** True while somebody else is actively editing; a lease past its timeout is free to take. */
-export function isLeaseHeldByOther(
-  lease: { sessionId: string; heartbeatAt: number } | null,
-  sessionId: string,
+/**
+ * True while a live lease blocks this claim: another session still inside the timeout,
+ * including another session of the same user unless the claim asks to take over.
+ * A reload mints a fresh sessionId without releasing the old lease, so a claim may ask to
+ * take over — which only works against the same user's lease, never another author's.
+ */
+export function isLeaseHeld(
+  lease: { sessionId: string; userId: string; heartbeatAt: number } | null,
+  claim: { sessionId: string; userId: string; takeover?: boolean },
   now: number,
 ): boolean {
-  return Boolean(lease && lease.sessionId !== sessionId && now - lease.heartbeatAt <= PRESENTATION_LEASE_TIMEOUT_MS);
+  if (!lease || now - lease.heartbeatAt > PRESENTATION_LEASE_TIMEOUT_MS) return false;
+  if (lease.sessionId === claim.sessionId) return false;
+  return !(claim.takeover === true && lease.userId === claim.userId);
 }
 
 /**

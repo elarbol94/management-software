@@ -274,3 +274,40 @@ test("presenting flushes the pending autosave instead of losing the last edit", 
   await page.waitForURL(/\/wiki\/presentations\/[^/]+\/present$/, { timeout: 30_000 });
   await expect(page.getByTestId("presentation-player").getByText(lateText)).toBeVisible({ timeout: 30_000 });
 });
+
+
+/**
+ * A reload mints a new editor session while the previous page load's lease is still warm.
+ * The author must get their own lease back at once instead of watching a banner name them
+ * as the blocking editor for the next sixty seconds. Editing after the reload is what
+ * proves it: while the stale lease still counts as foreign the autosave is refused, so
+ * "Gespeichert" never arrives.
+ */
+test("reloading the editor reclaims the author's own lease so edits still save", async ({ page }) => {
+  test.setTimeout(120_000);
+  await login(page);
+
+  const title = `E2E Reload ${Date.now()}`;
+  await page.getByRole("textbox", { name: "Titel der Präsentation" }).fill(title);
+  await page.getByRole("button", { name: "Neu", exact: true }).click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole("button", { name: "Pitch", exact: true }).click();
+  await page.waitForURL(/\/wiki\/presentations\/[^/]+$/, { timeout: 30_000 });
+  await expect(page.getByRole("textbox", { name: "Titel der Präsentation" })).toHaveValue(title);
+
+  await page.reload();
+  await expect(page.getByRole("textbox", { name: "Titel der Präsentation" })).toHaveValue(title, { timeout: 30_000 });
+
+  // The edit has to survive the round trip, not just render: a lease still held by the
+  // previous page load blocks the autosave and leaves the save state on "Fehler".
+  await page.getByRole("button", { name: "Text", exact: true }).click();
+  const contentField = page.getByRole("textbox", { name: "Text", exact: true });
+  await expect(contentField).toBeVisible();
+  await contentField.fill(`Edited after reload ${Date.now()}`);
+  await contentField.blur();
+  await expect(page.getByText("Gespeichert", { exact: true })).toBeVisible({ timeout: 15_000 });
+
+  // The claim has certainly resolved by now, so an absent banner means an absent lock.
+  await expect(page.getByText("bearbeitet diese Präsentation gerade")).toHaveCount(0);
+});

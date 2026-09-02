@@ -16,7 +16,7 @@ import { deleteAttachmentsFor } from "@/lib/files";
 import {
   PRESENTATION_LEASE_TIMEOUT_MS,
   defaultPresentationSettings,
-  isLeaseHeldByOther,
+  isLeaseHeld,
   normalizeSteps,
   parsePresentationCanvas,
   parsePresentationSteps,
@@ -104,11 +104,16 @@ export async function renamePresentation(input: { id: string; title: string }) {
   return { savedAt: Date.now() };
 }
 
-/** The lease holder, or null once their heartbeat has aged out. */
-function activeLease(presentationId: string, sessionId: string) {
+/**
+ * The lease holder, or null once their heartbeat has aged out. `takeover` is only ever a
+ * request: the userId compared here comes from the lease row and the session, never from
+ * the client, so a takeover can only ever reclaim the caller's own lease.
+ */
+function activeLease(presentationId: string, claim: { sessionId: string; userId: string; takeover?: boolean }) {
   const lease = db
     .select({
       sessionId: wikiPresentationEditLeases.sessionId,
+      userId: wikiPresentationEditLeases.userId,
       heartbeatAt: wikiPresentationEditLeases.heartbeatAt,
       holderName: user.name,
     })
@@ -116,18 +121,18 @@ function activeLease(presentationId: string, sessionId: string) {
     .leftJoin(user, eq(wikiPresentationEditLeases.userId, user.id))
     .where(eq(wikiPresentationEditLeases.presentationId, presentationId))
     .get();
-  const held = isLeaseHeldByOther(
-    lease ? { sessionId: lease.sessionId, heartbeatAt: lease.heartbeatAt.getTime() } : null,
-    sessionId,
+  const held = isLeaseHeld(
+    lease ? { sessionId: lease.sessionId, userId: lease.userId, heartbeatAt: lease.heartbeatAt.getTime() } : null,
+    claim,
     Date.now(),
   );
   return held && lease ? lease : null;
 }
 
-export async function acquirePresentationEditLease(input: { id: string; sessionId: string }) {
+export async function acquirePresentationEditLease(input: { id: string; sessionId: string; takeover?: boolean }) {
   const currentUser = await requireUserOrThrow();
-  const data = z.object({ id: idSchema, sessionId: sessionSchema }).parse(input);
-  const holder = activeLease(data.id, data.sessionId);
+  const data = z.object({ id: idSchema, sessionId: sessionSchema, takeover: z.boolean().optional() }).parse(input);
+  const holder = activeLease(data.id, { sessionId: data.sessionId, userId: currentUser.id, takeover: data.takeover });
   if (holder) return { editable: false as const, holderName: holder.holderName ?? "" };
   const now = new Date();
   db.insert(wikiPresentationEditLeases)
@@ -220,7 +225,8 @@ export async function savePresentation(input: {
     .parse(input);
   const current = db.select().from(wikiPresentations).where(eq(wikiPresentations.id, data.id)).get();
   if (!current) throw new Error("Presentation not found");
-  const holder = data.sessionId ? activeLease(data.id, data.sessionId) : null;
+  // No takeover on save: a stale tab whose lease was taken over must stop writing.
+  const holder = data.sessionId ? activeLease(data.id, { sessionId: data.sessionId, userId: currentUser.id }) : null;
   if (holder) return { locked: true as const, holderName: holder.holderName ?? "" };
 
   db.transaction(() => {
