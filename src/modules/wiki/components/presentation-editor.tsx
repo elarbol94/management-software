@@ -256,6 +256,12 @@ const CAMERA_TRANSITION_RANGE = { min: 100, max: 5_000 };
 const secondsText = (ms: number) => String(ms / 1000);
 const msFromSecondsText = (seconds: string) => Math.round(Number(seconds) * 1000);
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
+/** The plain number fields read like the duration ones: the entry clamped into range, or
+ * null when nothing usable was typed and the stored value should simply stay. */
+const parseNumberInput = (raw: string, min: number, max: number): number | null => {
+  const value = Number(raw.trim());
+  return raw.trim() && Number.isFinite(value) ? clamp(value, min, max) : null;
+};
 
 /** Alignment lines are drawn in canvas coordinates, so they stay glued to the elements
  * they describe while the author pans and zooms. */
@@ -1189,7 +1195,7 @@ function Editor({
                     className="mt-1 h-8"
                     key={`${selected.id}-rotation`}
                     value={String(selected.rotation)}
-                    normalise={(raw) => String(clamp(Math.round(Number(raw) || 0), -360, 360))}
+                    normalise={(raw) => String(Math.round(parseNumberInput(raw, -360, 360) ?? selected.rotation))}
                     onCommit={(next) => updateElement(selected.id, (element) => ({ ...element, rotation: Number(next) }))}
                   />
                 </label>
@@ -1217,7 +1223,7 @@ function Editor({
                       className="mt-1 h-8"
                       key={`${selected.id}-size`}
                       value={String(selected.content.fontSize)}
-                      normalise={(raw) => String(clamp(Math.round(Number(raw) || 32), 8, 400))}
+                      normalise={(raw) => String(Math.round(parseNumberInput(raw, 8, 400) ?? selected.content.fontSize))}
                       onCommit={(next) =>
                         updateElement(selected.id, (element) =>
                           element.type === "text" ? { ...element, content: { ...element.content, fontSize: Number(next) } } : element,
@@ -1358,7 +1364,7 @@ function Editor({
                       className="mt-1 h-8"
                       key={`${selected.id}-stroke-width`}
                       value={String(selected.content.strokeWidth)}
-                      normalise={(raw) => String(clamp(Number(raw) || 0, 0, 200))}
+                      normalise={(raw) => String(parseNumberInput(raw, 0, 200) ?? selected.content.strokeWidth)}
                       onCommit={(next) =>
                         updateElement(selected.id, (element) =>
                           element.type === "shape" ? { ...element, content: { ...element.content, strokeWidth: Number(next) } } : element,

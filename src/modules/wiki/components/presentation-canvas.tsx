@@ -59,7 +59,9 @@ function TextNode({ data, selected }: NodeProps<PresentationNode>) {
           defaultValue={text}
           maxLength={5_000}
           onBlur={(event) => {
-            data.onTextChange?.(element.id, event.currentTarget.value);
+            // Text left exactly as it was found is not an edit: committing it anyway would
+            // add an undo step and mark the canvas unsaved for nothing.
+            if (event.currentTarget.value !== text) data.onTextChange?.(element.id, event.currentTarget.value);
             setEditing(false);
           }}
           onKeyDown={(event) => {
