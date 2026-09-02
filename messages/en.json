@@ -3153,6 +3153,7 @@
       "joinSubmit": "Follow",
       "following": "Following the live presentation",
       "followingHost": "Following {name}",
+      "leaveFollow": "Leave",
       "followEnded": "The live presentation has ended",
       "followNotFound": "No live presentation for this code",
       "followNotFoundDescription": "The session may have ended, or the code was mistyped. Try again with the code the presenter is showing."

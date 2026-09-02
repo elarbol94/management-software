@@ -275,7 +275,9 @@ function Player({ presentation, follow }: { presentation: PresentationRecord; fo
         event.preventDefault();
         overview();
       } else if (event.key === "Escape" && !document.fullscreenElement) {
-        router.push(`/wiki/presentations/${presentation.id}`);
+        // A follower has no business in the editor -- they were handed a code, not the
+        // presentation. Send them back to the join screen, same as the badge's exit link.
+        router.push(following ? "/wiki/presentations/follow" : `/wiki/presentations/${presentation.id}`);
       }
     };
     window.addEventListener("keydown", onKeyDown);
