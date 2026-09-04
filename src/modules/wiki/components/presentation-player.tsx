@@ -230,6 +230,17 @@ function Player({ presentation, follow }: { presentation: PresentationRecord; fo
     channelRef.current?.postMessage({ type: "step", index });
   }, [index]);
 
+  // Leaving the player must end the live session BEFORE navigating: Next posts server
+  // actions to the current document URL, and the editor this pushes to does not register
+  // the live-stop action, so a stop sent after the push is answered 200 and dropped on the
+  // floor. Browser-back and closing the tab cannot run this and stay on the session's own
+  // 45s heartbeat staleness fallback.
+  const stopLive = useRef<(() => Promise<void>) | null>(null);
+  const exitPresent = useCallback(async () => {
+    await stopLive.current?.();
+    router.push(`/wiki/presentations/${presentation.id}`);
+  }, [presentation.id, router]);
+
   const openPresenterView = useCallback(() => {
     window.open(
       `/wiki/presentations/${presentation.id}/present/notes`,
@@ -276,13 +287,15 @@ function Player({ presentation, follow }: { presentation: PresentationRecord; fo
         overview();
       } else if (event.key === "Escape" && !document.fullscreenElement) {
         // A follower has no business in the editor -- they were handed a code, not the
-        // presentation. Send them back to the join screen, same as the badge's exit link.
-        router.push(following ? "/wiki/presentations/follow" : `/wiki/presentations/${presentation.id}`);
+        // presentation. Send them back to the join screen, same as the badge's exit link,
+        // and with no stop: the session is the presenter's, not theirs.
+        if (following) router.push("/wiki/presentations/follow");
+        else void exitPresent();
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [following, move, overview, presentation.id, router]);
+  }, [exitPresent, following, move, overview, router]);
 
   // Its own listener, kept separate from the step-navigation one above: zoom is
   // presenter-local camera state, unrelated to whichever step index is currently shown.
@@ -433,13 +446,13 @@ function Player({ presentation, follow }: { presentation: PresentationRecord; fo
           <Button type="button" variant="ghost" size="icon-sm" aria-label={t("presentations.openPresenterView")} onClick={openPresenterView}>
             <NotebookText className="size-4" />
           </Button>
-          <PresentationLiveControl presentationId={presentation.id} stepIndex={index} />
+          <PresentationLiveControl presentationId={presentation.id} stepIndex={index} stopRef={stopLive} />
           <Button
             type="button"
             variant="ghost"
             size="icon-sm"
             aria-label={t("presentations.exitPresent")}
-            onClick={() => router.push(`/wiki/presentations/${presentation.id}`)}
+            onClick={() => void exitPresent()}
           >
             <X className="size-4" />
           </Button>

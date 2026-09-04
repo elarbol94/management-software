@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
@@ -74,9 +74,12 @@ export function usePresentationFollower(code: string | null, onStep: (stepIndex:
 export function PresentationLiveControl({
   presentationId,
   stepIndex,
+  stopRef,
 }: {
   presentationId: string;
   stepIndex: number;
+  /** Filled with "end the session I am hosting", for the player to await before it navigates. */
+  stopRef: RefObject<(() => Promise<void>) | null>;
 }) {
   const t = useTranslations("wiki");
   const [code, setCode] = useState<string | null>(null);
@@ -108,27 +111,27 @@ export function PresentationLiveControl({
     };
   }, [code, presentationId, stepIndex]);
 
-  // Leaving the player ends the talk. Without this a session outlives the tab that hosts
-  // it: followers keep getting `{live:true}` with a frozen stop until the 45s stale window
-  // closes, and the presenter re-entering the player is offered "start" over a row that is
-  // still live. The code is read through a ref from a mount-lifetime effect on purpose --
-  // an effect keyed on `code` would tear down (and stop) every time the code changes, which
-  // includes the manual stop that just deleted the row and a restart that replaced it.
-  const codeRef = useRef(code);
+  // Leaving the player has to end the talk, or the session outlives the tab hosting it:
+  // followers keep getting `{live:true}` on a frozen stop until the 45s stale window closes,
+  // and the presenter re-entering the player is offered "start" over a row that is still
+  // live. This is handed to the player rather than run from an unmount cleanup because by
+  // unmount time it is too late: Next posts server actions to the *current* document URL,
+  // and the editor the player navigates to does not register this action, so a stop sent
+  // after `router.push` is answered 200 and silently dropped. The player awaits this first.
+  const stop = useCallback(async () => {
+    // Scoped to this tab's own code: a restart in another tab has already replaced the row,
+    // and that newer session is not ours to end.
+    if (!code) return;
+    try {
+      await stopPresentationLiveSession({ presentationId, code });
+    } catch {
+      // We are leaving regardless; the heartbeat's staleness window is the fallback.
+    }
+    setCode(null);
+  }, [code, presentationId]);
   useEffect(() => {
-    codeRef.current = code;
-  }, [code]);
-  useEffect(
-    () => () => {
-      // Fire-and-forget: the component is already gone, and the heartbeat's staleness
-      // window is the fallback if this never lands (a closed tab runs no cleanup at all).
-      // Scoped to this tab's own code: a restart elsewhere has already replaced the row,
-      // and that newer session is not ours to end.
-      const code = codeRef.current;
-      if (code) void stopPresentationLiveSession({ presentationId, code }).catch(() => {});
-    },
-    [presentationId],
-  );
+    stopRef.current = stop;
+  }, [stop, stopRef]);
 
   const toggle = useCallback(async () => {
     setBusy(true);
