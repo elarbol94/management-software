@@ -406,7 +406,7 @@ function Editor({
   const { resolvedTheme } = useTheme();
   const canvasRef = useRef<HTMLDivElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
-  const sessionId = useRef(globalThis.crypto.randomUUID());
+  const [sessionId] = useState(() => globalThis.crypto.randomUUID());
 
   const [lockedBy, setLockedBy] = useState<string | null>(null);
   const [restoring, setRestoring] = useState<string | null>(null);
@@ -477,7 +477,7 @@ function Editor({
           steps: state.steps,
           background: state.background,
           settings: state.settings,
-          sessionId: sessionId.current,
+          sessionId,
         });
         // Someone took over while this tab was editing: stop writing rather than
         // overwriting their canvas with a stale one.
@@ -512,7 +512,7 @@ function Editor({
     const next = (inFlight.current ?? Promise.resolve(true)).then(write, write);
     inFlight.current = next;
     return next;
-  }, [presentation.id, t]);
+  }, [presentation.id, sessionId, t]);
 
   /** Writes whatever is on the canvas right now, waiting for a save already in flight.
    * Used by every exit that would otherwise drop the pending debounce on the floor. Leaving
@@ -548,12 +548,15 @@ function Editor({
   // Edit lease: claim it on open, keep it warm while the tab lives, hand it back on exit.
   // A missed release is harmless — the lease expires on its own.
   useEffect(() => {
-    const session = sessionId.current;
     let disposed = false;
     const claim = (takeover = false) => {
-      void acquirePresentationEditLease({ id: presentation.id, sessionId: session, takeover })
+      void acquirePresentationEditLease({ id: presentation.id, sessionId, takeover })
         .then((result) => {
-          if (!disposed) setLockedBy(result.editable ? null : result.holderName);
+          if (disposed) return;
+          setLockedBy(result.editable ? null : result.holderName);
+          // The lock refused the last write and parked the autosave; now that it has
+          // lifted, the edit still sitting here deserves another try.
+          if (result.editable) dispatch({ type: "recovered" });
         })
         .catch(() => undefined);
     };
@@ -564,7 +567,7 @@ function Editor({
       if (disposed) return;
       // While locked out, keep asking: the holder's lease expires and this tab takes over
       // without the author having to reload.
-      void heartbeatPresentationEditLease({ id: presentation.id, sessionId: session })
+      void heartbeatPresentationEditLease({ id: presentation.id, sessionId })
         .then((result) => {
           if (!disposed && !result.editable) claim();
         })
@@ -573,9 +576,9 @@ function Editor({
     return () => {
       disposed = true;
       window.clearInterval(timer);
-      void releasePresentationEditLease({ id: presentation.id, sessionId: session }).catch(() => undefined);
+      void releasePresentationEditLease({ id: presentation.id, sessionId }).catch(() => undefined);
     };
-  }, [presentation.id]);
+  }, [presentation.id, sessionId]);
 
   useEffect(() => {
     if (!canvas.dirty && status !== "saving") return;
@@ -862,6 +865,7 @@ function Editor({
   /** Present and PDF export both read the canvas back from the database, so both have to
    * wait for a pending edit to be written before they hand over. */
   const needsFlush = !readOnly && (canvas.dirty || status === "saving");
+  const listHref = "/wiki/presentations";
   const presentHref = `/wiki/presentations/${presentation.id}/present`;
   const printHref = `/print/presentations/${presentation.id}`;
 
@@ -871,9 +875,14 @@ function Editor({
    * fails leaves the author here with their edit and the toast. */
   const flushThen = (href: string, newTab: boolean) => {
     const tab = newTab ? window.open("about:blank", "_blank") : null;
-    void flush().then((saved) => {
+    void flush().then(async (saved) => {
       if (!newTab) {
-        if (saved) router.push(href);
+        if (!saved) return;
+        // A server action posts to the page the browser is on, so the release in the
+        // unmount cleanup would reach the page being navigated to, which does not serve
+        // this action. Hand the lease back while this page still can.
+        await releasePresentationEditLease({ id: presentation.id, sessionId }).catch(() => undefined);
+        router.push(href);
       } else if (tab) {
         if (saved) tab.location.href = href;
         else tab.close();
@@ -934,7 +943,16 @@ function Editor({
   return (
     <div className="flex h-[calc(100vh-3.5rem)] min-h-0 flex-col md:h-screen">
       <header className="flex flex-wrap items-center gap-2 border-b bg-background px-3 py-2">
-        <Link href="/wiki/presentations" className="text-sm text-muted-foreground hover:text-foreground">
+        <Link
+          href={listHref}
+          className="text-sm text-muted-foreground hover:text-foreground"
+          onClick={(event) => {
+            if (!needsFlush) return;
+            event.preventDefault();
+            flushThen(listHref, false);
+          }}
+          onAuxClick={auxFlush(listHref)}
+        >
           {t("presentations.title")}
         </Link>
         <span className="text-muted-foreground">/</span>

@@ -713,6 +713,19 @@ describe("canvas save state", () => {
     expect(presentationCanvasReducer(failed, savedAction(failed))).toMatchObject({ dirty: false, failed: false });
   });
 
+  it("re-arms the autosave when the lock that refused the write lifts", () => {
+    const failed = presentationCanvasReducer(
+      presentationCanvasReducer(start(), { type: "touch", background: "#101828" }),
+      { type: "failed" },
+    );
+    const recovered = presentationCanvasReducer(failed, { type: "recovered" });
+    expect(recovered.failed).toBe(false);
+    // The edit itself is still waiting to be written.
+    expect(recovered.dirty).toBe(true);
+    // Nothing to recover from is not a state change, so a heartbeat cannot cause renders.
+    expect(presentationCanvasReducer(recovered, { type: "recovered" })).toBe(recovered);
+  });
+
   it("re-arms the autosave on the next edit after a failure", () => {
     const moved = presentationCanvasReducer(start(), {
       type: "geometry", at: 1_000, gesture: false, tolerance: 6, changes: [{ id: "a", x: 400, y: 0 }],

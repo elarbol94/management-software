@@ -609,7 +609,9 @@ export type PresentationCanvasAction =
   }
   /** Background and playback settings: edits that carry no undo step of their own. */
   | { type: "touch"; background?: string; settings?: Partial<PresentationSettings> }
-  | { type: "failed" };
+  | { type: "failed" }
+  /** The lock that refused the last write has lifted: the parked edit may go out again. */
+  | { type: "recovered" };
 
 export function initialPresentationCanvasState(
   elements: PresentationElement[],
@@ -698,6 +700,8 @@ export function presentationCanvasReducer(
     }
     case "failed":
       return state.failed ? state : { ...state, failed: true };
+    case "recovered":
+      return state.failed ? { ...state, failed: false } : state;
   }
 }
 
