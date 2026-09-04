@@ -869,10 +869,11 @@ function Editor({
   const presentHref = `/wiki/presentations/${presentation.id}/present`;
   const printHref = `/print/presentations/${presentation.id}`;
 
-  /** Hands over to a page rendered from the saved canvas once the pending edit has landed.
-   * A tab that has to be new is opened inside the click -- opening it after the await is
-   * what popup blockers exist for -- and only then pointed at the target. A write that
-   * fails leaves the author here with their edit and the toast. */
+  /** Hands over to a page rendered from the saved canvas once the pending edit has landed
+   * -- flushing nothing when there is nothing to write. A tab that has to be new is opened
+   * inside the click -- opening it after the await is what popup blockers exist for -- and
+   * only then pointed at the target. A write that fails leaves the author here with their
+   * edit and the toast. */
   const flushThen = (href: string, newTab: boolean) => {
     const tab = newTab ? window.open("about:blank", "_blank") : null;
     void flush().then(async (saved) => {
@@ -888,6 +889,16 @@ function Editor({
         else tab.close();
       }
     });
+  };
+  /** Leaving this page for another one in the same tab. Always handled here, dirty or not:
+   * the lease release only works from the page the action is registered on, and after
+   * `router.push` that is the page being navigated to. A modifier click leaves the editor
+   * mounted with its lease, so it only needs intercepting when there is an edit to write. */
+  const leaveVia = (href: string) => (event: React.MouseEvent) => {
+    const newTab = event.metaKey || event.ctrlKey || event.shiftKey;
+    if (newTab && !needsFlush) return;
+    event.preventDefault();
+    flushThen(href, newTab);
   };
   /** Middle-click never reaches onClick, and its default is the same new tab. */
   const auxFlush = (href: string) => (event: React.MouseEvent) => {
@@ -946,11 +957,7 @@ function Editor({
         <Link
           href={listHref}
           className="text-sm text-muted-foreground hover:text-foreground"
-          onClick={(event) => {
-            if (!needsFlush) return;
-            event.preventDefault();
-            flushThen(listHref, false);
-          }}
+          onClick={leaveVia(listHref)}
           onAuxClick={auxFlush(listHref)}
         >
           {t("presentations.title")}
@@ -1104,11 +1111,7 @@ function Editor({
             render={(
               <Link
                 href={presentHref}
-                onClick={(event) => {
-                  if (!needsFlush) return;
-                  event.preventDefault();
-                  flushThen(presentHref, event.metaKey || event.ctrlKey || event.shiftKey);
-                }}
+                onClick={leaveVia(presentHref)}
                 onAuxClick={auxFlush(presentHref)}
               />
             )}
