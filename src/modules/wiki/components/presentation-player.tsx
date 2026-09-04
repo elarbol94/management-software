@@ -395,12 +395,14 @@ function Player({ presentation, follow }: { presentation: PresentationRecord; fo
 
       {following && <PresentationFollowBadge live={remoteLive} hostName={follow?.hostName ?? ""} />}
 
+      {/* The strip spans the whole viewport width, so it must stay transparent to pointers:
+          only the pill itself is a control, and only the pill may swallow a canvas click. */}
       {!following && (
-      <div
-        className="absolute inset-x-0 bottom-0 flex items-center justify-center gap-2 p-4"
-        onClick={(event) => event.stopPropagation()}
-      >
-        <div className="flex items-center gap-1 rounded-full border bg-background/90 px-2 py-1 shadow-sm backdrop-blur">
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 flex items-center justify-center gap-2 p-4">
+        <div
+          className="pointer-events-auto flex items-center gap-1 rounded-full border bg-background/90 px-2 py-1 shadow-sm backdrop-blur"
+          onClick={(event) => event.stopPropagation()}
+        >
           <Button
             type="button"
             variant="ghost"
