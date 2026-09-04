@@ -195,7 +195,9 @@ test("a follower leaves a live session from the badge, and the presenter exiting
   const codeChip = player.getByTitle("Follow-Link kopieren");
   await expect(codeChip).toBeVisible({ timeout: 30_000 });
   const code = (await codeChip.innerText()).trim();
-  expect(code).toMatch(/^[A-Z2-9]{6}$/);
+  // CODE_ALPHABET from src/modules/wiki/lib/live-session.ts, spelled out rather than
+  // imported: it is module-private, and the spec should not lean on `@/` alias resolution.
+  expect(code).toMatch(/^[ABCDEFGHJKMNPQRTUVWXYZ2346789]{6}$/);
 
   // 3. A follower in a second tab of the same signed-in context.
   const follower = await context.newPage();

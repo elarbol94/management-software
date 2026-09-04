@@ -31,6 +31,11 @@ type FollowSource = { code: string; hostName: string };
 // that a pause mid-gesture (lifting fingers to reposition) doesn't get cut off.
 const GESTURE_SNAP_BACK_MS = 900;
 
+// How long leaving the player waits for the live session to be stopped before it navigates
+// anyway. A hung request must not trap the presenter in the player; if the cap wins, the
+// session's own 45s heartbeat staleness is what ends it.
+const LIVE_STOP_TIMEOUT_MS = 2_000;
+
 function Player({ presentation, follow }: { presentation: PresentationRecord; follow?: FollowSource }) {
   const t = useTranslations("wiki");
   const router = useRouter();
@@ -237,7 +242,10 @@ function Player({ presentation, follow }: { presentation: PresentationRecord; fo
   // 45s heartbeat staleness fallback.
   const stopLive = useRef<(() => Promise<void>) | null>(null);
   const exitPresent = useCallback(async () => {
-    await stopLive.current?.();
+    await Promise.race([
+      stopLive.current?.() ?? Promise.resolve(),
+      new Promise<void>((resolve) => setTimeout(resolve, LIVE_STOP_TIMEOUT_MS)),
+    ]);
     router.push(`/wiki/presentations/${presentation.id}`);
   }, [presentation.id, router]);
 
