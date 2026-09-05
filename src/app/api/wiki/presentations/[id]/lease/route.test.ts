@@ -1,9 +1,9 @@
 import { beforeEach, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/auth", () => ({ getSession: vi.fn() }));
-vi.mock("@/modules/wiki/presentation-actions", () => ({ releasePresentationEditLease: vi.fn() }));
+vi.mock("@/modules/wiki/presentation-actions", () => ({ acquirePresentationEditLease: vi.fn(), heartbeatPresentationEditLease: vi.fn(), releasePresentationEditLease: vi.fn() }));
 import { getSession } from "@/lib/auth";
-import { releasePresentationEditLease } from "@/modules/wiki/presentation-actions";
+import { acquirePresentationEditLease, heartbeatPresentationEditLease, releasePresentationEditLease } from "@/modules/wiki/presentation-actions";
 import { POST } from "./route";
 
 const params = Promise.resolve({ id: "deck" });
@@ -15,6 +15,8 @@ beforeEach(() => {
   vi.resetAllMocks();
   vi.mocked(getSession).mockResolvedValue({ user: { id: "author" } } as Awaited<ReturnType<typeof getSession>>);
   vi.mocked(releasePresentationEditLease).mockResolvedValue({ released: true });
+  vi.mocked(acquirePresentationEditLease).mockResolvedValue({ editable: true, expiresAt: 123 });
+  vi.mocked(heartbeatPresentationEditLease).mockResolvedValue({ editable: true });
 });
 
 it("requires authentication and rejects cross-site requests", async () => {
@@ -30,7 +32,11 @@ it("requires a JSON request with a valid session", async () => {
   expect(releasePresentationEditLease).not.toHaveBeenCalled();
 });
 
-it("releases the route's presentation through the ownership-checked action", async () => {
+it("uses the route's presentation and delegates to the ownership-checked actions", async () => {
   expect((await POST(request({ id: "other", sessionId: "editor-session" }), { params })).status).toBe(200);
   expect(releasePresentationEditLease).toHaveBeenCalledWith({ id: "deck", sessionId: "editor-session" });
+  expect((await POST(request({ action: "takeover", sessionId: "editor-session" }), { params })).status).toBe(200);
+  expect(acquirePresentationEditLease).toHaveBeenCalledWith({ id: "deck", sessionId: "editor-session", takeover: true });
+  expect((await POST(request({ action: "heartbeat", sessionId: "editor-session" }), { params })).status).toBe(200);
+  expect(heartbeatPresentationEditLease).toHaveBeenCalledWith({ id: "deck", sessionId: "editor-session" });
 });

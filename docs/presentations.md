@@ -12,8 +12,8 @@ the stored geometry. Presentations and live followers require a signed-in user.
   other navigation without a link click use the fixed PATCH endpoint under
   `/api/wiki/presentations/[id]` for a final queued save. Closing/reloading a tab
   with pending work still displays the browser's unsaved-changes warning.
-- Lease cleanup uses `/api/wiki/presentations/[id]/lease`, so it can finish after
-  navigation without posting a server action to a different page.
+- All lease operations use `/api/wiki/presentations/[id]/lease`, so editor
+  re-entry and cleanup do not post server actions to a different page.
 - Each editor has a lease. All editing controls are disabled while checking
   access or when another session holds the lease. Reloading can reclaim the
   same user's lease. An optimistic `expectedUpdatedAt` check prevents an older

@@ -72,9 +72,6 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 import {
-  acquirePresentationEditLease,
-  heartbeatPresentationEditLease,
-  releasePresentationEditLease,
   restorePresentationRevision,
   savePresentation,
 } from "../presentation-actions";
@@ -117,6 +114,15 @@ const MAX_IMAGE_SIDE = 480;
 /** Well inside the server's lease timeout, so a live editor never looks abandoned. */
 const LEASE_HEARTBEAT_INTERVAL = 15_000;
 type SaveState = "idle" | "unsaved" | "saving" | "saved" | "error";
+
+async function requestEditLease(id: string, sessionId: string, action: "acquire" | "takeover" | "heartbeat" | "release"): Promise<{ editable?: boolean; holderName?: string }> {
+  const response = await fetch(`/api/wiki/presentations/${id}/lease`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ sessionId, action }), keepalive: action === "release",
+  });
+  if (!response.ok) throw new Error("Edit lease request failed");
+  return response.json();
+}
 
 function StepRow({
   step,
@@ -599,10 +605,10 @@ function Editor({
   useEffect(() => {
     let disposed = false;
     const claim = (takeover = false) => {
-      void acquirePresentationEditLease({ id: presentation.id, sessionId, takeover })
+      void requestEditLease(presentation.id, sessionId, takeover ? "takeover" : "acquire")
         .then((result) => {
           if (disposed) return;
-          setLockedBy(result.editable ? null : result.holderName);
+          setLockedBy(result.editable ? null : result.holderName ?? "");
           setLeaseReady(true);
           // The lock refused the last write and parked the autosave; now that it has
           // lifted, the edit still sitting here deserves another try.
@@ -617,7 +623,7 @@ function Editor({
       if (disposed) return;
       // While locked out, keep asking: the holder's lease expires and this tab takes over
       // without the author having to reload.
-      void heartbeatPresentationEditLease({ id: presentation.id, sessionId })
+      void requestEditLease(presentation.id, sessionId, "heartbeat")
         .then((result) => {
           if (!disposed && !result.editable) claim();
         })
@@ -628,10 +634,7 @@ function Editor({
       window.clearInterval(timer);
       // The route may already be hidden. Server actions post to the new document URL
       // and can fail during partial rendering; the fixed endpoint is independent of it.
-      void fetch(`/api/wiki/presentations/${presentation.id}/lease`, {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sessionId }), keepalive: true,
-      }).catch(() => undefined);
+      void requestEditLease(presentation.id, sessionId, "release").catch(() => undefined);
     };
   }, [presentation.id, sessionId]);
 
@@ -954,10 +957,8 @@ function Editor({
     void flush().then(async (saved) => {
       if (!newTab) {
         if (!saved) return;
-        // A server action posts to the page the browser is on, so the release in the
-        // unmount cleanup would reach the page being navigated to, which does not serve
-        // this action. Hand the lease back while this page still can.
-        await releasePresentationEditLease({ id: presentation.id, sessionId }).catch(() => undefined);
+        // Hand the lease back before navigation so the next editor can claim it at once.
+        await requestEditLease(presentation.id, sessionId, "release").catch(() => undefined);
         router.push(href);
       } else if (tab) {
         if (saved) tab.location.href = href;
@@ -982,10 +983,8 @@ function Editor({
     document.addEventListener("click", onNavigation, true);
     return () => document.removeEventListener("click", onNavigation, true);
   }, [flushThen]);
-  /** Leaving this page for another one in the same tab. Always handled here, dirty or not:
-   * the lease release only works from the page the action is registered on, and after
-   * `router.push` that is the page being navigated to. A modifier click leaves the editor
-   * mounted with its lease, so it only needs intercepting when there is an edit to write. */
+  /** Flush even a clean canvas: a focused field may still hold an uncommitted draft.
+   * A modifier click keeps this editor open with its lease and opens a saved copy. */
   const leaveVia = (event: React.MouseEvent, href: string) => {
     const newTab = event.metaKey || event.ctrlKey || event.shiftKey;
     event.preventDefault();
