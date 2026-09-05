@@ -15,7 +15,7 @@ export default async function FollowLiveSessionPage({ params }: { params: Promis
   const parsed = liveSessionCodeSchema.safeParse(code);
   const session = parsed.success ? getLiveSessionByCode(parsed.data) : null;
 
-  if (!session) {
+  if (!session || !session.live) {
     const t = await getTranslations("wiki");
     return (
       <div className="p-5 md:p-8">
@@ -32,5 +32,7 @@ export default async function FollowLiveSessionPage({ params }: { params: Promis
 
   const presentation = getPresentation(session.presentationId);
   if (!presentation) notFound();
-  return <PresentationPlayer presentation={presentation} follow={{ code: session.code, hostName: session.hostName }} />;
+  // Speaker notes are private to the author/presenter; don't serialize them to followers.
+  const audiencePresentation = { ...presentation, steps: presentation.steps.map(({ id, elementId, durationMs }) => ({ id, elementId, durationMs })) };
+  return <PresentationPlayer presentation={audiencePresentation} follow={{ code: session.code, hostName: session.hostName, stepIndex: session.stepIndex, live: session.live }} />;
 }

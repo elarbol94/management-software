@@ -1062,3 +1062,15 @@
     transform: scaleX(1);
   }
 }
+
+/* The mobile app header and wiki header already occupy 7rem. The canvas supplies the
+   remaining height; the wiki's usual minimum height must not add an extra screen. */
+[data-app-main] > div:has([data-presentation-workspace]) {
+  min-height: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-testid="presentation-player"] .react-flow__node {
+    animation: none !important;
+  }
+}

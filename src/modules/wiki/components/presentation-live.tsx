@@ -16,19 +16,24 @@ import {
   liveSessionPositionSchema,
   normalizeLiveSessionCode,
 } from "../lib/live-session";
-import {
-  publishPresentationLivePosition,
-  startPresentationLiveSession,
-  stopPresentationLiveSession,
-} from "../presentation-live-actions";
+
+/** Background updates and the final stop must remain valid after route navigation. */
+async function liveRequest<T>(presentationId: string, command: { action: "start" | "publish" | "stop"; code?: string; stepIndex?: number }): Promise<T> {
+  const response = await fetch(`/api/wiki/presentations/${presentationId}/live`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(command), keepalive: command.action === "stop",
+  });
+  if (!response.ok) throw new Error("Live session request failed");
+  return response.json();
+}
 
 /**
  * Remote follow, viewer half: poll the live session and hand each reported stop to
  * `onStep`. Returns whether the session is still running, which is all the caller needs
  * beyond the step itself.
  */
-export function usePresentationFollower(code: string | null, onStep: (stepIndex: number) => void) {
-  const [live, setLive] = useState(true);
+export function usePresentationFollower(code: string | null, onStep: (stepIndex: number) => void, initialLive = true) {
+  const [live, setLive] = useState(initialLive);
 
   // The callback is read through a ref, so a caller that rebuilds it does not restart the poll.
   const onStepRef = useRef(onStep);
@@ -39,9 +44,13 @@ export function usePresentationFollower(code: string | null, onStep: (stepIndex:
   useEffect(() => {
     if (!code) return;
     let cancelled = false;
+    let polling = false;
+    const controller = new AbortController();
     const poll = async () => {
+      if (polling) return;
+      polling = true;
       try {
-        const response = await fetch(`/api/wiki/presentations/live/${code}`, { cache: "no-store" });
+        const response = await fetch(`/api/wiki/presentations/live/${code}`, { cache: "no-store", signal: controller.signal });
         if (!response.ok) {
           // A deleted session (404) ends the follow rather than freezing on the last stop.
           if (!cancelled && response.status === 404) setLive(false);
@@ -53,12 +62,15 @@ export function usePresentationFollower(code: string | null, onStep: (stepIndex:
         onStepRef.current(parsed.data.stepIndex);
       } catch {
         // A dropped poll is not an error worth showing: the next tick retries.
+      } finally {
+        polling = false;
       }
     };
     void poll();
     const timer = setInterval(() => void poll(), LIVE_SESSION_POLL_MS);
     return () => {
       cancelled = true;
+      controller.abort();
       clearInterval(timer);
     };
   }, [code]);
@@ -96,7 +108,7 @@ export function PresentationLiveControl({
     let cancelled = false;
     const publish = async () => {
       try {
-        const result = await publishPresentationLivePosition({ presentationId, code, stepIndex: stepRef.current });
+        const result = await liveRequest<{ live: boolean }>(presentationId, { action: "publish", code, stepIndex: stepRef.current });
         // The session was taken over or stopped elsewhere — drop back to not-live.
         if (!result.live && !cancelled) setCode(null);
       } catch {
@@ -114,16 +126,14 @@ export function PresentationLiveControl({
   // Leaving the player has to end the talk, or the session outlives the tab hosting it:
   // followers keep getting `{live:true}` on a frozen stop until the 45s stale window closes,
   // and the presenter re-entering the player is offered "start" over a row that is still
-  // live. This is handed to the player rather than run from an unmount cleanup because by
-  // unmount time it is too late: Next posts server actions to the *current* document URL,
-  // and the editor the player navigates to does not register this action, so a stop sent
-  // after `router.push` is answered 200 and silently dropped. The player awaits this first.
+  // live. The player awaits this before navigating. The fixed endpoint and keepalive also
+  // let the request finish if the player's bounded wait expires during a slow connection.
   const stop = useCallback(async () => {
     // Scoped to this tab's own code: a restart in another tab has already replaced the row,
     // and that newer session is not ours to end.
     if (!code) return;
     try {
-      await stopPresentationLiveSession({ presentationId, code });
+      await liveRequest(presentationId, { action: "stop", code });
     } catch {
       // We are leaving regardless; the heartbeat's staleness window is the fallback.
     }
@@ -137,10 +147,10 @@ export function PresentationLiveControl({
     setBusy(true);
     try {
       if (code) {
-        await stopPresentationLiveSession({ presentationId, code });
+        await liveRequest(presentationId, { action: "stop", code });
         setCode(null);
       } else {
-        const started = await startPresentationLiveSession({ presentationId, stepIndex: stepRef.current });
+        const started = await liveRequest<{ code: string }>(presentationId, { action: "start", stepIndex: stepRef.current });
         setCode(started.code);
       }
     } catch {
@@ -153,7 +163,11 @@ export function PresentationLiveControl({
   const copyLink = useCallback(() => {
     if (!code) return;
     const link = `${window.location.origin}${liveSessionFollowPath(code)}`;
-    void navigator.clipboard?.writeText(link).then(
+    if (!navigator.clipboard) {
+      toast.error(t("presentations.copyUnavailable", { code }));
+      return;
+    }
+    void navigator.clipboard.writeText(link).then(
       () => toast.success(t("presentations.liveLinkCopied")),
       () => toast.error(t("presentations.liveFailed")),
     );

@@ -23,7 +23,7 @@ export default async function PresentationsPage() {
           <h1 className="text-3xl font-semibold tracking-tight">{t("presentations.title")}</h1>
           <p className="mt-1 text-sm text-muted-foreground">{t("presentations.description")}</p>
         </div>
-        <div className="flex items-center gap-4">
+        <div className="flex w-full flex-wrap items-center gap-3 xl:w-auto">
           <Link href="/wiki/presentations/follow" className="text-sm font-medium text-indigo-600">{t("presentations.joinLive")}</Link>
           <NewPresentationFromWikiPage pages={wikiPages} />
           <NewPresentationForm />
@@ -51,10 +51,12 @@ export default async function PresentationsPage() {
                 </Link>
                 <DeletePresentationButton id={presentation.id} title={presentation.title} />
               </div>
-              <div className="mt-3 flex items-center gap-3 text-xs">
+              <div className="mt-3 flex flex-wrap items-center gap-3 text-xs">
                 <Link href={`/wiki/presentations/${presentation.id}`} className="font-medium text-indigo-600">{t("edit")}</Link>
-                <Link href={`/wiki/presentations/${presentation.id}/present`} className="font-medium text-indigo-600">{t("presentations.present")}</Link>
-                <a href={`/print/presentations/${presentation.id}`} target="_blank" rel="noopener noreferrer" className="font-medium text-indigo-600">{t("presentations.exportPdf")}</a>
+                {presentation.stepCount > 0 && <>
+                  <Link href={`/wiki/presentations/${presentation.id}/present`} className="font-medium text-indigo-600">{t("presentations.present")}</Link>
+                  <a href={`/print/presentations/${presentation.id}`} target="_blank" rel="noopener noreferrer" className="font-medium text-indigo-600">{t("presentations.exportPdf")}</a>
+                </>}
                 {presentation.updatedByName && <span className="ml-auto truncate text-muted-foreground">{presentation.updatedByName}</span>}
               </div>
             </li>

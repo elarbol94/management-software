@@ -9,9 +9,10 @@ import { useTheme } from "next-themes";
 import { ReactFlow, ReactFlowProvider, useReactFlow, type NodeMouseHandler } from "@xyflow/react";
 import { ChevronLeft, ChevronRight, Maximize, Minimize, NotebookText, Pause, Play, Scan, Spotlight, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { toast } from "sonner";
 import {
   PRESENTATION_CAMERA_PADDING,
-  elementBounds,
+  presentationCameraBounds,
   elementClickAction,
   elementsWithinStep,
   presentationCameraEasingFns,
@@ -24,7 +25,7 @@ import { elementsToNodes, presentationNodeTypes, type PresentationNode } from ".
 import { PresentationFollowBadge, PresentationLiveControl, usePresentationFollower } from "./presentation-live";
 
 /** Set when this player is a remote follower mirroring someone else's live session. */
-type FollowSource = { code: string; hostName: string };
+type FollowSource = { code: string; hostName: string; stepIndex?: number; live?: boolean };
 
 // How long a free pan/zoom gesture is left alone before the camera snaps back to the
 // current step's framing. Short enough that the view doesn't stay adrift, long enough
@@ -42,13 +43,23 @@ function Player({ presentation, follow }: { presentation: PresentationRecord; fo
   const reactFlow = useReactFlow<PresentationNode>();
   const { resolvedTheme } = useTheme();
   const containerRef = useRef<HTMLDivElement>(null);
-  const [index, setIndex] = useState(0);
+  const [index, setIndex] = useState(() => Math.min(Math.max(follow?.stepIndex ?? 0, 0), Math.max(presentation.steps.length - 1, 0)));
+  const [presenterSession] = useState(() => globalThis.crypto.randomUUID());
+  const [reducedMotion, setReducedMotion] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
   const [playing, setPlaying] = useState(false);
 
   const { elements, steps, settings } = presentation;
-  const cameraDuration = settings.cameraTransitionMs;
+  const cameraDuration = reducedMotion ? 0 : settings.cameraTransitionMs;
   const cameraEase = presentationCameraEasingFns[settings.cameraEasing];
+
+  useEffect(() => {
+    const query = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const update = () => setReducedMotion(query.matches);
+    update();
+    query.addEventListener("change", update);
+    return () => query.removeEventListener("change", update);
+  }, []);
 
   // Elements that belong to the current step's target: what fades in as it arrives.
   // Derived straight from the index, so re-arriving at a step re-plays the entrance.
@@ -74,7 +85,7 @@ function Player({ presentation, follow }: { presentation: PresentationRecord; fo
       const step = steps[stepIndex];
       const target = step ? stepTarget(step, elements) : null;
       if (!target) return overview(duration);
-      void reactFlow.fitBounds(elementBounds(target), { padding: PRESENTATION_CAMERA_PADDING, duration, ease: cameraEase });
+      void reactFlow.fitBounds(presentationCameraBounds(target), { padding: PRESENTATION_CAMERA_PADDING, duration, ease: cameraEase });
     },
     [elements, overview, reactFlow, steps, cameraDuration, cameraEase],
   );
@@ -138,13 +149,9 @@ function Player({ presentation, follow }: { presentation: PresentationRecord; fo
     if (!playing || !steps.length) return;
     const duration = resolveStepDuration(steps[index], settings);
     const timer = setTimeout(() => {
-      setIndex((current) => {
-        const next = current + 1;
-        if (next < steps.length) return next;
-        if (settings.loop) return 0;
-        setPlaying(false);
-        return current;
-      });
+      if (index + 1 < steps.length) setIndex(index + 1);
+      else if (settings.loop && steps.length > 1) setIndex(0);
+      else setPlaying(false);
     }, duration);
     return () => clearTimeout(timer);
   }, [playing, index, steps, settings]);
@@ -193,7 +200,7 @@ function Player({ presentation, follow }: { presentation: PresentationRecord; fo
         flyTo(action.index);
         return;
       }
-      void reactFlow.fitBounds(elementBounds(target), {
+      void reactFlow.fitBounds(presentationCameraBounds(target), {
         padding: PRESENTATION_CAMERA_PADDING,
         duration: cameraDuration,
         ease: cameraEase,
@@ -208,7 +215,7 @@ function Player({ presentation, follow }: { presentation: PresentationRecord; fo
     (stepIndex: number) => setIndex(Math.min(Math.max(stepIndex, 0), Math.max(steps.length - 1, 0))),
     [steps.length],
   );
-  const remoteLive = usePresentationFollower(follow?.code ?? null, applyRemoteStep);
+  const remoteLive = usePresentationFollower(follow?.code ?? null, applyRemoteStep, follow?.live);
 
   // Kept current without being an effect dependency, so the channel below is set up once
   // and can still answer a presenter window's "where are we" with the latest step.
@@ -222,12 +229,14 @@ function Player({ presentation, follow }: { presentation: PresentationRecord; fo
   // Presenter windows follow this player over BroadcastChannel: it broadcasts its own step
   // changes, and applies "goto" from a presenter window steering it back.
   useEffect(() => {
-    const channel = new BroadcastChannel(presenterChannelName(presentation.id));
+    if (following || typeof BroadcastChannel === "undefined") return;
+    const channel = new BroadcastChannel(presenterChannelName(presentation.id, presenterSession));
     channelRef.current = channel;
     channel.onmessage = (event) => {
       const message = parsePresenterMessage(event.data);
       if (!message) return;
       if (message.type === "goto") {
+        setPlaying(false);
         setIndex(Math.min(Math.max(message.index, 0), Math.max(steps.length - 1, 0)));
       } else if (message.type === "request-step") {
         channel.postMessage({ type: "step", index: indexRef.current });
@@ -237,19 +246,19 @@ function Player({ presentation, follow }: { presentation: PresentationRecord; fo
       channel.close();
       channelRef.current = null;
     };
-  }, [presentation.id, steps.length]);
+  }, [following, presentation.id, presenterSession, steps.length]);
 
   useEffect(() => {
     channelRef.current?.postMessage({ type: "step", index });
   }, [index]);
 
-  // Leaving the player must end the live session BEFORE navigating: Next posts server
-  // actions to the current document URL, and the editor this pushes to does not register
-  // the live-stop action, so a stop sent after the push is answered 200 and dropped on the
-  // floor. Browser-back and closing the tab cannot run this and stay on the session's own
-  // 45s heartbeat staleness fallback.
+  // End the live session before navigating when possible. Its fixed endpoint can finish
+  // after this bounded wait, so a slow connection does not trap the presenter. Browser
+  // Back and closing the tab retain the session's 45s heartbeat staleness fallback.
   const stopLive = useRef<(() => Promise<void>) | null>(null);
   const exitPresent = useCallback(async () => {
+    setPlaying(false);
+    if (document.fullscreenElement) await document.exitFullscreen().catch(() => undefined);
     await Promise.race([
       stopLive.current?.() ?? Promise.resolve(),
       new Promise<void>((resolve) => setTimeout(resolve, LIVE_STOP_TIMEOUT_MS)),
@@ -258,12 +267,13 @@ function Player({ presentation, follow }: { presentation: PresentationRecord; fo
   }, [presentation.id, router]);
 
   const openPresenterView = useCallback(() => {
-    window.open(
-      `/wiki/presentations/${presentation.id}/present/notes`,
-      `presenter-${presentation.id}`,
+    const popup = window.open(
+      `/wiki/presentations/${presentation.id}/present/notes?session=${presenterSession}`,
+      `presenter-${presentation.id}-${presenterSession}`,
       "width=960,height=680",
     );
-  }, [presentation.id]);
+    if (!popup) toast.error(t("presentations.popupBlocked"));
+  }, [presentation.id, presenterSession, t]);
 
   useEffect(() => {
     // A frame after paint, so the very first flight is measured against a pane that
@@ -290,6 +300,11 @@ function Player({ presentation, follow }: { presentation: PresentationRecord; fo
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey) return;
+      const target = event.target as HTMLElement | null;
+      if (target?.closest("input, textarea, select, [contenteditable='true']")) return;
+      // Space activates a focused control; it must not also advance the presentation.
+      if (event.key === " " && target?.closest("button, a, [role='button']")) return;
       if (event.key === "ArrowRight" || event.key === " " || event.key === "PageDown") {
         event.preventDefault();
         move(1);
@@ -317,6 +332,7 @@ function Player({ presentation, follow }: { presentation: PresentationRecord; fo
   // presenter-local camera state, unrelated to whichever step index is currently shown.
   useEffect(() => {
     const onZoomKeyDown = (event: KeyboardEvent) => {
+      if (following || event.ctrlKey || event.metaKey || event.altKey) return;
       if (!["+", "=", "-", "_"].includes(event.key)) return;
       event.preventDefault();
       const zooming = event.key === "-" || event.key === "_" ? reactFlow.zoomOut : reactFlow.zoomIn;
@@ -325,7 +341,7 @@ function Player({ presentation, follow }: { presentation: PresentationRecord; fo
     };
     window.addEventListener("keydown", onZoomKeyDown);
     return () => window.removeEventListener("keydown", onZoomKeyDown);
-  }, [reactFlow, scheduleSnapBack]);
+  }, [following, reactFlow, scheduleSnapBack]);
 
   // Spotlight/laser-pointer overlay: a presenter toggle, purely cosmetic. The pointer
   // position is written straight to the overlay's own CSS variables instead of React state
@@ -342,10 +358,15 @@ function Player({ presentation, follow }: { presentation: PresentationRecord; fo
     return () => window.removeEventListener("pointermove", onPointerMove);
   }, [spotlight]);
 
-  const toggleFullscreen = useCallback(() => {
-    if (document.fullscreenElement) void document.exitFullscreen();
-    else void containerRef.current?.requestFullscreen();
-  }, []);
+  const toggleFullscreen = useCallback(async () => {
+    try {
+      if (document.fullscreenElement) await document.exitFullscreen();
+      else if (containerRef.current?.requestFullscreen) await containerRef.current.requestFullscreen();
+      else toast.error(t("presentations.fullscreenUnavailable"));
+    } catch {
+      toast.error(t("presentations.fullscreenUnavailable"));
+    }
+  }, [t]);
 
   return (
     <div
@@ -354,7 +375,6 @@ function Player({ presentation, follow }: { presentation: PresentationRecord; fo
       // Covers the wiki rail and the app chrome: presenting owns the whole viewport.
       className="fixed inset-0 z-50 bg-background"
       style={presentation.background ? { backgroundColor: presentation.background } : undefined}
-      onClick={() => move(1)}
     >
       <ReactFlow
         nodes={nodes}
@@ -372,13 +392,14 @@ function Player({ presentation, follow }: { presentation: PresentationRecord; fo
         // Nodes stay unselectable/undraggable above; passing onNodeClick alone is what makes
         // them clickable at all (ReactFlow otherwise sets pointer-events: none on them).
         onNodeClick={onElementClick}
+        onPaneClick={() => move(1)}
         // Free camera while presenting: drag to pan, wheel/pinch to zoom, both bounded by
         // minZoom/maxZoom above. onMoveStart/onMoveEnd arm the snap-back defined earlier —
         // ReactFlow itself already tells apart a real gesture from our own flyTo calls.
-        panOnDrag
+        panOnDrag={!following}
         panOnScroll={false}
-        zoomOnScroll
-        zoomOnPinch
+        zoomOnScroll={!following}
+        zoomOnPinch={!following}
         zoomOnDoubleClick={false}
         onMoveStart={onGestureStart}
         onMoveEnd={onGestureEnd}
@@ -421,7 +442,7 @@ function Player({ presentation, follow }: { presentation: PresentationRecord; fo
       {!following && (
       <div className="pointer-events-none absolute inset-x-0 bottom-0 flex items-center justify-center gap-2 p-4">
         <div
-          className="pointer-events-auto flex items-center gap-1 rounded-full border bg-background/90 px-2 py-1 shadow-sm backdrop-blur"
+          className="pointer-events-auto flex max-w-full flex-wrap items-center justify-center gap-1 rounded-2xl border bg-background/90 px-2 py-1 shadow-sm backdrop-blur sm:rounded-full"
           onClick={(event) => event.stopPropagation()}
         >
           <Button
@@ -430,7 +451,10 @@ function Player({ presentation, follow }: { presentation: PresentationRecord; fo
             size="icon-sm"
             aria-label={playing ? t("presentations.pause") : t("presentations.play")}
             disabled={!steps.length}
-            onClick={() => setPlaying((current) => !current)}
+            onClick={() => {
+              if (!playing && index === steps.length - 1) setIndex(0);
+              setPlaying((current) => !current);
+            }}
           >
             {playing ? <Pause className="size-4" /> : <Play className="size-4" />}
           </Button>
@@ -458,7 +482,7 @@ function Player({ presentation, follow }: { presentation: PresentationRecord; fo
           >
             <Spotlight className="size-4" />
           </Button>
-          <Button type="button" variant="ghost" size="icon-sm" aria-label={t("presentations.fullscreen")} onClick={toggleFullscreen}>
+          <Button type="button" variant="ghost" size="icon-sm" aria-label={t("presentations.fullscreen")} aria-pressed={fullscreen} onClick={() => void toggleFullscreen()}>
             {fullscreen ? <Minimize className="size-4" /> : <Maximize className="size-4" />}
           </Button>
           <Button type="button" variant="ghost" size="icon-sm" aria-label={t("presentations.openPresenterView")} onClick={openPresenterView}>

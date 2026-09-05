@@ -189,7 +189,158 @@ async function openNewPitchEditor(page: Page, title: string) {
   await dialog.getByRole("button", { name: "Pitch", exact: true }).click();
   await page.waitForURL(/\/wiki\/presentations\/[^/]+$/, { timeout: 30_000 });
   await expect(page.getByRole("textbox", { name: "Titel der Präsentation" })).toHaveValue(title);
+  // A rendered breadcrumb can appear before hydration and the initial edit lease.
+  await expect(page.getByRole("button", { name: "Text", exact: true })).toBeEnabled();
 }
+
+test("mobile editing exposes the path and saves a focused title before presenting", async ({ page }, testInfo) => {
+  test.setTimeout(120_000);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await login(page);
+  await openNewPitchEditor(page, `E2E Mobile ${Date.now()}`);
+  await page.getByRole("button", { name: "Pfad und Eigenschaften" }).click();
+  const panel = page.getByRole("complementary", { name: "Pfad und Eigenschaften" });
+  await expect(panel.getByRole("heading", { name: "Weg", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Text", exact: true }).click();
+  await panel.getByRole("textbox", { name: "Text", exact: true }).fill("Mobile stop");
+  await panel.getByRole("button", { name: "Auswahl als Station" }).click();
+  await expect(panel.getByRole("button", { name: "Mobile stop", exact: true })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  expect(await page.evaluate(() => document.documentElement.scrollHeight <= window.innerHeight + 1)).toBe(true);
+  await page.screenshot({ path: testInfo.outputPath("mobile-editor.png"), fullPage: true });
+  const editorUrl = page.url();
+  const title = `Renamed on mobile ${Date.now()}`;
+  await page.getByRole("textbox", { name: "Titel der Präsentation" }).fill(title);
+  await page.getByRole("link", { name: "Präsentieren", exact: true }).click();
+  const player = page.getByTestId("presentation-player");
+  await expect(player.getByRole("status")).toHaveText("1 / 5");
+  const exit = player.getByRole("button", { name: "Präsentation beenden" });
+  await expect(exit).toBeInViewport();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await page.screenshot({ path: testInfo.outputPath("mobile-player.png"), fullPage: true });
+  await exit.click();
+  await page.waitForURL(editorUrl);
+  await expect(page.getByRole("textbox", { name: "Titel der Präsentation" })).toHaveValue(title);
+});
+
+test("rotation keeps an element in place and Save commits the currently focused field", async ({ page }, testInfo) => {
+  test.setTimeout(120_000);
+  await login(page);
+  await openNewPitchEditor(page, `E2E Geometry ${Date.now()}`);
+  const node = page.getByTestId("rf__node-pitch-title");
+  await node.click();
+  const before = await node.evaluate((element) => {
+    const box = element.getBoundingClientRect();
+    return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+  });
+  const rotation = page.getByLabel("Drehung (Grad)");
+  await rotation.fill("30");
+  await rotation.press("Tab");
+  const after = await node.evaluate((element) => {
+    const box = element.getBoundingClientRect();
+    return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+  });
+  expect(after.x).toBeCloseTo(before.x, 0);
+  expect(after.y).toBeCloseTo(before.y, 0);
+  const text = "Saved directly from the focused property field";
+  await page.getByRole("textbox", { name: "Text", exact: true }).fill(text);
+  await page.getByRole("button", { name: "Speichern", exact: true }).click();
+  await expect(page.getByText("Gespeichert", { exact: true })).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath("desktop-editor.png"), fullPage: true });
+  await page.reload();
+  await expect(page.getByTestId("rf__node-pitch-title")).toContainText(text);
+});
+
+test("restoring history drains pending edits and cannot be overwritten by autosave", async ({ page }) => {
+  test.setTimeout(120_000);
+  await login(page);
+  const title = `E2E Restore ${Date.now()}`;
+  await openNewPitchEditor(page, title);
+  await page.getByTestId("rf__node-pitch-title").click();
+  const content = page.getByRole("textbox", { name: "Text", exact: true });
+  await content.fill("First edit");
+  await page.getByRole("button", { name: "Speichern", exact: true }).click();
+  await expect(page.getByText("Gespeichert", { exact: true })).toBeVisible();
+  const restore = page.getByRole("button", { name: "Wiederherstellen", exact: true }).first();
+  await expect(restore).toBeVisible();
+  await content.fill("Pending edit immediately before restoring");
+  page.once("dialog", (dialog) => dialog.accept());
+  await restore.click();
+  await expect(page.getByTestId("rf__node-pitch-title")).toContainText("Your Pitch");
+  await expect(page.getByRole("button", { name: "Rückgängig" })).toBeDisabled();
+  await page.waitForTimeout(2_000);
+  await page.reload();
+  await expect(page.getByTestId("rf__node-pitch-title")).toContainText("Your Pitch");
+});
+
+test("PDF notes are opt-in and keyboard activation advances exactly one stop", async ({ page, context }) => {
+  test.setTimeout(120_000);
+  await login(page);
+  await openNewPitchEditor(page, `E2E Print ${Date.now()}`);
+  await page.getByRole("button", { name: "Your Pitch", exact: true }).click();
+  const notes = "Private presenter notes should not appear in the audience PDF";
+  await page.getByRole("textbox", { name: "Sprechernotizen" }).fill(notes);
+  const popupPromise = context.waitForEvent("page");
+  await page.getByRole("link", { name: "PDF-Export", exact: true }).click();
+  const print = await popupPromise;
+  await expect(print.getByTestId("presentation-print")).toBeVisible();
+  await expect(print.getByText(notes, { exact: true })).toHaveCount(0);
+  await print.getByRole("link", { name: "Sprechernotizen einschließen" }).click();
+  await expect(print.getByText(notes, { exact: true })).toBeVisible();
+  await print.close();
+  await page.getByRole("link", { name: "Präsentieren", exact: true }).click();
+  const player = page.getByTestId("presentation-player");
+  const next = player.getByRole("button", { name: "Nächste Station" });
+  await next.focus();
+  await next.press("Space");
+  await expect(player.getByRole("status")).toHaveText("2 / 4");
+  await player.getByRole("button", { name: "Präsentation beenden" }).click();
+});
+
+test("a tab that loses its lease disables all editing controls", async ({ page, context }) => {
+  test.setTimeout(120_000);
+  await login(page);
+  await openNewPitchEditor(page, `E2E Locked ${Date.now()}`);
+  await page.getByTestId("rf__node-pitch-title").click();
+  const second = await context.newPage();
+  await second.goto(page.url());
+  await expect(second.getByRole("button", { name: "Text", exact: true })).toBeEnabled();
+  await expect(page.getByRole("textbox", { name: "Titel der Präsentation" })).toBeDisabled({ timeout: 30_000 });
+  await expect(page.getByRole("textbox", { name: "Text", exact: true })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Auswahl als Station" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Element löschen" })).toBeDisabled();
+  await page.getByRole("button", { name: "Wiedergabeeinstellungen" }).click();
+  await expect(page.getByLabel("Standard-Stationsdauer (s)")).toBeDisabled();
+  await second.getByTestId("presentation-editor").getByRole("link", { name: "Präsentationen", exact: true }).click();
+  await second.close();
+});
+
+test("browser Back preserves an edit made during the autosave debounce", async ({ page }) => {
+  test.setTimeout(120_000);
+  await login(page);
+  const title = `E2E Back ${Date.now()}`;
+  await openNewPitchEditor(page, title);
+  // Reopen from the list so Back tests an existing deck's navigation, independently of
+  // the server action that created it and invalidated the initial list route.
+  await page.getByTestId("presentation-editor").getByRole("link", { name: "Präsentationen", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Neu", exact: true })).toBeEnabled();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await page.getByRole("link", { name: title, exact: false }).click();
+  await page.getByTestId("rf__node-pitch-title").click();
+  const text = "Last edit before browser Back";
+  await page.getByRole("textbox", { name: "Text", exact: true }).fill(text);
+  await page.getByRole("textbox", { name: "Text", exact: true }).blur();
+  page.once("dialog", (dialog) => dialog.accept());
+  const saved = page.waitForResponse((response) => response.request().method() === "PATCH" && response.url().includes("/api/wiki/presentations/"), { timeout: 30_000 });
+  await page.goBack();
+  await expect(page).toHaveURL(/\/wiki\/presentations$/);
+  expect((await saved).ok()).toBe(true);
+  await page.getByRole("link", { name: title, exact: false }).click();
+  await expect(page.getByTestId("presentation-editor")).toBeVisible();
+  // A reload distinguishes durable storage from Activity's preserved client state.
+  await page.reload();
+  await expect(page.getByTestId("rf__node-pitch-title")).toContainText(text);
+});
 
 test("panel inputs: a playback duration is typed digit by digit and clamped only on commit", async ({ page }) => {
   test.setTimeout(120_000);
@@ -368,6 +519,26 @@ test("a follower leaves a live session from the badge, and the presenter exiting
   await follower.goto(`/wiki/presentations/follow/${code}`);
   const badge = follower.getByTestId("presentation-player").getByRole("status");
   await expect(badge).toHaveText(/^Folgt/, { timeout: 30_000 });
+
+  // The follower belongs to the live session, not to local keyboard/camera commands or
+  // another presenter window broadcasting in this browser.
+  await player.getByRole("button", { name: "Nächste Station" }).click();
+  await expect.poll(async () => (await page.request.get(`/api/wiki/presentations/live/${code}`)).json().then((position) => position.stepIndex)).toBe(1);
+  await follower.waitForTimeout(2_500);
+  const viewport = follower.locator(".react-flow__viewport");
+  const position = await viewport.getAttribute("style");
+  const presentationId = new URL(page.url()).pathname.split("/")[3];
+  await follower.evaluate((id) => {
+    const channel = new BroadcastChannel(`wiki-presentation-presenter:${id}`);
+    channel.postMessage({ type: "goto", index: 3 });
+    channel.close();
+  }, presentationId);
+  await follower.keyboard.press("ArrowRight");
+  await follower.keyboard.press("+");
+  await follower.mouse.move(300, 200);
+  await follower.mouse.wheel(0, -200);
+  await follower.waitForTimeout(300);
+  await expect(viewport).toHaveAttribute("style", position ?? "");
 
   // 4. The badge's own exit goes to the join screen -- never to the editor, which a
   // follower has no business in and may not even be able to open.

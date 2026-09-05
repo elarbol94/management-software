@@ -2,6 +2,10 @@ import { describe, expect, it } from "vitest";
 import { formatElapsed, parsePresenterMessage, presenterChannelName } from "./presenter";
 
 describe("presenter channel naming", () => {
+  it("keeps simultaneous players of the same presentation independent", () => {
+    expect(presenterChannelName("abc", "first")).not.toBe(presenterChannelName("abc", "second"));
+    expect(presenterChannelName("abc", "first")).not.toBe(presenterChannelName("abc"));
+  });
   it("keys the channel name by presentation id", () => {
     expect(presenterChannelName("abc")).not.toBe(presenterChannelName("xyz"));
     expect(presenterChannelName("abc")).toBe(presenterChannelName("abc"));

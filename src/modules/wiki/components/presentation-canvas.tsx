@@ -234,7 +234,12 @@ export function elementsToNodes(
 ): PresentationNode[] {
   return elements.map((element, index) => {
     const style: CSSProperties = {};
-    if (element.rotation) style.transform = `rotate(${element.rotation}deg)`;
+    // Node styles override React Flow's positioning transform. Keep the translation or
+    // rotating an element teleports it back to the canvas origin.
+    if (element.rotation) {
+      style.transform = `translate(${element.x}px, ${element.y}px) rotate(${element.rotation}deg)`;
+      style.transformOrigin = "center center";
+    }
     if (element.background) style.backgroundColor = element.background;
     if (options.enteringIds?.has(element.id)) {
       // Fixed, subtle fade on step arrival — deliberately not a per-element setting.

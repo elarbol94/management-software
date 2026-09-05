@@ -22,6 +22,7 @@ import {
   parseSecondsInput,
   presentationCameraEasingFns,
   presentationCanvasReducer,
+  presentationCameraBounds,
   reorderElement,
   retargetStep,
   rotateElements,
@@ -53,6 +54,14 @@ const steps = (...elementIds: string[]): PresentationStep[] =>
   elementIds.map((elementId, index) => ({ id: `s${index}`, elementId }));
 
 describe("presentation camera targets", () => {
+  it("frames rotated corners without changing the editing geometry", () => {
+    const element = { ...frame("rotated", 100, 200, 300, 100), rotation: 90 };
+    expect(presentationCameraBounds(element).width).toBeCloseTo(100);
+    expect(presentationCameraBounds(element).height).toBeCloseTo(300);
+    expect(presentationCameraBounds(element).x).toBeCloseTo(200);
+    expect(presentationCameraBounds(element).y).toBeCloseTo(100);
+    expect(elementBounds(element)).toEqual({ x: 100, y: 200, width: 300, height: 100 });
+  });
   it("derives a step's camera target from the element's own bounds", () => {
     expect(elementBounds(frame("a", -120, 40, 640, 360))).toEqual({ x: -120, y: 40, width: 640, height: 360 });
   });
@@ -735,5 +744,45 @@ describe("canvas save state", () => {
     expect(presentationCanvasReducer(failed, { type: "touch", settings: { loop: true } }).failed).toBe(false);
     expect(presentationCanvasReducer(failed, { type: "edit", at: 2_000, steps: () => [] }).failed).toBe(false);
     expect(presentationCanvasReducer(failed, { type: "undo" }).failed).toBe(false);
+  });
+});
+
+describe("presentation editing regressions", () => {
+  it("undoes title, background and playback settings as well as elements", () => {
+    const original = initialPresentationCanvasState([], [], "", defaultPresentationSettings, "Original");
+    const title = presentationCanvasReducer(original, { type: "touch", title: "Renamed" });
+    const background = presentationCanvasReducer(title, { type: "touch", background: "#123456" });
+    const settings = presentationCanvasReducer(background, { type: "touch", settings: { loop: true } });
+    const undoSettings = presentationCanvasReducer(settings, { type: "undo" });
+    expect(undoSettings.settings.loop).toBe(false);
+    expect(undoSettings.background).toBe("#123456");
+    const undoBackground = presentationCanvasReducer(undoSettings, { type: "undo" });
+    expect(undoBackground.background).toBe("");
+    expect(presentationCanvasReducer(undoBackground, { type: "undo" }).title).toBe("Original");
+    expect(presentationCanvasReducer(undoSettings, { type: "redo" }).settings.loop).toBe(true);
+  });
+
+  it("ignores unchanged settings and tracks title edits made during a save", () => {
+    const original = initialPresentationCanvasState([], [], "", defaultPresentationSettings, "Original");
+    expect(presentationCanvasReducer(original, { type: "touch", settings: { loop: false } })).toBe(original);
+    const changed = presentationCanvasReducer(original, { type: "touch", title: "New" });
+    expect(presentationCanvasReducer(changed, { type: "saved", ...original }).dirty).toBe(true);
+  });
+
+  it("loads a restored snapshot without leaving an autosave or undo of the previous canvas", () => {
+    const original = initialPresentationCanvasState([], []);
+    const edited = presentationCanvasReducer(original, { type: "touch", title: "Pending edit" });
+    const restored = presentationCanvasReducer(edited, { type: "reset", snapshot: { ...original, title: "Restored" } });
+    expect(restored).toMatchObject({ title: "Restored", dirty: false, failed: false, past: [], future: [] });
+  });
+
+  it("keeps group scaling within the save limits without distorting relative widths", () => {
+    const elements = [frame("a", 0, 0, 100, 100), frame("b", 200, 0, 200, 100)];
+    const large = scaleElements(elements, new Set(["a", "b"]), { x: 0, y: 0 }, 1_000, 1_000);
+    expect(large.map((element) => element.width)).toEqual([10_000, 20_000]);
+    expect(large.every((element) => element.height <= 20_000)).toBe(true);
+    const small = scaleElements(elements, new Set(["a", "b"]), { x: 0, y: 0 }, 0.001, 0.001);
+    expect(small.map((element) => element.width)).toEqual([40, 80]);
+    expect(scaleElements(elements, new Set(["a"]), { x: 0, y: 0 }, Infinity, 1)).toBe(elements);
   });
 });

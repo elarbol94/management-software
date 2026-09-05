@@ -93,9 +93,10 @@ export async function createPresentationFromWikiPage(input: { pageId: string; in
   return { id: row.id };
 }
 
-export async function renamePresentation(input: { id: string; title: string }) {
+export async function renamePresentation(input: { id: string; title: string; sessionId?: string }) {
   const currentUser = await requireUserOrThrow();
-  const data = z.object({ id: idSchema, title: titleSchema }).parse(input);
+  const data = z.object({ id: idSchema, title: titleSchema, sessionId: sessionSchema.optional() }).parse(input);
+  if (activeLease(data.id, { sessionId: data.sessionId ?? "", userId: currentUser.id })) throw new Error("Presentation is locked");
   db.update(wikiPresentations)
     .set({ title: data.title, updatedBy: currentUser.id, updatedAt: new Date() })
     .where(eq(wikiPresentations.id, data.id))
@@ -211,6 +212,8 @@ export async function savePresentation(input: {
   sessionId?: string;
   background?: unknown;
   settings?: unknown;
+  title?: string;
+  expectedUpdatedAt?: number;
 }) {
   const currentUser = await requireUserOrThrow();
   const data = z
@@ -221,37 +224,46 @@ export async function savePresentation(input: {
       sessionId: sessionSchema.optional(),
       background: z.string().max(32).default(""),
       settings: presentationSettingsSchema.default(defaultPresentationSettings),
+      title: titleSchema.optional(),
+      expectedUpdatedAt: z.number().int().nonnegative().optional(),
     })
     .parse(input);
   const current = db.select().from(wikiPresentations).where(eq(wikiPresentations.id, data.id)).get();
   if (!current) throw new Error("Presentation not found");
   // No takeover on save: a stale tab whose lease was taken over must stop writing.
-  const holder = data.sessionId ? activeLease(data.id, { sessionId: data.sessionId, userId: currentUser.id }) : null;
+  const holder = activeLease(data.id, { sessionId: data.sessionId ?? "", userId: currentUser.id });
   if (holder) return { locked: true as const, holderName: holder.holderName ?? "" };
+  if (data.expectedUpdatedAt !== undefined && data.expectedUpdatedAt !== current.updatedAt.getTime()) {
+    return { locked: false as const, conflict: true as const };
+  }
+  const savedAt = Math.max(Date.now(), current.updatedAt.getTime() + 1);
 
   db.transaction(() => {
     snapshotPresentation(current, currentUser.id);
     db.update(wikiPresentations)
       .set({
+        title: data.title ?? current.title,
         // The envelope form; `parsePresentationCanvas` still reads the older bare array.
         elementsJson: JSON.stringify({ elements: data.elements, background: data.background, settings: data.settings }),
         // Steps pointing at deleted elements are dropped here, so a saved path is always
         // one the player can actually fly.
         pathJson: JSON.stringify(normalizeSteps(data.steps, data.elements)),
         updatedBy: currentUser.id,
-        updatedAt: new Date(),
+        updatedAt: new Date(savedAt),
       })
       .where(eq(wikiPresentations.id, data.id))
       .run();
   });
   revalidatePresentations(data.id);
-  return { locked: false as const, savedAt: Date.now() };
+  return { locked: false as const, conflict: false as const, savedAt };
 }
 
 /** Restoring is itself an edit, so the state being replaced is snapshotted first. */
-export async function restorePresentationRevision(input: { revisionId: string }) {
+export async function restorePresentationRevision(input: { revisionId: string; sessionId?: string; expectedUpdatedAt?: number }) {
   const currentUser = await requireUserOrThrow();
-  const { revisionId } = z.object({ revisionId: idSchema }).parse(input);
+  const { revisionId, sessionId, expectedUpdatedAt } = z.object({
+    revisionId: idSchema, sessionId: sessionSchema.optional(), expectedUpdatedAt: z.number().int().nonnegative().optional(),
+  }).parse(input);
   const revision = db
     .select()
     .from(wikiPresentationRevisions)
@@ -265,6 +277,10 @@ export async function restorePresentationRevision(input: { revisionId: string })
     .get();
   if (!current) throw new Error("Presentation not found");
 
+  if (activeLease(current.id, { sessionId: sessionId ?? "", userId: currentUser.id })) throw new Error("Presentation is locked");
+  if (expectedUpdatedAt !== undefined && expectedUpdatedAt !== current.updatedAt.getTime()) throw new Error("Presentation changed");
+  const savedAt = Math.max(Date.now(), current.updatedAt.getTime() + 1);
+
   const canvas = parsePresentationCanvas(revision.elementsJson);
   const steps = normalizeSteps(parsePresentationSteps(revision.pathJson), canvas.elements);
   db.transaction(() => {
@@ -275,13 +291,13 @@ export async function restorePresentationRevision(input: { revisionId: string })
         elementsJson: JSON.stringify(canvas),
         pathJson: JSON.stringify(steps),
         updatedBy: currentUser.id,
-        updatedAt: new Date(),
+        updatedAt: new Date(savedAt),
       })
       .where(eq(wikiPresentations.id, current.id))
       .run();
   });
   revalidatePresentations(current.id);
-  return { ok: true as const };
+  return { ok: true as const, savedAt, snapshot: { ...canvas, steps, title: revision.title } };
 }
 
 export async function deletePresentation(input: { id: string }) {

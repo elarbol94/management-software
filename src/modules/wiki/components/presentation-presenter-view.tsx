@@ -13,7 +13,7 @@ import type { PresentationRecord } from "../presentation-queries";
  * It never drives its own camera — it only mirrors the player's current step over
  * BroadcastChannel, and its prev/next buttons steer the player rather than itself.
  */
-export function PresentationPresenterView({ presentation }: { presentation: PresentationRecord }) {
+export function PresentationPresenterView({ presentation, sessionId }: { presentation: PresentationRecord; sessionId?: string }) {
   const t = useTranslations("wiki");
   const { elements, steps } = presentation;
   const [index, setIndex] = useState(0);
@@ -27,7 +27,8 @@ export function PresentationPresenterView({ presentation }: { presentation: Pres
   }, []);
 
   useEffect(() => {
-    const channel = new BroadcastChannel(presenterChannelName(presentation.id));
+    if (typeof BroadcastChannel === "undefined") return;
+    const channel = new BroadcastChannel(presenterChannelName(presentation.id, sessionId));
     channelRef.current = channel;
     channel.onmessage = (event) => {
       const message = parsePresenterMessage(event.data);
@@ -41,7 +42,7 @@ export function PresentationPresenterView({ presentation }: { presentation: Pres
       channel.close();
       channelRef.current = null;
     };
-  }, [presentation.id, steps.length]);
+  }, [presentation.id, sessionId, steps.length]);
 
   const goTo = useCallback(
     (nextIndex: number) => {
@@ -58,7 +59,7 @@ export function PresentationPresenterView({ presentation }: { presentation: Pres
   const nextTarget = nextStep ? stepTarget(nextStep, elements) : null;
 
   return (
-    <div className="flex h-screen flex-col bg-background p-6">
+    <div className="fixed inset-0 z-50 flex h-dvh flex-col bg-background p-4 sm:p-6">
       <header className="flex items-center justify-between gap-4">
         <div className="min-w-0">
           <p className="truncate text-xs font-semibold tracking-wide text-muted-foreground uppercase">{presentation.title}</p>

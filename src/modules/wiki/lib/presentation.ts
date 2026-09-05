@@ -207,6 +207,16 @@ export function elementBounds(element: PresentationElement): PresentationBounds 
   return { x: element.x, y: element.y, width: element.width, height: element.height };
 }
 
+/** Camera/export bounds include the corners of rotated elements; editing geometry keeps
+ * using the unrotated box so dragging and snapping do not rewrite an element's size. */
+export function presentationCameraBounds(element: PresentationElement): PresentationBounds {
+  if (!element.rotation) return elementBounds(element);
+  const radians = element.rotation * Math.PI / 180;
+  const width = Math.abs(element.width * Math.cos(radians)) + Math.abs(element.height * Math.sin(radians));
+  const height = Math.abs(element.width * Math.sin(radians)) + Math.abs(element.height * Math.cos(radians));
+  return { x: element.x + (element.width - width) / 2, y: element.y + (element.height - height) / 2, width, height };
+}
+
 /** Takes anything box-shaped, so a selection of elements and a set of raw boxes both work. */
 export function unionBounds(boxes: PresentationBounds[]): PresentationBounds | null {
   if (!boxes.length) return null;
@@ -569,14 +579,15 @@ export function applyGeometryChanges(
 export const PRESENTATION_HISTORY_COALESCE_MS = 350;
 export const PRESENTATION_HISTORY_LIMIT = 50;
 
-export type PresentationSnapshot = { elements: PresentationElement[]; steps: PresentationStep[] };
-
-export type PresentationCanvasState = PresentationSnapshot & {
-  /** Background and playback settings are saved with the canvas, so they belong to the
-   * same dirty/saved bookkeeping as the elements -- otherwise a background picked while a
-   * save is in flight looks saved and never reaches the server. */
+export type PresentationSnapshot = {
+  elements: PresentationElement[];
+  steps: PresentationStep[];
   background: string;
   settings: PresentationSettings;
+  title: string;
+};
+
+export type PresentationCanvasState = PresentationSnapshot & {
   /** Alignment lines to draw for the gesture in progress. */
   guides: SnapGuide[];
   past: PresentationSnapshot[];
@@ -606,9 +617,10 @@ export type PresentationCanvasAction =
     steps: PresentationStep[];
     background: string;
     settings: PresentationSettings;
+    title?: string;
   }
-  /** Background and playback settings: edits that carry no undo step of their own. */
-  | { type: "touch"; background?: string; settings?: Partial<PresentationSettings> }
+  | { type: "touch"; background?: string; settings?: Partial<PresentationSettings>; title?: string }
+  | { type: "reset"; snapshot: PresentationSnapshot }
   | { type: "failed" }
   /** The lock that refused the last write has lifted: the parked edit may go out again. */
   | { type: "recovered" };
@@ -618,8 +630,9 @@ export function initialPresentationCanvasState(
   steps: PresentationStep[],
   background = "",
   settings: PresentationSettings = defaultPresentationSettings,
+  title = "",
 ): PresentationCanvasState {
-  return { elements, steps, background, settings, guides: [], past: [], future: [], dirty: false, failed: false, editedAt: 0 };
+  return { elements, steps, background, settings, title, guides: [], past: [], future: [], dirty: false, failed: false, editedAt: 0 };
 }
 
 function commitCanvas(
@@ -637,20 +650,24 @@ function commitCanvas(
     dirty: true,
     failed: false,
     editedAt: at,
-    past: coalesce ? state.past : [...state.past, { elements: state.elements, steps: state.steps }].slice(-PRESENTATION_HISTORY_LIMIT),
-    future: coalesce ? state.future : [],
+    past: coalesce ? state.past : [...state.past, canvasSnapshot(state)].slice(-PRESENTATION_HISTORY_LIMIT),
+    future: [],
   };
+}
+
+function canvasSnapshot(state: PresentationCanvasState): PresentationSnapshot {
+  const { elements, steps, background, settings, title } = state;
+  return { elements, steps, background, settings, title };
 }
 
 function travelCanvas(state: PresentationCanvasState, direction: "undo" | "redo"): PresentationCanvasState {
   const source = direction === "undo" ? state.past : state.future;
   if (!source.length) return state;
   const snapshot = source[source.length - 1];
-  const current: PresentationSnapshot = { elements: state.elements, steps: state.steps };
+  const current = canvasSnapshot(state);
   return {
     ...state,
-    elements: snapshot.elements,
-    steps: snapshot.steps,
+    ...snapshot,
     guides: [],
     past: direction === "undo" ? source.slice(0, -1) : [...state.past, current],
     future: direction === "undo" ? [...state.future, current] : source.slice(0, -1),
@@ -666,6 +683,8 @@ export function presentationCanvasReducer(
   action: PresentationCanvasAction,
 ): PresentationCanvasState {
   switch (action.type) {
+    case "reset":
+      return initialPresentationCanvasState(action.snapshot.elements, action.snapshot.steps, action.snapshot.background, action.snapshot.settings, action.snapshot.title);
     case "edit":
       return commitCanvas(
         state,
@@ -689,14 +708,20 @@ export function presentationCanvasReducer(
       const current = state.elements === action.elements
         && state.steps === action.steps
         && state.background === action.background
-        && state.settings === action.settings;
+        && state.settings === action.settings
+        && (action.title === undefined || state.title === action.title);
       return current ? { ...state, dirty: false, failed: false } : state;
     }
     case "touch": {
       const background = action.background ?? state.background;
       const settings = action.settings ? { ...state.settings, ...action.settings } : state.settings;
-      if (background === state.background && settings === state.settings) return state;
-      return { ...state, background, settings, dirty: true, failed: false };
+      const title = action.title ?? state.title;
+      if (background === state.background && title === state.title
+        && Object.keys(settings).every((key) => settings[key as keyof PresentationSettings] === state.settings[key as keyof PresentationSettings])) return state;
+      return {
+        ...state, background, settings, title, dirty: true, failed: false, editedAt: 0,
+        past: [...state.past, canvasSnapshot(state)].slice(-PRESENTATION_HISTORY_LIMIT), future: [],
+      };
     }
     case "failed":
       return state.failed ? state : { ...state, failed: true };
@@ -745,7 +770,12 @@ export function scaleElements(
   scaleX: number,
   scaleY: number,
 ): PresentationElement[] {
-  if (!(scaleX > 0) || !(scaleY > 0)) return elements;
+  if (!(scaleX > 0) || !(scaleY > 0) || !Number.isFinite(scaleX) || !Number.isFinite(scaleY)) return elements;
+  // Clamp the shared scale, preserving the group's proportions and valid save geometry.
+  const selected = elements.filter((element) => ids.has(element.id));
+  if (!selected.length) return elements;
+  scaleX = Math.min(Math.max(scaleX, ...selected.map((element) => PRESENTATION_MIN_ELEMENT_SIZE / element.width)), ...selected.map((element) => 20_000 / element.width));
+  scaleY = Math.min(Math.max(scaleY, ...selected.map((element) => PRESENTATION_MIN_ELEMENT_SIZE / element.height)), ...selected.map((element) => 20_000 / element.height));
   // ponytail: the box scales, the font size does not — same as single-element resize.
   return elements.map((element) =>
     ids.has(element.id)

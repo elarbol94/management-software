@@ -3,9 +3,10 @@
 import "@xyflow/react/dist/style.css";
 
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useTranslations } from "next-intl";
+import { useFormatter, useTranslations } from "next-intl";
 import { useTheme } from "next-themes";
 import { createId } from "@paralleldrive/cuid2";
 import {
@@ -47,6 +48,7 @@ import {
   Loader2,
   Lock,
   Maximize2,
+  PanelRight,
   Play,
   Plus,
   Redo2,
@@ -73,7 +75,6 @@ import {
   acquirePresentationEditLease,
   heartbeatPresentationEditLease,
   releasePresentationEditLease,
-  renamePresentation,
   restorePresentationRevision,
   savePresentation,
 } from "../presentation-actions";
@@ -84,7 +85,7 @@ import {
   duplicateElement,
   initialPresentationCanvasState,
   presentationCanvasReducer,
-  elementBounds,
+  presentationCameraBounds,
   parseSecondsInput,
   moveStep,
   presentationCameraEasings,
@@ -127,6 +128,7 @@ function StepRow({
   onSelect,
   onRemove,
   removeLabel,
+  reorderLabel,
 }: {
   step: PresentationStep;
   index: number;
@@ -137,8 +139,9 @@ function StepRow({
   onSelect: () => void;
   onRemove: () => void;
   removeLabel: string;
+  reorderLabel: string;
 }) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: step.id });
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: step.id, disabled: readOnly });
   return (
     <li
       ref={setNodeRef}
@@ -154,6 +157,7 @@ function StepRow({
         className="cursor-grab touch-none rounded p-0.5 text-muted-foreground disabled:cursor-default disabled:opacity-40"
         {...attributes}
         {...listeners}
+        aria-label={reorderLabel}
       >
         <GripVertical className="size-4" />
       </button>
@@ -163,6 +167,7 @@ function StepRow({
         onClick={onSelect}
         className={cn("min-w-0 flex-1 truncate text-left", missing && "text-destructive")}
         title={label}
+        aria-current={active ? "step" : undefined}
       >
         {label}
       </button>
@@ -401,6 +406,7 @@ function Editor({
   revisions: PresentationRevisionItem[];
 }) {
   const t = useTranslations("wiki");
+  const format = useFormatter();
   const router = useRouter();
   const reactFlow = useReactFlow<PresentationNode>();
   const { resolvedTheme } = useTheme();
@@ -409,9 +415,14 @@ function Editor({
   const [sessionId] = useState(() => globalThis.crypto.randomUUID());
 
   const [lockedBy, setLockedBy] = useState<string | null>(null);
+  const [leaseReady, setLeaseReady] = useState(false);
+  const [conflict, setConflict] = useState(false);
+  const [panelOpen, setPanelOpen] = useState(false);
   const [restoring, setRestoring] = useState<string | null>(null);
-  const readOnly = lockedBy !== null;
-  const [title, setTitle] = useState(presentation.title);
+  const readOnly = !leaseReady || lockedBy !== null || conflict;
+  const disabled = readOnly || restoring !== null;
+  const paused = useRef(false);
+  const savedVersion = useRef(presentation.updatedAt);
   /**
    * The canvas, its undo stack and the alignment guides are one reducer: undo has to
    * snapshot exactly the canvas an edit is applied to, and a drag reports edits faster than
@@ -421,9 +432,9 @@ function Editor({
   const [canvas, dispatch] = useReducer(
     presentationCanvasReducer,
     presentation,
-    (source) => initialPresentationCanvasState(source.elements, source.steps, source.background, source.settings),
+    (source) => initialPresentationCanvasState(source.elements, source.steps, source.background, source.settings, source.title),
   );
-  const { elements, steps, guides, background, settings } = canvas;
+  const { elements, steps, guides, background, settings, title } = canvas;
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [activeStepId, setActiveStepId] = useState<string | null>(null);
   const [status, setStatus] = useState<Exclude<SaveState, "unsaved">>("idle");
@@ -442,6 +453,7 @@ function Editor({
   const latest = useRef({ canvas, readOnly });
   /** The write in flight, so a flush can wait for it and land after it. */
   const inFlight = useRef<Promise<boolean> | null>(null);
+  const lastPersisted = useRef<PresentationCanvasState | null>(null);
 
   const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
   const selection = useMemo(
@@ -467,18 +479,34 @@ function Editor({
 
   /** Writes one canvas and reports whether it reached the database. Writes queue behind
    * each other so a flush during a save cannot race the older canvas back over the newer. */
-  const persist = useCallback((state: PresentationCanvasState) => {
+  const persist = useCallback((state: PresentationCanvasState, afterNavigation = false) => {
     const write = async () => {
       setStatus("saving");
       try {
-        const result = await savePresentation({
+        const draft = {
           id: presentation.id,
           elements: state.elements,
           steps: state.steps,
           background: state.background,
           settings: state.settings,
           sessionId,
-        });
+          title: state.title,
+          expectedUpdatedAt: savedVersion.current,
+        };
+        let result: Awaited<ReturnType<typeof savePresentation>>;
+        if (afterNavigation) {
+          const body = JSON.stringify(draft);
+          const response = await fetch(`/api/wiki/presentations/${presentation.id}`, {
+            method: "PATCH", headers: { "Content-Type": "application/json" }, body,
+            // Browsers cap keepalive requests at 64 KiB. Larger canvases still save on
+            // client navigation; closing the tab remains guarded by beforeunload.
+            keepalive: new Blob([body]).size < 60_000,
+          });
+          if (!response.ok && response.status !== 409) throw new Error("Save failed");
+          result = await response.json();
+        } else {
+          result = await savePresentation(draft);
+        }
         // Someone took over while this tab was editing: stop writing rather than
         // overwriting their canvas with a stale one.
         if (result.locked) {
@@ -491,12 +519,22 @@ function Editor({
             : t("presentations.locked"));
           return false;
         }
+        if (result.conflict) {
+          setConflict(true);
+          dispatch({ type: "failed" });
+          setStatus("error");
+          toast.error(t("presentations.saveConflict"));
+          return false;
+        }
+        savedVersion.current = result.savedAt;
+        lastPersisted.current = state;
         dispatch({
           type: "saved",
           elements: state.elements,
           steps: state.steps,
           background: state.background,
           settings: state.settings,
+          title: state.title,
         });
         setStatus("saved");
         return true;
@@ -519,31 +557,42 @@ function Editor({
    * mid-save with nothing further edited can repeat that same write once, which is a wasted
    * request rather than a wrong one. */
   const flush = useCallback(async () => {
+    // Commit the field that still has focus before taking the save snapshot.
+    flushSync(() => {
+      if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+    });
     await inFlight.current?.catch(() => false);
     const current = latest.current;
-    if (current.readOnly || !current.canvas.dirty) return true;
+    if (!current.canvas.dirty) return true;
+    if (current.readOnly) return false;
     return persist(current.canvas);
   }, [persist]);
 
   // Debounced autosave: every edit marks the canvas unsaved, and the last edit of a
   // burst is the one that writes.
   useEffect(() => {
-    if (!canvas.dirty || canvas.failed || readOnly || status === "saving") return;
-    const timer = setTimeout(() => void persist(canvas), AUTOSAVE_DELAY);
+    if (!canvas.dirty || canvas.failed || readOnly || restoring || status === "saving") return;
+    const timer = setTimeout(() => { if (!paused.current) void persist(canvas); }, AUTOSAVE_DELAY);
     return () => clearTimeout(timer);
-  }, [canvas, status, persist, readOnly]);
+  }, [canvas, status, persist, readOnly, restoring]);
 
-  const flushRef = useRef(flush);
   // Re-pointed after every commit, so the exits above see the canvas as it is now.
   useEffect(() => {
     latest.current = { canvas, readOnly };
-    flushRef.current = flush;
   });
 
-  // Leaving the editor client-side (the breadcrumb, browser back) unmounts it mid-debounce,
-  // and nothing else would ever write that edit. Mount-lifetime effect on purpose: hanging
-  // this off the debounced effect's cleanup would save on every re-render instead.
-  useEffect(() => () => void flushRef.current().catch(() => undefined), []);
+  // Browser back can hide the route's Activity boundary without a link click. The fixed
+  // endpoint remains usable after navigation. Use the same queue and saved bookkeeping
+  // so returning to a preserved editor does not retry an already-saved canvas.
+  useEffect(() => () => {
+    const saveOnExit = async () => {
+      await inFlight.current;
+      const current = latest.current;
+      if (paused.current || current.readOnly || !current.canvas.dirty || current.canvas === lastPersisted.current) return;
+      await persist(current.canvas, true);
+    };
+    void saveOnExit().catch(() => undefined);
+  }, [persist]);
 
   // Edit lease: claim it on open, keep it warm while the tab lives, hand it back on exit.
   // A missed release is harmless — the lease expires on its own.
@@ -554,11 +603,12 @@ function Editor({
         .then((result) => {
           if (disposed) return;
           setLockedBy(result.editable ? null : result.holderName);
+          setLeaseReady(true);
           // The lock refused the last write and parked the autosave; now that it has
           // lifted, the edit still sitting here deserves another try.
           if (result.editable) dispatch({ type: "recovered" });
         })
-        .catch(() => undefined);
+        .catch(() => { if (!disposed) setLockedBy(""); });
     };
     // A reload leaves the previous page load's lease behind for up to a minute, so the
     // first claim takes over -- but only ever from this same user, enforced server-side.
@@ -576,13 +626,23 @@ function Editor({
     return () => {
       disposed = true;
       window.clearInterval(timer);
-      void releasePresentationEditLease({ id: presentation.id, sessionId }).catch(() => undefined);
+      // The route may already be hidden. Server actions post to the new document URL
+      // and can fail during partial rendering; the fixed endpoint is independent of it.
+      void fetch(`/api/wiki/presentations/${presentation.id}/lease`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionId }), keepalive: true,
+      }).catch(() => undefined);
     };
   }, [presentation.id, sessionId]);
 
   useEffect(() => {
-    if (!canvas.dirty && status !== "saving") return;
-    const warn = (event: BeforeUnloadEvent) => event.preventDefault();
+    const warn = (event: BeforeUnloadEvent) => {
+      const draft = document.activeElement;
+      const editing = draft instanceof HTMLInputElement || draft instanceof HTMLTextAreaElement;
+      if (!latest.current.canvas.dirty && status !== "saving" && !editing) return;
+      event.preventDefault();
+      event.returnValue = "";
+    };
     window.addEventListener("beforeunload", warn);
     return () => window.removeEventListener("beforeunload", warn);
   }, [canvas.dirty, status]);
@@ -613,8 +673,8 @@ function Editor({
   );
 
   const nodes = useMemo(
-    () => elementsToNodes(elements, { editable: !readOnly, selectedIds: selectedSet, onTextChange }),
-    [elements, selectedSet, onTextChange, readOnly],
+    () => elementsToNodes(elements, { editable: !disabled, selectedIds: selectedSet, onTextChange }),
+    [elements, selectedSet, onTextChange, disabled],
   );
 
   /**
@@ -650,7 +710,7 @@ function Editor({
           if (change.resizing) gesture = true;
         }
       }
-      if (!geometry.size) return;
+      if (disabled || !geometry.size) return;
       dispatch({
         type: "geometry",
         at: Date.now(),
@@ -660,7 +720,7 @@ function Editor({
         gesture,
       });
     },
-    [reactFlow],
+    [reactFlow, disabled],
   );
 
   const rotateSelection = useCallback(
@@ -686,10 +746,12 @@ function Editor({
 
   const addElement = useCallback(
     (element: PresentationElement) => {
+      if (disabled) return;
+      if (elements.length >= 500) { toast.error(t("presentations.elementLimit")); return; }
       commitElements((current) => [...current, element]);
       setSelectedIds([element.id]);
     },
-    [commitElements],
+    [commitElements, disabled, elements.length, t],
   );
 
   /** Deleting takes the steps that pointed at the gone elements with it. */
@@ -715,6 +777,7 @@ function Editor({
   const duplicateSelection = useCallback(
     (ids: string[]) => {
       if (!ids.length) return;
+      if (elements.length + ids.length > 500) { toast.error(t("presentations.elementLimit")); return; }
       // Ids are minted here rather than inside the update, which has to stay pure.
       const copies = ids.map((id) => ({ id, copyId: createId() }));
       commitElements((current) =>
@@ -722,7 +785,7 @@ function Editor({
       );
       setSelectedIds(copies.map((copy) => copy.copyId));
     },
-    [commitElements],
+    [commitElements, elements.length, t],
   );
 
   const reorderSelected = useCallback(
@@ -740,8 +803,13 @@ function Editor({
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
+        event.preventDefault();
+        if (!disabled) void flush();
+        return;
+      }
       if (target?.closest("input, textarea, select, [contenteditable='true']")) return;
-      if (readOnly) return;
+      if (disabled || target?.closest("[role='dialog']")) return;
       const shortcut = event.ctrlKey || event.metaKey;
       if (shortcut && event.key.toLowerCase() === "z") {
         event.preventDefault();
@@ -761,7 +829,7 @@ function Editor({
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [deleteSelection, duplicateSelection, selectedIds, readOnly]);
+  }, [deleteSelection, duplicateSelection, selectedIds, disabled, flush]);
 
   const addText = useCallback(() => {
     const { x, y } = viewportCenter();
@@ -828,15 +896,17 @@ function Editor({
 
   const flyTo = useCallback(
     (element: PresentationElement) => {
-      void reactFlow.fitBounds(elementBounds(element), { padding: PRESENTATION_CAMERA_PADDING, duration: CAMERA_DURATION });
+      void reactFlow.fitBounds(presentationCameraBounds(element), { padding: PRESENTATION_CAMERA_PADDING, duration: CAMERA_DURATION });
     },
     [reactFlow],
   );
 
   const addStep = useCallback(() => {
-    if (!selected) return;
-    commitSteps((current) => [...current, { id: createId(), elementId: selected.id }]);
-  }, [commitSteps, selected]);
+    if (!selected || disabled) return;
+    const step = { id: createId(), elementId: selected.id };
+    commitSteps((current) => [...current, step]);
+    setActiveStepId(step.id);
+  }, [commitSteps, selected, disabled]);
 
   const updateStepNotes = useCallback(
     (stepId: string, notes: string) => {
@@ -864,7 +934,6 @@ function Editor({
 
   /** Present and PDF export both read the canvas back from the database, so both have to
    * wait for a pending edit to be written before they hand over. */
-  const needsFlush = !readOnly && (canvas.dirty || status === "saving");
   const listHref = "/wiki/presentations";
   const presentHref = `/wiki/presentations/${presentation.id}/present`;
   const printHref = `/print/presentations/${presentation.id}`;
@@ -874,8 +943,14 @@ function Editor({
    * inside the click -- opening it after the await is what popup blockers exist for -- and
    * only then pointed at the target. A write that fails leaves the author here with their
    * edit and the toast. */
-  const flushThen = (href: string, newTab: boolean) => {
+  const flushThen = useCallback((href: string, newTab: boolean) => {
+    if (paused.current) return;
     const tab = newTab ? window.open("about:blank", "_blank") : null;
+    if (newTab && !tab) {
+      toast.error(t("presentations.popupBlocked"));
+      return;
+    }
+    paused.current = true;
     void flush().then(async (saved) => {
       if (!newTab) {
         if (!saved) return;
@@ -888,21 +963,37 @@ function Editor({
         if (saved) tab.location.href = href;
         else tab.close();
       }
-    });
-  };
+    }).finally(() => { paused.current = false; });
+  }, [flush, presentation.id, router, sessionId, t]);
+
+  // The app and wiki navigation live outside this component. Save before their Link
+  // handlers can unmount the editor, just as for its own breadcrumb and Present action.
+  useEffect(() => {
+    const onNavigation = (event: MouseEvent) => {
+      if (event.defaultPrevented || event.button !== 0) return;
+      const anchor = (event.target as HTMLElement | null)?.closest<HTMLAnchorElement>("a[href]");
+      if (!anchor || anchor.closest('[data-testid="presentation-editor"]') || anchor.hasAttribute("download")) return;
+      const destination = new URL(anchor.href, window.location.href);
+      if (destination.origin !== window.location.origin || destination.pathname === window.location.pathname) return;
+      event.preventDefault();
+      event.stopPropagation();
+      flushThen(`${destination.pathname}${destination.search}${destination.hash}`, event.ctrlKey || event.metaKey || event.shiftKey || anchor.target === "_blank");
+    };
+    document.addEventListener("click", onNavigation, true);
+    return () => document.removeEventListener("click", onNavigation, true);
+  }, [flushThen]);
   /** Leaving this page for another one in the same tab. Always handled here, dirty or not:
    * the lease release only works from the page the action is registered on, and after
    * `router.push` that is the page being navigated to. A modifier click leaves the editor
    * mounted with its lease, so it only needs intercepting when there is an edit to write. */
-  const leaveVia = (href: string) => (event: React.MouseEvent) => {
+  const leaveVia = (event: React.MouseEvent, href: string) => {
     const newTab = event.metaKey || event.ctrlKey || event.shiftKey;
-    if (newTab && !needsFlush) return;
     event.preventDefault();
     flushThen(href, newTab);
   };
   /** Middle-click never reaches onClick, and its default is the same new tab. */
-  const auxFlush = (href: string) => (event: React.MouseEvent) => {
-    if (!needsFlush || event.button !== 1) return;
+  const auxFlush = (event: React.MouseEvent, href: string) => {
+    if (event.button !== 1) return;
     event.preventDefault();
     flushThen(href, true);
   };
@@ -952,43 +1043,36 @@ function Editor({
   );
 
   return (
-    <div className="flex h-[calc(100vh-3.5rem)] min-h-0 flex-col md:h-screen">
+    <div className="flex h-[calc(100dvh-7rem)] min-h-0 min-w-0 flex-col md:h-dvh" data-testid="presentation-editor" data-presentation-workspace>
       <header className="flex flex-wrap items-center gap-2 border-b bg-background px-3 py-2">
+        <div className="flex w-full min-w-0 items-center gap-2 sm:w-auto">
         <Link
           href={listHref}
           className="text-sm text-muted-foreground hover:text-foreground"
-          onClick={leaveVia(listHref)}
-          onAuxClick={auxFlush(listHref)}
+          onClick={(event) => leaveVia(event, listHref)}
+          onAuxClick={(event) => auxFlush(event, listHref)}
         >
           {t("presentations.title")}
         </Link>
         <span className="text-muted-foreground">/</span>
-        <Input
+        <DraftInput
           value={title}
           maxLength={200}
-          disabled={readOnly}
+          disabled={disabled}
           aria-label={t("presentations.presentationTitle")}
-          className="h-8 w-56 font-medium"
-          onChange={(event) => setTitle(event.target.value)}
-          onBlur={async (event) => {
-            const next = event.target.value.trim();
-            if (!next || next === presentation.title) return setTitle(next || presentation.title);
-            try {
-              await renamePresentation({ id: presentation.id, title: next });
-              router.refresh();
-            } catch {
-              toast.error(t("presentations.saveFailed"));
-            }
-          }}
+          className="h-8 min-w-0 flex-1 font-medium sm:w-56 sm:flex-none"
+          normalise={(raw) => raw.trim() || title}
+          onCommit={(next) => dispatch({ type: "touch", title: next })}
         />
-        <span className="mx-1 h-5 w-px bg-border" />
-        <Button type="button" variant="outline" size="sm" disabled={readOnly} onClick={addText}><Type className="size-3.5" />{t("presentations.addText")}</Button>
-        <Button type="button" variant="outline" size="sm" disabled={uploading || readOnly} onClick={() => imageInputRef.current?.click()}>
+        </div>
+        <span className="mx-1 hidden h-5 w-px bg-border sm:block" />
+        <Button type="button" variant="outline" size="sm" disabled={disabled || elements.length >= 500} onClick={addText}><Type className="size-3.5" />{t("presentations.addText")}</Button>
+        <Button type="button" variant="outline" size="sm" disabled={uploading || disabled || elements.length >= 500} onClick={() => imageInputRef.current?.click()}>
           {uploading ? <Loader2 className="size-3.5 animate-spin" /> : <ImagePlus className="size-3.5" />}
           {t("presentations.addImage")}
         </Button>
-        <Button type="button" variant="outline" size="sm" disabled={readOnly} onClick={addFrame}><Square className="size-3.5" />{t("presentations.addFrame")}</Button>
-        <Button type="button" variant="outline" size="sm" disabled={readOnly} onClick={addShape}><Shapes className="size-3.5" />{t("presentations.addShape")}</Button>
+        <Button type="button" variant="outline" size="sm" disabled={disabled || elements.length >= 500} onClick={addFrame}><Square className="size-3.5" />{t("presentations.addFrame")}</Button>
+        <Button type="button" variant="outline" size="sm" disabled={disabled || elements.length >= 500} onClick={addShape}><Shapes className="size-3.5" />{t("presentations.addShape")}</Button>
         <input
           ref={imageInputRef}
           hidden
@@ -1006,7 +1090,7 @@ function Editor({
           size="icon-sm"
           aria-label={t("presentations.undo")}
           title={t("presentations.undo")}
-          disabled={readOnly || !canvas.past.length}
+          disabled={disabled || !canvas.past.length}
           onClick={() => dispatch({ type: "undo" })}
         >
           <Undo2 className="size-4" />
@@ -1017,7 +1101,7 @@ function Editor({
           size="icon-sm"
           aria-label={t("presentations.redo")}
           title={t("presentations.redo")}
-          disabled={readOnly || !canvas.future.length}
+          disabled={disabled || !canvas.future.length}
           onClick={() => dispatch({ type: "redo" })}
         >
           <Redo2 className="size-4" />
@@ -1026,10 +1110,11 @@ function Editor({
           <Maximize2 className="size-3.5" />{t("presentations.overview")}
         </Button>
         <Popover>
-          <PopoverTrigger render={<Button type="button" variant="ghost" size="sm" />}>
+          <PopoverTrigger render={<Button type="button" variant="ghost" size="sm" disabled={!leaseReady || restoring !== null} />}>
             <Settings className="size-3.5" />{t("presentations.playbackSettings")}
           </PopoverTrigger>
-          <PopoverContent className="w-72 space-y-3 p-3">
+          <PopoverContent className="w-72 p-3">
+            <fieldset disabled={disabled} className="space-y-3">
             <label className="block text-xs text-muted-foreground">
               {t("presentations.defaultStepDuration")}
               <DraftInput
@@ -1072,18 +1157,24 @@ function Editor({
                 ))}
               </select>
             </label>
+            </fieldset>
           </PopoverContent>
         </Popover>
-        <div className="ml-auto flex items-center gap-2 text-xs">
-          {saveIndicator}
-          <Button type="button" variant="outline" size="sm" onClick={() => void persist(canvas)} disabled={saveState === "saving" || readOnly}>
+        <Button type="button" variant={panelOpen ? "secondary" : "outline"} size="sm" className="lg:hidden" aria-expanded={panelOpen} aria-controls="presentation-properties" onClick={() => setPanelOpen((open) => !open)}>
+          <PanelRight className="size-3.5" />{t("presentations.showPanel")}
+        </Button>
+        <div className="ml-auto flex flex-wrap items-center gap-2 text-xs">
+          <span role="status" aria-live="polite" className="w-full sm:w-auto">{saveIndicator}</span>
+          <Button type="button" variant="outline" size="sm" onClick={() => void flush()} disabled={saveState === "saving" || disabled}>
             <Save className="size-3.5" />{t("presentations.save")}
           </Button>
           <Button
             type="button"
             variant="outline"
             size="sm"
-            disabled={!steps.length}
+            disabled={!steps.length || restoring !== null || uploading}
+            nativeButton={false}
+            role="link"
             // The print view reads the saved canvas, so the pending edit has to land first.
             render={(
               <a
@@ -1091,11 +1182,10 @@ function Editor({
                 target="_blank"
                 rel="noopener noreferrer"
                 onClick={(event) => {
-                  if (!needsFlush) return;
                   event.preventDefault();
                   flushThen(printHref, true);
                 }}
-                onAuxClick={auxFlush(printHref)}
+                onAuxClick={(event) => auxFlush(event, printHref)}
               />
             )}
           >
@@ -1104,32 +1194,43 @@ function Editor({
           <Button
             type="button"
             size="sm"
-            disabled={!steps.length}
+            disabled={!steps.length || restoring !== null || uploading}
+            nativeButton={false}
+            role="link"
             // The player is server-rendered from the saved canvas, so the navigation waits
             // for the write, rather than presenting a stale canvas. A modifier click still
             // means "new tab" -- it just gets one with the edit in it.
             render={(
               <Link
                 href={presentHref}
-                onClick={leaveVia(presentHref)}
-                onAuxClick={auxFlush(presentHref)}
+                onClick={(event) => leaveVia(event, presentHref)}
+                onAuxClick={(event) => auxFlush(event, presentHref)}
               />
             )}
           >
             <Play className="size-3.5" />{t("presentations.present")}
           </Button>
+          {!steps.length && <p className="w-full text-xs text-muted-foreground">{t("presentations.addStepHint")}</p>}
         </div>
       </header>
 
-      {readOnly && (
-        <div className="flex items-center gap-2 border-b border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100">
-          <Lock className="size-4 shrink-0" />
-          <span>{lockedBy ? t("presentations.lockedBy", { name: lockedBy }) : t("presentations.locked")}</span>
+      {conflict && (
+        <div role="alert" className="flex flex-wrap items-center gap-2 border-b bg-destructive/10 px-3 py-2 text-sm">
+          <TriangleAlert className="size-4 shrink-0" />
+          <span className="flex-1">{t("presentations.saveConflict")}</span>
+          <Button type="button" variant="outline" size="sm" onClick={() => window.location.reload()}>{t("presentations.reloadLatest")}</Button>
         </div>
       )}
 
-      <div className="flex min-h-0 flex-1">
-        <div ref={canvasRef} className="relative min-w-0 flex-1">
+      {!conflict && readOnly && (
+        <div className="flex items-center gap-2 border-b border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100">
+          <Lock className="size-4 shrink-0" />
+          <span>{!leaseReady && lockedBy === null ? t("presentations.checkingAccess") : lockedBy ? t("presentations.lockedBy", { name: lockedBy }) : t("presentations.locked")}</span>
+        </div>
+      )}
+
+      <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
+        <div ref={canvasRef} className="relative min-h-40 min-w-0 flex-1">
           <ReactFlow
             nodes={nodes}
             edges={[]}
@@ -1141,7 +1242,7 @@ function Editor({
             minZoom={0.02}
             maxZoom={8}
             nodesConnectable={false}
-            nodesDraggable={!readOnly}
+            nodesDraggable={!disabled}
             // Delete is handled by the editor's own shortcut, so there is one delete path.
             deleteKeyCode={null}
             // Shift draws a marquee on the pane and adds to the selection on an element,
@@ -1156,9 +1257,9 @@ function Editor({
           >
             <Background gap={24} size={1} />
             <Controls position="bottom-left" showInteractive={false} />
-            {elements.length > 3 && <MiniMap position="bottom-right" pannable zoomable maskColor="rgb(15 23 42 / 0.08)" />}
+            {elements.length > 3 && <MiniMap className="!hidden sm:!block" position="bottom-right" pannable zoomable maskColor="rgb(15 23 42 / 0.08)" />}
             <SnapGuides guides={guides} />
-            {!readOnly && selectionBounds && (
+            {!disabled && selectionBounds && (
               <SelectionOverlay
                 bounds={selectionBounds}
                 // One element resizes with React Flow's own handles; a group needs its own.
@@ -1181,16 +1282,17 @@ function Editor({
           )}
         </div>
 
-        <aside className="hidden w-72 shrink-0 overflow-y-auto border-l bg-background p-3 lg:block">
+        <aside id="presentation-properties" aria-label={t("presentations.showPanel")} className={cn("max-h-[45%] w-full shrink-0 overflow-y-auto border-t bg-background p-3 lg:block lg:max-h-none lg:w-80 lg:border-t-0 lg:border-l", panelOpen ? "block" : "hidden")}>
+          <fieldset disabled={disabled} className="min-w-0">
           <h2 className="text-xs font-semibold tracking-wide uppercase">{t("presentations.path")}</h2>
           <p className="mt-1 text-xs text-muted-foreground">{t("presentations.pathDescription")}</p>
-          <Button type="button" variant="outline" size="sm" className="mt-2 w-full" disabled={!selected} onClick={addStep}>
+          <Button type="button" variant="outline" size="sm" className="mt-2 w-full" disabled={!selected || disabled || steps.length >= 500} onClick={addStep}>
             <Plus className="size-3.5" />{t("presentations.addStep")}
           </Button>
           {steps.length === 0 ? (
             <p className="mt-3 rounded-md border border-dashed p-3 text-xs text-muted-foreground">{t("presentations.noSteps")}</p>
           ) : (
-            <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onStepDragEnd}>
+            <DndContext id={`presentation-path-${presentation.id}`} sensors={sensors} collisionDetection={closestCenter} onDragEnd={onStepDragEnd}>
               <SortableContext items={steps.map((step) => step.id)} strategy={verticalListSortingStrategy}>
                 <ol className="mt-3 space-y-1.5">
                   {steps.map((step, index) => {
@@ -1205,6 +1307,7 @@ function Editor({
                         readOnly={readOnly}
                         label={target ? stepLabel(target, index) : t("presentations.missingStep")}
                         removeLabel={t("presentations.removeStep")}
+                        reorderLabel={t("presentations.reorderStep", { number: index + 1 })}
                         onSelect={() => {
                           setActiveStepId(step.id);
                           if (target) {
@@ -1358,7 +1461,7 @@ function Editor({
                       }
                     />
                   </label>
-                  <div className="flex gap-1.5">
+                  <div className="flex flex-wrap gap-1.5">
                     <Button
                       type="button"
                       variant={selected.content.bold ? "default" : "outline"}
@@ -1541,7 +1644,7 @@ function Editor({
                 {revisions.map((revision) => (
                   <li key={revision.id} className="flex items-center gap-2 rounded-md border bg-card px-2 py-1.5 text-xs">
                     <span className="min-w-0 flex-1">
-                      <span className="block truncate">{new Date(revision.createdAt).toLocaleString()}</span>
+                      <span className="block truncate">{format.dateTime(revision.createdAt, { dateStyle: "short", timeStyle: "short", timeZone: "Europe/Vienna" })}</span>
                       <span className="block truncate text-muted-foreground">{revision.createdByName}</span>
                     </span>
                     <Button
@@ -1551,15 +1654,22 @@ function Editor({
                       disabled={readOnly || restoring !== null}
                       onClick={async () => {
                         if (!confirm(t("presentations.restoreConfirm"))) return;
+                        paused.current = true;
                         setRestoring(revision.id);
                         try {
-                          await restorePresentationRevision({ revisionId: revision.id });
-                          // The canvas lives in component state, so the restored version
-                          // only shows after a full reload.
-                          window.location.reload();
+                          if (!await flush()) return;
+                          const restored = await restorePresentationRevision({ revisionId: revision.id, sessionId, expectedUpdatedAt: savedVersion.current });
+                          savedVersion.current = restored.savedAt;
+                          dispatch({ type: "reset", snapshot: restored.snapshot });
+                          setSelectedIds([]);
+                          setActiveStepId(null);
+                          setStatus("saved");
+                          router.refresh();
                         } catch {
-                          setRestoring(null);
                           toast.error(t("presentations.restoreFailed"));
+                        } finally {
+                          paused.current = false;
+                          setRestoring(null);
                         }
                       }}
                     >
@@ -1570,6 +1680,7 @@ function Editor({
               </ul>
             )}
           </section>
+          </fieldset>
         </aside>
       </div>
     </div>

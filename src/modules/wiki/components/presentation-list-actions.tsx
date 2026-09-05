@@ -137,6 +137,9 @@ export function NewPresentationForm() {
     setBusy(true);
     try {
       const { id } = await createPresentation({ title: name, templateId });
+      setOpen(false);
+      setTitle("");
+      setBusy(false);
       router.push(`/wiki/presentations/${id}`);
     } catch {
       toast.error(t("presentations.createFailed"));
@@ -147,7 +150,7 @@ export function NewPresentationForm() {
   return (
     <>
       <form
-        className="flex items-center gap-2"
+        className="flex w-full flex-wrap items-center gap-2 sm:w-auto"
         onSubmit={(event) => {
           event.preventDefault();
           setOpen(true);
@@ -158,7 +161,7 @@ export function NewPresentationForm() {
           maxLength={200}
           placeholder={t("presentations.newPlaceholder")}
           aria-label={t("presentations.presentationTitle")}
-          className="h-8 w-56"
+          className="h-8 min-w-0 flex-1 sm:w-56"
           onChange={(event) => setTitle(event.target.value)}
         />
         <Button type="submit" size="sm" disabled={busy}>
@@ -210,6 +213,8 @@ export function NewPresentationFromWikiPage({ pages }: { pages: Array<{ id: stri
     setBusy(true);
     try {
       const { id } = await createPresentationFromWikiPage({ pageId, includeImages });
+      setOpen(false);
+      setBusy(false);
       router.push(`/wiki/presentations/${id}`);
     } catch {
       toast.error(t("presentations.createFailed"));

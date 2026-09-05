@@ -4,8 +4,8 @@ import { z } from "zod";
  * Player and presenter windows sync over one native BroadcastChannel per presentation, so
  * a presenter tab open for a different presentation never crosses wires with this one.
  */
-export function presenterChannelName(presentationId: string): string {
-  return `wiki-presentation-presenter:${presentationId}`;
+export function presenterChannelName(presentationId: string, sessionId?: string): string {
+  return `wiki-presentation-presenter:${presentationId}${sessionId ? `:${sessionId}` : ""}`;
 }
 
 const stepMessageSchema = z.object({ type: z.literal("step"), index: z.number().int().min(0) });

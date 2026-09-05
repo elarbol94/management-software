@@ -4,7 +4,7 @@ import { getTranslations } from "next-intl/server";
 import { requireUser } from "@/lib/auth";
 import {
   PRESENTATION_PAGE_SIZE,
-  elementBounds,
+  presentationCameraBounds,
   fitBoundsToPage,
   stepTarget,
   type PresentationElement,
@@ -147,13 +147,15 @@ function ElementView({ element }: { element: PresentationElement }) {
 }
 
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }) {
+  await requireUser();
   const { id } = await params;
   // The document title is what the browser offers as the PDF's file name.
   return { title: getPresentation(id)?.title ?? "" };
 }
 
-export default async function PresentationPrintPage({ params }: { params: Promise<{ id: string }> }) {
-  const [, { id }, t] = await Promise.all([requireUser(), params, getTranslations("wiki")]);
+export default async function PresentationPrintPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ notes?: string }> }) {
+  const [, { id }, t, { notes }] = await Promise.all([requireUser(), params, getTranslations("wiki"), searchParams]);
+  const includeNotes = notes === "1";
   const presentation = getPresentation(id);
   if (!presentation) notFound();
 
@@ -164,12 +166,12 @@ export default async function PresentationPrintPage({ params }: { params: Promis
   ];
 
   return (
-    <main className="bg-white text-black">
+    <main className="bg-white text-black" data-testid="presentation-print">
       <style>{`
         @page { size: A4 landscape; margin: 0; }
         @media print { html, body { background: #fff; } }
       `}</style>
-      <PrintButton />
+      <PrintButton includeNotes={includeNotes} />
 
       {presentation.steps.length === 0 ? (
         <p className="p-10 text-sm">{t("presentations.noSteps")}</p>
@@ -177,7 +179,7 @@ export default async function PresentationPrintPage({ params }: { params: Promis
         presentation.steps.map((step, index) => {
           const target = stepTarget(step, presentation.elements);
           if (!target) return null;
-          const { scale, offsetX, offsetY } = fitBoundsToPage(elementBounds(target));
+          const { scale, offsetX, offsetY } = fitBoundsToPage(presentationCameraBounds(target));
           return (
             <section
               key={step.id}
@@ -189,7 +191,8 @@ export default async function PresentationPrintPage({ params }: { params: Promis
                 width: PRESENTATION_PAGE_SIZE.width,
                 height: PRESENTATION_PAGE_SIZE.height,
                 overflow: "hidden",
-                background: "#fff",
+                background: presentation.background || "#fff",
+                printColorAdjust: "exact",
               }}
             >
               <div
@@ -204,7 +207,7 @@ export default async function PresentationPrintPage({ params }: { params: Promis
                   <ElementView key={element.id} element={element} />
                 ))}
               </div>
-              {step.notes?.trim() && (
+              {includeNotes && step.notes?.trim() && (
                 // Speaker notes ride along at the foot of the page, over the canvas crop —
                 // the sheet keeps its fixed A4 size, so pagination stays one page per step.
                 <footer
