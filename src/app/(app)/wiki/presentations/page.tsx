@@ -4,6 +4,7 @@ import { Presentation } from "lucide-react";
 import { requireUser } from "@/lib/auth";
 import { listPresentations } from "@/modules/wiki/presentation-queries";
 import { listPagesFlat } from "@/modules/wiki/queries";
+import { PresentationImport } from "@/modules/wiki/components/presentation-import";
 import {
   DeletePresentationButton,
   NewPresentationForm,
@@ -11,8 +12,8 @@ import {
 } from "@/modules/wiki/components/presentation-list-actions";
 
 export default async function PresentationsPage() {
-  const [, t] = await Promise.all([requireUser(), getTranslations("wiki")]);
-  const presentations = listPresentations();
+  const [viewer, t] = await Promise.all([requireUser(), getTranslations("wiki")]);
+  const presentations = listPresentations(viewer);
   const wikiPages = listPagesFlat();
 
   return (
@@ -27,6 +28,7 @@ export default async function PresentationsPage() {
           <Link href="/wiki/presentations/follow" className="text-sm font-medium text-indigo-600">{t("presentations.joinLive")}</Link>
           <NewPresentationFromWikiPage pages={wikiPages} />
           <NewPresentationForm />
+          <PresentationImport />
         </div>
       </header>
 
@@ -49,7 +51,7 @@ export default async function PresentationsPage() {
                     {t("presentations.stepsCount", { count: presentation.stepCount })} · {t("presentations.elementsCount", { count: presentation.elementCount })}
                   </p>
                 </Link>
-                <DeletePresentationButton id={presentation.id} title={presentation.title} />
+                {presentation.role === "owner" && <DeletePresentationButton id={presentation.id} title={presentation.title} />}
               </div>
               <div className="mt-3 flex flex-wrap items-center gap-3 text-xs">
                 <Link href={`/wiki/presentations/${presentation.id}`} className="font-medium text-indigo-600">{t("edit")}</Link>

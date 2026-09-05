@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { mergePresentation, presentationValuesEqual } from "./presentation-merge";
 
 /**
  * A presentation is a single infinite canvas plus an ordered path across it. Elements
@@ -9,7 +10,7 @@ import { z } from "zod";
 export const presentationFrameShapes = ["rect", "circle", "none"] as const;
 export type PresentationFrameShape = (typeof presentationFrameShapes)[number];
 
-export const presentationElementTypes = ["text", "image", "frame", "shape"] as const;
+export const presentationElementTypes = ["text", "image", "frame", "shape", "video", "audio", "chart", "icon"] as const;
 export type PresentationElementType = (typeof presentationElementTypes)[number];
 
 export const presentationShapeKinds = ["rect", "ellipse", "arrow", "line"] as const;
@@ -24,7 +25,17 @@ const geometrySchema = {
   rotation: z.number().finite().min(-360).max(360).default(0),
   /** Optional so every presentation saved before backgrounds existed still parses. */
   background: z.string().max(32).optional(),
+  parentId: z.string().min(1).max(64).optional(),
+  locked: z.boolean().optional(),
 };
+
+export const presentationFonts = ["sans", "serif", "mono", "arial", "georgia"] as const;
+export const presentationFontFamilies = { sans: "system-ui, sans-serif", serif: "Georgia, serif", mono: "ui-monospace, monospace", arial: "Arial, sans-serif", georgia: "Georgia, serif" };
+export const presentationLinkSchema = z.string().max(2000).refine((value) => !value || /^(https?:\/\/|mailto:)/i.test(value), "Use an http, https or mailto link");
+export const presentationTextRunSchema = z.object({
+  text: z.string().max(5000), bold: z.boolean().optional(), italic: z.boolean().optional(),
+  underline: z.boolean().optional(), color: z.string().max(32).optional(), href: presentationLinkSchema.optional(),
+});
 
 const textElementSchema = z.object({
   ...geometrySchema,
@@ -35,6 +46,11 @@ const textElementSchema = z.object({
     bold: z.boolean().default(false),
     color: z.string().max(32).default(""),
     align: z.enum(["left", "center", "right"]).default("left"),
+    font: z.enum(presentationFonts).optional(),
+    italic: z.boolean().optional(),
+    underline: z.boolean().optional(),
+    list: z.enum(["none", "bullet", "number"]).optional(),
+    runs: presentationTextRunSchema.array().max(200).optional(),
   }),
 });
 
@@ -44,6 +60,11 @@ const imageElementSchema = z.object({
   content: z.object({
     attachmentId: z.string().min(1).max(64),
     alt: z.string().max(500).default(""),
+    fit: z.enum(["contain", "cover"]).optional(),
+    mask: z.enum(["none", "circle", "rounded", "diamond"]).optional(),
+    cropX: z.number().min(0).max(100).optional(),
+    cropY: z.number().min(0).max(100).optional(),
+    zoom: z.number().min(1).max(5).optional(),
   }),
 });
 
@@ -54,8 +75,20 @@ const frameElementSchema = z.object({
     label: z.string().max(200).default(""),
     shape: z.enum(presentationFrameShapes).default("rect"),
     color: z.string().max(32).default(""),
+    isGroup: z.boolean().optional(),
   }),
 });
+
+const mediaContentSchema = z.object({ attachmentId: z.string().min(1).max(64), title: z.string().max(500).default(""), loop: z.boolean().optional() });
+const videoElementSchema = z.object({ ...geometrySchema, type: z.literal("video"), content: mediaContentSchema });
+const audioElementSchema = z.object({ ...geometrySchema, type: z.literal("audio"), content: mediaContentSchema });
+const chartElementSchema = z.object({ ...geometrySchema, type: z.literal("chart"), content: z.object({
+  title: z.string().max(200), kind: z.enum(["bar", "line", "pie"]),
+  data: z.object({ label: z.string().max(100), value: z.number().finite().min(-1e12).max(1e12) }).array().min(1).max(50),
+  color: z.string().max(32).optional(),
+}) });
+export const presentationIconNames = ["target", "lightbulb", "users", "rocket", "heart", "globe", "check", "star", "calendar", "chart", "briefcase", "leaf"] as const;
+const iconElementSchema = z.object({ ...geometrySchema, type: z.literal("icon"), content: z.object({ name: z.enum(presentationIconNames), color: z.string().max(32).optional(), label: z.string().max(200).optional() }) });
 
 /** Empty `fill`/`stroke` mean "no fill" and "follow the theme", so shapes read on both. */
 const shapeElementSchema = z.object({
@@ -75,6 +108,7 @@ export const presentationElementSchema = z.discriminatedUnion("type", [
   imageElementSchema,
   frameElementSchema,
   shapeElementSchema,
+  videoElementSchema, audioElementSchema, chartElementSchema, iconElementSchema,
 ]);
 export type PresentationElement = z.infer<typeof presentationElementSchema>;
 export type PresentationTextElement = z.infer<typeof textElementSchema>;
@@ -89,10 +123,29 @@ export const presentationStepSchema = z.object({
   durationMs: z.number().int().min(500).max(120_000).optional(),
   // Optional and additive so presentations saved before presenter notes existed still parse.
   notes: z.string().max(5_000).optional(),
+  action: z.enum(["camera", "fadeIn", "fadeOut"]).optional(),
+  animationMs: z.number().int().min(0).max(5000).optional(),
 });
 export type PresentationStep = z.infer<typeof presentationStepSchema>;
 
-export const presentationElementsSchema = presentationElementSchema.array().max(500);
+export const presentationElementsSchema = presentationElementSchema.array().max(500).superRefine((elements, ctx) => {
+  const byId = new Map(elements.map((element) => [element.id, element]));
+  if (byId.size !== elements.length) ctx.addIssue({ code: "custom", message: "Duplicate element ID" });
+  for (const element of elements) {
+    const seen = new Set([element.id]);
+    let parentId = element.parentId;
+    while (parentId) {
+      const parent = byId.get(parentId);
+      if (!parent || parent.type !== "frame" || seen.has(parentId)) {
+        ctx.addIssue({ code: "custom", message: "Invalid frame hierarchy" }); break;
+      }
+      seen.add(parentId); parentId = parent.parentId;
+    }
+    if (element.type === "text" && element.content.runs && element.content.runs.map((run) => run.text).join("") !== element.content.text) {
+      ctx.addIssue({ code: "custom", message: "Text runs must match the plain text" });
+    }
+  }
+});
 export const presentationStepsSchema = presentationStepSchema.array().max(500);
 
 export const presentationCameraEasings = ["linear", "ease", "ease-in", "ease-out", "ease-in-out", "ease-out-back"] as const;
@@ -296,7 +349,7 @@ export function stepTarget(
  * order the presenter walks the path in. Null means no step points here: a free-look click.
  */
 export function stepIndexForElement(steps: PresentationStep[], elementId: string): number | null {
-  const index = steps.findIndex((step) => step.elementId === elementId);
+  const index = steps.findIndex((step) => step.elementId === elementId && (!step.action || step.action === "camera"));
   return index === -1 ? null : index;
 }
 
@@ -386,7 +439,7 @@ export function elementClickAction(
   elementId: string,
 ): PresentationClickAction {
   const element = elements.find((candidate) => candidate.id === elementId);
-  const step = steps[currentIndex];
+  const step = presentationCameraStep(steps, currentIndex);
   const current = element && step ? stepTarget(step, elements) : null;
   if (element?.type === "frame" && current && elementsWithinStep(element, elements).some((within) => within.id === current.id)) {
     return { kind: "advance" };
@@ -529,7 +582,9 @@ export function applyGeometryChanges(
   changes: PresentationGeometryChange[],
   tolerance: number,
 ): { elements: PresentationElement[]; guides: SnapGuide[] } {
-  const byId = new Map(changes.map((change) => [change.id, change]));
+  const requested = new Set(changes.map((change) => change.id));
+  const byId = new Map(changes.filter((change) => !isPresentationElementLocked(elements, change.id)
+    && !presentationAncestors(elements, change.id).some((parent) => requested.has(parent.id))).map((change) => [change.id, change]));
   const moving = new Map<string, PresentationBounds>();
   for (const element of elements) {
     const change = byId.get(element.id);
@@ -545,7 +600,8 @@ export function applyGeometryChanges(
   const after = unionBounds([...moving.values()]);
   if (!before || !after) return { elements, guides: [] };
 
-  const targets = elements.filter((element) => !moving.has(element.id)).map(elementBounds);
+  const affected = presentationDescendants(elements, new Set(moving.keys()));
+  const targets = elements.filter((element) => !affected.has(element.id)).map(elementBounds);
   const snapped = snapBounds(before, after, targets, tolerance);
   // Only a resize changes the box's size, and a canvas resizes one element at a time, so
   // the snapped union *is* that element's box. A move shifts every mover by the same amount.
@@ -568,7 +624,22 @@ export function applyGeometryChanges(
     touched = true;
     return { ...element, x: target.x, y: target.y, width: target.width, height: target.height };
   });
-  return { elements: touched ? next : elements, guides: snapped.guides };
+  if (!touched) return { elements, guides: snapped.guides };
+  let nested = next;
+  for (const parent of elements.filter((element) => byId.has(element.id) && element.type === "frame")) {
+    const updated = next.find((element) => element.id === parent.id)!;
+    const children = presentationDescendants(elements, new Set([parent.id]));
+    const sx = updated.width / parent.width;
+    const sy = updated.height / parent.height;
+    // Never save an invalid child size; rejecting the whole gesture preserves the hierarchy.
+    if (elements.some((child) => child.id !== parent.id && children.has(child.id)
+      && (child.width * sx < 20 || child.height * sy < 20 || child.width * sx > 20000 || child.height * sy > 20000))) return { elements, guides: [] };
+    nested = nested.map((child) => child.id !== parent.id && children.has(child.id) ? {
+      ...child, x: updated.x + (child.x - parent.x) * sx, y: updated.y + (child.y - parent.y) * sy,
+      width: child.width * sx, height: child.height * sy,
+    } : child);
+  }
+  return { elements: nested, guides: snapped.guides };
 }
 
 /**
@@ -586,6 +657,9 @@ export type PresentationSnapshot = {
   settings: PresentationSettings;
   title: string;
 };
+
+export const presentationSnapshotSchema = z.object({ elements: presentationElementsSchema, steps: presentationStepsSchema,
+  background: z.string().max(32), settings: presentationSettingsSchema, title: z.string().trim().min(1).max(200) });
 
 export type PresentationCanvasState = PresentationSnapshot & {
   /** Alignment lines to draw for the gesture in progress. */
@@ -621,6 +695,7 @@ export type PresentationCanvasAction =
   }
   | { type: "touch"; background?: string; settings?: Partial<PresentationSettings>; title?: string }
   | { type: "reset"; snapshot: PresentationSnapshot }
+  | { type: "remote"; base: PresentationSnapshot; snapshot: PresentationSnapshot }
   | { type: "failed" }
   /** The lock that refused the last write has lifted: the parked edit may go out again. */
   | { type: "recovered" };
@@ -683,6 +758,12 @@ export function presentationCanvasReducer(
   action: PresentationCanvasAction,
 ): PresentationCanvasState {
   switch (action.type) {
+    case "remote": {
+      const merged = mergePresentation(action.base, state, action.snapshot);
+      if (merged.conflicts.length) return { ...state, failed: true };
+      return { ...state, ...merged.snapshot, past: [], future: [], guides: [], editedAt: 0,
+        dirty: !presentationValuesEqual(merged.snapshot, { elements: action.snapshot.elements, steps: action.snapshot.steps, title: action.snapshot.title, background: action.snapshot.background, settings: action.snapshot.settings }), failed: false };
+    }
     case "reset":
       return initialPresentationCanvasState(action.snapshot.elements, action.snapshot.steps, action.snapshot.background, action.snapshot.settings, action.snapshot.title);
     case "edit":
@@ -746,6 +827,7 @@ export function rotateElements(
   deltaDegrees: number,
   center: { x: number; y: number },
 ): PresentationElement[] {
+  ids = presentationDescendants(elements, new Set([...ids].filter((id) => !isPresentationElementLocked(elements, id))));
   const radians = (deltaDegrees * Math.PI) / 180;
   const cos = Math.cos(radians);
   const sin = Math.sin(radians);
@@ -770,6 +852,7 @@ export function scaleElements(
   scaleX: number,
   scaleY: number,
 ): PresentationElement[] {
+  ids = presentationDescendants(elements, new Set([...ids].filter((id) => !isPresentationElementLocked(elements, id))));
   if (!(scaleX > 0) || !(scaleY > 0) || !Number.isFinite(scaleX) || !Number.isFinite(scaleY)) return elements;
   // Clamp the shared scale, preserving the group's proportions and valid save geometry.
   const selected = elements.filter((element) => ids.has(element.id));
@@ -799,4 +882,89 @@ export function stepLabel(element: PresentationElement, index: number): string {
           : "";
   const trimmed = raw.trim().replace(/\s+/g, " ");
   return trimmed ? trimmed.slice(0, 60) : `${index + 1}`;
+}
+
+/** Absolute geometry is retained for backwards compatibility and identical exports. */
+export function presentationAncestors(elements: PresentationElement[], id: string): PresentationElement[] {
+  const byId = new Map(elements.map((element) => [element.id, element]));
+  const result: PresentationElement[] = [];
+  const seen = new Set([id]);
+  let parent = byId.get(id)?.parentId;
+  while (parent && !seen.has(parent)) {
+    seen.add(parent);
+    const element = byId.get(parent);
+    if (!element) break;
+    result.push(element); parent = element.parentId;
+  }
+  return result;
+}
+
+export function presentationDescendants(elements: PresentationElement[], ids: Set<string>): Set<string> {
+  const result = new Set(ids);
+  for (let pass = 0; pass < elements.length; pass++) {
+    let added = false;
+    for (const element of elements) if (element.parentId && result.has(element.parentId) && !result.has(element.id)) {
+      result.add(element.id); added = true;
+    }
+    if (!added) break;
+  }
+  return result;
+}
+
+export function isPresentationElementLocked(elements: PresentationElement[], id: string): boolean {
+  return Boolean(elements.find((element) => element.id === id)?.locked || presentationAncestors(elements, id).some((element) => element.locked));
+}
+
+export function groupPresentationElements(elements: PresentationElement[], ids: Set<string>, groupId: string): PresentationElement[] {
+  const selected = elements.filter((element) => ids.has(element.id) && !isPresentationElementLocked(elements, element.id));
+  const roots = selected.filter((element) => !presentationAncestors(elements, element.id).some((parent) => ids.has(parent.id)));
+  const bounds = unionBounds(roots);
+  if (!bounds || roots.length < 2 || elements.length >= 500) return elements;
+  const parentId = roots.every((element) => element.parentId === roots[0].parentId) ? roots[0].parentId : undefined;
+  const rootIds = new Set(roots.map((element) => element.id));
+  return [...elements.map((element) => rootIds.has(element.id) ? { ...element, parentId: groupId } : element), {
+    id: groupId, type: "frame", ...bounds, rotation: 0, parentId,
+    content: { label: "", shape: "none", color: "", isGroup: true },
+  }];
+}
+
+export function ungroupPresentationElements(elements: PresentationElement[], id: string): PresentationElement[] {
+  const group = elements.find((element) => element.id === id);
+  if (group?.type !== "frame" || !group.content.isGroup || isPresentationElementLocked(elements, id)) return elements;
+  return elements.filter((element) => element.id !== id).map((element) => element.parentId === id ? { ...element, parentId: group.parentId } : element);
+}
+
+export function duplicatePresentationTree(elements: PresentationElement[], ids: Set<string>, idMap: Map<string, string>): PresentationElement[] {
+  const included = presentationDescendants(elements, ids);
+  const copies = elements.filter((element) => included.has(element.id)).map((element) => ({
+    ...element, id: idMap.get(element.id)!, locked: false,
+    parentId: element.parentId ? idMap.get(element.parentId) ?? element.parentId : undefined,
+    x: element.x + PRESENTATION_DUPLICATE_OFFSET, y: element.y + PRESENTATION_DUPLICATE_OFFSET,
+  }));
+  return elements.length + copies.length <= 500 ? [...elements, ...copies] : elements;
+}
+
+export function presentationCameraStep(steps: PresentationStep[], index: number): PresentationStep | undefined {
+  for (let i = index; i >= 0; i--) if (!steps[i]?.action || steps[i].action === "camera") return steps[i];
+  return undefined;
+}
+
+/** Replaying from the beginning makes backwards navigation, jumps and live following deterministic. */
+export function presentationHiddenIds(elements: PresentationElement[], steps: PresentationStep[], index: number): Set<string> {
+  const hidden = new Set<string>();
+  const initialized = new Set<string>();
+  for (const step of steps) {
+    if (!step.action || step.action === "camera") continue;
+    for (const id of presentationDescendants(elements, new Set([step.elementId]))) {
+      if (!initialized.has(id) && step.action === "fadeIn") hidden.add(id);
+      initialized.add(id);
+    }
+  }
+  for (const step of steps.slice(0, index + 1)) {
+    if (!step.action || step.action === "camera") continue;
+    for (const id of presentationDescendants(elements, new Set([step.elementId]))) {
+      if (step.action === "fadeIn") hidden.delete(id); else hidden.add(id);
+    }
+  }
+  return hidden;
 }

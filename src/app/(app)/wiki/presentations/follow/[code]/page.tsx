@@ -11,7 +11,7 @@ import { PresentationPlayer } from "@/modules/wiki/components/presentation-playe
  * already have an account here, never a way past sign-in.
  */
 export default async function FollowLiveSessionPage({ params }: { params: Promise<{ code: string }> }) {
-  const [, { code }] = await Promise.all([requireUser(), params]);
+  const [viewer, { code }] = await Promise.all([requireUser(), params]);
   const parsed = liveSessionCodeSchema.safeParse(code);
   const session = parsed.success ? getLiveSessionByCode(parsed.data) : null;
 
@@ -30,9 +30,9 @@ export default async function FollowLiveSessionPage({ params }: { params: Promis
     );
   }
 
-  const presentation = getPresentation(session.presentationId);
+  const presentation = getPresentation(session.presentationId, viewer);
   if (!presentation) notFound();
   // Speaker notes are private to the author/presenter; don't serialize them to followers.
-  const audiencePresentation = { ...presentation, steps: presentation.steps.map(({ id, elementId, durationMs }) => ({ id, elementId, durationMs })) };
+  const audiencePresentation = { ...presentation, steps: presentation.steps.map(({ id, elementId, durationMs, action, animationMs }) => ({ id, elementId, durationMs, action, animationMs })) };
   return <PresentationPlayer presentation={audiencePresentation} follow={{ code: session.code, hostName: session.hostName, stepIndex: session.stepIndex, live: session.live }} />;
 }

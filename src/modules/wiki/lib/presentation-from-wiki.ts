@@ -111,21 +111,23 @@ function place(
   elements: PresentationElement[],
   steps: PresentationStep[],
   nextId: () => string,
+  parentId?: string,
 ) {
   const id = nextId();
-  elements.push(frameElement(id, x, y, section.width, section.height, section.title));
+  elements.push({ ...frameElement(id, x, y, section.width, section.height, section.title), parentId });
   steps.push({ id: nextId(), elementId: id });
 
   let cursorX = x + GAP;
   const rowY = y + GAP;
   for (const child of section.children) {
-    place(child, cursorX, rowY, elements, steps, nextId);
+    place(child, cursorX, rowY, elements, steps, nextId, id);
     cursorX += child.width + GAP;
   }
   for (const image of section.images) {
     elements.push({
       id: nextId(),
       type: "image",
+      parentId: id,
       x: cursorX,
       y: rowY,
       width: LEAF_WIDTH,

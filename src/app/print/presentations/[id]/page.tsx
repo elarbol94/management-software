@@ -1,4 +1,4 @@
-import type { CSSProperties } from "react";
+import { PresentationContent } from "@/modules/wiki/components/presentation-content";
 import { notFound } from "next/navigation";
 import { getTranslations } from "next-intl/server";
 import { requireUser } from "@/lib/auth";
@@ -7,6 +7,9 @@ import {
   presentationCameraBounds,
   fitBoundsToPage,
   stepTarget,
+  presentationCameraStep,
+  presentationHiddenIds,
+  unionBounds,
   type PresentationElement,
 } from "@/modules/wiki/lib/presentation";
 import { getPresentation } from "@/modules/wiki/presentation-queries";
@@ -19,144 +22,20 @@ import { PrintButton } from "./print-button";
  * page is framed by a single transform.
  */
 
-// The printed sheet is white regardless of the app theme, so element colours keep the
-// contrast their author picked on a light canvas.
-const FRAME_BORDER = "rgba(0,0,0,0.45)";
-
 function ElementView({ element }: { element: PresentationElement }) {
-  const box: CSSProperties = {
-    position: "absolute",
-    left: element.x,
-    top: element.y,
-    width: element.width,
-    height: element.height,
-    // Rotation is around the element's own centre, matching what the canvas shows.
-    transform: element.rotation ? `rotate(${element.rotation}deg)` : undefined,
-    backgroundColor: element.background || undefined,
-  };
-
-  if (element.type === "text") {
-    const { text, fontSize, bold, color, align } = element.content;
-    return (
-      <div
-        style={{
-          ...box,
-          fontSize,
-          fontWeight: bold ? 700 : 400,
-          textAlign: align,
-          color: color || undefined,
-          lineHeight: 1.15,
-          overflow: "hidden",
-          whiteSpace: "pre-wrap",
-          overflowWrap: "break-word",
-        }}
-      >
-        {text}
-      </div>
-    );
-  }
-
-  if (element.type === "image") {
-    return (
-      // Served by the existing attachment route, which enforces the session check.
-      // eslint-disable-next-line @next/next/no-img-element
-      <img
-        src={`/api/files/${element.content.attachmentId}`}
-        alt={element.content.alt}
-        style={{ ...box, objectFit: "contain" }}
-      />
-    );
-  }
-
-  if (element.type === "shape") {
-    // Mirrors the canvas ShapeNode: same geometry, minus the editor chrome. Printed on
-    // white, so an empty stroke falls back to black instead of the theme colour.
-    const { shape, fill, stroke, strokeWidth, opacity } = element.content;
-    const w = element.width;
-    const h = element.height;
-    const inset = strokeWidth / 2;
-    const head = Math.min(Math.max(strokeWidth * 3, 10), w / 2);
-    const mid = h / 2;
-    return (
-      <svg
-        width={w}
-        height={h}
-        viewBox={`0 0 ${w} ${h}`}
-        preserveAspectRatio="none"
-        style={{ ...box, opacity, overflow: "visible" }}
-        aria-hidden
-      >
-        {shape === "rect" && (
-          <rect
-            x={inset}
-            y={inset}
-            width={Math.max(w - strokeWidth, 0)}
-            height={Math.max(h - strokeWidth, 0)}
-            fill={fill || "none"}
-            stroke={stroke || "#000"}
-            strokeWidth={strokeWidth}
-          />
-        )}
-        {shape === "ellipse" && (
-          <ellipse
-            cx={w / 2}
-            cy={h / 2}
-            rx={Math.max(w - strokeWidth, 0) / 2}
-            ry={Math.max(h - strokeWidth, 0) / 2}
-            fill={fill || "none"}
-            stroke={stroke || "#000"}
-            strokeWidth={strokeWidth}
-          />
-        )}
-        {shape === "line" && (
-          <line x1={0} y1={mid} x2={w} y2={mid} stroke={stroke || "#000"} strokeWidth={strokeWidth} />
-        )}
-        {shape === "arrow" && (
-          <>
-            <line x1={0} y1={mid} x2={w - head} y2={mid} stroke={stroke || "#000"} strokeWidth={strokeWidth} />
-            <polygon
-              points={`${w},${mid} ${w - head},${mid - head / 2} ${w - head},${mid + head / 2}`}
-              fill={stroke || "#000"}
-            />
-          </>
-        )}
-      </svg>
-    );
-  }
-
-  const { label, shape, color } = element.content;
-  // An invisible frame is a pure camera target: it exists to be zoomed at, not printed.
-  if (shape === "none") return null;
-  return (
-    <div
-      style={{
-        ...box,
-        border: `2px solid ${color || FRAME_BORDER}`,
-        borderRadius: shape === "circle" ? "50%" : 12,
-      }}
-    >
-      {label && (
-        <span
-          style={{ position: "absolute", left: 0, top: -26, fontSize: 18, fontWeight: 500, color: color || undefined }}
-        >
-          {label}
-        </span>
-      )}
-    </div>
-  );
+  return <div style={{ position: "absolute", left: element.x, top: element.y, width: element.width, height: element.height, transform: `rotate(${element.rotation}deg)`, background: element.background || undefined }}><PresentationContent element={element} interactive={false} /></div>;
 }
-
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }) {
-  await requireUser();
+  const viewer = await requireUser();
   const { id } = await params;
   // The document title is what the browser offers as the PDF's file name.
-  return { title: getPresentation(id)?.title ?? "" };
+  return { title: getPresentation(id, viewer)?.title ?? "" };
 }
 
 export default async function PresentationPrintPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ notes?: string }> }) {
-  const [, { id }, t, { notes }] = await Promise.all([requireUser(), params, getTranslations("wiki"), searchParams]);
+  const [viewer, { id }, t, { notes }] = await Promise.all([requireUser(), params, getTranslations("wiki"), searchParams]);
   const includeNotes = notes === "1";
-  const presentation = getPresentation(id);
+  const presentation = getPresentation(id, viewer);
   if (!presentation) notFound();
 
   // Frames print behind everything else, the same stacking the canvas uses.
@@ -177,9 +56,12 @@ export default async function PresentationPrintPage({ params, searchParams }: { 
         <p className="p-10 text-sm">{t("presentations.noSteps")}</p>
       ) : (
         presentation.steps.map((step, index) => {
-          const target = stepTarget(step, presentation.elements);
-          if (!target) return null;
-          const { scale, offsetX, offsetY } = fitBoundsToPage(presentationCameraBounds(target));
+          const camera = presentationCameraStep(presentation.steps, index);
+          const target = camera ? stepTarget(camera, presentation.elements) : null;
+          const hidden = presentationHiddenIds(presentation.elements, presentation.steps, index);
+          const bounds = target ? presentationCameraBounds(target) : unionBounds(presentation.elements.map(presentationCameraBounds));
+          if (!bounds) return null;
+          const { scale, offsetX, offsetY } = fitBoundsToPage(bounds);
           return (
             <section
               key={step.id}
@@ -203,7 +85,7 @@ export default async function PresentationPrintPage({ params, searchParams }: { 
                   transformOrigin: "0 0",
                 }}
               >
-                {ordered.map((element) => (
+                {ordered.filter((element) => !hidden.has(element.id)).map((element) => (
                   <ElementView key={element.id} element={element} />
                 ))}
               </div>

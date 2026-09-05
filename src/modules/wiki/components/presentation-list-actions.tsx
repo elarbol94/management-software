@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { useTranslations } from "next-intl";
+import { useTranslations, useLocale } from "next-intl";
 import { FileText, Loader2, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -97,6 +97,12 @@ const TEMPLATE_ICONS: Record<PresentationTemplateId, () => React.ReactElement> =
   hub: HubIcon,
   pitch: PitchIcon,
   mindmap: MindmapIcon,
+  roadmap: TimelineIcon,
+  workshop: MindmapIcon,
+  report: PitchIcon,
+  demo: HubIcon,
+  portfolio: PitchIcon,
+  lesson: TimelineIcon,
 };
 
 function TemplateCard({
@@ -126,6 +132,7 @@ function TemplateCard({
 }
 
 export function NewPresentationForm() {
+  const locale = useLocale();
   const t = useTranslations("wiki");
   const router = useRouter();
   const [title, setTitle] = useState("");
@@ -136,7 +143,7 @@ export function NewPresentationForm() {
     const name = title.trim() || t("presentations.untitled");
     setBusy(true);
     try {
-      const { id } = await createPresentation({ title: name, templateId });
+      const { id } = await createPresentation({ title: name, templateId, locale });
       setOpen(false);
       setTitle("");
       setBusy(false);
@@ -171,7 +178,7 @@ export function NewPresentationForm() {
       </form>
 
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="sm:max-w-2xl">
+        <DialogContent className="max-h-[85dvh] overflow-y-auto sm:max-w-2xl">
           <DialogHeader>
             <DialogTitle>{t("presentations.chooseTemplate")}</DialogTitle>
             <DialogDescription>{t("presentations.chooseTemplateDescription")}</DialogDescription>

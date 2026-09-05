@@ -4,8 +4,8 @@ import { getPresentation, listPresentationRevisions } from "@/modules/wiki/prese
 import { PresentationEditor } from "@/modules/wiki/components/presentation-editor";
 
 export default async function PresentationEditorPage({ params }: { params: Promise<{ id: string }> }) {
-  const [, { id }] = await Promise.all([requireUser(), params]);
-  const presentation = getPresentation(id);
+  const [viewer, { id }] = await Promise.all([requireUser(), params]);
+  const presentation = getPresentation(id, viewer);
   if (!presentation) notFound();
-  return <PresentationEditor presentation={presentation} revisions={listPresentationRevisions(id)} />;
+  return <PresentationEditor presentation={presentation} revisions={presentation.role === "edit" || presentation.role === "owner" ? listPresentationRevisions(id, viewer) : []} />;
 }

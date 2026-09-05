@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { revalidatePath } from "next/cache";
 import { getSession } from "@/lib/auth";
+import { presentationRole } from "@/modules/wiki/presentation-access";
 import {
   isAttachmentEntityType,
   listAttachmentsFor,
@@ -21,6 +22,7 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "Invalid request" }, { status: 400 });
   }
 
+  if (entityType === "wikiPresentation" && !presentationRole(entityId, session.user)) return NextResponse.json({ error: "Not found" }, { status: 404 });
   return NextResponse.json(listAttachmentsFor(entityType, entityId));
 }
 
@@ -46,6 +48,11 @@ export async function POST(request: Request) {
   }
 
   try {
+    if (entityType === "wikiPresentation") {
+      const role = presentationRole(entityId, session.user);
+      if (role !== "edit" && role !== "owner") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+    if (entityType === "wikiPresentationLibrary") return NextResponse.json({ error: "Use the design library" }, { status: 403 });
     const attachment = await saveAttachment({
       file,
       entityType,

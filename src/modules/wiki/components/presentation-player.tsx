@@ -18,6 +18,8 @@ import {
   presentationCameraEasingFns,
   resolveStepDuration,
   stepTarget,
+  presentationCameraStep,
+  presentationHiddenIds,
 } from "../lib/presentation";
 import { parsePresenterMessage, presenterChannelName } from "../lib/presenter";
 import type { PresentationRecord } from "../presentation-queries";
@@ -69,7 +71,9 @@ function Player({ presentation, follow }: { presentation: PresentationRecord; fo
     return target ? new Set(elementsWithinStep(target, elements).map((element) => element.id)) : new Set<string>();
   }, [index, steps, elements]);
 
-  const nodes = useMemo(() => elementsToNodes(elements, { editable: false, enteringIds }), [elements, enteringIds]);
+  const hiddenIds = useMemo(() => presentationHiddenIds(elements, steps, index), [elements, steps, index]);
+  const animationMs = reducedMotion ? 0 : steps[index]?.animationMs ?? 300;
+  const nodes = useMemo(() => elementsToNodes(elements, { editable: false, enteringIds: reducedMotion ? undefined : enteringIds, hiddenIds, animationMs }), [elements, enteringIds, hiddenIds, animationMs, reducedMotion]);
 
   const overview = useCallback(
     (duration = cameraDuration) => void reactFlow.fitView({ padding: 0.15, duration, ease: cameraEase }),
@@ -82,7 +86,7 @@ function Player({ presentation, follow }: { presentation: PresentationRecord; fo
    */
   const flyTo = useCallback(
     (stepIndex: number, duration = cameraDuration) => {
-      const step = steps[stepIndex];
+      const step = presentationCameraStep(steps, stepIndex);
       const target = step ? stepTarget(step, elements) : null;
       if (!target) return overview(duration);
       void reactFlow.fitBounds(presentationCameraBounds(target), { padding: PRESENTATION_CAMERA_PADDING, duration, ease: cameraEase });
@@ -173,6 +177,7 @@ function Player({ presentation, follow }: { presentation: PresentationRecord; fo
   // on the frame we are already looking inside is not a jump at all — see elementClickAction.
   const onElementClick = useCallback<NodeMouseHandler<PresentationNode>>(
     (event, node) => {
+      if ((event.target as HTMLElement)?.closest?.("a,video,audio,summary,details")) return;
       // Never also register as the container's "click empty canvas" advance.
       event.stopPropagation();
       if (following) return;
@@ -485,10 +490,12 @@ function Player({ presentation, follow }: { presentation: PresentationRecord; fo
           <Button type="button" variant="ghost" size="icon-sm" aria-label={t("presentations.fullscreen")} aria-pressed={fullscreen} onClick={() => void toggleFullscreen()}>
             {fullscreen ? <Minimize className="size-4" /> : <Maximize className="size-4" />}
           </Button>
+          {(presentation.role === "owner" || presentation.role === "edit") && <>
           <Button type="button" variant="ghost" size="icon-sm" aria-label={t("presentations.openPresenterView")} onClick={openPresenterView}>
             <NotebookText className="size-4" />
           </Button>
           <PresentationLiveControl presentationId={presentation.id} stepIndex={index} stopRef={stopLive} />
+          </>}
           <Button
             type="button"
             variant="ghost"

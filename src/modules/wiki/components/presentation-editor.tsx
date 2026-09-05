@@ -79,7 +79,11 @@ import type { PresentationRecord, PresentationRevisionItem } from "../presentati
 import {
   PRESENTATION_CAMERA_PADDING,
   PRESENTATION_SNAP_TOLERANCE,
-  duplicateElement,
+  duplicatePresentationTree,
+  presentationDescendants,
+  presentationAncestors,
+  isPresentationElementLocked,
+  applyGeometryChanges,
   initialPresentationCanvasState,
   presentationCanvasReducer,
   presentationCameraBounds,
@@ -105,6 +109,9 @@ import {
   type SnapGuide,
 } from "../lib/presentation";
 import { elementsToNodes, presentationNodeTypes, type PresentationNode } from "./presentation-canvas";
+import { PresentationStudioInspector } from "./presentation-studio-inspector";
+import { PresentationLibraryPanel } from "./presentation-library-panel";
+import { mergePresentation, presentationValuesEqual } from "../lib/presentation-merge";
 
 /** Empty means "follow the theme"; the rest read acceptably on light and dark canvases. */
 const COLORS = ["", "#6366f1", "#0d9488", "#f59e0b", "#e11d48", "#0ea5e9"] as const;
@@ -412,6 +419,7 @@ function Editor({
   revisions: PresentationRevisionItem[];
 }) {
   const t = useTranslations("wiki");
+  const studio = useTranslations("presentationStudio");
   const format = useFormatter();
   const router = useRouter();
   const reactFlow = useReactFlow<PresentationNode>();
@@ -419,13 +427,15 @@ function Editor({
   const canvasRef = useRef<HTMLDivElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const [sessionId] = useState(() => globalThis.crypto.randomUUID());
+  const canEdit = presentation.role === "owner" || presentation.role === "edit";
+  const baseSnapshot = useRef(presentation);
 
   const [lockedBy, setLockedBy] = useState<string | null>(null);
   const [leaseReady, setLeaseReady] = useState(false);
   const [conflict, setConflict] = useState(false);
   const [panelOpen, setPanelOpen] = useState(false);
   const [restoring, setRestoring] = useState<string | null>(null);
-  const readOnly = !leaseReady || lockedBy !== null || conflict;
+  const readOnly = !canEdit || !leaseReady || lockedBy !== null || conflict;
   const disabled = readOnly || restoring !== null;
   const paused = useRef(false);
   const savedVersion = useRef(presentation.updatedAt);
@@ -498,9 +508,10 @@ function Editor({
           sessionId,
           title: state.title,
           expectedUpdatedAt: savedVersion.current,
+          base: presentation.coediting ? baseSnapshot.current : undefined,
         };
         let result: Awaited<ReturnType<typeof savePresentation>>;
-        if (afterNavigation) {
+        if (afterNavigation || presentation.coediting) {
           const body = JSON.stringify(draft);
           const response = await fetch(`/api/wiki/presentations/${presentation.id}`, {
             method: "PATCH", headers: { "Content-Type": "application/json" }, body,
@@ -533,6 +544,21 @@ function Editor({
           return false;
         }
         savedVersion.current = result.savedAt;
+        if (result.snapshot) {
+          baseSnapshot.current = { ...presentation, ...result.snapshot, updatedAt: result.savedAt };
+          const expected = { elements: state.elements, steps: state.steps, background: state.background, settings: state.settings, title: state.title };
+          if (!presentationValuesEqual(expected, result.snapshot)) {
+            // The user may keep typing while the server merges this save. A conflict
+            // with those newer keystrokes must also stop editing, not merely autosave.
+            const rebased = mergePresentation(state, latest.current.canvas, result.snapshot);
+            if (rebased.conflicts.length) {
+              setConflict(true); dispatch({ type: "failed" }); setStatus("error");
+              toast.error(t("presentations.saveConflict")); return false;
+            }
+            dispatch({ type: "remote", base: state, snapshot: result.snapshot });
+            setStatus("saved"); return true;
+          }
+        }
         lastPersisted.current = state;
         dispatch({
           type: "saved",
@@ -556,7 +582,7 @@ function Editor({
     const next = (inFlight.current ?? Promise.resolve(true)).then(write, write);
     inFlight.current = next;
     return next;
-  }, [presentation.id, sessionId, t]);
+  }, [presentation, sessionId, t]);
 
   /** Writes whatever is on the canvas right now, waiting for a save already in flight.
    * Used by every exit that would otherwise drop the pending debounce on the floor. Leaving
@@ -603,6 +629,7 @@ function Editor({
   // Edit lease: claim it on open, keep it warm while the tab lives, hand it back on exit.
   // A missed release is harmless — the lease expires on its own.
   useEffect(() => {
+    if (!canEdit) return;
     let disposed = false;
     const claim = (takeover = false) => {
       void requestEditLease(presentation.id, sessionId, takeover ? "takeover" : "acquire")
@@ -636,7 +663,31 @@ function Editor({
       // and can fail during partial rendering; the fixed endpoint is independent of it.
       void requestEditLease(presentation.id, sessionId, "release").catch(() => undefined);
     };
-  }, [presentation.id, sessionId]);
+  }, [presentation.id, sessionId, canEdit]);
+
+  useEffect(() => {
+    if (!presentation.coediting && canEdit) return;
+    let disposed = false;
+    let polling = false;
+    const poll = async () => {
+      if (polling || inFlight.current && latest.current.canvas.dirty || paused.current) return;
+      polling = true;
+      try {
+        const response = await fetch(`/api/wiki/presentations/${presentation.id}`, { cache: "no-store" });
+        if (!response.ok) { if (!disposed) setLockedBy(""); return; }
+        const remote = await response.json() as PresentationRecord;
+        if (disposed || remote.updatedAt === savedVersion.current) return;
+        if (remote.role !== presentation.role) { setLockedBy(""); return; }
+        const merged = mergePresentation(baseSnapshot.current, latest.current.canvas, remote);
+        if (merged.conflicts.length) { setConflict(true); return; }
+        dispatch({ type: "remote", base: baseSnapshot.current, snapshot: remote });
+        baseSnapshot.current = remote; savedVersion.current = remote.updatedAt;
+      } catch { /* Offline edits remain local and retry through normal save recovery. */ }
+      finally { polling = false; }
+    };
+    const timer = setInterval(() => void poll(), 2000);
+    return () => { disposed = true; clearInterval(timer); };
+  }, [presentation.id, presentation.coediting, presentation.role, canEdit]);
 
   useEffect(() => {
     const warn = (event: BeforeUnloadEvent) => {
@@ -652,7 +703,15 @@ function Editor({
 
   const updateElement = useCallback(
     (id: string, update: (element: PresentationElement) => PresentationElement) => {
-      commitElements((current) => current.map((element) => (element.id === id ? update(element) : element)));
+      commitElements((current) => {
+        const source = current.find((element) => element.id === id);
+        if (!source || isPresentationElementLocked(current, id)) return current;
+        const next = update(source);
+        let result = current;
+        if (next.rotation !== source.rotation) result = rotateElements(result, new Set([id]), next.rotation - source.rotation, { x: source.x + source.width / 2, y: source.y + source.height / 2 });
+        if (["x", "y", "width", "height"].some((key) => next[key as "x"] !== source[key as "x"])) result = applyGeometryChanges(result, [{ id, x: next.x, y: next.y, width: next.width, height: next.height }], 0).elements;
+        return result.map((element) => element.id === id ? { ...next, x: element.x, y: element.y, width: element.width, height: element.height, rotation: element.rotation } : element);
+      });
     },
     [commitElements],
   );
@@ -670,7 +729,7 @@ function Editor({
 
   const onTextChange = useCallback(
     (id: string, text: string) => {
-      updateElement(id, (element) => (element.type === "text" ? { ...element, content: { ...element.content, text } } : element));
+      updateElement(id, (element) => (element.type === "text" ? { ...element, content: { ...element.content, text, runs: undefined } } : element));
     },
     [updateElement],
   );
@@ -692,7 +751,8 @@ function Editor({
         setSelectedIds((current) => {
           const next = new Set(current);
           for (const change of selectChanges) {
-            if (change.selected) next.add(change.id);
+            const group = presentationAncestors(elements, change.id).findLast((element) => element.type === "frame" && element.content.isGroup);
+            if (change.selected) next.add(group?.id ?? change.id);
             else next.delete(change.id);
           }
           if (next.size === current.length && current.every((id) => next.has(id))) return current;
@@ -704,7 +764,10 @@ function Editor({
       let gesture = false;
       for (const change of changes) {
         if (change.type === "position" && change.position) {
-          geometry.set(change.id, { ...geometry.get(change.id), id: change.id, x: change.position.x, y: change.position.y });
+          const element = elements.find((element) => element.id === change.id);
+          const group = presentationAncestors(elements, change.id).findLast((element) => element.type === "frame" && element.content.isGroup);
+          if (group && element) geometry.set(group.id, { id: group.id, x: group.x + change.position.x - element.x, y: group.y + change.position.y - element.y });
+          else geometry.set(change.id, { ...geometry.get(change.id), id: change.id, x: change.position.x, y: change.position.y });
           if (change.dragging) gesture = true;
         } else if (change.type === "dimensions" && change.dimensions && (change.resizing || change.setAttributes)) {
           // React Flow also reports the dimensions it measured on mount; the reducer drops
@@ -723,7 +786,7 @@ function Editor({
         gesture,
       });
     },
-    [reactFlow, disabled],
+    [reactFlow, disabled, elements],
   );
 
   const rotateSelection = useCallback(
@@ -761,7 +824,7 @@ function Editor({
   const deleteSelection = useCallback(
     (ids: string[]) => {
       if (!ids.length) return;
-      const removed = new Set(ids);
+      const removed = presentationDescendants(elements, new Set(ids.filter((id) => !isPresentationElementLocked(elements, id))));
       // One action, so deleting an element and the stops that pointed at it is one undo.
       dispatch({
         type: "edit",
@@ -774,21 +837,20 @@ function Editor({
       });
       setSelectedIds((current) => current.filter((id) => !removed.has(id)));
     },
-    [],
+    [elements],
   );
 
   const duplicateSelection = useCallback(
     (ids: string[]) => {
       if (!ids.length) return;
-      if (elements.length + ids.length > 500) { toast.error(t("presentations.elementLimit")); return; }
+      const included = presentationDescendants(elements, new Set(ids));
+      if (elements.length + included.size > 500) { toast.error(t("presentations.elementLimit")); return; }
       // Ids are minted here rather than inside the update, which has to stay pure.
-      const copies = ids.map((id) => ({ id, copyId: createId() }));
-      commitElements((current) =>
-        copies.reduce((elements, copy) => duplicateElement(elements, copy.id, copy.copyId).elements, current),
-      );
-      setSelectedIds(copies.map((copy) => copy.copyId));
+      const copies = new Map([...included].map((id) => [id, createId()]));
+      commitElements((current) => duplicatePresentationTree(current, new Set(ids), copies));
+      setSelectedIds(ids.map((id) => copies.get(id)!));
     },
-    [commitElements, elements.length, t],
+    [commitElements, elements, t],
   );
 
   const reorderSelected = useCallback(
@@ -857,6 +919,26 @@ function Editor({
       content: { shape: "rect", fill: "", stroke: "", strokeWidth: 2, opacity: 1 },
     });
   }, [addElement, viewportCenter]);
+
+  const addStudioElement = (type: "chart" | "icon") => {
+    const { x, y } = viewportCenter();
+    const base = { id: createId(), x: x - 240, y: y - 150, width: 480, height: 300, rotation: 0 };
+    if (type === "chart") addElement({ ...base, type, content: { title: studio("chartTitle"), kind: "bar", data: [{ label: "A", value: 20 }, { label: "B", value: 40 }, { label: "C", value: 30 }] } });
+    else addElement({ ...base, width: 120, height: 120, type, content: { name: "target", color: "#6366f1" } });
+  };
+
+  const uploadMedia = async (file: File) => {
+    if (disabled || uploading) return;
+    setUploading(true);
+    try {
+      const body = new FormData(); body.append("file", file); body.append("entityType", "wikiPresentation"); body.append("entityId", presentation.id);
+      const response = await fetch("/api/files", { method: "POST", body });
+      const payload = await response.json();
+      if (!response.ok || !payload.id) throw new Error("Upload failed");
+      const { x, y } = viewportCenter();
+      addElement({ id: createId(), type: file.type.startsWith("video/") ? "video" : "audio", x: x - 240, y: y - 135, width: 480, height: file.type.startsWith("video/") ? 270 : 80, rotation: 0, content: { attachmentId: payload.id, title: file.name } });
+    } catch { toast.error(studio("uploadFailed")); } finally { setUploading(false); }
+  };
 
   const uploadImage = useCallback(
     async (file: File) => {
@@ -1217,6 +1299,10 @@ function Editor({
         <div role="alert" className="flex flex-wrap items-center gap-2 border-b bg-destructive/10 px-3 py-2 text-sm">
           <TriangleAlert className="size-4 shrink-0" />
           <span className="flex-1">{t("presentations.saveConflict")}</span>
+          <Button type="button" variant="outline" size="sm" onClick={() => {
+            const url = URL.createObjectURL(new Blob([JSON.stringify(latest.current.canvas, null, 2)], { type: "application/json" }));
+            const link = document.createElement("a"); link.href = url; link.download = "presentation-draft.json"; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+          }}>{studio("downloadDraft")}</Button>
           <Button type="button" variant="outline" size="sm" onClick={() => window.location.reload()}>{t("presentations.reloadLatest")}</Button>
         </div>
       )}
@@ -1224,7 +1310,7 @@ function Editor({
       {!conflict && readOnly && (
         <div className="flex items-center gap-2 border-b border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100">
           <Lock className="size-4 shrink-0" />
-          <span>{!leaseReady && lockedBy === null ? t("presentations.checkingAccess") : lockedBy ? t("presentations.lockedBy", { name: lockedBy }) : t("presentations.locked")}</span>
+          <span>{!canEdit ? studio("viewOnly") : !leaseReady && lockedBy === null ? t("presentations.checkingAccess") : lockedBy ? t("presentations.lockedBy", { name: lockedBy }) : t("presentations.locked")}</span>
         </div>
       )}
 
@@ -1258,7 +1344,7 @@ function Editor({
             <Controls position="bottom-left" showInteractive={false} />
             {elements.length > 3 && <MiniMap className="!hidden sm:!block" position="bottom-right" pannable zoomable maskColor="rgb(15 23 42 / 0.08)" />}
             <SnapGuides guides={guides} />
-            {!disabled && selectionBounds && (
+            {!disabled && selectionBounds && !selection.some((element) => isPresentationElementLocked(elements, element.id)) && (
               <SelectionOverlay
                 bounds={selectionBounds}
                 // One element resizes with React Flow's own handles; a group needs its own.
@@ -1282,7 +1368,15 @@ function Editor({
         </div>
 
         <aside id="presentation-properties" aria-label={t("presentations.showPanel")} className={cn("max-h-[45%] w-full shrink-0 overflow-y-auto border-t bg-background p-3 lg:block lg:max-h-none lg:w-80 lg:border-t-0 lg:border-l", panelOpen ? "block" : "hidden")}>
+          <PresentationLibraryPanel id={presentation.id} selectedId={selected?.id} canEdit={canEdit && !disabled} onSelect={(id) => { setSelectedIds([id]); const element = elements.find((element) => element.id === id); if (element) flyTo(element); }} flush={flush}
+            onTheme={(theme) => { commitElements((current) => current.map((element) => element.type === "text" ? { ...element, content: { ...element.content, color: theme.foreground, font: theme.font } } : element.type === "frame" ? { ...element, content: { ...element.content, color: theme.accent } } : element)); dispatch({ type: "touch", background: theme.background }); }}
+            onTemplate={(snapshot) => { dispatch({ type: "edit", at: Date.now(), elements: () => snapshot.elements, steps: () => snapshot.steps }); dispatch({ type: "touch", background: snapshot.background, settings: snapshot.settings }); setSelectedIds([]); }}
+            onAsset={(attachmentId, alt) => { const { x, y } = viewportCenter(); addElement({ id: createId(), type: "image", x, y, width: 360, height: 240, rotation: 0, content: { attachmentId, alt } }); }}
+            onIcon={(name) => { const { x, y } = viewportCenter(); addElement({ id: createId(), type: "icon", x, y, width: 100, height: 100, rotation: 0, content: { name, color: "#6366f1" } }); }} />
           <fieldset disabled={disabled} className="min-w-0">
+          <PresentationStudioInspector elements={elements} selectedIds={selectedIds} activeStep={activeStep}
+            onElements={commitElements} onSelect={setSelectedIds} onUpdate={(element) => updateElement(element.id, () => element)} onSteps={commitSteps}
+            onAdd={addStudioElement} onUpload={(file) => void uploadMedia(file)} disabled={disabled || uploading} />
           <h2 className="text-xs font-semibold tracking-wide uppercase">{t("presentations.path")}</h2>
           <p className="mt-1 text-xs text-muted-foreground">{t("presentations.pathDescription")}</p>
           <Button type="button" variant="outline" size="sm" className="mt-2 w-full" disabled={!selected || disabled || steps.length >= 500} onClick={addStep}>
@@ -1304,7 +1398,7 @@ function Editor({
                         active={activeStepId === step.id}
                         missing={!target}
                         readOnly={readOnly}
-                        label={target ? stepLabel(target, index) : t("presentations.missingStep")}
+                        label={`${step.action && step.action !== "camera" ? `${studio(step.action)}: ` : ""}${target ? stepLabel(target, index) : t("presentations.missingStep")}`}
                         removeLabel={t("presentations.removeStep")}
                         reorderLabel={t("presentations.reorderStep", { number: index + 1 })}
                         onSelect={() => {

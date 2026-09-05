@@ -5,6 +5,7 @@ import { z } from "zod";
 import { db } from "@/db";
 import { wikiPresentationLiveSessions, wikiPresentations } from "@/db/schema";
 import { requireUserOrThrow } from "@/lib/auth";
+import { requirePresentationAccess } from "./presentation-access";
 import {
   generateLiveSessionCode,
   liveStepIndexSchema,
@@ -29,6 +30,7 @@ export async function startPresentationLiveSession(input: { presentationId: stri
     .where(eq(wikiPresentations.id, data.presentationId))
     .get();
   if (!presentation) throw new Error("Presentation not found");
+  requirePresentationAccess(data.presentationId, currentUser, "edit");
 
   const now = new Date();
   // ponytail: retry on the unique code index instead of locking. 29^6 codes against a
@@ -74,6 +76,7 @@ export async function publishPresentationLivePosition(input: {
   const data = z
     .object({ presentationId: idSchema, code: liveSessionCodeSchema, stepIndex: liveStepIndexSchema })
     .parse(input);
+  requirePresentationAccess(data.presentationId, currentUser, "edit");
   const updated = db
     .update(wikiPresentationLiveSessions)
     .set({ stepIndex: data.stepIndex, heartbeatAt: new Date() })

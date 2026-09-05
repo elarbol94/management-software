@@ -12,7 +12,7 @@ import {
   wikiPresentations,
 } from "@/db/schema";
 import { requireUserOrThrow } from "@/lib/auth";
-import { deleteAttachmentsFor } from "@/lib/files";
+import { deleteAttachmentsFor, getAttachment } from "@/lib/files";
 import {
   PRESENTATION_LEASE_TIMEOUT_MS,
   defaultPresentationSettings,
@@ -26,7 +26,10 @@ import {
   shouldSnapshotRevision,
 } from "./lib/presentation";
 import { presentationFromWikiPage } from "./lib/presentation-from-wiki";
-import { presentationTemplateIds, presentationTemplates } from "./lib/presentation-templates";
+import { presentationTemplateIds, presentationTemplates, localizedPresentationTemplate } from "./lib/presentation-templates";
+import { requirePresentationAccess, presentationAccessSettings } from "./presentation-access";
+import { mergePresentation } from "./lib/presentation-merge";
+import { presentationSnapshotSchema } from "./lib/presentation";
 
 const idSchema = z.string().min(1).max(64);
 const titleSchema = z.string().trim().min(1).max(200);
@@ -38,13 +41,13 @@ function revalidatePresentations(id?: string) {
   if (id) revalidatePath(`/wiki/presentations/${id}`);
 }
 
-export async function createPresentation(input: { title: string; templateId?: string }) {
+export async function createPresentation(input: { title: string; templateId?: string; locale?: string }) {
   const currentUser = await requireUserOrThrow();
-  const { title, templateId } = z
-    .object({ title: titleSchema, templateId: templateIdSchema.optional() })
+  const { title, templateId, locale } = z
+    .object({ title: titleSchema, templateId: templateIdSchema.optional(), locale: z.enum(["de", "en"]).default("de") })
     .parse(input);
   // templateId is validated against the enum above, so this is always a known template.
-  const template = templateId ? presentationTemplates[templateId] : null;
+  const template = templateId ? localizedPresentationTemplate(presentationTemplates[templateId], locale) : null;
   const row = db
     .insert(wikiPresentations)
     .values({
@@ -96,6 +99,7 @@ export async function createPresentationFromWikiPage(input: { pageId: string; in
 export async function renamePresentation(input: { id: string; title: string; sessionId?: string }) {
   const currentUser = await requireUserOrThrow();
   const data = z.object({ id: idSchema, title: titleSchema, sessionId: sessionSchema.optional() }).parse(input);
+  requirePresentationAccess(data.id, currentUser, "edit");
   if (activeLease(data.id, { sessionId: data.sessionId ?? "", userId: currentUser.id })) throw new Error("Presentation is locked");
   db.update(wikiPresentations)
     .set({ title: data.title, updatedBy: currentUser.id, updatedAt: new Date() })
@@ -111,6 +115,7 @@ export async function renamePresentation(input: { id: string; title: string; ses
  * the client, so a takeover can only ever reclaim the caller's own lease.
  */
 function activeLease(presentationId: string, claim: { sessionId: string; userId: string; takeover?: boolean }) {
+  if (presentationAccessSettings(presentationId)?.coediting) return null;
   const lease = db
     .select({
       sessionId: wikiPresentationEditLeases.sessionId,
@@ -133,6 +138,8 @@ function activeLease(presentationId: string, claim: { sessionId: string; userId:
 export async function acquirePresentationEditLease(input: { id: string; sessionId: string; takeover?: boolean }) {
   const currentUser = await requireUserOrThrow();
   const data = z.object({ id: idSchema, sessionId: sessionSchema, takeover: z.boolean().optional() }).parse(input);
+  requirePresentationAccess(data.id, currentUser, "edit");
+  if (presentationAccessSettings(data.id)?.coediting) return { editable: true as const, expiresAt: Date.now() + PRESENTATION_LEASE_TIMEOUT_MS };
   const holder = activeLease(data.id, { sessionId: data.sessionId, userId: currentUser.id, takeover: data.takeover });
   if (holder) return { editable: false as const, holderName: holder.holderName ?? "" };
   const now = new Date();
@@ -149,6 +156,8 @@ export async function acquirePresentationEditLease(input: { id: string; sessionI
 export async function heartbeatPresentationEditLease(input: { id: string; sessionId: string }) {
   const currentUser = await requireUserOrThrow();
   const data = z.object({ id: idSchema, sessionId: sessionSchema }).parse(input);
+  requirePresentationAccess(data.id, currentUser, "edit");
+  if (presentationAccessSettings(data.id)?.coediting) return { editable: true };
   const updated = db
     .update(wikiPresentationEditLeases)
     .set({ heartbeatAt: new Date() })
@@ -214,6 +223,7 @@ export async function savePresentation(input: {
   settings?: unknown;
   title?: string;
   expectedUpdatedAt?: number;
+  base?: unknown;
 }) {
   const currentUser = await requireUserOrThrow();
   const data = z
@@ -226,17 +236,39 @@ export async function savePresentation(input: {
       settings: presentationSettingsSchema.default(defaultPresentationSettings),
       title: titleSchema.optional(),
       expectedUpdatedAt: z.number().int().nonnegative().optional(),
+      base: presentationSnapshotSchema.optional(),
     })
     .parse(input);
   const current = db.select().from(wikiPresentations).where(eq(wikiPresentations.id, data.id)).get();
   if (!current) throw new Error("Presentation not found");
+  requirePresentationAccess(data.id, currentUser, "edit");
   // No takeover on save: a stale tab whose lease was taken over must stop writing.
+  if (presentationAccessSettings(data.id)?.coediting && (!data.base || data.expectedUpdatedAt === undefined)) return { locked: false as const, conflict: true as const };
   const holder = activeLease(data.id, { sessionId: data.sessionId ?? "", userId: currentUser.id });
   if (holder) return { locked: true as const, holderName: holder.holderName ?? "" };
   if (data.expectedUpdatedAt !== undefined && data.expectedUpdatedAt !== current.updatedAt.getTime()) {
-    return { locked: false as const, conflict: true as const };
+    if (!presentationAccessSettings(data.id)?.coediting || !data.base) return { locked: false as const, conflict: true as const };
+    const remote = { ...parsePresentationCanvas(current.elementsJson), steps: parsePresentationSteps(current.pathJson), title: current.title };
+    const result = mergePresentation(data.base, { ...data, title: data.title ?? current.title }, remote);
+    if (result.conflicts.length) return { locked: false as const, conflict: true as const, conflicts: result.conflicts, remote };
+    const merged = presentationSnapshotSchema.safeParse(result.snapshot);
+    if (!merged.success) return { locked: false as const, conflict: true as const };
+    Object.assign(data, merged.data);
   }
   const savedAt = Math.max(Date.now(), current.updatedAt.getTime() + 1);
+
+  // New media must belong to this deck or an explicitly shared wiki/library source.
+  // Do not let a guessed attachment id publish another presentation's private files.
+  // Preserve legacy references (including missing uploads) so they can still be edited.
+  const previousMedia = new Set(parsePresentationCanvas(current.elementsJson).elements.flatMap((element) =>
+    "attachmentId" in element.content ? [`${element.type}:${element.content.attachmentId}`] : []));
+  for (const element of data.elements) {
+    if (!("attachmentId" in element.content) || previousMedia.has(`${element.type}:${element.content.attachmentId}`)) continue;
+    const attachment = getAttachment(element.content.attachmentId);
+    const allowedSource = attachment && (attachment.entityType === "wikiPage" || attachment.entityType === "wikiPresentationLibrary" ||
+      (attachment.entityType === "wikiPresentation" && attachment.entityId === data.id));
+    if (!allowedSource || !attachment.mimeType.startsWith(`${element.type}/`)) throw new Error("Presentation media unavailable");
+  }
 
   db.transaction(() => {
     snapshotPresentation(current, currentUser.id);
@@ -255,7 +287,8 @@ export async function savePresentation(input: {
       .run();
   });
   revalidatePresentations(data.id);
-  return { locked: false as const, conflict: false as const, savedAt };
+  return { locked: false as const, conflict: false as const, savedAt,
+    snapshot: { elements: data.elements, steps: normalizeSteps(data.steps, data.elements), background: data.background, settings: data.settings, title: data.title ?? current.title } };
 }
 
 /** Restoring is itself an edit, so the state being replaced is snapshotted first. */
@@ -276,9 +309,11 @@ export async function restorePresentationRevision(input: { revisionId: string; s
     .where(eq(wikiPresentations.id, revision.presentationId))
     .get();
   if (!current) throw new Error("Presentation not found");
+  requirePresentationAccess(current.id, currentUser, "edit");
 
   if (activeLease(current.id, { sessionId: sessionId ?? "", userId: currentUser.id })) throw new Error("Presentation is locked");
   if (expectedUpdatedAt !== undefined && expectedUpdatedAt !== current.updatedAt.getTime()) throw new Error("Presentation changed");
+  if (presentationAccessSettings(current.id)?.coediting && expectedUpdatedAt === undefined) throw new Error("Presentation changed");
   const savedAt = Math.max(Date.now(), current.updatedAt.getTime() + 1);
 
   const canvas = parsePresentationCanvas(revision.elementsJson);
@@ -301,8 +336,9 @@ export async function restorePresentationRevision(input: { revisionId: string; s
 }
 
 export async function deletePresentation(input: { id: string }) {
-  await requireUserOrThrow();
+  const currentUser = await requireUserOrThrow();
   const { id } = z.object({ id: idSchema }).parse(input);
+  requirePresentationAccess(id, currentUser, "owner");
   db.delete(wikiPresentations).where(eq(wikiPresentations.id, id)).run();
   // The canvas is gone, so its uploaded images are unreachable — remove them with it.
   deleteAttachmentsFor("wikiPresentation", id);

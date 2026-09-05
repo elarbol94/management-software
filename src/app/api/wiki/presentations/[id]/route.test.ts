@@ -2,6 +2,8 @@ import { beforeEach, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/auth", () => ({ getSession: vi.fn() }));
 vi.mock("@/modules/wiki/presentation-actions", () => ({ savePresentation: vi.fn() }));
+vi.mock("@/modules/wiki/presentation-queries", () => ({ getPresentation: vi.fn() }));
+vi.mock("@/modules/wiki/presentation-access", () => ({ PresentationAccessError: class extends Error {} }));
 
 import { getSession } from "@/lib/auth";
 import { savePresentation } from "@/modules/wiki/presentation-actions";
@@ -16,7 +18,7 @@ const request = (body: unknown = data, headers: Record<string, string> = {}) => 
 beforeEach(() => {
   vi.resetAllMocks();
   vi.mocked(getSession).mockResolvedValue({ user: { id: "author" } } as Awaited<ReturnType<typeof getSession>>);
-  vi.mocked(savePresentation).mockResolvedValue({ locked: false, conflict: false, savedAt: 124 });
+  vi.mocked(savePresentation).mockResolvedValue({ locked: false, conflict: false, savedAt: 124, snapshot: { elements: [], steps: [], background: "", title: "Test", settings: { defaultStepDurationMs: 4000, cameraTransitionMs: 700, cameraEasing: "ease-in-out", loop: false } } });
 });
 
 it("requires authentication and rejects cross-site requests", async () => {

@@ -2,6 +2,40 @@ import { createId } from "@paralleldrive/cuid2";
 import { index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 import { user } from "@/db/core-schema";
 
+// Missing access rows preserve the original internal-workspace policy for old decks.
+export const wikiPresentationAccess = sqliteTable("wiki_presentation_access", {
+  presentationId: text("presentation_id").primaryKey().references(() => wikiPresentations.id, { onDelete: "cascade" }),
+  restricted: integer("restricted", { mode: "boolean" }).notNull().default(false),
+  coediting: integer("coediting", { mode: "boolean" }).notNull().default(false),
+  publicTokenHash: text("public_token_hash").unique(),
+});
+
+export const wikiPresentationMembers = sqliteTable("wiki_presentation_members", {
+  id: text("id").primaryKey().$defaultFn(() => createId()),
+  presentationId: text("presentation_id").notNull().references(() => wikiPresentations.id, { onDelete: "cascade" }),
+  userId: text("user_id").notNull().references(() => user.id, { onDelete: "cascade" }),
+  role: text("role", { enum: ["view", "comment", "edit"] }).notNull(),
+}, (table) => [uniqueIndex("wiki_presentation_member_idx").on(table.presentationId, table.userId)]);
+
+export const wikiPresentationComments = sqliteTable("wiki_presentation_comments", {
+  id: text("id").primaryKey().$defaultFn(() => createId()),
+  presentationId: text("presentation_id").notNull().references(() => wikiPresentations.id, { onDelete: "cascade" }),
+  elementId: text("element_id"),
+  body: text("body").notNull(),
+  authorId: text("author_id").notNull().references(() => user.id),
+  resolved: integer("resolved", { mode: "boolean" }).notNull().default(false),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+}, (table) => [index("wiki_presentation_comments_idx").on(table.presentationId, table.createdAt)]);
+
+export const wikiPresentationLibrary = sqliteTable("wiki_presentation_library", {
+  id: text("id").primaryKey().$defaultFn(() => createId()),
+  name: text("name").notNull(),
+  kind: text("kind", { enum: ["theme", "template"] }).notNull(),
+  documentJson: text("document_json").notNull(),
+  createdBy: text("created_by").notNull().references(() => user.id),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+});
+
 /**
  * One row is one whole presentation: the canvas elements and the ordered path across
  * them. Both are JSON because nothing outside the editor queries individual elements,

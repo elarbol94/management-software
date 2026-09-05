@@ -22,6 +22,12 @@ const ALLOWED_MIME: Record<string, string> = {
   "image/webp": ".webp",
   "image/svg+xml": ".svg",
   "image/heic": ".heic",
+  "video/mp4": ".mp4",
+  "video/webm": ".webm",
+  "audio/mpeg": ".mp3",
+  "audio/mp4": ".m4a",
+  "audio/ogg": ".ogg",
+  "audio/wav": ".wav",
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
   "text/plain": ".txt",
@@ -57,6 +63,16 @@ export async function saveAttachment(options: {
   }
 
   const buffer = Buffer.from(await file.arrayBuffer());
+  // Media is served inline: reject disguised HTML and unsupported containers.
+  if (/^(audio|video)\//.test(file.type)) {
+    const header = buffer.subarray(0, 16);
+    const valid = file.type.endsWith("mp4") ? header.subarray(4, 8).toString() === "ftyp"
+      : file.type === "video/webm" ? header.subarray(0, 4).equals(Buffer.from([0x1a, 0x45, 0xdf, 0xa3]))
+      : file.type === "audio/ogg" ? header.subarray(0, 4).toString() === "OggS"
+      : file.type === "audio/wav" ? header.subarray(0, 4).toString() === "RIFF" && header.subarray(8, 12).toString() === "WAVE"
+      : file.type === "audio/mpeg" ? header.subarray(0, 3).toString() === "ID3" || (header[0] === 0xff && (header[1] & 0xe0) === 0xe0) : false;
+    if (!valid) throw new UploadError("The media content does not match its file type");
+  }
   if (file.type === "image/svg+xml") {
     let svgBytes: Uint8Array = buffer;
     try {

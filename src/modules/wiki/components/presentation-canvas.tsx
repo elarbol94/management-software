@@ -1,9 +1,10 @@
 "use client";
 
-import { useState, type CSSProperties } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { NodeResizer, type Node, type NodeProps } from "@xyflow/react";
 import { cn } from "@/lib/utils";
-import { PRESENTATION_MIN_ELEMENT_SIZE, type PresentationElement } from "../lib/presentation";
+import { PRESENTATION_MIN_ELEMENT_SIZE, isPresentationElementLocked, type PresentationElement } from "../lib/presentation";
+import { PresentationContent } from "./presentation-content";
 
 /**
  * The node types are shared by the editor and the player: what a reader sees while
@@ -16,10 +17,12 @@ export type PresentationNodeData = {
   /** False while several elements are selected: the group is resized as a whole instead. */
   resizable?: boolean;
   onTextChange?: (id: string, text: string) => void;
+  mediaUrl?: (id: string) => string;
+  hidden?: boolean;
   [key: string]: unknown;
 };
 
-export type PresentationNode = Node<PresentationNodeData, "text" | "image" | "frame" | "shape">;
+export type PresentationNode = Node<PresentationNodeData, PresentationElement["type"]>;
 
 function Resizer({ selected, editable }: { selected: boolean; editable: boolean }) {
   if (!editable) return null;
@@ -43,6 +46,7 @@ function TextNode({ data, selected }: NodeProps<PresentationNode>) {
 
   return (
     <div
+      inert={data.hidden || undefined}
       className={cn(
         "h-full w-full",
         data.editable && "cursor-grab rounded-sm active:cursor-grabbing",
@@ -74,7 +78,7 @@ function TextNode({ data, selected }: NodeProps<PresentationNode>) {
           style={{ fontSize, fontWeight: bold ? 700 : 400, textAlign: align, color: color || undefined }}
           onDoubleClick={() => data.editable && setEditing(true)}
         >
-          {text}
+          <PresentationContent element={element} interactive={!data.editable} />
         </div>
       )}
     </div>
@@ -86,6 +90,7 @@ function ImageNode({ data, selected }: NodeProps<PresentationNode>) {
   if (element.type !== "image") return null;
   return (
     <div
+      inert={data.hidden || undefined}
       className={cn(
         "h-full w-full overflow-hidden",
         data.editable && "cursor-grab active:cursor-grabbing",
@@ -93,14 +98,7 @@ function ImageNode({ data, selected }: NodeProps<PresentationNode>) {
       )}
     >
       <Resizer selected={Boolean(selected)} editable={data.editable && data.resizable !== false} />
-      {/* Served by the existing attachment route, which enforces the session check. */}
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img
-        src={`/api/files/${element.content.attachmentId}`}
-        alt={element.content.alt}
-        draggable={false}
-        className="pointer-events-none h-full w-full object-contain"
-      />
+      <PresentationContent element={element} mediaUrl={data.mediaUrl} />
     </div>
   );
 }
@@ -111,6 +109,7 @@ function FrameNode({ data, selected }: NodeProps<PresentationNode>) {
   const { label, shape, color } = element.content;
   return (
     <div
+      inert={data.hidden || undefined}
       className={cn(
         "h-full w-full",
         data.editable && "cursor-grab active:cursor-grabbing",
@@ -157,6 +156,7 @@ function ShapeNode({ data, selected }: NodeProps<PresentationNode>) {
 
   return (
     <div
+      inert={data.hidden || undefined}
       className={cn(
         "h-full w-full text-foreground",
         data.editable && "cursor-grab active:cursor-grabbing",
@@ -212,7 +212,19 @@ function ShapeNode({ data, selected }: NodeProps<PresentationNode>) {
   );
 }
 
-export const presentationNodeTypes = { text: TextNode, image: ImageNode, frame: FrameNode, shape: ShapeNode };
+function ContentNode({ data, selected }: NodeProps<PresentationNode>) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (data.hidden) ref.current?.querySelectorAll("video,audio").forEach((media) => (media as HTMLMediaElement).pause());
+  }, [data.hidden]);
+  return <div ref={ref} inert={data.hidden || undefined} className={cn("h-full w-full", data.editable && selected && "ring-2 ring-indigo-500/60")}>
+    <Resizer selected={Boolean(selected)} editable={data.editable && data.resizable !== false} />
+    <div className={data.editable ? "pointer-events-none h-full w-full" : "nodrag nopan nowheel h-full w-full"}>
+      <PresentationContent element={data.element} mediaUrl={data.mediaUrl} interactive={!data.editable} />
+    </div>
+  </div>;
+}
+export const presentationNodeTypes = { text: TextNode, image: ImageNode, frame: FrameNode, shape: ShapeNode, video: ContentNode, audio: ContentNode, chart: ContentNode, icon: ContentNode };
 
 /**
  * Frames sit behind everything else so a text block placed inside one stays grabbable.
@@ -230,6 +242,9 @@ export function elementsToNodes(
     onTextChange?: (id: string, text: string) => void;
     /** Ids currently hidden so they can fade in — the player's step-arrival entrance. */
     enteringIds?: Set<string>;
+    hiddenIds?: Set<string>;
+    animationMs?: number;
+    mediaUrl?: (id: string) => string;
   },
 ): PresentationNode[] {
   return elements.map((element, index) => {
@@ -241,7 +256,12 @@ export function elementsToNodes(
       style.transformOrigin = "center center";
     }
     if (element.background) style.backgroundColor = element.background;
-    if (options.enteringIds?.has(element.id)) {
+    if (options.hiddenIds) {
+      style.opacity = options.hiddenIds.has(element.id) ? 0 : 1;
+      style.pointerEvents = options.hiddenIds.has(element.id) ? "none" : undefined;
+      style.transition = `opacity ${options.animationMs ?? 300}ms ease`;
+    }
+    if (options.enteringIds?.has(element.id) && !options.hiddenIds?.has(element.id)) {
       // Fixed, subtle fade on step arrival — deliberately not a per-element setting.
       // A keyframe animation (not a state-driven transition) plays once whenever this
       // element newly becomes part of the arriving step.
@@ -253,18 +273,20 @@ export function elementsToNodes(
       position: { x: element.x, y: element.y },
       width: element.width,
       height: element.height,
-      selected: options.editable ? Boolean(options.selectedIds?.has(element.id)) : false,
-      draggable: options.editable,
-      selectable: options.editable,
+      selected: Boolean(options.selectedIds?.has(element.id)),
+      draggable: options.editable && !isPresentationElementLocked(elements, element.id),
+      selectable: options.selectedIds !== undefined,
       connectable: false,
-      deletable: options.editable,
+      deletable: options.editable && !isPresentationElementLocked(elements, element.id),
       zIndex: (element.type === "frame" ? 0 : FRONT_BAND) + index,
       style: Object.keys(style).length ? style : undefined,
       data: {
         element,
-        editable: options.editable,
+        editable: options.editable && !isPresentationElementLocked(elements, element.id),
         resizable: options.selectedIds?.size === 1,
         onTextChange: options.onTextChange,
+        mediaUrl: options.mediaUrl,
+        hidden: options.hiddenIds?.has(element.id),
       },
     };
   });

@@ -11,7 +11,7 @@ import type {
  * a canvas someone else arranged first. No separate rendering path needed.
  */
 
-export const presentationTemplateIds = ["timeline", "hub", "pitch", "mindmap"] as const;
+export const presentationTemplateIds = ["timeline", "hub", "pitch", "mindmap", "roadmap", "workshop", "report", "demo", "portfolio", "lesson"] as const;
 export type PresentationTemplateId = (typeof presentationTemplateIds)[number];
 
 export type PresentationTemplate = {
@@ -109,9 +109,51 @@ const mindmap: PresentationTemplate = (() => {
   };
 })();
 
+function structuredTemplate(id: PresentationTemplateId, layout: "grid" | "journey" | "nested", count: number): PresentationTemplate {
+  const overview = frame(`${id}-overview`, -60, -100, layout === "journey" ? 1100 * count : 2200, layout === "nested" ? 1500 : 1100, "", "rect", "#6366f1");
+  const elements: PresentationElement[] = [overview];
+  const steps = [step(`${id}-start`, overview.id)];
+  for (let i = 0; i < count; i++) {
+    const x = layout === "journey" ? i * 1050 : (i % 2) * 1050;
+    const y = layout === "journey" ? (i % 2) * 500 : layout === "nested" ? Math.floor(i / 2) * 450 : Math.floor(i / 2) * 500;
+    const section = { ...frame(`${id}-frame-${i}`, x, y, 900, 360, `${i + 1}`, "rect", i % 2 ? "#0d9488" : "#6366f1"), parentId: overview.id };
+    elements.push(section, { ...text(`${id}-text-${i}`, x + 50, y + 50, 800, 80, `${i + 1}`, 56, true), parentId: section.id });
+    steps.push(step(`${id}-step-${i}`, section.id));
+    if (layout === "nested") {
+      const detail = { ...frame(`${id}-detail-${i}`, x + 520, y + 180, 300, 130, "", "circle", "#f59e0b"), parentId: section.id };
+      elements.push(detail); steps.push(step(`${id}-zoom-${i}`, detail.id));
+    }
+  }
+  return { id, elements, steps };
+}
+
 export const presentationTemplates: Record<PresentationTemplateId, PresentationTemplate> = {
   timeline,
   hub,
   pitch,
   mindmap,
+  roadmap: structuredTemplate("roadmap", "journey", 4),
+  workshop: structuredTemplate("workshop", "nested", 6),
+  report: structuredTemplate("report", "grid", 4),
+  demo: structuredTemplate("demo", "nested", 4),
+  portfolio: structuredTemplate("portfolio", "grid", 4),
+  lesson: structuredTemplate("lesson", "journey", 5),
 };
+
+/** Meaningful prompts in the author's language, not English-only starter content. */
+export function localizedPresentationTemplate(template: PresentationTemplate, locale: "de" | "en") {
+  const labels = {
+    de: { roadmap: ["Vision", "Heute", "Nächster Schritt", "Ausblick"], workshop: ["Ziel", "Kontext", "Ideen", "Diskussion", "Entscheidung", "Nächste Schritte"], report: ["Zusammenfassung", "Kennzahlen", "Erkenntnisse", "Maßnahmen"], demo: ["Problem", "Lösung", "Produkt", "Nächste Schritte"], portfolio: ["Profil", "Kompetenzen", "Projekte", "Kontakt"], lesson: ["Lernziel", "Grundlagen", "Beispiel", "Übung", "Rückblick"] },
+    en: { roadmap: ["Vision", "Today", "Next milestone", "Outlook"], workshop: ["Objective", "Context", "Ideas", "Discussion", "Decision", "Next steps"], report: ["Summary", "Key metrics", "Findings", "Actions"], demo: ["Problem", "Solution", "Product", "Next steps"], portfolio: ["Profile", "Expertise", "Projects", "Contact"], lesson: ["Learning goal", "Foundations", "Example", "Exercise", "Recap"] },
+  };
+  const names = labels[locale][template.id as keyof typeof labels.en];
+  if (!names) return template;
+  const elements = template.elements.map((element) => {
+    const match = element.id.match(/-(?:frame|text)-(\d+)$/);
+    const label = match ? names[Number(match[1])] : undefined;
+    if (!label) return element;
+    return element.type === "text" ? { ...element, content: { ...element.content, text: label, color: "#172033" } }
+      : element.type === "frame" ? { ...element, background: "#ffffff", content: { ...element.content, label } } : element;
+  });
+  return { ...template, elements };
+}
