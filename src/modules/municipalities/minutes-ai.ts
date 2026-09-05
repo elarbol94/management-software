@@ -101,7 +101,7 @@ export async function analyzeMunicipalityMinute(input: {
       headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
       signal: AbortSignal.timeout(180_000),
       body: JSON.stringify({
-        model: process.env.OPENAI_MINUTES_MODEL?.trim() || "gpt-5.6-luna",
+        model: process.env.OPENAI_MINUTES_MODEL?.trim() || "gpt-6-astra",
         store: false,
         safety_identifier: input.safetyIdentifier,
         reasoning: { effort: "low" },

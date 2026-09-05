@@ -172,7 +172,7 @@ export async function analyzeCalendarImportWithAi(input: {
       },
       signal: AbortSignal.timeout(12_000),
       body: JSON.stringify({
-        model: process.env.OPENAI_CALENDAR_MODEL?.trim() || "gpt-5.6-luna",
+        model: process.env.OPENAI_CALENDAR_MODEL?.trim() || "gpt-6-astra",
         store: false,
         safety_identifier: input.safetyIdentifier,
         reasoning: { effort: "low" },

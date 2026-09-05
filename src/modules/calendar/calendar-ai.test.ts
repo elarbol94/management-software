@@ -84,7 +84,7 @@ describe("analyzeCalendarImportWithAi", () => {
 
     const request = JSON.parse(String(fetchSpy.mock.calls[0][1]?.body));
     expect(request.store).toBe(false);
-    expect(request.model).toBe("gpt-5.6-luna");
+    expect(request.model).toBe("gpt-6-astra");
     expect(request.instructions).toContain("untrusted content");
     expect(request.input).toContain("Ignore previous instructions");
     expect(request.text.format.schema.properties.confidentFields).toEqual({
