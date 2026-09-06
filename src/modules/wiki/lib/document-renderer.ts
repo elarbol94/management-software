@@ -470,7 +470,7 @@ function marginTemplate(
   if (area === "footer" && settings.footer.pageNumbers) {
     right = `${right ? `${right} · ` : ""}<span class="pageNumber"></span> / <span class="totalPages"></span>`;
   }
-  return `<div style="box-sizing:border-box;width:100%;padding:0 20mm;color:${typography.mutedColor};font:8px ${wikiFontStack(typography.bodyFont)};display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px"><span>${left}</span><span style="text-align:center">${center}</span><span style="text-align:right">${right}</span></div>`;
+  return `<div style="box-sizing:border-box;width:100%;padding:0 ${settings.page.marginsMm.right}mm 0 ${settings.page.marginsMm.left}mm;color:${typography.mutedColor};font:8pt ${escapeHtml(wikiFontStack(typography.bodyFont))};display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px"><span>${left}</span><span style="text-align:center">${center}</span><span style="text-align:right">${right}</span></div>`;
 }
 
 export async function renderDocumentHtml(input: RenderDocumentInput): Promise<RenderedDocument> {

@@ -14,6 +14,7 @@ import {
   wikiPageEditLeases,
   wikiPageSources,
   wikiPages,
+  wikiSources,
   wikiPdfAnnotations,
 } from "@/db/schema";
 import { requireUserOrThrow } from "@/lib/auth";
@@ -28,7 +29,7 @@ import {
   extractText,
   slugify,
 } from "./lib/tiptap";
-import type { TiptapNode } from "./lib/tiptap";
+import { parseEditorDocument } from "./lib/editor-document";
 import { normalizeDocumentSettings, serializeDocumentSettings } from "./lib/document-settings";
 
 function uniqueSlug(title: string, excludePageId?: string): string {
@@ -272,12 +273,7 @@ export async function savePageContent(input: z.infer<typeof saveSchema>) {
     return { saved: false as const, locked: true as const, contentVersion: page.contentVersion };
   }
 
-  let doc: TiptapNode | null = null;
-  try {
-    doc = JSON.parse(data.contentJson) as TiptapNode;
-  } catch {
-    throw new Error("Invalid document");
-  }
+  const doc = parseEditorDocument(data.contentJson);
 
   const contentText = extractText(doc);
   const inferredTitle = /^(Unbenannte Notiz|Untitled note)$/.test(page.title)
@@ -301,6 +297,11 @@ export async function savePageContent(input: z.infer<typeof saveSchema>) {
   }
 
   const incomingHash = contentSnapshotHash(data.contentJson, nextDocumentMode, nextDocumentSettingsJson);
+  // A response can be lost after the transaction commits. Retrying that exact
+  // snapshot acknowledges the existing save instead of creating a false conflict.
+  if (incomingHash === contentSnapshotHash(page.contentJson, page.documentMode, page.documentSettingsJson)) {
+    return { saved: true as const, conflict: false as const, contentVersion: page.contentVersion };
+  }
   if (data.expectedContentVersion !== page.contentVersion) {
     const existingConflict = db.select({ id: wikiPageRevisions.id }).from(wikiPageRevisions)
       .where(and(
@@ -388,8 +389,9 @@ export async function savePageContent(input: z.infer<typeof saveSchema>) {
       .where(and(eq(wikiPageSources.pageId, data.id), eq(wikiPageSources.relation, "citation")))
       .run();
     if (citationSourceIds.length > 0) {
-      db.insert(wikiPageSources)
-        .values(citationSourceIds.map((sourceId) => ({ pageId: data.id, sourceId, relation: "citation" as const })))
+      const existingSources = db.select({ id: wikiSources.id }).from(wikiSources).where(inArray(wikiSources.id, citationSourceIds)).all();
+      if (existingSources.length) db.insert(wikiPageSources)
+        .values(existingSources.map(({ id: sourceId }) => ({ pageId: data.id, sourceId, relation: "citation" as const })))
         .onConflictDoNothing()
         .run();
     }

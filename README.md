@@ -47,6 +47,9 @@ Docker image already includes both tools and the German/English OCR packs.
 For wiki presentation editing, save recovery, live following and PDF export,
 see [docs/presentations.md](docs/presentations.md).
 
+For Wiki document saving, recovery, templates, Word import and validation,
+see [docs/wiki-documents.md](docs/wiki-documents.md).
+
 ### Schema changes
 
 Edit the module schema (`src/modules/*/schema.ts`), re-export it from

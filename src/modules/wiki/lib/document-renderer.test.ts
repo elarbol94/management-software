@@ -1,8 +1,21 @@
 import { describe, expect, it } from "vitest";
+import { DOMParser } from "@xmldom/xmldom";
 import { DEFAULT_DOCUMENT_SETTINGS } from "./document-settings";
 import { renderDocumentHtml, renderDocumentMarkdown } from "./document-renderer";
 import type { TiptapNode } from "./tiptap";
 import { normalizeWikiTypography } from "./wiki-typography";
+
+it("keeps PDF margin styles intact when font names contain quotes", async () => {
+  const rendered = await renderDocumentHtml({ title: "Readable header", doc: { type: "doc", content: [{ type: "paragraph" }] }, settings: DEFAULT_DOCUMENT_SETTINGS });
+  for (const template of [rendered.headerTemplate, rendered.footerTemplate]) {
+    const element = new DOMParser().parseFromString(template, "text/html").documentElement!;
+    const style = element.getAttribute("style");
+    expect(style).toContain('"Segoe UI"');
+    expect(style).toContain("font:8pt");
+    expect(style).toContain("display:grid");
+    expect(style).toContain("padding:0 20mm 0 24mm");
+  }
+});
 
 const doc: TiptapNode = {
   type: "doc",

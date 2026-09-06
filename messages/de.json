@@ -2171,6 +2171,10 @@
       }
     },
     "document": {
+      "recoveryUnavailable": "Die lokale Wiederherstellung ist nicht verfügbar. Lass diese Seite geöffnet, bis „Gespeichert“ angezeigt wird.",
+      "exportSaveFailed": "Das Dokument konnte vor dem Export nicht gespeichert werden. Bitte zuerst den Speicherfehler oder Konflikt beheben.",
+      "replaceWithStarterContent": "Text durch Vorlageninhalt ersetzen",
+      "templateFailed": "Die Vorlage konnte nicht angewendet oder gespeichert werden. Bitte erneut versuchen.",
       "toggle": "Dokumentmodus",
       "noteMode": "Notiz",
       "documentMode": "Dokument",

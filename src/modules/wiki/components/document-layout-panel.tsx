@@ -4,6 +4,7 @@ import { useEffect, useState, useTransition } from "react";
 import type { Editor } from "@tiptap/react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
+import { toast } from "sonner";
 import {
   AlertTriangle,
   BookOpen,
@@ -22,6 +23,7 @@ import { applyDocumentTemplate, savePageAsDocumentTemplate } from "../document-a
 import type { StoredDocumentTemplate } from "../document-queries";
 import {
   DOCUMENT_DIAGRAM_SIZE_MODES,
+  serializeDocumentSettings,
   type DocumentConstraint,
   type DocumentDiagramSizeMode,
   type DocumentPreflightIssue,
@@ -40,6 +42,8 @@ type Props = {
   editor: Editor;
   settings: DocumentSettingsV1;
   onSettingsChange: (settings: DocumentSettingsV1) => void;
+  onApplyTemplate: (settings: DocumentSettingsV1, contentJson: string | null) => void;
+  onExport: (format: "docx" | "pdf", inline?: boolean) => void;
   templates: StoredDocumentTemplate[];
   issues: DocumentPreflightIssue[];
   outline: OutlineItem[];
@@ -69,6 +73,8 @@ export function DocumentLayoutPanel({
   editor,
   settings,
   onSettingsChange,
+  onApplyTemplate,
+  onExport,
   templates,
   issues,
   outline,
@@ -84,6 +90,7 @@ export function DocumentLayoutPanel({
   const [templateId, setTemplateId] = useState(templates[0]?.id ?? "");
   const [templateName, setTemplateName] = useState("");
   const [includeContent, setIncludeContent] = useState(false);
+  const [applyStarterContent, setApplyStarterContent] = useState(false);
   const [constraintHeading, setConstraintHeading] = useState(outline[0]?.id ?? "");
   const [constraintLimit, setConstraintLimit] = useState("1000");
   const [referenceTarget, setReferenceTarget] = useState(outline[0]?.id ?? "");
@@ -166,37 +173,48 @@ export function DocumentLayoutPanel({
   }
 
   async function importDocx(file: File | undefined) {
-    if (!file) return;
+    if (!file || !editor.isEditable || docxStatus === "importing") return;
+    const originalDocument = editor.state.doc;
     setDocxStatus("importing");
     try {
       const form = new FormData(); form.set("file", file);
       const response = await fetch("/api/wiki/docx/import", { method: "POST", body: form });
       if (!response.ok) throw new Error("DOCX import failed");
       const result = await response.json() as { document: object };
+      // An import may finish after the author typed more or lost the edit lease.
+      if (!editor.isEditable || !editor.state.doc.eq(originalDocument)) throw new Error("Document changed during import");
       editor.commands.setContent(result.document);
       setDocxStatus("idle");
     } catch { setDocxStatus("error"); }
   }
 
   function applySelectedTemplate() {
-    if (!templateId) return;
+    if (!templateId || !editor.isEditable) return;
+    const originalDocument = editor.state.doc;
     startTransition(async () => {
-      await applyDocumentTemplate({ pageId, templateId, applyStarterContent: true });
-      location.reload();
+      try {
+        const result = await applyDocumentTemplate({ pageId, templateId, applyStarterContent });
+        if (!editor.isEditable || !editor.state.doc.eq(originalDocument)) throw new Error("Document changed");
+        onApplyTemplate(result.settings, result.contentJson);
+      } catch { toast.error(t("templateFailed")); }
     });
   }
 
   function saveTemplate() {
     if (!templateName.trim()) return;
     startTransition(async () => {
+      try {
       await savePageAsDocumentTemplate({
         pageId,
         name: templateName.trim(),
         description: "",
         includeContent,
+        contentJson: JSON.stringify(editor.getJSON()),
+        documentSettingsJson: serializeDocumentSettings(settings),
       });
       setTemplateName("");
       router.refresh();
+      } catch { toast.error(t("templateFailed")); }
     });
   }
 
@@ -420,13 +438,14 @@ export function DocumentLayoutPanel({
             <SelectTrigger className="h-8"><SelectValue /></SelectTrigger>
             <SelectContent>{templates.map((template) => <SelectItem key={template.id} value={template.id}>{template.name}</SelectItem>)}</SelectContent>
           </Select>
-          <Button type="button" size="sm" className="w-full" disabled={pending || !templateId} onClick={applySelectedTemplate}><FilePlus2 />{t("applyTemplate")}</Button>
+          <Toggle checked={applyStarterContent} onChange={setApplyStarterContent} label={t("replaceWithStarterContent")} />
+          <Button type="button" size="sm" className="w-full" disabled={pending || !templateId || !editor.isEditable} onClick={applySelectedTemplate}><FilePlus2 />{t("applyTemplate")}</Button>
           <label className="flex h-8 cursor-pointer items-center justify-center rounded-md border px-3 text-xs font-medium hover:bg-accent">
             <input type="file" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document" className="sr-only" onChange={(event) => { void importDocx(event.target.files?.[0]); event.currentTarget.value = ""; }} />
             {docxStatus === "importing" ? t("proposal.importingDocx") : t("proposal.importDocx")}
           </label>
           {docxStatus === "error" && <p className="text-[11px] text-destructive">{t("proposal.importDocxError")}</p>}
-          <Button nativeButton={false} render={<a href={`/api/wiki/pages/${pageId}/export?format=docx`} />} type="button" size="sm" variant="outline" className="w-full">{t("proposal.exportDocx")}</Button>
+          <Button onClick={() => onExport("docx")} type="button" size="sm" variant="outline" className="w-full">{t("proposal.exportDocx")}</Button>
 
           <Field label={t("templateName")}><Input className="h-8" value={templateName} onChange={(event) => setTemplateName(event.target.value)} /></Field>
           <Toggle checked={includeContent} onChange={setIncludeContent} label={t("includeContent")} />
@@ -468,7 +487,7 @@ export function DocumentLayoutPanel({
         </div>)}
         {issues.some((issue) => issue.severity === "error")
           ? <Button type="button" className="mt-2 w-full" disabled><FilePlus2 />{t("previewPdf")}</Button>
-          : <Button nativeButton={false} render={<a href={`/api/wiki/pages/${pageId}/export?format=pdf&disposition=inline`} target="_blank" rel="noreferrer" />} className="mt-2 w-full">
+          : <Button onClick={() => onExport("pdf", true)} className="mt-2 w-full">
               <FilePlus2 />{t("previewPdf")}
             </Button>}
       </TabsContent>

@@ -14,7 +14,7 @@ import TaskList from "@tiptap/extension-task-list";
 import TaskItem from "@tiptap/extension-task-item";
 import { DOMParser as ProseMirrorDOMParser, Fragment, Slice } from "@tiptap/pm/model";
 import { AlertCircle, AlignCenter, AlignLeft, AlignRight, ArrowLeftRight, Bold, BookMarked, CalendarClock, Captions, Check, ClipboardCheck, CloudOff, Code, Columns2, FileText, Heading1, Heading2, Heading3, Highlighter, ImagePlus, Italic, Keyboard, Languages, Layers3, Link2, List, ListOrdered, ListTree, ListTodo, MessageSquareText, Minus, MoreHorizontal, PanelRightClose, PanelRightOpen, Paperclip, Pilcrow, Quote, Redo2, RotateCcw, Rows3, Scan, ScissorsLineDashed, Search, Settings2, Strikethrough, Trash2, Underline as UnderlineIcon, Undo2, WifiOff, Workflow } from "lucide-react";
-import { addComment, restorePageRevision } from "../research-actions";
+import { addComment } from "../research-actions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -39,6 +39,8 @@ import type { WikiProofingPrefsV1 } from "../lib/wiki-proofing-prefs";
 import { looksLikeMarkdown, parseMarkdownDocument } from "../lib/markdown-import";
 import { sanitizePastedHtml } from "../lib/paste-html";
 import { calculateWritingStats, type WritingStats } from "../lib/editor-writing";
+import { parseEditorDraft, readEditorStorage, removeEditorStorage, sameEditorSnapshot, writeEditorStorage } from "../lib/editor-draft";
+import { exportSavedDocument } from "../lib/editor-export";
 import { userMarkColorStyle, type UserMarkColor } from "@/lib/user-mark-colors";
 import { MermaidDiagram, MERMAID_PLACEHOLDER } from "./mermaid-extension";
 import { SuggestionDelete, SuggestionInsert, SuggestionMode } from "./suggestion-extension";
@@ -92,6 +94,7 @@ type PageRef = { id: string; title: string; slug: string };
 type SourceRef = CitationSource;
 type WikiEditorPageActions = { addAttachment: () => void; linkSupportingSource: () => void };
 export type WikiEditorHandle = {
+  flushSave: () => Promise<boolean>;
   insertGraphic: (asset: { attachmentId: string; fileName: string; contentUrl: string; caption?: string | null }) => void;
 };
 type CachedSpellcheckMatch = Omit<SpellcheckResponseMatch, "paragraph">;
@@ -119,6 +122,7 @@ async function savePageContentRequest(input: WikiSaveInput): Promise<WikiSaveRes
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input),
+    signal: AbortSignal.timeout(20_000),
   });
   if (!response.ok) throw new Error("Save failed");
   return response.json() as Promise<WikiSaveResult>;
@@ -198,7 +202,7 @@ function loadDocumentZoom() {
   if (typeof window === "undefined") return 100;
   // Without this guard an absent entry parses as 0 and clamps to the minimum,
   // so a first visit opened the document at 70 % instead of 100 %.
-  const stored = Number(window.localStorage.getItem(DOCUMENT_ZOOM_KEY) ?? Number.NaN);
+  const stored = Number(readEditorStorage(DOCUMENT_ZOOM_KEY) ?? Number.NaN);
   return Number.isFinite(stored) && stored > 0 ? Math.min(DOCUMENT_ZOOM_MAX, Math.max(DOCUMENT_ZOOM_MIN, stored)) : 100;
 }
 
@@ -277,7 +281,7 @@ type WikiEditorProps = {
 function loadEditorPreferences(): WikiEditorPreferences {
   if (typeof window === "undefined") return { statusVisible: true, minimalToolbar: false, typewriterMode: false };
   try {
-    const stored = JSON.parse(localStorage.getItem("wiki-editor-preferences") ?? "{}") as Partial<WikiEditorPreferences>;
+    const stored = JSON.parse(readEditorStorage("wiki-editor-preferences") ?? "{}") as Partial<WikiEditorPreferences>;
     return { statusVisible: stored.statusVisible ?? true, minimalToolbar: stored.minimalToolbar ?? false, typewriterMode: stored.typewriterMode ?? false };
   } catch {
     return { statusVisible: true, minimalToolbar: false, typewriterMode: false };
@@ -287,7 +291,7 @@ function loadEditorPreferences(): WikiEditorPreferences {
 function loadWikiShortcutBindings() {
   if (typeof window === "undefined") return { ...DEFAULT_WIKI_SHORTCUT_BINDINGS };
   try {
-    return parseWikiShortcutBindings(JSON.parse(window.localStorage.getItem(WIKI_SHORTCUTS_KEY) ?? "null"));
+    return parseWikiShortcutBindings(JSON.parse(readEditorStorage(WIKI_SHORTCUTS_KEY) ?? "null"));
   } catch {
     return { ...DEFAULT_WIKI_SHORTCUT_BINDINGS };
   }
@@ -295,7 +299,7 @@ function loadWikiShortcutBindings() {
 
 function loadBooleanPreference(key: string, fallback: boolean) {
   if (typeof window === "undefined") return fallback;
-  const stored = window.localStorage.getItem(key);
+  const stored = readEditorStorage(key);
   if (stored === null) return fallback;
   return stored === "true";
 }
@@ -874,23 +878,45 @@ export function WikiEditor({
   const [leaseState, setLeaseState] = useState<"checking" | "editable" | "locked">("checking");
   const leaseStateRef = useRef<"checking" | "editable" | "locked">("checking");
   const recoveryApplied = useRef(false);
+  const [recoveryAvailable, setRecoveryAvailable] = useState(true);
+  const discardingDraft = useRef(false);
+  const saveCompletion = useRef<Promise<void>>(Promise.resolve());
+  const flushSaveRef = useRef<() => Promise<boolean>>(async () => false);
   const commentsPreferenceKey = `wiki:page:${pageId}:comments-visible`;
   const layoutPreferenceKey = `wiki:page:${pageId}:document-layout-visible`;
   const [commentsVisible, setCommentsVisible] = useState(() => loadBooleanPreference(commentsPreferenceKey, false));
   const [documentLayoutVisible, setDocumentLayoutVisible] = useState(() => loadBooleanPreference(layoutPreferenceKey, false));
   const storageKey = `wiki-draft:${pageId}`; const preferencesKey = `wiki-editor-preferences`;
   let content: object | undefined; try { content = initialContent ? JSON.parse(initialContent) : undefined; } catch { content = undefined; }
-  if (typeof window !== "undefined") {
-    const draft = window.localStorage.getItem(storageKey);
-    if (draft && draft !== initialContent) {
-      try {
-        const parsed = JSON.parse(draft) as ({ contentJson?: string } & object) | null;
-        content = parsed && "contentJson" in parsed && typeof parsed.contentJson === "string"
-          ? JSON.parse(parsed.contentJson)
-          : parsed ?? undefined;
-      } catch { /* ignore damaged recovery */ }
-    }
+  const [recoveredDraft] = useState(() => parseEditorDraft(readEditorStorage(storageKey), {
+    contentJson: initialContent,
+    documentMode: initialDocumentMode,
+    documentSettingsJson: serializeDocumentSettings(localizedInitialDocumentSettings),
+  }));
+  if (recoveredDraft) content = JSON.parse(recoveredDraft.contentJson);
+
+  function currentSnapshot() {
+    return {
+      contentJson: liveEditor.current && !liveEditor.current.isDestroyed ? JSON.stringify(liveEditor.current.getJSON()) : pendingSave.current ?? lastServerContent.current,
+      documentMode: documentModeRef.current,
+      documentSettingsJson: serializeDocumentSettings(documentSettingsRef.current),
+    };
   }
+
+  function journalSnapshot() {
+    const snapshot = currentSnapshot();
+    pendingSave.current = snapshot.contentJson;
+    writeDraft(JSON.stringify({
+      ...snapshot,
+      baseContentVersion: contentVersion.current,
+      editorSessionId: editorSessionId.current,
+      savedAt: Date.now(),
+    }));
+  }
+
+  const writeDraft = useCallback((value: string) => {
+    setRecoveryAvailable(writeEditorStorage(storageKey, value));
+  }, [storageKey]);
 
   function updateDerivedState(currentEditor: Editor) {
     setSuggestionCounts(countSuggestions(currentEditor.getJSON() as never));
@@ -950,7 +976,8 @@ export function WikiEditor({
     if (!contentSyncDirty.current) return;
     contentSyncDirty.current = false;
     const json = JSON.stringify(currentEditor.getJSON());
-    localStorage.setItem(storageKey, JSON.stringify({
+    pendingSave.current = json;
+    writeDraft(JSON.stringify({
       contentJson: json,
       documentMode: documentModeRef.current,
       documentSettingsJson: serializeDocumentSettings(documentSettingsRef.current),
@@ -1016,16 +1043,17 @@ export function WikiEditor({
     if (typeof navigator !== "undefined" && !navigator.onLine) { setSaveState("offline"); return; }
     if (conflictBlocked.current) { setSaveState("conflict"); return; }
     if (saveInFlight.current) { queuedSave.current = json; return; }
+    if (saveTimer.current) { clearTimeout(saveTimer.current); saveTimer.current = null; }
     saveInFlight.current = true;
+    let completeSave!: () => void;
+    saveCompletion.current = new Promise<void>((resolve) => { completeSave = resolve; });
     setSaveState("saving");
+    const snapshot = { contentJson: json, documentMode: documentModeRef.current, documentSettingsJson: serializeDocumentSettings(documentSettingsRef.current) };
     try {
-      const settingsJson = serializeDocumentSettings(documentSettingsRef.current);
       const result = await savePageContentRequest({
         id: pageId,
-        contentJson: json,
+        ...snapshot,
         baseContentJson: lastServerContent.current,
-        documentMode: documentModeRef.current,
-        documentSettingsJson: settingsJson,
         baseDocumentMode: lastServerDocumentMode.current,
         baseDocumentSettingsJson: lastServerDocumentSettings.current,
         expectedContentVersion: contentVersion.current,
@@ -1034,16 +1062,24 @@ export function WikiEditor({
       if (result.saved) {
         contentVersion.current = result.contentVersion;
         lastServerContent.current = json;
-        lastServerDocumentMode.current = documentModeRef.current;
-        lastServerDocumentSettings.current = settingsJson;
-        pendingSave.current = null;
+        lastServerDocumentMode.current = snapshot.documentMode;
+        lastServerDocumentSettings.current = snapshot.documentSettingsJson;
         conflictBlocked.current = false;
-        localStorage.removeItem(storageKey);
         setConflictRevision(null);
-        setSaveState("saved");
-        if (maxSaveTimer.current) {
-          clearTimeout(maxSaveTimer.current);
-          maxSaveTimer.current = null;
+        if (sameEditorSnapshot(snapshot, currentSnapshot())) {
+          pendingSave.current = null;
+          const journal = readEditorStorage(storageKey);
+          try {
+            if (journal && JSON.parse(journal).editorSessionId === editorSessionId.current) removeEditorStorage(storageKey);
+          } catch { /* leave an unrecognized journal intact */ }
+          setSaveState("saved");
+          if (maxSaveTimer.current) { clearTimeout(maxSaveTimer.current); maxSaveTimer.current = null; }
+        } else {
+          // The acknowledgement covers only the submitted snapshot. Journal newer
+          // text AND layout with the acknowledged version before sending it next.
+          journalSnapshot();
+          queuedSave.current = pendingSave.current;
+          setSaveState("unsaved");
         }
       } else if ("conflict" in result && result.conflict) {
         contentVersion.current = result.contentVersion;
@@ -1054,20 +1090,36 @@ export function WikiEditor({
         leaseStateRef.current = "locked";
         setLeaseState("locked");
         setSaveState("conflict");
+      } else {
+        throw new Error("Page could not be saved");
       }
     } catch {
       setSaveState(typeof navigator !== "undefined" && !navigator.onLine ? "offline" : "error");
-      if (attempt < 2) saveTimer.current = setTimeout(() => void persistContent(json, attempt + 1), 1_000 * (2 ** attempt));
+      if (attempt < 2) saveTimer.current = setTimeout(() => {
+        if (pendingSave.current) void persistContent(currentSnapshot().contentJson, attempt + 1);
+      }, 1_000 * (2 ** attempt));
     } finally {
       saveInFlight.current = false;
       const queued = queuedSave.current;
       queuedSave.current = null;
-      if (queued && queued !== json && !conflictBlocked.current) void persistContent(queued);
+      if (queued && pendingSave.current && !conflictBlocked.current) void persistContent(currentSnapshot().contentJson);
+      completeSave();
     }
   }
   persistContentRef.current = (json: string) => persistContent(json);
+  async function flushSave() {
+    flushContentSyncRef.current();
+    while (saveInFlight.current) await saveCompletion.current;
+    if (pendingSave.current) {
+      await persistContent(currentSnapshot().contentJson, 2);
+      while (saveInFlight.current) await saveCompletion.current;
+    }
+    return !pendingSave.current && !conflictBlocked.current;
+  }
+  flushSaveRef.current = flushSave;
 
   async function takeOverEditing() {
+    try {
     const response = await fetch(`/api/wiki/pages/${encodeURIComponent(pageId)}/lease`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -1082,6 +1134,9 @@ export function WikiEditor({
     conflictBlocked.current = false;
     setSaveState(pendingSave.current ? "unsaved" : "idle");
     if (pendingSave.current) void persistContentRef.current(pendingSave.current);
+    } catch {
+      toast.error(t("editor.lease.takeoverFailed"));
+    }
   }
 
   function requestWikiTask(targetEditor: Editor) {
@@ -1292,16 +1347,14 @@ export function WikiEditor({
   useEffect(() => {
     if (!editor || recoveryApplied.current) return;
     recoveryApplied.current = true;
-    const draft = window.localStorage.getItem(storageKey);
-    if (!draft) return;
+    if (!recoveredDraft) return;
     try {
-      const recovered = JSON.parse(draft) as {
-        contentJson?: unknown;
-        documentMode?: unknown;
-        documentSettingsJson?: unknown;
-      };
-      if (typeof recovered.contentJson !== "string" || recovered.contentJson === initialContent) return;
+      const recovered = recoveredDraft;
+      contentVersion.current = recovered.baseContentVersion;
       pendingSave.current = recovered.contentJson;
+      // Claim the recovered journal so a successful save clears it. Otherwise a
+      // later visit could replay this now-obsolete draft over newer server text.
+      writeEditorStorage(storageKey, JSON.stringify({ ...recovered, editorSessionId: editorSessionId.current }));
       let recoveredMode: boolean | undefined;
       let recoveredSettings: DocumentSettingsV1 | undefined;
       if (typeof recovered.documentMode === "boolean") {
@@ -1328,7 +1381,7 @@ export function WikiEditor({
     } catch {
       // A damaged local journal must never prevent the server version from opening.
     }
-  }, [citationLocale, editor, initialContent, storageKey]);
+  }, [citationLocale, editor, recoveredDraft, storageKey]);
 
   useEffect(() => {
     if (!editor) return;
@@ -1367,10 +1420,11 @@ export function WikiEditor({
       }).catch(() => undefined);
     }, 15_000);
     const release = () => {
+      if (discardingDraft.current) { void requestLease("release").catch(() => undefined); return; }
       // Snapshot whatever was typed inside the last sync window before leaving.
       flushContentSyncRef.current();
       if (pendingSave.current) {
-        localStorage.setItem(storageKey, JSON.stringify({
+        writeDraft(JSON.stringify({
           contentJson: pendingSave.current,
           documentMode: documentModeRef.current,
           documentSettingsJson: serializeDocumentSettings(documentSettingsRef.current),
@@ -1383,12 +1437,13 @@ export function WikiEditor({
     };
     window.addEventListener("pagehide", release);
     return () => {
+      if (!discardingDraft.current) flushContentSyncRef.current();
       disposed = true;
       window.clearInterval(heartbeat);
       window.removeEventListener("pagehide", release);
       void requestLease("release").catch(() => undefined);
     };
-  }, [editor, pageId, storageKey]);
+  }, [editor, pageId, storageKey, writeDraft]);
   useEffect(() => { editor?.setEditable(leaseState === "editable"); }, [editor, leaseState]);
   useEffect(() => () => {
     if (saveTimer.current) clearTimeout(saveTimer.current);
@@ -1672,11 +1727,11 @@ export function WikiEditor({
   useEffect(() => { if (commentFocusRequest > 0) commentRailRef.current?.focusGeneralComment(); }, [commentFocusRequest]);
   useEffect(() => {
     typewriterModeRef.current = typewriterMode;
-    localStorage.setItem(preferencesKey, JSON.stringify({ statusVisible, minimalToolbar, typewriterMode }));
+    writeEditorStorage(preferencesKey, JSON.stringify({ statusVisible, minimalToolbar, typewriterMode }));
   }, [minimalToolbar, preferencesKey, statusVisible, typewriterMode]);
-  useEffect(() => { window.localStorage.setItem(commentsPreferenceKey, String(commentsVisible)); }, [commentsPreferenceKey, commentsVisible]);
-  useEffect(() => { window.localStorage.setItem(layoutPreferenceKey, String(documentLayoutVisible)); }, [documentLayoutVisible, layoutPreferenceKey]);
-  useEffect(() => { window.localStorage.setItem(DOCUMENT_ZOOM_KEY, String(documentZoom)); }, [documentZoom]);
+  useEffect(() => { writeEditorStorage(commentsPreferenceKey, String(commentsVisible)); }, [commentsPreferenceKey, commentsVisible]);
+  useEffect(() => { writeEditorStorage(layoutPreferenceKey, String(documentLayoutVisible)); }, [documentLayoutVisible, layoutPreferenceKey]);
+  useEffect(() => { writeEditorStorage(DOCUMENT_ZOOM_KEY, String(documentZoom)); }, [documentZoom]);
   // Figure/table numbers and cross-reference labels shown live in the canvas use the
   // document's own citation language, matching the word the PDF/DOCX export picks —
   // and caption numbering only shows where the export shows it (index enabled).
@@ -1753,7 +1808,7 @@ export function WikiEditor({
       window.removeEventListener("blur", releaseControlKey);
     };
   }, [editor]);
-  useEffect(() => { window.localStorage.setItem(WIKI_SHORTCUTS_KEY, JSON.stringify(wikiShortcuts)); }, [wikiShortcuts]);
+  useEffect(() => { writeEditorStorage(WIKI_SHORTCUTS_KEY, JSON.stringify(wikiShortcuts)); }, [wikiShortcuts]);
   useEffect(() => {
     const online = () => { if (pendingSave.current) void persistContentRef.current(pendingSave.current); };
     const offline = () => { if (pendingSave.current) setSaveState("offline"); };
@@ -1974,6 +2029,7 @@ export function WikiEditor({
   useEffect(() => {
     if (!actionsRef || !editor) return;
     actionsRef.current = {
+      flushSave: () => flushSaveRef.current(),
       insertGraphic: ({ attachmentId, fileName, contentUrl, caption }) => {
         // Insert *after* the selection rather than into it: a freshly inserted
         // graphic stays selected as a node, and inserting into that selection
@@ -2014,7 +2070,7 @@ export function WikiEditor({
   function scheduleDocumentSave() {
     const json = JSON.stringify(activeEditor.getJSON());
     pendingSave.current = json;
-    localStorage.setItem(storageKey, JSON.stringify({
+    writeDraft(JSON.stringify({
       contentJson: json,
       documentMode: documentModeRef.current,
       documentSettingsJson: serializeDocumentSettings(documentSettingsRef.current),
@@ -2049,12 +2105,14 @@ export function WikiEditor({
       .finally(() => setExistingImagesLoading(false));
   }
   function changeDocumentSettings(settings: DocumentSettingsV1) {
+    if (!activeEditor.isEditable) return;
     documentSettingsRef.current = settings;
     setDocumentSettings(settings);
     setDocumentIssues(collectDocumentPreflightIssues(activeEditor.getJSON(), settings));
     scheduleDocumentSave();
   }
   function changeDocumentMode(enabled: boolean) {
+    if (!activeEditor.isEditable) return;
     documentModeRef.current = enabled;
     setDocumentMode(enabled);
     scheduleDocumentSave();
@@ -2220,16 +2278,20 @@ export function WikiEditor({
     router.refresh();
   }
   function discardDraftAndReload() {
+    discardingDraft.current = true;
+    pendingSave.current = null;
+    contentSyncDirty.current = false;
     if (saveTimer.current) clearTimeout(saveTimer.current);
-    localStorage.removeItem(storageKey);
+    removeEditorStorage(storageKey);
     location.reload();
   }
   async function restoreConflictDraft() {
     if (!conflictRevision) return;
     if (saveTimer.current) clearTimeout(saveTimer.current);
-    await restorePageRevision(conflictRevision);
-    localStorage.removeItem(storageKey);
-    location.reload();
+    // Include edits made after the conflict was reported. The version check
+    // still protects changes another editor made since that response.
+    conflictBlocked.current = false;
+    await persistContent(currentSnapshot().contentJson, 2);
   }
 
   async function cycleProofingLanguage() {
@@ -2450,6 +2512,7 @@ export function WikiEditor({
   <EditorSearchPanel key={externalSearchQuery} editor={activeEditor} open={searchOpen} onOpenChange={changeSearchOpen} initialQuery={externalSearchQuery} />
   {imageUploading && <p className="text-xs text-muted-foreground">{t("uploadingImage")}</p>}
   {imageError && <p className="text-xs text-destructive">{imageError}</p>}
+  {!recoveryAvailable && <p role="alert" className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950">{t("document.recoveryUnavailable")}</p>}
   {leaseState === "locked" && <div className="flex flex-wrap items-center gap-3 rounded-lg border border-indigo-200 bg-indigo-50/70 p-3 text-sm text-indigo-950 dark:border-indigo-900 dark:bg-indigo-950/30 dark:text-indigo-100"><CloudOff className="size-4" /><span className="flex-1">{t("editor.lease.locked")}</span><Button size="sm" onClick={() => void takeOverEditing()}>{t("editor.lease.takeover")}</Button></div>}
   {saveState === "conflict" && conflictRevision && <div className="flex flex-wrap items-center gap-3 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950 dark:bg-amber-950/30 dark:text-amber-100"><RotateCcw className="size-4" /><span className="flex-1">{t("editConflictDescription")}</span><Button size="sm" variant="outline" onClick={discardDraftAndReload}>{t("loadCurrent")}</Button><Button size="sm" onClick={() => void restoreConflictDraft()}>{t("restoreMine")}</Button></div>}
   <div className={
@@ -2586,6 +2649,16 @@ export function WikiEditor({
       pageId={pageId}
       editor={activeEditor}
       settings={documentSettings}
+      onApplyTemplate={(settings, contentJson) => {
+        if (!activeEditor.isEditable) return;
+        documentModeRef.current = true;
+        setDocumentMode(true);
+        documentSettingsRef.current = settings;
+        setDocumentSettings(settings);
+        if (contentJson) activeEditor.commands.setContent(JSON.parse(contentJson));
+        scheduleDocumentSave();
+      }}
+      onExport={(format, inline = false) => { void exportSavedDocument(pageId, format, inline, flushSave, () => toast.error(t("document.exportSaveFailed"))); }}
       onSettingsChange={changeDocumentSettings}
       templates={documentTemplates}
       issues={documentIssues}

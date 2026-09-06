@@ -1,6 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
+import { readEditorStorage, writeEditorStorage } from "../lib/editor-draft";
+import { exportSavedDocument, type DocumentExportFormat } from "../lib/editor-export";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useFormatter, useLocale, useTranslations } from "next-intl";
@@ -35,7 +38,7 @@ import { ContextPanel } from "@/modules/context/components/context-panel";
 type PageRef = { id: string; title: string; slug: string };
 type SourceRef = CitationSource;
 
-function PageHeaderActions({ pageId, favorite, onNewSubpage, onToggleFavorite, onVerify, onDelete }: { pageId: string; favorite: boolean; onNewSubpage: () => void; onToggleFavorite: () => void; onVerify: () => void; onDelete: () => void }) {
+function PageHeaderActions({ onExport, favorite, onNewSubpage, onToggleFavorite, onVerify, onDelete }: { onExport: (format: DocumentExportFormat, inline?: boolean) => void; favorite: boolean; onNewSubpage: () => void; onToggleFavorite: () => void; onVerify: () => void; onDelete: () => void }) {
   const t = useTranslations("wiki");
   return <DropdownMenu>
     <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" title={t("editor.toolbar.more")} aria-label={t("editor.toolbar.more")} />}><MoreHorizontal className="size-4" /></DropdownMenuTrigger>
@@ -44,11 +47,11 @@ function PageHeaderActions({ pageId, favorite, onNewSubpage, onToggleFavorite, o
       <DropdownMenuItem onClick={onToggleFavorite}><Star className={favorite ? "fill-indigo-400 text-indigo-500" : ""} />{t("favorite")}</DropdownMenuItem>
       <DropdownMenuItem onClick={onVerify}><Check />{t("markVerified")}</DropdownMenuItem>
       <DropdownMenuSeparator />
-      <DropdownMenuItem render={<a href={"/api/wiki/pages/" + pageId + "/export?format=pdf&disposition=inline"} target="_blank" rel="noreferrer" />}><Eye />{t("document.previewPdf")}</DropdownMenuItem>
-      <DropdownMenuItem render={<a href={"/api/wiki/pages/" + pageId + "/export?format=pdf"} />}><Download />{t("document.downloadPdf")}</DropdownMenuItem>
-      <DropdownMenuItem render={<a href={"/api/wiki/pages/" + pageId + "/export?format=markdown"} />}><FileText />Markdown</DropdownMenuItem>
-      <DropdownMenuItem render={<a href={"/api/wiki/pages/" + pageId + "/export?format=html"} />}><FileText />HTML</DropdownMenuItem>
-      <DropdownMenuItem render={<a href={"/api/wiki/pages/" + pageId + "/export?format=docx"} />}><FileText />DOCX</DropdownMenuItem>
+      <DropdownMenuItem onClick={() => onExport("pdf", true)}><Eye />{t("document.previewPdf")}</DropdownMenuItem>
+      <DropdownMenuItem onClick={() => onExport("pdf")}><Download />{t("document.downloadPdf")}</DropdownMenuItem>
+      <DropdownMenuItem onClick={() => onExport("markdown")}><FileText />Markdown</DropdownMenuItem>
+      <DropdownMenuItem onClick={() => onExport("html")}><FileText />HTML</DropdownMenuItem>
+      <DropdownMenuItem onClick={() => onExport("docx")}><FileText />DOCX</DropdownMenuItem>
       <DropdownMenuSeparator />
       <DropdownMenuItem className="text-destructive focus:text-destructive" onClick={onDelete}><Trash2 />{t("deletePage")}</DropdownMenuItem>
     </DropdownMenuContent>
@@ -120,13 +123,13 @@ export function WikiShell({ page, backlinks, unlinkedMentions = [], allPages, so
     : [];
 
   useEffect(() => {
-    const frame = requestAnimationFrame(() => setDetailsOpen(localStorage.getItem("wiki:document-details-open") === "true"));
+    const frame = requestAnimationFrame(() => setDetailsOpen(readEditorStorage("wiki:document-details-open") === "true"));
     return () => cancelAnimationFrame(frame);
   }, []);
 
   function changeDetailsOpen(open: boolean) {
     setDetailsOpen(open);
-    localStorage.setItem("wiki:document-details-open", String(open));
+    writeEditorStorage("wiki:document-details-open", String(open));
   }
 
   function openAttachmentPicker() {
@@ -154,7 +157,7 @@ export function WikiShell({ page, backlinks, unlinkedMentions = [], allPages, so
   return <div className={isFocused ? "w-full max-w-none p-4 md:p-7" : "mx-auto max-w-[112rem] p-4 md:p-7"}>
     <header className="mb-5 border-b pb-4">
       <div className="flex flex-wrap items-start justify-between gap-4"><div className="flex min-w-0 items-start gap-2"><Link href="/wiki" aria-label={t("backToWikiStart")} title={t("backToWikiStart")} className="mt-1 grid size-8 shrink-0 place-items-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"><ArrowLeft className="size-4" /></Link><div className="min-w-0"><button type="button" aria-label={`${t("rename")}: ${page.title}`} onClick={rename} className={isFocused ? "max-w-4xl text-left text-2xl font-semibold tracking-tight hover:text-indigo-700 dark:hover:text-indigo-300" : "max-w-4xl text-left text-3xl font-semibold tracking-tight hover:text-indigo-700 dark:hover:text-indigo-300"}>{page.title}</button>{!isFocused && meta && <p className="mt-1 flex items-center gap-1 text-xs text-muted-foreground"><Clock3 className="size-3" />{t("lastEdited", { name: meta.updatedByName })} · {format.dateTime(new Date(meta.updatedAt), { dateStyle: "medium", timeStyle: "short" })}</p>}</div></div>
-        <div className="flex items-center gap-1">{!isFocused && <><Button variant={detailsOpen ? "secondary" : "ghost"} size="sm" className="gap-1.5" title={detailsOpen ? t("hideDocumentDetails") : t("showDocumentDetails")} aria-label={detailsOpen ? t("hideDocumentDetails") : t("showDocumentDetails")} aria-pressed={detailsOpen} onClick={() => changeDetailsOpen(!detailsOpen)}>{detailsOpen ? <PanelRightClose className="size-4" /> : <PanelRightOpen className="size-4" />}<span className="hidden text-xs sm:inline">{t("documentDetails")}</span></Button><PageHeaderActions pageId={page.id} favorite={research.favorite} onNewSubpage={async () => { const title = prompt(t("pageTitle")); if (!title?.trim()) return; const child = await createPage({ title: title.trim(), parentId: page.id, proofingLanguage: locale === "en" ? "en-US" : "de-AT" }); router.push("/wiki/pages/" + child.slug); router.refresh(); }} onToggleFavorite={async () => { await toggleFavorite("page", page.id); router.refresh(); }} onVerify={() => void runVerify(6)} onDelete={remove} /></>}<FocusModeToggle compact={isFocused} /></div></div>
+        <div className="flex items-center gap-1">{!isFocused && <><Button variant={detailsOpen ? "secondary" : "ghost"} size="sm" className="gap-1.5" title={detailsOpen ? t("hideDocumentDetails") : t("showDocumentDetails")} aria-label={detailsOpen ? t("hideDocumentDetails") : t("showDocumentDetails")} aria-pressed={detailsOpen} onClick={() => changeDetailsOpen(!detailsOpen)}>{detailsOpen ? <PanelRightClose className="size-4" /> : <PanelRightOpen className="size-4" />}<span className="hidden text-xs sm:inline">{t("documentDetails")}</span></Button><PageHeaderActions onExport={(format, inline = false) => { void exportSavedDocument(page.id, format, inline, () => editorActions.current?.flushSave() ?? Promise.resolve(false), () => toast.error(t("document.exportSaveFailed"))); }} favorite={research.favorite} onNewSubpage={async () => { const title = prompt(t("pageTitle")); if (!title?.trim()) return; const child = await createPage({ title: title.trim(), parentId: page.id, proofingLanguage: locale === "en" ? "en-US" : "de-AT" }); router.push("/wiki/pages/" + child.slug); router.refresh(); }} onToggleFavorite={async () => { await toggleFavorite("page", page.id); router.refresh(); }} onVerify={() => void runVerify(6)} onDelete={remove} /></>}<FocusModeToggle compact={isFocused} /></div></div>
     </header>
 
     <div className={isFocused || !detailsOpen ? "w-full" : "grid gap-7 xl:grid-cols-[minmax(0,1fr)_17rem]"}>

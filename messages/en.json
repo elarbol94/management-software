@@ -2171,6 +2171,10 @@
       }
     },
     "document": {
+      "recoveryUnavailable": "Local recovery is unavailable. Keep this page open until the status shows Saved.",
+      "exportSaveFailed": "The document could not be saved before export. Resolve the save error or conflict first.",
+      "replaceWithStarterContent": "Replace text with template content",
+      "templateFailed": "The template could not be applied or saved. Please try again.",
       "toggle": "Document mode",
       "noteMode": "Note",
       "documentMode": "Document",
