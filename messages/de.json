@@ -2378,6 +2378,8 @@
         },
         "switch": "Prüfsprache: {language}. Zu {nextLanguage} wechseln.",
         "checking": "Prüfung läuft",
+        "checkingChanges": "Änderungen werden geprüft…",
+        "recheckingSuggestion": "Dieser Hinweis wird gerade aktualisiert…",
         "unavailable": "Rechtschreib- und Grammatikprüfung momentan nicht erreichbar",
         "browserFallback": "Die erweiterte Prüfung ist nicht erreichbar. Die Browserprüfung ist aktiviert, sofern dein Browser die Sprache unterstützt. Wir versuchen es automatisch erneut.",
         "saveFailed": "Die Prüfsprache konnte nicht gespeichert werden.",

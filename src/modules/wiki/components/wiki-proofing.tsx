@@ -47,14 +47,15 @@ export function WikiProofingSuggestions({ selected, onClose, onReplace, onReplac
             <Button type="button" variant="ghost" size="icon-sm" aria-label={t("close")} onClick={onClose}><X /></Button>
           </div>
           <p className="px-2 py-2 text-xs text-muted-foreground">{issue.message}</p>
+          {issue.pending && <p role="status" className="px-2 pb-2 text-xs text-muted-foreground">{t("recheckingSuggestion")}</p>}
           <div className="flex flex-wrap gap-1 p-1">
-            {issue.replacements.length ? issue.replacements.map((replacement, index) => <Button ref={index === 0 ? firstSuggestion : undefined} key={replacement} type="button" variant={index === 0 ? "secondary" : "outline"} size="sm" disabled={!editable} className="h-auto min-h-8 max-w-full whitespace-normal break-words text-left" onClick={() => onReplace(replacement)}>{index === 0 && <Check className="size-3.5 shrink-0" />}{replacement || t("deleteText")}</Button>) : <p className="px-1 text-xs text-muted-foreground">{t("noReplacement")}</p>}
+            {issue.replacements.length ? issue.replacements.map((replacement, index) => <Button ref={index === 0 ? firstSuggestion : undefined} key={replacement} type="button" variant={index === 0 ? "secondary" : "outline"} size="sm" disabled={!editable || issue.pending} className="h-auto min-h-8 max-w-full whitespace-normal break-words text-left" onClick={() => onReplace(replacement)}>{index === 0 && <Check className="size-3.5 shrink-0" />}{replacement || t("deleteText")}</Button>) : <p className="px-1 text-xs text-muted-foreground">{t("noReplacement")}</p>}
           </div>
           <div className="mt-1 border-t pt-1">
             <Button type="button" variant="ghost" size="sm" className="w-full justify-start" onClick={onIgnore}>{t("ignore")}</Button>
             {issue.kind === "spelling" && <Button type="button" variant="ghost" size="sm" disabled={busy} className="h-auto min-h-8 w-full justify-start whitespace-normal text-left" onClick={onDictionary}>{t("addToDictionary")}</Button>}
             <details className="px-2 py-1 text-xs"><summary className="cursor-pointer py-1 text-muted-foreground">{t("moreActions")}</summary>
-              {issue.replacements.length > 0 && <Button type="button" variant="ghost" size="sm" disabled={!editable} className="h-auto min-h-8 w-full justify-start whitespace-normal text-left" onClick={() => onReplaceAll(issue.replacements[0])}>{t("replaceAll")}</Button>}
+              {issue.replacements.length > 0 && <Button type="button" variant="ghost" size="sm" disabled={!editable || issue.pending} className="h-auto min-h-8 w-full justify-start whitespace-normal text-left" onClick={() => onReplaceAll(issue.replacements[0])}>{t("replaceAll")}</Button>}
               {issue.ruleId && <Button type="button" variant="ghost" size="sm" className="w-full justify-start" onClick={onDisableRule}>{t("disableRule")}</Button>}
             </details>
           </div>
@@ -71,12 +72,13 @@ export function WikiProofingMenu({ language, status, count, picky, saving, onLan
   const t = useTranslations("wiki.editor.proofing");
   const [open, setOpen] = useState(false);
   const names: Record<ProofingLanguage, string> = { "de-DE": t("languages.de"), "de-AT": t("languages.deAt"), "en-US": t("languages.en") };
-  const label = saving ? t("saving") : status === "error" ? t("fallbackShort") : status === "checking" ? t("checking") : count ? t("issueCount", { count }) : t("ready");
+  const label = saving ? t("saving") : status === "error" ? t("fallbackShort") : count ? t("issueCount", { count }) : status === "checking" ? t("checking") : t("ready");
   const icon: ReactElement = status === "checking" ? <RotateCcw className="size-3 animate-spin" /> : <Languages className="size-3.5" />;
   return <Popover open={open} onOpenChange={setOpen}>
     <PopoverTrigger render={<Button type="button" data-testid={compact ? "proofing-menu-compact" : "proofing-language-toggle"} variant="outline" className={compact ? "xl:hidden" : "h-auto w-full flex-col items-stretch gap-1.5 px-2 py-2"} aria-label={t("title")} />}>
       <span className="flex items-center gap-1.5 text-xs font-medium">{icon}{t(compact ? "title" : "shortTitle")}<ChevronDown className="ml-auto size-3" /></span>
-      {!compact && <span className="text-[10px] text-muted-foreground" data-testid="proofing-status">{label}</span>}
+      {!compact && <span className="whitespace-normal text-[10px] leading-tight text-muted-foreground" data-testid="proofing-status">{label}</span>}
+      {!compact && !saving && status === "checking" && count > 0 && <span className="whitespace-normal text-[10px] leading-tight text-muted-foreground" data-testid="proofing-pending">{t("checkingChanges")}</span>}
     </PopoverTrigger>
     <PopoverContent align="end" className="w-80">
       <p className="text-sm font-medium">{t("title")}</p>
@@ -88,6 +90,7 @@ export function WikiProofingMenu({ language, status, count, picky, saving, onLan
       </label>
       <label className="flex items-center gap-2 py-1 text-sm"><input type="checkbox" checked={picky} disabled={saving} onChange={onPicky} />{t("picky")}</label>
       <p role="status" className="text-xs text-muted-foreground">{!saving && status === "error" ? t("browserFallback") : label}</p>
+      {!saving && status === "checking" && count > 0 && <p className="text-xs text-muted-foreground">{t("checkingChanges")}</p>}
       {status === "error" && <Button type="button" size="sm" variant="outline" onClick={onRetry}><RotateCcw />{t("retry")}</Button>}
       <Button type="button" size="sm" variant="secondary" disabled={!count} onClick={() => { setOpen(false); onNext(); }}>{t("nextIssue")}<kbd className="ml-auto text-xs text-muted-foreground">Alt+F7</kbd></Button>
       <p className="text-xs text-muted-foreground">{t("hint")}</p>

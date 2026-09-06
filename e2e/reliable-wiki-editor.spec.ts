@@ -318,6 +318,84 @@ async function mockProofing(page: Page) {
   await page.route("**/api/wiki/spellcheck", (route) => route.fulfill({ json: { matches: proofingMatches(route.request().postDataJSON().paragraphs) } }));
 }
 
+test("proofing keeps remaining suggestions clickable and the count stable during consecutive corrections", async ({ page }) => {
+  await page.route("**/api/wiki/proofing-dictionary?*", (route) => route.fulfill({ json: { words: [] } }));
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const rechecks: string[] = [];
+  await page.route("**/api/wiki/spellcheck", async (route) => {
+    const paragraphs = route.request().postDataJSON().paragraphs as string[];
+    if (paragraphs.some((text) => text.includes("Fehler"))) {
+      rechecks.push(...paragraphs);
+      await gate;
+    }
+    await route.fulfill({ json: { matches: proofingMatches(paragraphs) } });
+  });
+  await login(page);
+  const editor = await createNote(page);
+  page.setDefaultTimeout(15_000);
+  try {
+    await editor.fill("Feler eins und Feler zwei. Feler drei. Feler vier. Feler fünf. Feler sechs.");
+    await expect(page.locator(".wiki-spellcheck-issue")).toHaveCount(6);
+    await expect(page.getByTestId("proofing-pending")).toHaveCount(0);
+    await page.locator(".wiki-spellcheck-issue").first().click();
+    await page.getByRole("button", { name: "Fehler", exact: true }).click();
+    await expect.poll(() => rechecks.length).toBeGreaterThan(0);
+    await expect(page.locator(".wiki-spellcheck-issue")).toHaveCount(5);
+    await expect(page.getByTestId("proofing-status")).toHaveText("5 Hinweise");
+    await expect(page.getByTestId("proofing-pending")).toHaveText("Änderungen werden geprüft…");
+    // The checker remains held: the second word must already be usable.
+    await page.locator(".wiki-spellcheck-issue").first().click();
+    const popup = page.getByRole("dialog", { name: "Korrekturvorschläge" });
+    await expect(popup.getByRole("button", { name: "Fehler", exact: true })).toBeEnabled();
+    await popup.getByRole("button", { name: "Fehler", exact: true }).click();
+    await expect(editor).toContainText("Fehler eins und Fehler zwei.");
+    await expect(page.locator(".wiki-spellcheck-issue")).toHaveCount(4);
+    await expect(page.getByTestId("proofing-status")).toHaveText("4 Hinweise");
+    expect(rechecks.every((text) => !text.includes("sechs"))).toBe(true);
+    await page.screenshot({ path: "tmp/proofing-pending-check.png" });
+    release();
+    await expect(page.getByTestId("proofing-pending")).toHaveCount(0);
+    await expect(page.locator(".wiki-spellcheck-issue")).toHaveCount(4);
+  } finally { release(); }
+});
+
+test("proofing shows a new typo before a slow background request finishes", async ({ page }) => {
+  await page.route("**/api/wiki/proofing-dictionary?*", (route) => route.fulfill({ json: { words: [] } }));
+  let release!: () => void, backgroundStarted = false, backgroundFinished = false;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  await page.route("**/api/wiki/spellcheck", async (route) => {
+    const paragraphs = route.request().postDataJSON().paragraphs as string[];
+    if (paragraphs.includes("Langsame Hintergrundprüfung.")) {
+      backgroundStarted = true;
+      await gate;
+      backgroundFinished = true;
+    } else if (paragraphs.some((text) => text.includes("Feler"))) {
+      await new Promise((resolve) => setTimeout(resolve, 400));
+    }
+    await route.fulfill({ json: { matches: proofingMatches(paragraphs) } });
+  });
+  await login(page);
+  const editor = await createNote(page);
+  page.setDefaultTimeout(15_000);
+  try {
+    await editor.fill("Bereiter Text.");
+    await expect(page.getByTestId("proofing-status")).toHaveText("Prüfung abgeschlossen");
+    await editor.press("End");
+    await editor.press("Enter");
+    await page.keyboard.insertText("Langsame Hintergrundprüfung.");
+    await expect.poll(() => backgroundStarted).toBe(true);
+    await editor.press("Control+Home");
+    await page.keyboard.insertText("Feler ");
+    await expect(page.locator(".wiki-spellcheck-issue")).toHaveText("Feler", { timeout: 3_000 });
+    expect(backgroundFinished).toBe(false);
+    const timing = await page.evaluate(() => performance.getEntriesByName("wiki-proofing.request").at(-1)?.toJSON());
+    expect(timing?.duration).toBeGreaterThanOrEqual(400);
+    release();
+    await expect(page.getByTestId("proofing-pending")).toHaveCount(0);
+  } finally { release(); }
+});
+
 test("proofing suggestions correct formatted words after line breaks and support keyboard and undo", async ({ page }) => {
   await mockProofing(page);
   await login(page);
@@ -352,6 +430,38 @@ test("proofing suggestions correct formatted words after line breaks and support
   await page.keyboard.press("Escape");
 });
 
+test("proofing refreshes pending grammar before allowing a context-dependent replacement", async ({ page }) => {
+  await page.route("**/api/wiki/proofing-dictionary?*", (route) => route.fulfill({ json: { words: [] } }));
+  let release!: () => void, recheckStarted = false;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  await page.route("**/api/wiki/spellcheck", async (route) => {
+    const paragraphs = route.request().postDataJSON().paragraphs as string[];
+    if (paragraphs.some((text) => text.includes("Fehler"))) { recheckStarted = true; await gate; }
+    const grammar = paragraphs.flatMap((text, paragraph) => [...text.matchAll(/ist sind/g)].map((match) => ({
+      paragraph, offset: match.index!, length: 8, message: "Grammatikhinweis", kind: "writing", category: "Grammatik", ruleId: "GRAMMAR", replacements: ["ist"],
+    })));
+    await route.fulfill({ json: { matches: [...proofingMatches(paragraphs), ...grammar] } });
+  });
+  await login(page);
+  const editor = await createNote(page);
+  page.setDefaultTimeout(15_000);
+  try {
+    await editor.fill("Feler ist sind hier.");
+    await expect(page.locator(".wiki-spellcheck-issue")).toHaveCount(2);
+    await page.locator(".wiki-spellcheck-issue--spelling").click();
+    await page.getByRole("button", { name: "Fehler", exact: true }).click();
+    await expect.poll(() => recheckStarted).toBe(true);
+    await page.locator(".wiki-spellcheck-issue--writing").click();
+    const popup = page.getByRole("dialog", { name: "Korrekturvorschläge" });
+    await expect(popup.getByRole("button", { name: "ist", exact: true })).toBeDisabled();
+    await expect(popup.getByRole("status")).toHaveText("Dieser Hinweis wird gerade aktualisiert…");
+    release();
+    await expect(popup.getByRole("button", { name: "ist", exact: true })).toBeEnabled();
+    await popup.getByRole("button", { name: "ist", exact: true }).click();
+    await expect(editor).toHaveText("Fehler ist hier.");
+  } finally { release(); }
+});
+
 test("proofing keeps delayed checks useful without applying stale offsets", async ({ page }) => {
   await page.route("**/api/wiki/proofing-dictionary?*", (route) => route.fulfill({ json: { words: [] } }));
   let release!: () => void;
@@ -369,9 +479,10 @@ test("proofing keeps delayed checks useful without applying stale offsets", asyn
   try {
     await editor.fill("Feler alt");
     await expect.poll(() => texts.includes("Feler alt")).toBe(true);
-    await editor.fill("Ganz neuer Text");
+    await editor.press("Control+Home");
     await editor.press("Enter");
-    await page.keyboard.insertText("Feler alt");
+    await editor.press("Control+Home");
+    await page.keyboard.insertText("Ganz neuer Text");
     release();
     await expect(page.locator(".wiki-spellcheck-issue")).toHaveText("Feler");
     await expect(page.getByTestId("proofing-status")).toHaveText("1 Hinweis");

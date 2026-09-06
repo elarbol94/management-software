@@ -49,13 +49,25 @@ focus; Enter applies it and Escape returns to writing. Additional actions includ
 a spelling to the shared dictionary, replacing matching marked occurrences,
 and disabling a rule.
 
-Checks start after a 250 ms typing pause. One request runs at a time, with the
-current paragraph first. Typing does not cancel an in-flight request. Results
-are cached by exact text and applied against the current document, so changing
-or moving text cannot apply stale offsets. Unchanged blocks and repeated text
-reuse results. Edited paragraphs lose their old underlines immediately; code,
-links, inline atoms and deleted suggestions are excluded. Hard breaks and
-inline references retain their document offsets.
+Checks start after a 250 ms typing pause. Sentences are checked with their
+immediate neighbors as context, bounded to 12,000 characters; unusually long
+sentences are split without breaking UTF-16 surrogate pairs. Results are cached
+by exact context and mapped onto the current document. Unchanged paragraphs
+also reuse sentence segmentation. Moving text cannot apply old document offsets.
+
+A lane for the current sentence runs alongside at most one background request.
+Background batches contain up to eight contexts and normally at most 4,000
+characters (one longer context may run alone). Superseded requests are cancelled;
+useful work can finish in the background. Cancellation reaches LanguageTool when
+no other editor is awaiting the same shared request. Continuous typing is
+coalesced, and completed requests do not bypass the typing pause or IME composition.
+
+Editing a word removes its own underline. Other spelling hints remain usable
+immediately. Grammar hints whose paragraph changed remain visible but cannot be
+applied until their sentence context has been checked again. The count includes
+these pending hints; “Checking changes…” distinguishes unfinished checks from
+resolved issues. Code, links, inline atoms and deleted suggestions are excluded.
+Hard breaks and inline references retain their document offsets.
 
 Suggestions are inserted as plain text, including empty replacements for
 deletion. “Replace all” only changes identically marked text with the same rule;
@@ -71,6 +83,18 @@ On failure, the editor enables browser spellchecking with the selected language
 save behavior, and retries after 5, 10, 20, then at most 30 seconds. The menu also
 offers an immediate retry. Actual checking latency depends on LanguageTool;
 the 250 ms debounce is not a service-response guarantee.
+
+Timing diagnostics stay local and contain no document text or page identifiers.
+The browser Performance panel exposes the latest `wiki-proofing.queue`,
+`wiki-proofing.request`, and `wiki-proofing.apply` measures. Their detail includes
+payload size, item count and outcome. Queue duration is time since the latest
+edit when the request starts; request duration includes the response body;
+apply duration covers matching and publishing current hints. Only the latest
+measure for each phase is retained. API responses include `Server-Timing` for
+authentication, cache hit/miss/shared status, normalization and total time.
+`languagetool` measures the upstream round trip (network plus service processing);
+`shared_wait` measures waiting for another request's shared result. The checker
+cannot measure LanguageTool's internal processing separately from that hop.
 
 ## Validation
 
@@ -92,6 +116,8 @@ export after typing, competing editors, paper layout and SVG version recovery.
 The SVG case delays preview loading to verify that an early label selection
 opens its editor once the preview arrives.
 Proofing cases use controlled service responses to exercise delayed checks,
+consecutive corrections without losing other hints, stable counts while checking,
+and a new edit completing while a background request is still pending,
 correction/undo, keyboard and small-screen interactions, safe replacement,
 deletion suggestions, dictionary limits, language persistence and outage recovery.
 Run only these with `npm run e2e -- e2e/reliable-wiki-editor.spec.ts --grep proofing`.

@@ -11,6 +11,53 @@ describe("POST /api/wiki/spellcheck", () => {
     vi.restoreAllMocks();
   });
 
+  it("reports service and cache timings without including document text", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ matches: [] }));
+    const makeRequest = () => new Request("http://test/api/wiki/spellcheck", { method: "POST", body: JSON.stringify({ paragraphs: ["Private timing sample"], language: "en-US" }) });
+    const first = await POST(makeRequest());
+    const cached = await POST(makeRequest());
+    expect(first.headers.get("server-timing")).toMatch(/cache;desc="miss".*languagetool;dur=[\d.]+.*normalize;dur=[\d.]+.*total;dur=[\d.]+/);
+    expect(cached.headers.get("server-timing")).toContain('cache;desc="hit"');
+    expect(first.headers.get("server-timing")).not.toContain("Private");
+    expect(cached.headers.get("cache-control")).toBe("no-store");
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it("cancels obsolete service work and permits a fresh request for the same text", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation((_url, options) => new Promise((_resolve, reject) => {
+      options!.signal!.addEventListener("abort", () => reject(options!.signal!.reason), { once: true });
+    }));
+    const abort = new AbortController();
+    const body = JSON.stringify({ paragraphs: ["Obsolete request sample"], language: "en-US" });
+    const response = POST(new Request("http://test/api/wiki/spellcheck", { method: "POST", body, signal: abort.signal }));
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+    const serviceSignal = fetchMock.mock.calls[0][1]!.signal!;
+    abort.abort();
+    expect((await response).status).toBe(499);
+    expect(serviceSignal.aborted).toBe(true);
+    fetchMock.mockResolvedValue(Response.json({ matches: [] }));
+    expect((await POST(new Request("http://test/api/wiki/spellcheck", { method: "POST", body }))).status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps a shared service request alive until its remaining editor receives the result", async () => {
+    let release!: (response: Response) => void;
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(() => new Promise((resolve) => { release = resolve; }));
+    const abort = new AbortController();
+    const body = JSON.stringify({ paragraphs: ["Two editors sharing a request"], language: "en-US" });
+    const first = POST(new Request("http://test/api/wiki/spellcheck", { method: "POST", body, signal: abort.signal }));
+    const second = POST(new Request("http://test/api/wiki/spellcheck", { method: "POST", body }));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(fetchMock).toHaveBeenCalledOnce();
+    abort.abort();
+    expect((await first).status).toBe(499);
+    expect(fetchMock.mock.calls[0][1]!.signal!.aborted).toBe(false);
+    release(Response.json({ matches: [] }));
+    const response = await second;
+    expect(response.status).toBe(200);
+    expect(response.headers.get("server-timing")).toMatch(/cache;desc="shared".*shared_wait;dur=/);
+  });
+
   it("rejects malformed requests before contacting LanguageTool", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch");
     const response = await POST(new Request("http://test/api/wiki/spellcheck", {

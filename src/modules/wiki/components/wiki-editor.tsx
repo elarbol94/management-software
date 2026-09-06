@@ -1489,8 +1489,17 @@ export function WikiEditor({
     setSpellcheckIssues(editor, []);
     if (!proofingDictionaryLoaded) return;
     const dictionary = new Set(proofingDictionary.map((word) => word.normalize("NFKC").toLocaleLowerCase(proofingLanguage)));
+    let proofingDoc = editor.state.doc;
+    let proofingParagraphs = collectSpellcheckParagraphs(proofingDoc);
     const checker = createSpellcheckController({
-      snapshot: () => ({ paragraphs: collectSpellcheckParagraphs(editor.state.doc), cursor: editor.state.selection.from }),
+      snapshot: () => {
+        if (proofingDoc !== editor.state.doc) {
+          proofingDoc = editor.state.doc;
+          proofingParagraphs = collectSpellcheckParagraphs(proofingDoc);
+        }
+        return { paragraphs: proofingParagraphs, cursor: editor.state.selection.from, issues: getSpellcheckIssues(editor) };
+      },
+      language: proofingLanguage,
       composing: () => editor.view.composing,
       request: async (batch, signal) => {
         const response = await fetch("/api/wiki/spellcheck", {
@@ -1505,9 +1514,28 @@ export function WikiEditor({
       publish: (issues) => {
         const filtered = issues.filter((issue) => !ignoredProofingIssues.current.has(proofingIssueKey(issue)) && !disabledProofingRuleIds.current.has(issue.ruleId)
           && (issue.kind !== "spelling" || !dictionary.has(editor.state.doc.textBetween(issue.from, issue.to).normalize("NFKC").toLocaleLowerCase(proofingLanguage))));
+        const previous = getSpellcheckIssues(editor);
+        if (previous.length === filtered.length && previous.every((issue, index) => {
+          const next = filtered[index];
+          return issue.from === next.from && issue.to === next.to && issue.kind === next.kind && issue.ruleId === next.ruleId
+            && issue.pending === next.pending && issue.message === next.message && issue.category === next.category && issue.replacements === next.replacements;
+        })) return;
         setSpellcheckIssues(editor, filtered);
+        setSpellcheckIssue((selected) => {
+          if (!selected) return null;
+          const issue = filtered.find((item) => item.from === selected.issue.from && item.to === selected.issue.to && item.ruleId === selected.issue.ruleId);
+          return issue ? { ...selected, issue } : null;
+        });
       },
       status: setProofingStatus,
+      timing: (timing) => {
+        // Local, bounded diagnostics: no text, page identifiers or telemetry.
+        for (const [phase, duration] of [["queue", timing.queueMs], ["request", timing.requestMs], ["apply", timing.applyMs]] as const) {
+          const name = `wiki-proofing.${phase}`;
+          performance.clearMeasures(name);
+          performance.measure(name, { start: Math.max(0, performance.now() - duration), duration, detail: timing });
+        }
+      },
     });
     const update = () => { setSpellcheckIssue(null); checker.schedule(); };
     editor.on("update", update);
@@ -2318,15 +2346,16 @@ export function WikiEditor({
     } finally { setProofingDictionarySaving(false); }
   }
 
-  function currentProofingIssue() {
+  function currentProofingIssue(replacement: string) {
     if (!spellcheckIssue || !activeEditor.isEditable) return null;
     const { issue, source } = spellcheckIssue;
     return getSpellcheckIssues(activeEditor).find((candidate) => candidate.from === issue.from && candidate.to === issue.to
-      && candidate.ruleId === issue.ruleId && activeEditor.state.doc.textBetween(candidate.from, candidate.to) === source) ?? null;
+      && !candidate.pending && candidate.ruleId === issue.ruleId && candidate.replacements.includes(replacement)
+      && activeEditor.state.doc.textBetween(candidate.from, candidate.to) === source) ?? null;
   }
 
   function replaceAllCurrentProofingIssue(replacement: string) {
-    const issue = currentProofingIssue();
+    const issue = currentProofingIssue(replacement);
     if (!issue) { setSpellcheckIssue(null); return; }
     const count = replaceAllSpellcheckOccurrences(activeEditor, issue, replacement);
     setSpellcheckIssue(null);
@@ -2335,7 +2364,7 @@ export function WikiEditor({
   }
 
   function replaceCurrentProofingIssue(replacement: string) {
-    const issue = currentProofingIssue();
+    const issue = currentProofingIssue(replacement);
     if (!issue) { setSpellcheckIssue(null); return; }
     // Suggestions are plain text, including an empty string for deletion.
     activeEditor.view.dispatch(activeEditor.state.tr.insertText(replacement, issue.from, issue.to).scrollIntoView());

@@ -22,6 +22,8 @@ export type SpellcheckIssue = {
   category: string;
   ruleId: string;
   replacements: string[];
+  /** Context changed; retain the hint while its grammar is rechecked. */
+  pending?: boolean;
 };
 
 export type SpellcheckResponseMatch = {
@@ -49,8 +51,9 @@ function splitParagraphForProofing(text: string, paragraph: number): SpellcheckB
   while (offset < text.length) {
     let end = Math.min(offset + SPELLCHECK_SEGMENT_MAX_CHARACTERS, text.length);
     if (end < text.length) {
-      const whitespace = text.lastIndexOf(" ", end);
+      const whitespace = text.lastIndexOf(" ", end - 1);
       if (whitespace > offset + SPELLCHECK_SEGMENT_MAX_CHARACTERS / 2) end = whitespace + 1;
+      if (/[\uD800-\uDBFF]/.test(text[end - 1]) && /[\uDC00-\uDFFF]/.test(text[end])) end--;
     }
     items.push({ text: text.slice(offset, end), paragraph, offset });
     offset = end;
@@ -149,12 +152,12 @@ export function getSpellcheckIssues(editor: Editor) {
 }
 
 export function replaceAllSpellcheckOccurrences(editor: Editor, issue: SpellcheckIssue, replacement: string) {
-  if (!editor.isEditable || !getSpellcheckIssues(editor).includes(issue)) return 0;
+  if (!editor.isEditable || issue.pending || !getSpellcheckIssues(editor).includes(issue)) return 0;
   const source = editor.state.doc.textBetween(issue.from, issue.to);
   if (!source || source === replacement) return 0;
   // Grammar depends on context. Only replace occurrences the checker actually
   // marked with this rule, never arbitrary substrings elsewhere in the document.
-  const ranges = getSpellcheckIssues(editor).filter((candidate) => candidate.ruleId === issue.ruleId
+  const ranges = getSpellcheckIssues(editor).filter((candidate) => !candidate.pending && candidate.ruleId === issue.ruleId
     && candidate.kind === issue.kind && editor.state.doc.textBetween(candidate.from, candidate.to) === source);
   if (!ranges.length) return 0;
   const transaction = editor.state.tr;
@@ -168,10 +171,16 @@ export function setSpellcheckIssues(editor: Editor, issues: SpellcheckIssue[]) {
   editor.view.dispatch(editor.view.state.tr.setMeta(spellcheckKey, issues));
 }
 
+function neighboringWordCharacter(doc: ProseMirrorNode, position: number, before: boolean) {
+  const text = doc.textBetween(Math.max(0, before ? position - 2 : position), Math.min(doc.content.size, before ? position : position + 2), " ", " ");
+  return text.match(before ? /[\p{L}\p{M}\p{N}_'’-]$/u : /^[\p{L}\p{M}\p{N}_'’-]/u)?.[0] ?? "";
+}
+
 export function createSpellcheckPlugin(onIssueClick: (issue: SpellcheckIssue, target: HTMLElement) => void) {
   const decorate = (doc: ProseMirrorNode, issues: SpellcheckIssue[]) => DecorationSet.create(doc, issues.map((issue) => Decoration.inline(issue.from, issue.to, {
     class: "wiki-spellcheck-issue wiki-spellcheck-issue--" + issue.kind,
     "data-spellcheck-issue": "true",
+    "data-proofing-pending": issue.pending ? "true" : "false",
     title: issue.message,
   })));
   return new Plugin<SpellcheckState>({
@@ -187,12 +196,23 @@ export function createSpellcheckPlugin(onIssueClick: (issue: SpellcheckIssue, ta
           issues = issues.flatMap((issue) => {
             const start = transaction.docs[index].resolve(issue.from);
             let touched = false;
+            let contextChanged = false;
+            let boundaryChanged = false;
             map.forEach((from, to) => {
-              if (from <= start.end() && to >= start.start()) touched = true;
+              if (from < issue.to && to > issue.from) touched = true;
+              if (from === issue.to || to === issue.from) boundaryChanged = true;
+              if (from <= start.end() && to >= start.start()) contextChanged = true;
             });
             if (touched) return [];
             const from = map.map(issue.from), to = map.map(issue.to, -1);
-            return from < to ? [{ ...issue, from, to }] : [];
+            if (boundaryChanged) {
+              const before = transaction.docs[index], after = transaction.docs[index + 1] ?? transaction.doc;
+              // Spaces/punctuation beside a word do not remove its hint; joining
+              // or extending the word does. Read at most two UTF-16 units per side.
+              if (neighboringWordCharacter(before, issue.from, true) !== neighboringWordCharacter(after, from, true)
+                || neighboringWordCharacter(before, issue.to, false) !== neighboringWordCharacter(after, to, false)) return [];
+            }
+            return from < to ? [{ ...issue, from, to, ...(issue.kind === "writing" && contextChanged ? { pending: true } : {}) }] : [];
           });
         });
         return { issues, decorations: decorate(transaction.doc, issues) };

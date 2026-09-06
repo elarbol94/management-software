@@ -2378,6 +2378,8 @@
         },
         "switch": "Proofing language: {language}. Switch to {nextLanguage}.",
         "checking": "Checking",
+        "checkingChanges": "Checking changes…",
+        "recheckingSuggestion": "This suggestion is being updated…",
         "unavailable": "Spelling and grammar checking is currently unavailable",
         "browserFallback": "Advanced checking is unavailable. Browser checking is enabled if your browser supports this language. We will retry automatically.",
         "saveFailed": "The proofing language could not be saved.",

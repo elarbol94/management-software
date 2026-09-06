@@ -88,7 +88,7 @@ describe("wiki spellcheck helpers", () => {
     expect(paragraphs[0].excludedRanges).toEqual([{ from: 20, to: 21 }, { from: 21, to: 22 }, { from: 27, to: 33 }]);
   });
 
-  it("invalidates edited paragraphs immediately and reuses decorations for selection changes", () => {
+  it("invalidates edited words immediately and reuses decorations for selection changes", () => {
     const doc = schema.node("doc", null, [schema.node("paragraph", null, schema.text("Feler")), schema.node("paragraph", null, schema.text("Feler"))]);
     const issue: SpellcheckIssue = { from: 1, to: 6, message: "Typo", kind: "spelling", category: "", ruleId: "TYPO", replacements: ["Fehler"] };
     let state = EditorState.create({ doc, plugins: [createSpellcheckPlugin(() => {})] });
@@ -99,6 +99,46 @@ describe("wiki spellcheck helpers", () => {
     state = state.apply(state.tr.insertText("h", 3));
     expect(spellcheckKey.getState(state)?.issues).toEqual([{ ...issue, from: 9, to: 14 }]);
     expect(state.doc.textBetween(9, 14)).toBe("Feler");
+  });
+
+  it("keeps other spelling hints in the same paragraph and holds context-dependent grammar", () => {
+    const doc = schema.node("doc", null, schema.node("paragraph", null, schema.text("Feler Feler falsch")));
+    const issue: SpellcheckIssue = { from: 1, to: 6, message: "Typo", kind: "spelling", category: "", ruleId: "TYPO", replacements: ["Fehler"] };
+    let state = EditorState.create({ doc, plugins: [createSpellcheckPlugin(() => {})] });
+    state = state.apply(state.tr.setMeta(spellcheckKey, [issue, { ...issue, from: 7, to: 12 }, { ...issue, from: 13, to: 19, kind: "writing" }]));
+    state = state.apply(state.tr.insertText("Fehler", 1, 6));
+    expect(spellcheckKey.getState(state)?.issues).toEqual([
+      { ...issue, from: 8, to: 13 }, { ...issue, from: 14, to: 20, kind: "writing", pending: true },
+    ]);
+    expect(state.doc.textBetween(8, 13)).toBe("Feler");
+    // Two steps in one transaction still map against each step's document.
+    state = state.apply(state.tr.insertText("Ein ", 1).insertText("h", 14));
+    expect(spellcheckKey.getState(state)?.issues).toEqual([{ ...issue, from: 19, to: 25, kind: "writing", pending: true }]);
+  });
+
+  it("never bulk-applies grammar suggestions whose context is pending", () => {
+    const doc = schema.node("doc", null, schema.node("paragraph", null, schema.text("Teh Teh")));
+    const issue: SpellcheckIssue = { from: 1, to: 4, message: "Grammar", kind: "writing", category: "", ruleId: "GRAMMAR", replacements: ["The"] };
+    let state = EditorState.create({ doc, plugins: [createSpellcheckPlugin(() => {})] });
+    state = state.apply(state.tr.setMeta(spellcheckKey, [issue, { ...issue, from: 5, to: 8, pending: true }]));
+    const editor = { get state() { return state; }, isEditable: true, view: { dispatch: (tr: Transaction) => { state = state.apply(tr); } } } as unknown as Editor;
+    expect(replaceAllSpellcheckOccurrences(editor, issue, "The")).toBe(1);
+    expect(state.doc.textContent).toBe("The Teh");
+  });
+
+  it("keeps a word's hint when typing a space, but removes it when the word is extended or joined", () => {
+    const doc = schema.node("doc", null, schema.node("paragraph", null, schema.text("Feler")));
+    const issue: SpellcheckIssue = { from: 1, to: 6, message: "Typo", kind: "spelling", category: "", ruleId: "TYPO", replacements: ["Fehler"] };
+    let state = EditorState.create({ doc, plugins: [createSpellcheckPlugin(() => {})] });
+    state = state.apply(state.tr.setMeta(spellcheckKey, [issue]));
+    state = state.apply(state.tr.insertText(" ", 6));
+    expect(spellcheckKey.getState(state)?.issues).toEqual([issue]);
+    state = state.apply(state.tr.insertText("Vor ", 1));
+    expect(spellcheckKey.getState(state)?.issues).toEqual([{ ...issue, from: 5, to: 10 }]);
+    const joined = state.apply(state.tr.delete(4, 5));
+    expect(spellcheckKey.getState(joined)?.issues).toEqual([]);
+    state = state.apply(state.tr.insertText("chen", 10));
+    expect(spellcheckKey.getState(state)?.issues).toEqual([]);
   });
 
   it("replace all changes only matching marked occurrences, including formatted words", () => {
