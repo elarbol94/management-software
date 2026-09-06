@@ -65,6 +65,7 @@ import { CommentableImage, FigureIdentity, figureRepairs } from "./figure-extens
 import { FigureUploads, addUpload, removeUpload, uploadPosition } from "./figure-upload";
 import { FigureList, FigureListEntry, FigureListSync } from "./figure-list";
 import { FigureLibraryContext, figureAssetAttributes, useFigureLibrary } from "./figure-library";
+import { FigureTextDrop } from "./figure-drop";
 import { FigurePanel } from "./figure-panel";
 import { FigurePicker } from "./figure-picker";
 import { FigureReferencePicker } from "./figure-reference-picker";
@@ -1212,7 +1213,7 @@ export function WikiEditor({
   ];
   const slashExtension = createSlashCommandExtension({ commands: slashCommands, ariaLabel: t("slash.ariaLabel"), emptyLabel: t("slash.empty") });
 
-  const editor = useEditor({ immediatelyRender: false, editable: false, enableInputRules: ["blockquote", "bulletList", "codeBlock", "heading", "orderedList", "taskItem"], extensions: [StarterKit.configure({ dropcursor: { color: "#3b82f6", width: 3 }, bold: false, code: false, heading: false, listItem: false, italic: false, link: { openOnClick: false }, strike: false }), CollapsibleHeading.configure({ levels: [1, 2, 3] }), HeadingListItem, ...MarkdownShortcutMarks, ...MarkdownDocumentExtensions, ...DocumentExtensions, FigureIdentity, FigureUploads, FigureList, FigureListEntry, FigureListSync, TaskList, TaskItem.configure({ nested: true }), Citation, PdfEvidence, TaskReference, DeadlineReference, CommentableImage, MermaidDiagram, CommentMark, SuggestionInsert, SuggestionDelete, SuggestionMode, Highlight, Placeholder.configure({ placeholder: ({ node }) => node.type.name === "heading" ? t("editor.placeholder.heading") : t("editor.placeholder.empty") }), EditorSearchExtension, createSpellcheckExtension((issue, target) => {
+  const editor = useEditor({ immediatelyRender: false, editable: false, enableInputRules: ["blockquote", "bulletList", "codeBlock", "heading", "orderedList", "taskItem"], extensions: [StarterKit.configure({ dropcursor: { color: "#3b82f6", width: 3 }, bold: false, code: false, heading: false, listItem: false, italic: false, link: { openOnClick: false }, strike: false }), CollapsibleHeading.configure({ levels: [1, 2, 3] }), HeadingListItem, ...MarkdownShortcutMarks, ...MarkdownDocumentExtensions, ...DocumentExtensions, FigureIdentity, FigureTextDrop, FigureUploads, FigureList, FigureListEntry, FigureListSync, TaskList, TaskItem.configure({ nested: true }), Citation, PdfEvidence, TaskReference, DeadlineReference, CommentableImage, MermaidDiagram, CommentMark, SuggestionInsert, SuggestionDelete, SuggestionMode, Highlight, Placeholder.configure({ placeholder: ({ node }) => node.type.name === "heading" ? t("editor.placeholder.heading") : t("editor.placeholder.empty") }), EditorSearchExtension, createSpellcheckExtension((issue, target) => {
       const source = liveEditor.current?.state.doc.textBetween(issue.from, issue.to) ?? "";
       setSpellcheckIssue({ issue, target, source });
     }), MarkdownShortcuts, slashExtension], content,

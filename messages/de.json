@@ -3453,7 +3453,7 @@
       "panelTitle": "Bild",
       "textWrap": "Textumbruch",
       "noWrap": "In eigener Zeile",
-      "moveHint": "Ziehe das Bild oder seinen Griff an eine neue Stelle im Text. Die blaue Linie zeigt die Einfügeposition.",
+      "moveHint": "Ziehe das Bild oder seinen Griff zwischen Wörter oder Absätze. Die blaue Markierung zeigt die genaue Position; der Text geht nach dem Bild weiter.",
       "cropHint": "Ziehe die Ecken zum Zuschneiden oder verschiebe den Rahmen. Mit den Pfeiltasten kannst du fein nachjustieren. Übernehmen speichert, Escape verwirft.",
       "preciseCrop": "Genaue Zuschnittmaße",
       "applyCrop": "Zuschnitt übernehmen",

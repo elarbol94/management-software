@@ -1118,3 +1118,9 @@
 .wiki-crop-handle:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
 @media (max-width: 1279px) { .wiki-figure-panel { position: fixed; z-index: 46; top: 4rem; right: .75rem; width: min(20rem, calc(100vw - 1.5rem)); box-shadow: 0 8px 30px #0003; } }
 @media print { .wiki-figure-panel { display: none !important; } }
+
+.wiki-figure-text-drop-caret { display: inline-block; width: 0; height: 1.2em; border-left: 3px solid #3b82f6; margin-right: -3px; vertical-align: text-bottom; pointer-events: none; }
+
+/* The standard cursor retains its last block marker briefly when disabled. */
+.wiki-figure-text-drop-active > .prosemirror-dropcursor-block,
+.wiki-figure-text-drop-active > .prosemirror-dropcursor-inline { display: none; }

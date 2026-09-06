@@ -28,8 +28,11 @@ percentage fields remain available under the crop dimensions disclosure.
 **Apply crop** commits the preview, while closing cropping or pressing Escape
 cancels it. Cropping retains the original bytes and can be reset.
 
-Drag the image itself or its grip to another position in the text; a blue line
-marks the insertion position. Captions and figure identity move with it, keeping
+Drag the image itself or its grip to another position in the text. Within a
+paragraph, a blue caret marks the exact position between characters. Dropping
+there splits that paragraph and places the figure between the two text parts,
+retaining formatting and inline comments. The existing text-wrapping setting
+still applies. Between paragraphs, a blue line marks the block insertion point. Captions and figure identity move with it, keeping
 references intact. Duplication creates a separate target. Floating figures move
 with their surrounding text, and page and column widths limit their size.
 Choose **Done / Fertig** or press Escape in the panel to return to writing.

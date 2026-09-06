@@ -3451,7 +3451,7 @@
       "panelTitle": "Image",
       "textWrap": "Text wrapping",
       "noWrap": "On its own line",
-      "moveHint": "Drag the image or its grip to a new position in the text. The blue line shows where it will land.",
+      "moveHint": "Drag the image or its grip between words or paragraphs. The blue marker shows the exact position; text continues after the image.",
       "cropHint": "Drag the corners to crop, or drag the frame to move it. Arrow keys make fine adjustments. Apply when ready; Escape cancels.",
       "preciseCrop": "Precise crop dimensions",
       "applyCrop": "Apply crop",
