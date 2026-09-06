@@ -32,6 +32,7 @@ export type PaginationItem = {
   /** Measured split candidates in flow order, starting with the block's first line. */
   splits?: PaginationSplit[];
   pageBreak?: boolean;
+  breakBefore?: boolean;
   heading?: boolean;
   keepWithNext?: boolean;
   keepTogether?: boolean;
@@ -124,7 +125,7 @@ export function computeDocumentPagination(
     const points = splitPoints(item);
     let offset = 0;
 
-    if (forceNextPage) {
+    if (forceNextPage || (item.breakBefore && flowTop > contentStart + TOLERANCE)) {
       forceNextPage = false;
       offset = contentStartOf(page + 1) - flowTop;
     } else if (flowTop < contentStart) {

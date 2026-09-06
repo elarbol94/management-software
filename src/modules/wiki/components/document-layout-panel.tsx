@@ -177,7 +177,7 @@ export function DocumentLayoutPanel({
     const originalDocument = editor.state.doc;
     setDocxStatus("importing");
     try {
-      const form = new FormData(); form.set("file", file);
+      const form = new FormData(); form.set("file", file); form.set("pageId", pageId);
       const response = await fetch("/api/wiki/docx/import", { method: "POST", body: form });
       if (!response.ok) throw new Error("DOCX import failed");
       const result = await response.json() as { document: object };

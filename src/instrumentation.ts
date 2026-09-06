@@ -26,5 +26,7 @@ export async function register() {
     await warmLanguageTool();
     const { startPdfProcessingWorker } = await import("./modules/wiki/pdf-processing");
     startPdfProcessingWorker();
+    const { startFigureSyncWorker } = await import("./modules/wiki/figure-assets");
+    startFigureSyncWorker();
   }
 }

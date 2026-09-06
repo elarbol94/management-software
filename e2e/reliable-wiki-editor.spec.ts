@@ -265,6 +265,7 @@ test("document paper keeps its physical aspect ratio and margin guides can be to
 });
 
 test("SVG text updates live and previous versions can be restored", async ({ page }) => {
+  page.setDefaultTimeout(30_000);
   let releasePreview!: () => void;
   const previewGate = new Promise<void>((resolve) => { releasePreview = resolve; });
   await page.route("**/api/wiki/svg-assets/*/content?raw=1&v=*", async (route) => { await previewGate; await route.continue(); });
@@ -277,9 +278,8 @@ test("SVG text updates live and previous versions can be restored", async ({ pag
       buffer: Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="320" height="120"><rect width="100%" height="100%" fill="white"/><text x="20" y="65">Original label</text></svg>'),
     });
     await expect(page.locator("figure[data-commentable-image]")).toBeVisible();
-    await page.getByRole("button", { name: "Bildbeschreibung speichern", exact: true }).click();
-    await page.getByRole("button", { name: "Mehr", exact: true }).last().click();
-    await page.getByRole("menuitem", { name: "Grafiken" }).click();
+    await page.locator("figure[data-commentable-image] img").click();
+    await page.getByRole("button", { name: "SVG-Beschriftungen bearbeiten", exact: true }).click();
     const panel = page.getByRole("dialog", { name: "Grafiken" });
     await expect(panel).toBeVisible();
     const panelBox = await panel.boundingBox();

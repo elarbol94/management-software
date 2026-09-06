@@ -8,6 +8,7 @@ export * from "@/modules/projects/schema";
 export * from "@/modules/personnel/schema";
 export * from "@/modules/wiki/schema";
 export * from "@/modules/wiki/pdf-schema";
+export * from "@/modules/wiki/figure-schema";
 export * from "@/modules/wiki/presentation-schema";
 export * from "@/modules/context/schema";
 export * from "@/modules/municipalities/schema";

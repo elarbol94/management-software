@@ -8,6 +8,7 @@ import { EditorContent, useEditor, type Editor } from "@tiptap/react";
 import { BubbleMenu } from "@tiptap/react/menus";
 import { Mark, Node, mergeAttributes } from "@tiptap/core";
 import { NodeSelection } from "@tiptap/pm/state";
+import { closeHistory } from "@tiptap/pm/history";
 import StarterKit from "@tiptap/starter-kit";
 import Placeholder from "@tiptap/extension-placeholder";
 import TaskList from "@tiptap/extension-task-list";
@@ -59,7 +60,14 @@ import {
   type DocumentPreflightIssue,
   type DocumentSettingsV1,
 } from "../lib/document-settings";
-import { hasOwnFigureNumber } from "../lib/figure-caption";
+import { figureMime, hasFigureList, isFigure, stripFigureNumber } from "../lib/figure";
+import { CommentableImage, FigureIdentity, figureRepairs } from "./figure-extension";
+import { FigureUploads, addUpload, removeUpload, uploadPosition } from "./figure-upload";
+import { FigureList, FigureListEntry, FigureListSync } from "./figure-list";
+import { FigureLibraryContext, figureAssetAttributes, useFigureLibrary } from "./figure-library";
+import { FigurePicker } from "./figure-picker";
+import { FigureReferencePicker } from "./figure-reference-picker";
+import type { FigureAssetDto } from "../lib/figure-types";
 import {
   normalizeWikiTypography,
   wikiTypographyCssVariables,
@@ -433,40 +441,6 @@ const DeadlineReference = Node.create({
   },
 });
 
-const CommentableImage = Node.create({
-  name: "commentableImage", group: "block", atom: true, selectable: true, draggable: true,
-  addAttributes() {
-    return {
-      nodeId: { default: "" },
-      attachmentId: { default: "" },
-      src: { default: "" },
-      alt: { default: "" },
-      caption: { default: "" },
-      includeInFigureIndex: { default: true },
-      widthPercent: { default: 100 },
-      alignment: { default: "center" },
-      cropX: { default: 50 },
-      cropY: { default: 50 },
-    };
-  },
-  parseHTML() { return [{ tag: "figure[data-commentable-image]" }]; },
-  renderHTML({ HTMLAttributes }) {
-    const label = HTMLAttributes.caption || HTMLAttributes.alt || "Image";
-    return ["figure", {
-      "data-commentable-image": "",
-      "data-comment-node-id": HTMLAttributes.nodeId,
-      "data-attachment-id": HTMLAttributes.attachmentId,
-      "data-image-alignment": HTMLAttributes.alignment,
-      class: "wiki-commentable-media my-5",
-      style: `width:${Math.max(20, Math.min(100, Number(HTMLAttributes.widthPercent) || 100))}%;margin-left:${HTMLAttributes.alignment === "right" ? "auto" : HTMLAttributes.alignment === "center" ? "auto" : "0"};margin-right:${HTMLAttributes.alignment === "left" ? "auto" : HTMLAttributes.alignment === "center" ? "auto" : "0"}`,
-    },
-    // bg-white: images with transparency (diagrams exported from Inkscape/Illustrator commonly
-    // have none) assume a light backing; the wiki background goes dark in dark mode otherwise.
-    ["img", { src: HTMLAttributes.src, alt: HTMLAttributes.alt || label, class: "max-h-[36rem] w-full rounded-lg bg-white object-contain", style: `object-position:${Number(HTMLAttributes.cropX) || 50}% ${Number(HTMLAttributes.cropY) || 50}%` }],
-    ...(label ? [["figcaption", { class: "mt-2 text-center text-xs text-muted-foreground" }, label]] : [])];
-  },
-});
-
 const CommentMark = Mark.create({
   name: "comment", inclusive: false,
   addAttributes() {
@@ -554,32 +528,17 @@ function backfillCommentNodeIds(editor: Editor) {
 }
 
 type UploadedAttachment = { id: string; fileName: string; mimeType: string };
-type ExistingImageAttachment = UploadedAttachment & { sizeBytes: number };
+type ExistingImageAttachment = UploadedAttachment & { src?: string };
 const INLINE_IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/svg+xml"]);
 
 function isInlineImageFile(file: File) {
-  return INLINE_IMAGE_TYPES.has(file.type) || (!file.type && file.name.toLocaleLowerCase().endsWith(".svg"));
-}
-
-function isExistingInlineImage(attachment: ExistingImageAttachment) {
-  return INLINE_IMAGE_TYPES.has(attachment.mimeType) || attachment.fileName.toLocaleLowerCase().endsWith(".svg");
+  return INLINE_IMAGE_TYPES.has(file.type) || Boolean(figureMime(file.name));
 }
 
 function normalizeInlineImageFile(file: File) {
   return !file.type && file.name.toLocaleLowerCase().endsWith(".svg")
     ? new File([file], file.name, { type: "image/svg+xml", lastModified: file.lastModified })
     : file;
-}
-
-async function uploadInlineAttachment(pageId: string, file: File): Promise<UploadedAttachment> {
-  const data = new FormData();
-  data.set("file", file);
-  data.set("entityType", "wikiPage");
-  data.set("entityId", pageId);
-  const response = await fetch("/api/files", { method: "POST", body: data });
-  const result = await response.json() as UploadedAttachment & { error?: string };
-  if (!response.ok) throw new Error(result.error || "Upload failed");
-  return result;
 }
 
 function imageNodeAttrs(attachment: UploadedAttachment) {
@@ -589,7 +548,8 @@ function imageNodeAttrs(attachment: UploadedAttachment) {
     attachmentId: attachment.id,
     src: `/api/files/${attachment.id}`,
     alt: label,
-    caption: label,
+    caption: "",
+    numbered: true,
     includeInFigureIndex: true,
     widthPercent: 100,
     alignment: "center",
@@ -817,7 +777,14 @@ export function WikiEditor({
     parseDocumentSettings(initialDocumentSettings),
     citationLocale,
   );
-  const [conflictRevision, setConflictRevision] = useState<string | null>(null); const [activeThreadId, setActiveThreadId] = useState<string | null>(null); const [optimisticCommentThreads, setOptimisticCommentThreads] = useState<CommentThread[]>([]); const [commentFocusRequest, setCommentFocusRequest] = useState(0); const [inlineImagePickerOpen, setInlineImagePickerOpen] = useState(false); const [existingImages, setExistingImages] = useState<ExistingImageAttachment[]>([]); const [existingImagesLoading, setExistingImagesLoading] = useState(false); const [existingImagesError, setExistingImagesError] = useState(""); const [commentOpen, setCommentOpen] = useState(false); const [commentBody, setCommentBody] = useState(""); const [pendingAnchor, setPendingAnchor] = useState<CommentAnchor | null>(null); const [regionTarget, setRegionTarget] = useState<{ nodeId: string; label: string } | null>(null); const [imageError, setImageError] = useState(""); const [imageUploading, setImageUploading] = useState(false); const [assigneeId, setAssigneeId] = useState("none");
+  const [conflictRevision, setConflictRevision] = useState<string | null>(null); const [activeThreadId, setActiveThreadId] = useState<string | null>(null); const [optimisticCommentThreads, setOptimisticCommentThreads] = useState<CommentThread[]>([]); const [commentFocusRequest, setCommentFocusRequest] = useState(0); const [inlineImagePickerOpen, setInlineImagePickerOpen] = useState(false); const [commentOpen, setCommentOpen] = useState(false); const [commentBody, setCommentBody] = useState(""); const [pendingAnchor, setPendingAnchor] = useState<CommentAnchor | null>(null); const [regionTarget, setRegionTarget] = useState<{ nodeId: string; label: string } | null>(null); const [imageError, setImageError] = useState(""); const [imageUploading, setImageUploading] = useState(false); const [assigneeId, setAssigneeId] = useState("none");
+  const figureLibrary = useFigureLibrary(pageId, t("figures.staleExport"));
+  const [figureReferenceOpen, setFigureReferenceOpen] = useState(false);
+  const [figureTargetId, setFigureTargetId] = useState("");
+  const [figureSourceMode, setFigureSourceMode] = useState(false);
+  const [preferredSvgId, setPreferredSvgId] = useState("");
+  const uploadControllers = useRef(new Set<AbortController>());
+  useEffect(() => () => { uploadControllers.current.forEach((controller) => controller.abort()); }, []);
   const commentThreads = useMemo(
     () => [...optimisticCommentThreads.filter((thread) => !comments.some((item) => item.id === thread.id)), ...comments],
     [comments, optimisticCommentThreads],
@@ -930,11 +897,11 @@ export function WikiEditor({
     const targets = new Map<string, CitationTarget>();
     currentEditor.state.doc.descendants((node, position) => {
       if (node.type.name === "heading") items.push({ level: Number(node.attrs.level), text: node.textContent, position, id: String(node.attrs.id ?? `heading-${position}`) });
-      if (node.type.name === "commentableImage" && node.attrs.includeInFigureIndex !== false && String(node.attrs.caption ?? "").trim()) {
-        captions.push({ nodeId: String(node.attrs.nodeId ?? `figure-${position}`), caption: String(node.attrs.caption).trim() });
+      if (isFigure(node.type.name) && node.attrs.numbered !== false && node.attrs.includeInFigureIndex !== false) {
+        captions.push({ nodeId: String(node.attrs.nodeId ?? `figure-${position}`), caption: stripFigureNumber(String(node.attrs.caption || "")) });
       }
       if (node.type.name === "markdownTable" && node.attrs.includeInTableIndex !== false && String(node.attrs.caption ?? "").trim()) {
-        tables.push({ tableId: String(node.attrs.tableId ?? ("table-" + position)), caption: String(node.attrs.caption).trim() });
+        tables.push({ tableId: String(node.attrs.tableId ?? ("table-" + position)), caption: stripFigureNumber(String(node.attrs.caption || "")) });
       }
       if (node.type.name === "citation" && Array.isArray(node.attrs.items)) {
         for (const item of node.attrs.items as Array<{ sourceId?: unknown; documentId?: unknown; annotationId?: unknown; locator?: unknown }>) {
@@ -1005,6 +972,7 @@ export function WikiEditor({
   // a request carrying text from a moment ago would drop the local journal of
   // the newer keystrokes once the server confirmed it.
   function persistLatestContent() {
+    if (!pendingSave.current) return;
     const json = liveEditor.current ? JSON.stringify(liveEditor.current.getJSON()) : pendingSave.current;
     if (json) void persistContent(json);
   }
@@ -1047,11 +1015,21 @@ export function WikiEditor({
     if (conflictBlocked.current) { setSaveState("conflict"); return; }
     if (saveInFlight.current) { queuedSave.current = json; return; }
     if (saveTimer.current) { clearTimeout(saveTimer.current); saveTimer.current = null; }
+    const snapshot = { contentJson: json, documentMode: documentModeRef.current, documentSettingsJson: serializeDocumentSettings(documentSettingsRef.current) };
+    if (sameEditorSnapshot(snapshot, { contentJson: lastServerContent.current, documentMode: lastServerDocumentMode.current, documentSettingsJson: lastServerDocumentSettings.current })) {
+      pendingSave.current = null;
+      const journal = readEditorStorage(storageKey);
+      try {
+        if (journal && JSON.parse(journal).editorSessionId === editorSessionId.current) removeEditorStorage(storageKey);
+      } catch { /* leave an unrecognized journal intact */ }
+      if (maxSaveTimer.current) { clearTimeout(maxSaveTimer.current); maxSaveTimer.current = null; }
+      setSaveState("saved");
+      return;
+    }
     saveInFlight.current = true;
     let completeSave!: () => void;
     saveCompletion.current = new Promise<void>((resolve) => { completeSave = resolve; });
     setSaveState("saving");
-    const snapshot = { contentJson: json, documentMode: documentModeRef.current, documentSettingsJson: serializeDocumentSettings(documentSettingsRef.current) };
     try {
       const result = await savePageContentRequest({
         id: pageId,
@@ -1232,11 +1210,11 @@ export function WikiEditor({
     }),
     // The document layout panel's Content tab already has a target picker covering
     // headings, figures, tables and annexes — open it rather than duplicating it here.
-    slash("crossReference", "wiki", Link2, () => setDocumentLayoutVisible(true)),
+    slash("crossReference", "wiki", Link2, () => { rememberToolbarSelection(); setFigureReferenceOpen(true); }),
   ];
   const slashExtension = createSlashCommandExtension({ commands: slashCommands, ariaLabel: t("slash.ariaLabel"), emptyLabel: t("slash.empty") });
 
-  const editor = useEditor({ immediatelyRender: false, editable: false, enableInputRules: ["blockquote", "bulletList", "codeBlock", "heading", "orderedList", "taskItem"], extensions: [StarterKit.configure({ bold: false, code: false, heading: false, listItem: false, italic: false, link: { openOnClick: false }, strike: false }), CollapsibleHeading.configure({ levels: [1, 2, 3] }), HeadingListItem, ...MarkdownShortcutMarks, ...MarkdownDocumentExtensions, ...DocumentExtensions, TaskList, TaskItem.configure({ nested: true }), Citation, PdfEvidence, TaskReference, DeadlineReference, CommentableImage, MermaidDiagram, CommentMark, SuggestionInsert, SuggestionDelete, SuggestionMode, Highlight, Placeholder.configure({ placeholder: ({ node }) => node.type.name === "heading" ? t("editor.placeholder.heading") : t("editor.placeholder.empty") }), EditorSearchExtension, createSpellcheckExtension((issue, target) => {
+  const editor = useEditor({ immediatelyRender: false, editable: false, enableInputRules: ["blockquote", "bulletList", "codeBlock", "heading", "orderedList", "taskItem"], extensions: [StarterKit.configure({ bold: false, code: false, heading: false, listItem: false, italic: false, link: { openOnClick: false }, strike: false }), CollapsibleHeading.configure({ levels: [1, 2, 3] }), HeadingListItem, ...MarkdownShortcutMarks, ...MarkdownDocumentExtensions, ...DocumentExtensions, FigureIdentity, FigureUploads, FigureList, FigureListEntry, FigureListSync, TaskList, TaskItem.configure({ nested: true }), Citation, PdfEvidence, TaskReference, DeadlineReference, CommentableImage, MermaidDiagram, CommentMark, SuggestionInsert, SuggestionDelete, SuggestionMode, Highlight, Placeholder.configure({ placeholder: ({ node }) => node.type.name === "heading" ? t("editor.placeholder.heading") : t("editor.placeholder.empty") }), EditorSearchExtension, createSpellcheckExtension((issue, target) => {
       const source = liveEditor.current?.state.doc.textBetween(issue.from, issue.to) ?? "";
       setSpellcheckIssue({ issue, target, source });
     }), MarkdownShortcuts, slashExtension], content,
@@ -1246,16 +1224,7 @@ export function WikiEditor({
         const files = [...(event.clipboardData?.files ?? [])].filter(isInlineImageFile).map(normalizeInlineImageFile);
         if (files.length) {
           event.preventDefault();
-          void (async () => {
-            let position = view.state.selection.from;
-            for (const file of files) {
-              const attachment = await uploadInlineAttachment(pageId, file);
-              const node = view.state.schema.nodes.commentableImage.create(imageNodeAttrs(attachment));
-              view.dispatch(view.state.tr.insert(position, node));
-              position += node.nodeSize;
-            }
-            router.refresh();
-          })().catch((error: unknown) => setImageError(error instanceof Error ? error.message : t("uploadFailed")));
+          void insertFigureFiles(files, view.state.selection.from);
           return true;
         }
         const clipboard = event.clipboardData;
@@ -1298,22 +1267,15 @@ export function WikiEditor({
         if (!files.length) return false;
         event.preventDefault();
         const coordinates = view.posAtCoords({ left: event.clientX, top: event.clientY });
-        void (async () => {
-          let position = coordinates?.pos ?? view.state.selection.from;
-          for (const file of files) {
-            const attachment = await uploadInlineAttachment(pageId, file);
-            const node = view.state.schema.nodes.commentableImage.create(imageNodeAttrs(attachment));
-            view.dispatch(view.state.tr.insert(position, node));
-            position += node.nodeSize;
-          }
-          router.refresh();
-        })().catch((error: unknown) => setImageError(error instanceof Error ? error.message : t("uploadFailed")));
+        void insertFigureFiles(files, coordinates?.pos ?? view.state.selection.from);
         return true;
       },
     },
     onCreate({ editor }) {
       liveEditor.current = editor;
       backfillCommentNodeIds(editor);
+      const repairs = figureRepairs(editor.state.doc);
+      if (repairs.length) { const transaction = editor.state.tr; repairs.forEach(({ position, attrs }) => transaction.setNodeMarkup(position, undefined, attrs)); editor.view.dispatch(transaction); }
       if (!normalizeCitationLabels(editor, sources, citationStyle, citationLocale)) updateDerivedState(editor);
     },
     onUpdate({ editor }) {
@@ -1322,6 +1284,11 @@ export function WikiEditor({
       else setSaveState("unsaved");
       refreshToolbarState();
       scheduleContentSync(editor, true);
+    },
+    onTransaction({ transaction }) {
+      if (transaction.docChanged && toolbarSelection.current) {
+        toolbarSelection.current = { from: transaction.mapping.map(toolbarSelection.current.from, -1), to: transaction.mapping.map(toolbarSelection.current.to, 1) };
+      }
     },
     onSelectionUpdate({ editor }) {
       refreshToolbarState();
@@ -1451,6 +1418,22 @@ export function WikiEditor({
     };
   }, [editor, pageId, storageKey, writeDraft]);
   useEffect(() => { editor?.setEditable(leaseState === "editable"); }, [editor, leaseState]);
+  useEffect(() => {
+    if (!editor) return;
+    const repair = (event: Event) => {
+      const position = (event as CustomEvent<{ position: number }>).detail.position;
+      if (!editor.isEditable || typeof position !== "number") return;
+      toolbarSelection.current = { from: position, to: position + 1 }; setFigureReferenceOpen(true);
+    };
+    editor.view.dom.addEventListener("wiki-reference-repair", repair);
+    return () => editor.view.dom.removeEventListener("wiki-reference-repair", repair);
+  }, [editor]);
+  useEffect(() => {
+    if (!editor?.isEditable || !documentSettings.figures.enabled || hasFigureList(editor.getJSON())) return;
+    // Move the legacy generated appendix into the ordinary document flow once.
+    editor.commands.insertContentAt(editor.state.doc.content.size, { type: "figureList", attrs: { title: documentSettings.figures.heading, pageBreakBefore: documentSettings.figures.pageBreakBefore } });
+  }, [editor, leaseState, documentSettings.figures.enabled, documentSettings.figures.heading, documentSettings.figures.pageBreakBefore]);
+
   useEffect(() => () => {
     if (saveTimer.current) clearTimeout(saveTimer.current);
     if (maxSaveTimer.current) clearTimeout(maxSaveTimer.current);
@@ -1585,18 +1568,23 @@ export function WikiEditor({
       const marginTop = documentSettings.page.marginsMm.top * pixelsPerMm;
       const marginBottom = documentSettings.page.marginsMm.bottom * pixelsPerMm;
       const usableHeight = pageHeight - marginTop - marginBottom;
-      const canvasTop = canvas.getBoundingClientRect().top;
+      // Page arithmetic is relative to the body; the cover has its own page stack.
+      const canvasTop = proseMirror.getBoundingClientRect().top;
       const natural = (value: number) => (value - canvasTop) / zoomFactor;
 
       const elements: HTMLElement[] = [];
       const items: PaginationItem[] = [];
-      const collectPaginationElements = (element: HTMLElement) => {
+      const collectPaginationElements = (element: HTMLElement, inheritedBreak = false) => {
         if (element.classList.contains("wiki-document-auto-page-break")) return;
-        const rect = element.getBoundingClientRect();
+        // React node views have a wrapper with zero height around a floated figure.
+        // Measure the artwork and attached caption, while retaining the wrapper's document position.
+        const media = element.matches(".node-commentableImage, .node-mermaidDiagram") ? element.querySelector<HTMLElement>("figure[data-figure-view]") : null;
+        const rect = (media || element).getBoundingClientRect();
         const elementHeight = rect.height / zoomFactor;
-        const canSplit = element.matches("ul, ol, li, blockquote, section[data-document-columns]");
+        const canSplit = element.matches("ul, ol, li, blockquote, section[data-document-columns], nav[data-figure-list]");
+        const breakBefore = inheritedBreak || element.dataset.pageBreakBefore === "true";
         if (canSplit && elementHeight > usableHeight && element.children.length > 0) {
-          for (const child of Array.from(element.children) as HTMLElement[]) collectPaginationElements(child);
+          for (const [index, child] of (Array.from(element.children) as HTMLElement[]).entries()) collectPaginationElements(child, index === 0 && breakBefore);
           return;
         }
         const isTable = element.matches("table");
@@ -1607,11 +1595,12 @@ export function WikiEditor({
           bottom: natural(rect.bottom),
           kind: element.tagName === "LI" ? "listItem" : "block",
           splitKind: isTable ? "tableRow" : "inline",
-          splittable: isTable || element.matches("p, pre, li, blockquote"),
+          splittable: !element.matches(".wiki-figure-list-row") && (isTable || element.matches("p, pre, li, blockquote")),
           pageBreak: element.hasAttribute("data-document-page-break"),
+          breakBefore,
           heading: /^H[1-6]$/.test(element.tagName),
           keepWithNext: element.hasAttribute("data-keep-with-next"),
-          keepTogether: element.hasAttribute("data-keep-together"),
+          keepTogether: Boolean(media) || element.hasAttribute("data-keep-together"),
         });
       };
       for (const element of Array.from(proseMirror.children) as HTMLElement[]) collectPaginationElements(element);
@@ -1703,19 +1692,28 @@ export function WikiEditor({
   useEffect(() => { writeEditorStorage(commentsPreferenceKey, String(commentsVisible)); }, [commentsPreferenceKey, commentsVisible]);
   useEffect(() => { writeEditorStorage(layoutPreferenceKey, String(documentLayoutVisible)); }, [documentLayoutVisible, layoutPreferenceKey]);
   useEffect(() => { writeEditorStorage(DOCUMENT_ZOOM_KEY, String(documentZoom)); }, [documentZoom]);
+  const figureExportScope = figureLibrary.exportScope;
+  useEffect(() => {
+    if (!editor) return;
+    const update = () => { const ids = new Set<string>(); editor.state.doc.descendants((node) => { if (node.attrs.assetId) ids.add(String(node.attrs.assetId)); }); figureExportScope.current = ids; };
+    update(); editor.on("transaction", update);
+    return () => { editor.off("transaction", update); };
+  }, [editor, figureExportScope]);
   // Figure/table numbers and cross-reference labels shown live in the canvas use the
   // document's own citation language, matching the word the PDF/DOCX export picks —
-  // and caption numbering only shows where the export shows it (index enabled).
+  // and figure numbering is independent of whether a figure list is present.
   useEffect(() => {
     if (!editor) return;
     const german = citationLocale.toLocaleLowerCase().startsWith("de");
     setDocumentNumberingConfig(editor, {
       figureLabel: german ? "Abbildung" : "Figure",
       tableLabel: german ? "Tabelle" : "Table",
-      numberFigures: documentSettings.figures.enabled,
+      numberFigures: true,
       numberTables: documentSettings.tables.enabled,
+      missingReferenceLabel: t("figures.missingReference"),
+      pageNumberStart: documentSettings.footer.pageNumberStart,
     });
-  }, [citationLocale, documentSettings.figures.enabled, documentSettings.tables.enabled, editor]);
+  }, [citationLocale, documentSettings.figures.enabled, documentSettings.tables.enabled, documentSettings.footer.pageNumberStart, editor, t]);
   useLayoutEffect(() => {
     const anchor = zoomAnchor.current;
     appliedZoom.current = documentZoom;
@@ -2058,22 +2056,7 @@ export function WikiEditor({
     }, 10_000);
   }
   function openInlineImagePicker() {
-    rememberToolbarSelection();
-    setInlineImagePickerOpen(true);
-    setExistingImagesLoading(true);
-    setExistingImagesError("");
-    void fetch(`/api/files?entityType=wikiPage&entityId=${encodeURIComponent(pageId)}`)
-      .then(async (response) => {
-        if (!response.ok) throw new Error(t("imagePicker.loadFailed"));
-        return response.json() as Promise<ExistingImageAttachment[]>;
-      })
-      .then((attachments) => {
-        setExistingImages(attachments.filter(isExistingInlineImage));
-      })
-      .catch((reason: unknown) => {
-        setExistingImagesError(reason instanceof Error ? reason.message : t("imagePicker.loadFailed"));
-      })
-      .finally(() => setExistingImagesLoading(false));
+    rememberToolbarSelection(); setFigureTargetId(""); setFigureSourceMode(false); setInlineImagePickerOpen(true);
   }
   function changeDocumentSettings(settings: DocumentSettingsV1) {
     if (!activeEditor.isEditable) return;
@@ -2096,7 +2079,7 @@ export function WikiEditor({
   }
 
   const layoutVisible = documentMode && documentLayoutVisible;
-  const figureIndexVisible = documentMode && documentSettings.figures.enabled && figureCaptions.length > 0;
+  const figureIndexVisible = documentMode && documentSettings.figures.enabled && !hasFigureList(activeEditor.getJSON()) && figureCaptions.length > 0;
   const tableIndexVisible = documentMode && documentSettings.tables.enabled && tableCaptions.length > 0;
   const bibliography = formatBibliography(
     citedSourceIds.flatMap((sourceId) => {
@@ -2129,6 +2112,7 @@ export function WikiEditor({
   const documentCanvasStyle = {
     ...wikiTypographyCssVariables(typography),
     "--document-paper-width": `${documentSettings.page.orientation === "portrait" ? paperWidth : paperHeight}mm`,
+    "--figure-available-height": `${orientedPaperHeight - documentSettings.page.marginsMm.top - documentSettings.page.marginsMm.bottom - 18}mm`,
     "--document-paper-height": `${documentSettings.page.orientation === "portrait" ? paperHeight : paperWidth}mm`,
     "--document-margin-top": `${documentSettings.page.marginsMm.top}mm`,
     "--document-margin-right": `${documentSettings.page.marginsMm.right}mm`,
@@ -2190,19 +2174,66 @@ export function WikiEditor({
     setImageDescriptionOpen(false);
   }
   async function insertInlineImage(file: File) {
-    if (!isInlineImageFile(file)) { setImageError(t("inlineImageUnsupported")); return; }
-    file = normalizeInlineImageFile(file);
-    setImageUploading(true); setImageError("");
-    try {
-      const attachment = await uploadInlineAttachment(pageId, file);
-      insertImageWithCaption(attachment);
-      router.refresh();
-    } catch (error) {
-      setImageError(error instanceof Error ? error.message : t("uploadFailed"));
-    } finally {
-      setImageUploading(false);
-    }
+    await insertFigureFiles([file], toolbarSelection.current?.from ?? activeEditor.state.selection.from, figureTargetId);
   }
+  async function insertFigureFiles(files: File[], position: number, targetId = "") {
+    if (!activeEditor.isEditable) return;
+    const controller = new AbortController(); uploadControllers.current.add(controller);
+    const id = crypto.randomUUID();
+    const cancel = () => { controller.abort(); removeUpload(activeEditor, id); };
+    addUpload(activeEditor, position, { id, label: t("figures.uploading"), cancelLabel: t("figures.cancel"), cancel });
+    setImageUploading(true); setImageError(""); setInlineImagePickerOpen(false);
+    try {
+      for (const file of files) {
+        if (!isInlineImageFile(file)) throw new Error(t("inlineImageUnsupported"));
+        const form = new FormData(); form.set("file", file);
+        const response = await figureLibrary.request(form, "POST", controller.signal);
+        if (controller.signal.aborted || activeEditor.isDestroyed || !activeEditor.isEditable || conflictBlocked.current) break;
+        const asset = response.assets.find((item) => item.id === response.result?.id);
+        const at = uploadPosition(activeEditor, id);
+        if (!asset || at === undefined) break;
+        removeUpload(activeEditor, id);
+        const attrs = { ...imageNodeAttrs({ id: asset.attachmentId, fileName: asset.fileName, mimeType: asset.mimeType }), ...figureAssetAttributes(asset) };
+        let replaced = false;
+        if (targetId) activeEditor.state.doc.descendants((node, pos) => { if (node.attrs.nodeId === targetId && node.type.name === "commentableImage") { activeEditor.view.dispatch(activeEditor.state.tr.setNodeMarkup(pos, undefined, { ...node.attrs, assetId: asset.id, attachmentId: asset.attachmentId, src: asset.src })); replaced = true; } });
+        if (!targetId) {
+          activeEditor.chain().insertContentAt(at, { type: "commentableImage", attrs }).run();
+          let nextPosition = at + 1;
+          activeEditor.state.doc.descendants((node, pos) => { if (node.attrs.nodeId === attrs.nodeId) nextPosition = pos + node.nodeSize; });
+          addUpload(activeEditor, nextPosition, { id, label: t("figures.uploading"), cancelLabel: t("figures.cancel"), cancel });
+        } else if (!replaced) break;
+      }
+    } catch (error) { if (!controller.signal.aborted) setImageError(error instanceof Error && t.has(`figures.${error.message}`) ? t(`figures.${error.message}` as "figures.invalidFile") : t("uploadFailed")); }
+    finally { removeUpload(activeEditor, id); if (!activeEditor.isDestroyed) activeEditor.view.dispatch(closeHistory(activeEditor.state.tr)); uploadControllers.current.delete(controller); setImageUploading(uploadControllers.current.size > 0); }
+  }
+  function insertFigureAsset(asset: FigureAssetDto) {
+    if (figureTargetId) {
+      activeEditor.state.doc.descendants((node, position) => {
+        if (node.attrs.nodeId === figureTargetId && node.type.name === "commentableImage") activeEditor.view.dispatch(activeEditor.state.tr.setNodeMarkup(position, undefined, { ...node.attrs, assetId: asset.id, attachmentId: asset.attachmentId, src: asset.src }));
+      });
+    } else toolbarChain().insertContent({ type: "commentableImage", attrs: { ...imageNodeAttrs({ id: asset.attachmentId, fileName: asset.fileName, mimeType: asset.mimeType }), ...figureAssetAttributes(asset) } }).run();
+  }
+  async function editFigureArtwork(nodeId: string) {
+    const node = (() => { let found: typeof activeEditor.state.doc | undefined; activeEditor.state.doc.descendants((item) => { if (item.attrs.nodeId === nodeId) found = item; }); return found; })();
+    const asset = figureLibrary.manifest.assets.find((item) => item.id === node?.attrs.assetId);
+    if (!asset || !activeEditor.isEditable) return;
+    try {
+      const { result: copy } = await figureLibrary.request({ action: "editableCopy", assetId: asset.id, expectedVersion: asset.version });
+      if (!copy?.attachmentId || !activeEditor.isEditable || conflictBlocked.current) return;
+      activeEditor.state.doc.descendants((item, position) => {
+        if (item.attrs.nodeId === nodeId && item.attrs.assetId === asset.id) activeEditor.view.dispatch(activeEditor.state.tr.setNodeMarkup(position, undefined, { ...item.attrs, assetId: "", attachmentId: copy.attachmentId, src: copy.contentUrl }));
+      });
+      setPreferredSvgId(copy.id); setGraphicsOpen(true);
+    } catch { setImageError(t("figures.sourceUnavailable")); }
+  }
+  function insertFigureList() {
+    let existing: number | undefined;
+    activeEditor.state.doc.descendants((node, pos) => { if (node.type.name === "figureList") existing = pos; });
+    if (existing !== undefined) { (activeEditor.view.nodeDOM(existing) as HTMLElement | null)?.scrollIntoView({ block: "center" }); return; }
+    activeEditor.chain().focus().insertContentAt(toolbarSelection.current?.to ?? activeEditor.state.selection.to, { type: "figureList", attrs: { title: t("figures.list") } }).run();
+    changeDocumentSettings({ ...documentSettings, figures: { ...documentSettings.figures, enabled: false } });
+  }
+
   /**
    * Selects a just-inserted image so the caption dialog, which acts on the current
    * NodeSelection, targets it.
@@ -2227,11 +2258,13 @@ export function WikiEditor({
     const attrs = imageNodeAttrs(attachment);
     toolbarChain().insertContent({ type: "commentableImage", attrs }).run();
     setInlineImagePickerOpen(false);
-    if (selectImageNode(String(attrs.nodeId))) openImageDescription();
+    selectImageNode(String(attrs.nodeId));
   }
 
   function insertExistingImage(attachment: ExistingImageAttachment) {
-    insertImageWithCaption(attachment);
+    if (figureTargetId) {
+      activeEditor.state.doc.descendants((node, position) => { if (node.attrs.nodeId === figureTargetId) activeEditor.view.dispatch(activeEditor.state.tr.setNodeMarkup(position, undefined, { ...node.attrs, assetId: "", attachmentId: attachment.id, src: attachment.src || `/api/files/${attachment.id}` })); });
+    } else insertImageWithCaption(attachment);
   }
   async function submitComment() {
     if (!pendingAnchor || !commentBody.trim()) return;
@@ -2394,7 +2427,7 @@ export function WikiEditor({
   const currentDocumentModeLabel = t(documentMode ? "document.documentMode" : "document.noteMode");
   const nextDocumentModeLabel = t(documentMode ? "document.noteMode" : "document.documentMode");
 
-  return <div className="relative flex flex-col gap-3"><div className="sticky top-0 z-40 flex flex-wrap items-center gap-1.5 rounded-xl border bg-background/95 p-1.5 shadow-sm backdrop-blur supports-[backdrop-filter]:bg-background/80">
+  return <FigureLibraryContext.Provider value={{ ...figureLibrary, editArtwork: (nodeId) => void editFigureArtwork(nodeId), replace: (nodeId) => { rememberToolbarSelection(); setFigureSourceMode(false); setFigureTargetId(nodeId); setInlineImagePickerOpen(true); }, editSource: (nodeId) => { rememberToolbarSelection(); setFigureSourceMode(true); setFigureTargetId(nodeId); setInlineImagePickerOpen(true); } }}><div className="relative flex flex-col gap-3"><div className="sticky top-0 z-40 flex flex-wrap items-center gap-1.5 rounded-xl border bg-background/95 p-1.5 shadow-sm backdrop-blur supports-[backdrop-filter]:bg-background/80">
     <ToolbarGroup label={t("editor.toolbar.groups.history")}>
       <ToolbarButton title={t("editor.toolbar.undo")} shortcut={shortcutLabel("undo")} onClick={() => activeEditor.chain().focus().undo().run()}><Undo2 className="size-4" /></ToolbarButton>
       <ToolbarButton title={t("editor.toolbar.redo")} shortcut={shortcutLabel("redo")} onClick={() => activeEditor.chain().focus().redo().run()}><Redo2 className="size-4" /></ToolbarButton>
@@ -2427,29 +2460,25 @@ export function WikiEditor({
       <EditorLinkPopover editor={activeEditor} pages={allPages} request={linkEditorRequest} />
       <PageLinkPicker editor={editor} pages={allPages} open={pageLinkOpen} onOpenChange={setPageLinkOpen} /><CitationPicker editor={editor} sources={sources} locale={citationLocale} pageSlug={pageSlug} open={citationOpen} onOpenChange={setCitationOpen} /><EvidencePicker editor={editor} pageId={pageId} locale={citationLocale} open={evidenceOpen} onOpenChange={setEvidenceOpen} />
       <ToolbarMenu label={t("editor.toolbar.insert")} icon={<ImagePlus className="size-4" />} onPointerDown={rememberToolbarSelection}>
-      <DropdownMenuItem onClick={openInlineImagePicker}><ImagePlus />{t("insertImage")}<DropdownMenuShortcut>{shortcutLabel("image")}</DropdownMenuShortcut></DropdownMenuItem>
+      <DropdownMenuItem onClick={openInlineImagePicker}><ImagePlus />{t("figures.insert")}<DropdownMenuShortcut>{shortcutLabel("image")}</DropdownMenuShortcut></DropdownMenuItem>
+      <DropdownMenuItem onClick={() => { rememberToolbarSelection(); setFigureReferenceOpen(true); }}><Link2 />{t("figures.insertReference")}</DropdownMenuItem>
+      <DropdownMenuItem onClick={insertFigureList}><List />{t("figures.insertList")}</DropdownMenuItem>
       <DropdownMenuItem onClick={() => toolbarChain().setHorizontalRule().run()}><Minus />{t("slash.commands.horizontalRule.label")}<DropdownMenuShortcut>{shortcutLabel("horizontalRule")}</DropdownMenuShortcut></DropdownMenuItem>
       <DropdownMenuItem onClick={() => pageActions.addAttachment()}><Paperclip />{t("slash.commands.attachment.label")}<DropdownMenuShortcut>{shortcutLabel("attachment")}</DropdownMenuShortcut></DropdownMenuItem>
       <DropdownMenuItem onClick={() => pageActions.linkSupportingSource()}><BookMarked />{t("slash.commands.supportingSource.label")}<DropdownMenuShortcut>{shortcutLabel("supportingSource")}</DropdownMenuShortcut></DropdownMenuItem>
       </ToolbarMenu>
     </ToolbarGroup>
-    <input ref={imageInputRef} data-testid="wiki-inline-image-input" hidden type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml,.svg" onChange={(event) => { const file = event.target.files?.[0]; if (file) void insertInlineImage(file); event.target.value = ""; }} />
-    <Dialog open={inlineImagePickerOpen} onOpenChange={setInlineImagePickerOpen}>
-      <DialogContent className="max-h-[min(42rem,calc(100dvh-2rem))] overflow-y-auto sm:max-w-3xl">
-        <DialogHeader><DialogTitle>{t("imagePicker.title")}</DialogTitle></DialogHeader>
-        <p className="text-sm text-muted-foreground">{t("imagePicker.description")}</p>
-        {existingImagesLoading ? <div className="grid min-h-44 place-items-center"><RotateCcw className="size-5 animate-spin text-muted-foreground" /></div>
-          : existingImagesError ? <p role="alert" className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">{existingImagesError}</p>
-          : existingImages.length ? <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">{existingImages.map((attachment) => <button key={attachment.id} type="button" data-testid={`wiki-existing-image-${attachment.id}`} onClick={() => insertExistingImage(attachment)} className="group overflow-hidden rounded-lg border bg-card text-left transition-colors hover:border-indigo-400 hover:bg-indigo-50/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 dark:hover:bg-indigo-950/20">
-            {/* Existing graphics are user-uploaded files and cannot use the Next image optimizer. */}
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={`/api/files/${attachment.id}`} alt="" className="aspect-[4/3] w-full bg-muted object-contain" />
-            <span className="block truncate px-2.5 py-2 text-xs font-medium">{attachment.fileName}</span>
-          </button>)}</div>
-            : <div className="rounded-lg border border-dashed p-6 text-center"><ImagePlus className="mx-auto mb-2 size-5 text-muted-foreground" /><p className="text-sm font-medium">{t("imagePicker.empty")}</p><p className="mt-1 text-xs text-muted-foreground">{t("imagePicker.emptyHint")}</p></div>}
-        <div className="flex justify-end border-t pt-3"><Button type="button" size="sm" variant="ghost" className="text-muted-foreground" onClick={() => imageInputRef.current?.click()}><ImagePlus className="size-4" />{t("imagePicker.addFromPath")}</Button></div>
-      </DialogContent>
-    </Dialog>
+    <input ref={imageInputRef} data-testid="wiki-inline-image-input" hidden type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml,.svg,.svgz" onChange={(event) => { const file = event.target.files?.[0]; if (file) void insertInlineImage(file); event.target.value = ""; }} />
+    <FigurePicker sourceMode={figureSourceMode} open={inlineImagePickerOpen} onOpenChange={setInlineImagePickerOpen} selectedAssetId={figureTargetId ? (() => { let id = ""; activeEditor.state.doc.descendants((node) => { if (node.attrs.nodeId === figureTargetId) id = String(node.attrs.assetId || ""); }); return id; })() : undefined}
+      onInsert={insertFigureAsset} onExisting={insertExistingImage} onUpload={(files) => void insertFigureFiles(files, toolbarSelection.current?.from ?? activeEditor.state.selection.from, figureTargetId)}
+      onDiagram={() => toolbarChain().insertContent({ type: "mermaidDiagram", attrs: { code: MERMAID_PLACEHOLDER, svg: "", nodeId: crypto.randomUUID(), numbered: true } }).run()}
+      onEditSvg={(preferredId) => { setPreferredSvgId(preferredId || ""); setInlineImagePickerOpen(false); setGraphicsOpen(true); }} />
+    <FigureReferencePicker editor={activeEditor} open={figureReferenceOpen} onOpenChange={setFigureReferenceOpen} insert={(targetId, label) => {
+      const selection = toolbarSelection.current || activeEditor.state.selection;
+      const reference = { type: "crossReference", attrs: { targetId, label } };
+      if (!activeEditor.state.doc.resolve(selection.from).parent.inlineContent) activeEditor.chain().focus().insertContentAt(selection.to, { type: "paragraph", content: [reference] }).run();
+      else toolbarChain().insertContent(reference).run();
+    }} />
     <WikiProofingMenu {...proofingMenuProps} compact />
     <ToolbarMenu label={t("editor.toolbar.more")} icon={<MoreHorizontal className="size-4" />}>
       <DropdownMenuGroup>
@@ -2588,7 +2617,7 @@ export function WikiEditor({
           <p className="wiki-document-figure-index-kicker">{t("document.figureIndex")}</p>
           <h2>{documentSettings.figures.heading}</h2>
           {/* A caption that already numbers itself ("Abbildung 4: …") is not numbered twice. */}
-          <ol>{figureCaptions.map((figure, index) => <li key={figure.nodeId}><span>{hasOwnFigureNumber(figure.caption) ? "" : t("document.figureNumber", { number: index + 1 })}</span><span>{figure.caption}</span></li>)}</ol>
+          <ol>{figureCaptions.map((figure, index) => <li key={figure.nodeId}><span>{t("document.figureNumber", { number: index + 1 })}</span><span>{figure.caption}</span></li>)}</ol>
         </section>}
         {tableIndexVisible && <section className="wiki-document-figure-index wiki-document-table-index" style={{ top: "var(--document-table-index-top)" }} aria-label={documentSettings.tables.heading}>
           <p className="wiki-document-figure-index-kicker">{t("document.tableIndex")}</p>
@@ -2645,7 +2674,7 @@ export function WikiEditor({
     <span className="ml-auto">{t("editor.stats.block", { type: activeEditor.state.selection.$from.parent.type.name })}</span>
   </footer>}
   {regionTarget && <ImageRegionSelector rootRef={editorRootRef} {...regionTarget} onCancel={() => setRegionTarget(null)} onSelect={(anchor) => { setRegionTarget(null); openCommentComposer(anchor); }} />}
-  <SvgGraphicsPanel pageId={pageId} open={graphicsOpen} onOpenChange={setGraphicsOpen} variables={{ title: pageTitle, author: documentSettings.metadata.author, ...documentSettings.variables }} documentSettings={documentSettings} typography={typography} onDocumentSettingsChange={changeDocumentSettings} onAssetReady={handleSvgAssetReady} />
+  <SvgGraphicsPanel preferredId={preferredSvgId} pageId={pageId} open={graphicsOpen} onOpenChange={setGraphicsOpen} variables={{ title: pageTitle, author: documentSettings.metadata.author, ...documentSettings.variables }} documentSettings={documentSettings} typography={typography} onDocumentSettingsChange={changeDocumentSettings} onAssetReady={handleSvgAssetReady} />
   <Dialog open={imageDescriptionOpen} onOpenChange={setImageDescriptionOpen}><DialogContent className="w-[min(28rem,calc(100vw-2rem))]"><DialogHeader><DialogTitle>{t("imageDescription.title")}</DialogTitle></DialogHeader>
     <div className="grid gap-4">
       <label className="grid gap-1.5 text-sm font-medium">{t("imageDescription.caption")}<Input value={imageCaptionDraft} onChange={(event) => setImageCaptionDraft(event.target.value)} placeholder={t("imageDescription.captionPlaceholder")} /></label>
@@ -2675,5 +2704,5 @@ export function WikiEditor({
     typography={personalTypography}
   />}
   <EditorOutlineSheet editor={activeEditor} items={outline} activePosition={activeHeadingPosition} open={outlineOpen} onOpenChange={setOutlineOpen} />
-  </div>;
+  </div></FigureLibraryContext.Provider>;
 }

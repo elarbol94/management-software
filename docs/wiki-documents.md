@@ -1,5 +1,8 @@
 # Wiki document stability
 
+For image insertion, captions, references, figure lists, live folder links and
+export behavior, see [wiki-figures.md](wiki-figures.md).
+
 The Wiki editor uses one content version for text and document layout. A save
 includes that version and the tab's edit-lease session. Metadata changes such as
 renaming a page do not invalidate a text save.

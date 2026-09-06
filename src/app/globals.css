@@ -924,7 +924,7 @@
 
   /* Live figure/table numbers: a decoration sets the custom property on the figure's/table's
      own wrapping element (see document-extension.ts); CSS prepends it to the existing caption. */
-  .wiki-document-canvas .wiki-commentable-media figcaption::before { content: var(--wiki-figure-number, ""); }
+  .wiki-document-canvas .wiki-commentable-media:not([data-figure-view]) figcaption::before { content: var(--wiki-figure-number, ""); }
   .wiki-document-canvas .wiki-markdown-table > caption::before { content: var(--wiki-table-number, ""); }
 
   .wiki-document-annex { margin-block: 2rem 1rem; border-top: 2px solid var(--document-accent); padding-top: 0.75rem; font-size: 1.35em; }
@@ -1074,3 +1074,29 @@
     animation: none !important;
   }
 }
+
+/* Figure editing chrome sits outside the document flow; selecting an image must not repaginate it. */
+.wiki-editable-figure { position: relative; display: block; margin-top: 1em; margin-bottom: 1em; break-inside: avoid; }
+.wiki-editable-figure.is-selected > .wiki-figure-artwork { outline: 2px solid var(--ring); outline-offset: 3px; }
+.wiki-figure-artwork { position: relative; overflow: hidden; background: white; }
+.wiki-figure-artwork > img { display: block; height: auto; margin: 0 !important; max-height: none !important; transform-origin: top left; border-radius: 0; }
+.wiki-editable-figure > .wiki-figure-caption { display: flex; flex-wrap: wrap; align-items: baseline; gap: .35em; margin-top: .5em; font: inherit; font-size: .85em; text-align: left; color: inherit; }
+.wiki-figure-caption-input { flex: 1 1 8em; width: 100%; min-width: 0; padding: 0; resize: none; border: 0; background: transparent; color: inherit; font: inherit; line-height: inherit; field-sizing: content; }
+.wiki-figure-caption-input:focus { outline: 1px solid var(--ring); outline-offset: 3px; }
+.wiki-figure-controls { position: absolute; left: 0; top: 100%; z-index: 45; width: max(100%, min(30rem, 80vw)); max-width: calc(100vw - 3rem); padding: .5rem; border: 1px solid var(--border); border-radius: .5rem; background: var(--background); color: var(--foreground); box-shadow: 0 4px 18px #0002; line-height: 1.4; }
+.wiki-figure-controls + .wiki-figure-controls { top: auto; bottom: 100%; }
+.wiki-figure-controls > * + * { margin-top: .5rem; }
+.wiki-figure-source-status { font-size: 10px; color: var(--muted-foreground); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wiki-figure-resize { position: absolute; bottom: 1px; right: 1px; width: 18px; height: 18px; border: 2px solid white; background: var(--ring); cursor: ew-resize; touch-action: none; }
+.wiki-figure-move { position: absolute; top: 3px; left: 3px; width: 24px; height: 24px; background: var(--background); color: var(--foreground); border: 1px solid var(--border); cursor: grab; line-height: 1; }
+.wiki-figure-list { clear: both; margin: 1.5em 0; }
+.wiki-figure-list ol { list-style: none; margin: .5em 0; padding: 0; }
+.wiki-figure-list-row { margin: 0; padding: .25em 0; list-style: none; break-inside: avoid; }
+.wiki-figure-list-row button { display: flex; width: 100%; gap: .4em; align-items: baseline; text-align: left; font: inherit; }
+.wiki-figure-list-row button:hover { text-decoration: underline; }
+.wiki-figure-list-leader { flex: 1; min-width: 1em; border-bottom: 1px dotted currentColor; }
+.wiki-figure-upload { display: inline-flex; gap: .75em; padding: .5em; margin: .25em; border: 1px dashed var(--border); border-radius: .25rem; font-size: .85em; }
+.wiki-figure-upload button { text-decoration: underline; }
+.wiki-document-cross-reference[data-missing="true"] { color: var(--destructive); text-decoration: underline wavy; }
+.wiki-document-canvas .ProseMirror::after { content: ""; display: block; clear: both; }
+@media print { .wiki-figure-controls, .wiki-figure-source-status, .wiki-figure-resize, .wiki-figure-move { display: none !important; } }

@@ -14,6 +14,7 @@ import type { WikiTypographySettingsV1 } from "../lib/wiki-typography";
 
 type Props = {
   pageId: string;
+  preferredId?: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   variables: Record<string, string>;
@@ -56,7 +57,7 @@ function setOwnText(element: SVGElement, value: string) {
   else element.appendChild(text);
 }
 
-export function SvgGraphicsPanel({ pageId, open, onOpenChange, variables, documentSettings, typography, onDocumentSettingsChange, onAssetReady }: Props) {
+export function SvgGraphicsPanel({ pageId, preferredId, open, onOpenChange, variables, documentSettings, typography, onDocumentSettingsChange, onAssetReady }: Props) {
   const t = useTranslations("wiki.graphics");
   const tDocument = useTranslations("wiki.document");
   const [assets, setAssets] = useState<SvgAssetDto[]>([]);
@@ -189,7 +190,7 @@ export function SvgGraphicsPanel({ pageId, open, onOpenChange, variables, docume
       setError("");
       setDiagramsDraft(documentSettings.diagrams);
       try {
-        const next = await load("");
+        const next = await load(preferredId || "");
         if (cancelled) return;
         for (const asset of next) onAssetReady(asset.attachmentId, asset.contentUrl);
       } catch (reason) {
@@ -202,7 +203,7 @@ export function SvgGraphicsPanel({ pageId, open, onOpenChange, variables, docume
     return () => { cancelled = true; };
     // documentSettings.diagrams is the value to start the draft from, not a trigger to reload.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [load, onAssetReady, open, t]);
+  }, [load, onAssetReady, open, preferredId, t]);
 
   useEffect(() => {
     if (!open || !selected) return;

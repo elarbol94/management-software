@@ -5,6 +5,7 @@ import { Decoration, DecorationSet } from "@tiptap/pm/view";
 import { ReactNodeViewRenderer } from "@tiptap/react";
 import type { DocumentPaginationBreak } from "../lib/document-pagination";
 import { figureNumberLabel, resolveCrossReferenceLabels } from "../lib/figure-caption";
+import { isFigure, numberedFigure, stripFigureNumber } from "../lib/figure";
 import { TableOfContentsView } from "./table-of-contents-view";
 
 export type { DocumentPaginationBreak, DocumentPaginationBreakKind } from "../lib/document-pagination";
@@ -234,10 +235,11 @@ const ProposalSuggestion = Mark.create({
 export type DocumentNumberingConfig = {
   figureLabel: string;
   tableLabel: string;
-  /** Mirror settings.figures.enabled / settings.tables.enabled — the export prefixes
-   * captions only when the matching index is enabled, so the canvas does too. */
+  /** Caption numbering is independent of the presence of a figure list. */
   numberFigures: boolean;
   numberTables: boolean;
+  missingReferenceLabel?: string;
+  pageNumberStart?: number;
 };
 const DEFAULT_NUMBERING_CONFIG: DocumentNumberingConfig = { figureLabel: "Figure", tableLabel: "Table", numberFigures: false, numberTables: false };
 
@@ -275,10 +277,10 @@ function computeDocumentNumberingState(doc: ProseMirrorNode, config: DocumentNum
     } else if (node.type.name === "annexMarker") {
       const id = String(node.attrs.annexId ?? "").trim();
       if (id) { annexes.push({ id, title: String(node.attrs.title ?? "Annex") }); positions.set(id, pos); }
-    } else if (node.type.name === "commentableImage") {
-      const caption = String(node.attrs.caption ?? "").trim();
+    } else if (isFigure(node.type.name)) {
+      const caption = stripFigureNumber(String(node.attrs.caption ?? ""));
       const id = String(node.attrs.nodeId ?? "");
-      if (id && caption && node.attrs.includeInFigureIndex !== false) { figures.push({ id, caption }); positions.set(id, pos); }
+      if (id && numberedFigure(node.attrs)) { figures.push({ id, caption }); positions.set(id, pos); }
     } else if (node.type.name === "markdownTable") {
       const caption = String(node.attrs.caption ?? "").trim();
       const id = String(node.attrs.tableId ?? "");
@@ -291,7 +293,7 @@ function computeDocumentNumberingState(doc: ProseMirrorNode, config: DocumentNum
 
   const decorationList: Decoration[] = [];
   doc.descendants((node, pos) => {
-    if (config.numberFigures && node.type.name === "commentableImage") {
+    if (config.numberFigures && isFigure(node.type.name)) {
       const index = figures.findIndex((figure) => figure.id === String(node.attrs.nodeId ?? ""));
       if (index >= 0) {
         const prefix = figureNumberLabel(figures[index].caption, config.figureLabel, index + 1);
@@ -304,7 +306,7 @@ function computeDocumentNumberingState(doc: ProseMirrorNode, config: DocumentNum
       const targetId = String(node.attrs.targetId ?? "");
       // Diffed against the previous decoration set, so the CrossReference node view
       // only re-renders when its resolved label actually changed.
-      decorationList.push(Decoration.node(pos, pos + node.nodeSize, { "data-wiki-cross-reference-label": (targetId && labels.get(targetId)) || "" }));
+      decorationList.push(Decoration.node(pos, pos + node.nodeSize, { "data-wiki-cross-reference-label": (targetId && labels.get(targetId)) || config.missingReferenceLabel || "Reference target missing" }));
     }
     return true;
   });
@@ -365,7 +367,7 @@ const CrossReference = Node.create({
   parseHTML: () => [{ tag: "span[data-document-cross-reference]" }],
   renderHTML: ({ HTMLAttributes }) => ["span", mergeAttributes(HTMLAttributes, { "data-document-cross-reference": HTMLAttributes.targetId, class: "wiki-document-cross-reference", contenteditable: "false" }), HTMLAttributes.label || "Reference"],
   addNodeView() {
-    return ({ node, view }) => {
+    return ({ node, view, getPos }) => {
       let current = node;
       const dom = document.createElement("span");
       dom.className = "wiki-document-cross-reference";
@@ -374,7 +376,12 @@ const CrossReference = Node.create({
       const render = () => {
         const targetId = String(current.attrs.targetId ?? "");
         dom.dataset.documentCrossReference = targetId;
-        const label = (targetId && documentNumberingKey.getState(view.state)?.labels.get(targetId)) || String(current.attrs.label ?? "") || "Reference";
+        const numbering = documentNumberingKey.getState(view.state);
+        const resolved = targetId && numbering?.labels.get(targetId);
+        const label = resolved || numbering?.config.missingReferenceLabel || "Reference target missing";
+        dom.dataset.missing = resolved ? "false" : "true";
+        dom.setAttribute("role", "button");
+        dom.tabIndex = 0;
         dom.textContent = label;
       };
       render();
@@ -384,7 +391,9 @@ const CrossReference = Node.create({
         const targetId = String(current.attrs.targetId ?? "");
         const pos = targetId ? documentNumberingKey.getState(view.state)?.positions.get(targetId) : undefined;
         if (pos !== undefined) scrollTargetIntoView(view, pos);
+        else dom.dispatchEvent(new CustomEvent("wiki-reference-repair", { bubbles: true, detail: { position: getPos() } }));
       });
+      dom.addEventListener("keydown", (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); dom.click(); } });
 
       return {
         dom,
