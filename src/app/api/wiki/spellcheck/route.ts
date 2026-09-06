@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
+import { z } from "zod";
 
 type ProofingLanguage = "de-DE" | "de-AT" | "en-US";
 type LanguageToolMatch = {
@@ -23,6 +24,14 @@ type NormalizedMatch = {
   ruleId: string;
   replacements: string[];
 };
+
+const serviceMatchSchema = z.object({
+  offset: z.number().int().nonnegative(), length: z.number().int().positive(), message: z.string().min(1),
+  replacements: z.array(z.object({ value: z.string() })).optional(),
+  rule: z.object({ id: z.string().optional(), issueType: z.string().optional(),
+    category: z.object({ id: z.string().optional(), name: z.string().optional() }).optional(),
+  }).optional(),
+});
 
 const MAX_PARAGRAPHS = 80;
 const MAX_CHARACTERS = 24_000;
@@ -63,7 +72,8 @@ async function checkWithLanguageTool(text: string, language: ProofingLanguage, p
     });
     if (!response.ok) throw new Error(`LanguageTool returned ${response.status}`);
     const payload = await response.json() as { matches?: LanguageToolMatch[] };
-    const matches = payload.matches ?? [];
+    if (!payload || !Array.isArray(payload.matches)) throw new Error("Invalid LanguageTool response");
+    const matches = payload.matches;
     resultCache.set(key, { expiresAt: Date.now() + CACHE_TTL_MS, matches });
     trimCache();
     return matches;
@@ -73,15 +83,17 @@ async function checkWithLanguageTool(text: string, language: ProofingLanguage, p
 }
 
 function normalizeMatches(rawMatches: LanguageToolMatch[], text: string, paragraphRanges: Array<{ paragraph: number; from: number; to: number }>, dictionary: Set<string>, language: ProofingLanguage) {
-  const candidates = rawMatches.flatMap((match): NormalizedMatch[] => {
-    if (typeof match.offset !== "number" || !Number.isInteger(match.offset) || typeof match.length !== "number" || !Number.isInteger(match.length) || !match.message) return [];
+  const candidates = rawMatches.flatMap((raw): NormalizedMatch[] => {
+    const parsed = serviceMatchSchema.safeParse(raw);
+    if (!parsed.success) return [];
+    const match = parsed.data;
     const matchOffset = match.offset;
     const matchLength = match.length;
     const matchEnd = matchOffset + matchLength;
     const range = paragraphRanges.find(({ from, to }) => matchOffset >= from && matchEnd <= to);
     if (!range) return [];
     const matchedText = text.slice(matchOffset, matchEnd);
-    if (dictionary.has(matchedText.normalize("NFKC").toLocaleLowerCase(language))) return [];
+    if (match.rule?.issueType === "misspelling" && dictionary.has(matchedText.normalize("NFKC").toLocaleLowerCase(language))) return [];
     return [{
       paragraph: range.paragraph,
       offset: matchOffset - range.from,
@@ -90,7 +102,7 @@ function normalizeMatches(rawMatches: LanguageToolMatch[], text: string, paragra
       kind: match.rule?.issueType === "misspelling" ? "spelling" : "writing",
       category: match.rule?.category?.name ?? match.rule?.category?.id ?? "",
       ruleId: match.rule?.id ?? "",
-      replacements: [...new Set((match.replacements ?? []).map((replacement) => replacement.value ?? "").filter(Boolean))],
+      replacements: [...new Set((match.replacements ?? []).map((replacement) => replacement.value))],
     }];
   });
 

@@ -1,14 +1,20 @@
 import { describe, expect, it } from "vitest";
 import { Schema } from "@tiptap/pm/model";
+import { EditorState, TextSelection, type Transaction } from "@tiptap/pm/state";
+import type { Editor } from "@tiptap/core";
+import { createSpellcheckPlugin, replaceAllSpellcheckOccurrences, spellcheckKey, type SpellcheckIssue } from "./spellcheck";
 import { PROOFING_LANGUAGES, SPELLCHECK_BATCH_MAX_CHARACTERS, SPELLCHECK_BATCH_MAX_PARAGRAPHS, collectSpellcheckParagraphs, createSpellcheckBatches, mapSpellcheckMatches, nextProofingLanguage, remapSpellcheckBatchMatches } from "./spellcheck";
 
 const schema = new Schema({
   nodes: {
     doc: { content: "block+" },
-    paragraph: { group: "block", content: "text*" },
+    paragraph: { group: "block", content: "inline*" },
     codeBlock: { group: "block", content: "text*" },
-    text: {},
+    text: { group: "inline" },
+    hardBreak: { inline: true, group: "inline" },
+    citation: { inline: true, group: "inline", atom: true },
   },
+  marks: { bold: {}, code: {}, link: {} },
 });
 
 describe("wiki spellcheck helpers", () => {
@@ -68,5 +74,40 @@ describe("wiki spellcheck helpers", () => {
     expect(nextProofingLanguage("en-US")).toBe("de-AT");
     expect(nextProofingLanguage("de-AT")).toBe("de-DE");
     expect(PROOFING_LANGUAGES).toEqual(["de-DE", "en-US", "de-AT"]);
+  });
+
+  it("keeps offsets after hard breaks and inline citations, and checks prose after URLs", () => {
+    const doc = schema.node("doc", null, [schema.node("paragraph", null, [
+      schema.text("https://example.com "), schema.node("citation"), schema.node("hardBreak"),
+      schema.text("Fe"), schema.text("ler", [schema.mark("bold")]), schema.text(" codee", [schema.mark("code")]),
+    ])]);
+    const paragraphs = collectSpellcheckParagraphs(doc);
+    const matches = mapSpellcheckMatches(paragraphs, [{ paragraph: 0, offset: paragraphs[0].text.indexOf("Feler"), length: 5, message: "Typo", kind: "spelling", category: "", ruleId: "TYPO", replacements: ["Fehler"] }]);
+    expect(matches).toHaveLength(1);
+    expect(doc.textBetween(matches[0].from, matches[0].to)).toBe("Feler");
+    expect(paragraphs[0].excludedRanges).toEqual([{ from: 20, to: 21 }, { from: 21, to: 22 }, { from: 27, to: 33 }]);
+  });
+
+  it("invalidates edited paragraphs immediately and reuses decorations for selection changes", () => {
+    const doc = schema.node("doc", null, [schema.node("paragraph", null, schema.text("Feler")), schema.node("paragraph", null, schema.text("Feler"))]);
+    const issue: SpellcheckIssue = { from: 1, to: 6, message: "Typo", kind: "spelling", category: "", ruleId: "TYPO", replacements: ["Fehler"] };
+    let state = EditorState.create({ doc, plugins: [createSpellcheckPlugin(() => {})] });
+    state = state.apply(state.tr.setMeta(spellcheckKey, [issue, { ...issue, from: 8, to: 13 }]));
+    const cached = spellcheckKey.getState(state);
+    state = state.apply(state.tr.setSelection(TextSelection.create(state.doc, 3)));
+    expect(spellcheckKey.getState(state)).toBe(cached);
+    state = state.apply(state.tr.insertText("h", 3));
+    expect(spellcheckKey.getState(state)?.issues).toEqual([{ ...issue, from: 9, to: 14 }]);
+    expect(state.doc.textBetween(9, 14)).toBe("Feler");
+  });
+
+  it("replace all changes only matching marked occurrences, including formatted words", () => {
+    const doc = schema.node("doc", null, [schema.node("paragraph", null, [schema.text("Te"), schema.text("h", [schema.mark("bold")]), schema.text(" TehOther Teh")])]);
+    const issue: SpellcheckIssue = { from: 1, to: 4, message: "Typo", kind: "spelling", category: "", ruleId: "TYPO", replacements: ["The"] };
+    let state = EditorState.create({ doc, plugins: [createSpellcheckPlugin(() => {})] });
+    state = state.apply(state.tr.setMeta(spellcheckKey, [issue, { ...issue, from: 14, to: 17 }]));
+    const editor = { get state() { return state; }, isEditable: true, view: { dispatch: (tr: Transaction) => { state = state.apply(tr); } } } as unknown as Editor;
+    expect(replaceAllSpellcheckOccurrences(editor, issue, "The")).toBe(2);
+    expect(state.doc.textContent).toBe("The TehOther The");
   });
 });

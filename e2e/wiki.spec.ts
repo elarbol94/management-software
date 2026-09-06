@@ -623,7 +623,7 @@ test("proofing language persists and spelling and writing issues use distinct st
     await login(page);
   }
   await quickNote(page, "Proofing language", "Feler grammar Zweii");
-  await expect(page.getByTestId("proofing-language-toggle")).toContainText("DE");
+  await expect(page.locator(".ProseMirror")).toHaveAttribute("lang", "de-AT");
   await expect(page.locator(".ProseMirror")).toHaveAttribute("spellcheck", "false");
   await expect(page.locator(".wiki-spellcheck-issue--spelling")).toHaveCount(2, { timeout: 10_000 });
   await expect(page.locator(".wiki-spellcheck-issue--writing")).toHaveCount(1);
@@ -631,7 +631,7 @@ test("proofing language persists and spelling and writing issues use distinct st
   await page.locator(".wiki-spellcheck-issue--spelling").first().click();
   await page.getByRole("button", { name: "Fehler", exact: true }).click();
   await page.waitForTimeout(700);
-  expect(requestedLanguages).toHaveLength(requestsBeforeAcceptance);
+  expect(requestedLanguages).toHaveLength(requestsBeforeAcceptance + 1);
   await expect(page.locator(".wiki-spellcheck-issue--spelling")).toHaveCount(1);
   await expect(page.locator(".wiki-spellcheck-issue--writing")).toHaveCount(1);
   await page.locator(".wiki-spellcheck-issue--spelling").click();
@@ -639,11 +639,11 @@ test("proofing language persists and spelling and writing issues use distinct st
   await expect(page.locator(".wiki-spellcheck-issue--spelling")).toHaveCount(0, { timeout: 10_000 });
   await expect(page.locator(".wiki-spellcheck-issue--writing")).toHaveCount(1);
 
-  // Quick notes default to de-AT, which now sits last in the de-DE -> en-US -> de-AT
-  // cycle, so reaching en-US takes two clicks instead of one.
   await page.getByTestId("proofing-language-toggle").click();
-  await page.getByTestId("proofing-language-toggle").click();
+  await page.getByRole("combobox", { name: "Prüfsprache" }).click();
+  await page.getByRole("option", { name: "Englisch", exact: true }).click();
+  await expect(page.getByRole("combobox", { name: "Prüfsprache" })).toBeEnabled();
   await expect.poll(() => requestedLanguages.includes("en-US")).toBe(true);
   await page.reload();
-  await expect(page.getByTestId("proofing-language-toggle")).toContainText("EN");
+  await expect(page.locator(".ProseMirror")).toHaveAttribute("lang", "en-US");
 });

@@ -2358,6 +2358,19 @@
     },
     "editor": {
       "proofing": {
+        "shortTitle": "Prüfung",
+        "saving": "Speichert…",
+        "preferenceFailed": "Die Einstellung gilt vorerst nur in dieser Sitzung. Speichern fehlgeschlagen.",
+        "moreActions": "Weitere Aktionen",
+        "deleteText": "Entfernen",
+        "hint": "Unterstrichene Wörter anklicken. Alt+Enter öffnet den Hinweis am Cursor.",
+        "nextIssue": "Nächster Hinweis",
+        "retry": "Erneut prüfen",
+        "issueCount": "{count, plural, one {# Hinweis} other {# Hinweise}}",
+        "fallbackShort": "Browserprüfung",
+        "ready": "Prüfung abgeschlossen",
+        "language": "Prüfsprache",
+        "title": "Rechtschreibung",
         "languages": {
           "de": "Deutsch",
           "deAt": "Deutsch (Österreich)",
@@ -2366,7 +2379,7 @@
         "switch": "Prüfsprache: {language}. Zu {nextLanguage} wechseln.",
         "checking": "Prüfung läuft",
         "unavailable": "Rechtschreib- und Grammatikprüfung momentan nicht erreichbar",
-        "browserFallback": "Schnelle Browserprüfung aktiv. Die erweiterte Grammatikprüfung ist momentan nicht erreichbar.",
+        "browserFallback": "Die erweiterte Prüfung ist nicht erreichbar. Die Browserprüfung ist aktiviert, sofern dein Browser die Sprache unterstützt. Wir versuchen es automatisch erneut.",
         "saveFailed": "Die Prüfsprache konnte nicht gespeichert werden.",
         "picky": "Strengere Prüfung",
         "dialog": "Korrekturvorschläge",
@@ -2375,7 +2388,7 @@
           "writing": "Grammatik & Stil"
         },
         "noReplacement": "Keine Ersetzung vorgeschlagen.",
-        "replaceAll": "Alle gleichen Stellen ersetzen",
+        "replaceAll": "Alle gleich markierten Stellen ersetzen",
         "ignore": "Diesen Hinweis ignorieren",
         "addToDictionary": "Zum gemeinsamen Wörterbuch hinzufügen",
         "disableRule": "Regel deaktivieren",

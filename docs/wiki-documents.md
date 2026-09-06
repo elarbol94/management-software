@@ -38,11 +38,47 @@ line breaks, nested lists, table paragraphs and unique heading targets. A failed
 or malformed import returns an ordinary error. If text changes or the edit lease
 is lost while an import runs, the result is rejected to preserve those edits.
 
+## Spelling and grammar
+
+The **Rechtschreibung / Proofreading** menu selects German, Austrian German or
+English directly, shows the check status and opens the next suggestion. Click
+an underline, press **Alt+Enter** at an issue, or use **Alt+F7** to move to the
+next one. Language changes show a saving state until acknowledged and keep
+their request alive during navigation. The first correction receives keyboard
+focus; Enter applies it and Escape returns to writing. Additional actions include ignoring a hint, adding
+a spelling to the shared dictionary, replacing matching marked occurrences,
+and disabling a rule.
+
+Checks start after a 250 ms typing pause. One request runs at a time, with the
+current paragraph first. Typing does not cancel an in-flight request. Results
+are cached by exact text and applied against the current document, so changing
+or moving text cannot apply stale offsets. Unchanged blocks and repeated text
+reuse results. Edited paragraphs lose their old underlines immediately; code,
+links, inline atoms and deleted suggestions are excluded. Hard breaks and
+inline references retain their document offsets.
+
+Suggestions are inserted as plain text, including empty replacements for
+deletion. “Replace all” only changes identically marked text with the same rule;
+it does not alter unmarked substrings or assume a grammar rule applies in every
+context. Shared dictionary filtering happens in the browser, so dictionaries
+larger than 500 words do not exceed the checking API's request limit.
+
+LanguageTool runs privately in the Docker Compose `languagetool` service. Local
+development needs a reachable `LANGUAGETOOL_URL`; the default Docker hostname
+does not resolve outside that network. Text is sent to the configured service.
+On failure, the editor enables browser spellchecking with the selected language
+(availability depends on installed browser dictionaries), retains its normal
+save behavior, and retries after 5, 10, 20, then at most 30 seconds. The menu also
+offers an immediate retry. Actual checking latency depends on LanguageTool;
+the 250 ms debounce is not a service-response guarantee.
+
 ## Validation
 
 Run `npm run check` for TypeScript, lint and the unit suite. Focused regression
 coverage is in `src/modules/wiki/actions.test.ts`, `lib/editor-draft.test.ts`,
-`lib/document-template.test.ts`, and `lib/docx-import.test.ts`.
+`lib/document-template.test.ts`, `lib/docx-import.test.ts`,
+`lib/spellcheck.test.ts`, `lib/spellcheck-controller.test.ts`, and the spellcheck
+API route tests.
 
 Stop the normal development server, then run:
 
@@ -53,6 +89,12 @@ npm run e2e -- e2e/reliable-wiki-editor.spec.ts
 This uses the throwaway database configured by Playwright. The browser cases
 exercise delayed and lost save responses, stale recovery, layout-only recovery,
 export after typing, competing editors, paper layout and SVG version recovery.
+The SVG case delays preview loading to verify that an early label selection
+opens its editor once the preview arrives.
+Proofing cases use controlled service responses to exercise delayed checks,
+correction/undo, keyboard and small-screen interactions, safe replacement,
+deletion suggestions, dictionary limits, language persistence and outage recovery.
+Run only these with `npm run e2e -- e2e/reliable-wiki-editor.spec.ts --grep proofing`.
 The document PDF rendering smoke test is `npx tsx scripts/verify-document-pdf.ts`.
 
 ## Remaining improvements

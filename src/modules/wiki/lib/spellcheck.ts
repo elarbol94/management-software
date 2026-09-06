@@ -1,5 +1,5 @@
 import { Extension, type Editor } from "@tiptap/core";
-import { Plugin, PluginKey } from "@tiptap/pm/state";
+import { Plugin, PluginKey, TextSelection } from "@tiptap/pm/state";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
 import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
 
@@ -82,23 +82,32 @@ export function remapSpellcheckBatchMatches(batch: SpellcheckBatch, matches: Spe
   });
 }
 
-export const spellcheckKey = new PluginKey<SpellcheckIssue[]>("wikiSpellcheck");
+type SpellcheckState = { issues: SpellcheckIssue[]; decorations: DecorationSet };
+export const spellcheckKey = new PluginKey<SpellcheckState>("wikiSpellcheck");
 
 /** Returns independently checkable prose blocks and their document offsets. */
 export function collectSpellcheckParagraphs(doc: ProseMirrorNode): SpellcheckParagraph[] {
   const paragraphs: SpellcheckParagraph[] = [];
   doc.descendants((node, position) => {
-    if (!node.isTextblock || node.type.name === "codeBlock" || node.isAtom) return;
-    const text = node.textContent.trim();
-    if (text.length < 2 || /^(https?:\/\/|www\.)/i.test(text)) return;
-    const leadingWhitespace = node.textContent.length - node.textContent.trimStart().length;
+    if (node.type.name === "codeBlock" || node.isAtom) return false;
+    if (!node.isTextblock) return;
+    // Inline atoms and hard breaks occupy document positions too. Keep one
+    // character per position so a suggestion can never shift onto nearby text.
+    let rawText = "";
     const excludedRanges: Array<{ from: number; to: number }> = [];
-    node.descendants((child, offset) => {
-      if (!child.isText || !child.text) return;
-      const excluded = child.marks.some((mark) => mark.type.name === "code" || mark.type.name === "link");
-      if (excluded) excludedRanges.push({ from: Math.max(0, offset - leadingWhitespace), to: Math.max(0, offset - leadingWhitespace + child.text.length) });
+    node.forEach((child, offset) => {
+      rawText += child.isText ? child.text! : child.type.name === "hardBreak" ? "\n" : " ".repeat(child.nodeSize);
+      if (!child.isText || child.marks.some((mark) => ["code", "link", "suggestionDelete"].includes(mark.type.name))) {
+        excludedRanges.push({ from: offset, to: offset + child.nodeSize });
+      }
     });
-    paragraphs.push({ text, from: position + 1 + leadingWhitespace, excludedRanges });
+    const text = rawText.trim();
+    if (text.length < 2 || /^(https?:\/\/|www\.)\S+$/i.test(text)) return false;
+    const leadingWhitespace = rawText.length - rawText.trimStart().length;
+    paragraphs.push({ text, from: position + 1 + leadingWhitespace, excludedRanges: excludedRanges
+      .map((range) => ({ from: Math.max(0, range.from - leadingWhitespace), to: Math.min(text.length, range.to - leadingWhitespace) }))
+      .filter((range) => range.to > range.from) });
+    return false;
   });
   return paragraphs;
 }
@@ -122,7 +131,7 @@ export function mapSpellcheckMatches(
 ): SpellcheckIssue[] {
   return matches.flatMap((match) => {
     const paragraph = paragraphs[match.paragraph];
-    if (!paragraph || match.offset < 0 || match.length < 1 || match.offset + match.length > paragraph.text.length || shouldIgnoreMatch(paragraph, match.offset, match.length)) return [];
+    if (!paragraph || !Number.isInteger(match.offset) || !Number.isInteger(match.length) || match.offset < 0 || match.length < 1 || match.offset + match.length > paragraph.text.length || shouldIgnoreMatch(paragraph, match.offset, match.length)) return [];
     return [{
       from: paragraph.from + match.offset,
       to: paragraph.from + match.offset + match.length,
@@ -136,20 +145,17 @@ export function mapSpellcheckMatches(
 }
 
 export function getSpellcheckIssues(editor: Editor) {
-  return spellcheckKey.getState(editor.state) ?? [];
+  return spellcheckKey.getState(editor.state)?.issues ?? [];
 }
 
-export function replaceAllSpellcheckOccurrences(editor: Editor, source: string, replacement: string) {
+export function replaceAllSpellcheckOccurrences(editor: Editor, issue: SpellcheckIssue, replacement: string) {
+  if (!editor.isEditable || !getSpellcheckIssues(editor).includes(issue)) return 0;
+  const source = editor.state.doc.textBetween(issue.from, issue.to);
   if (!source || source === replacement) return 0;
-  const ranges: Array<{ from: number; to: number }> = [];
-  editor.state.doc.descendants((node, position, parent) => {
-    if (!node.isText || !node.text || parent?.type.name === "codeBlock" || node.marks.some((mark) => mark.type.name === "code" || mark.type.name === "link")) return;
-    let offset = node.text.indexOf(source);
-    while (offset >= 0) {
-      ranges.push({ from: position + offset, to: position + offset + source.length });
-      offset = node.text.indexOf(source, offset + source.length);
-    }
-  });
+  // Grammar depends on context. Only replace occurrences the checker actually
+  // marked with this rule, never arbitrary substrings elsewhere in the document.
+  const ranges = getSpellcheckIssues(editor).filter((candidate) => candidate.ruleId === issue.ruleId
+    && candidate.kind === issue.kind && editor.state.doc.textBetween(candidate.from, candidate.to) === source);
   if (!ranges.length) return 0;
   const transaction = editor.state.tr;
   for (const range of ranges.reverse()) transaction.insertText(replacement, range.from, range.to);
@@ -162,43 +168,73 @@ export function setSpellcheckIssues(editor: Editor, issues: SpellcheckIssue[]) {
   editor.view.dispatch(editor.view.state.tr.setMeta(spellcheckKey, issues));
 }
 
+export function createSpellcheckPlugin(onIssueClick: (issue: SpellcheckIssue, target: HTMLElement) => void) {
+  const decorate = (doc: ProseMirrorNode, issues: SpellcheckIssue[]) => DecorationSet.create(doc, issues.map((issue) => Decoration.inline(issue.from, issue.to, {
+    class: "wiki-spellcheck-issue wiki-spellcheck-issue--" + issue.kind,
+    "data-spellcheck-issue": "true",
+    title: issue.message,
+  })));
+  return new Plugin<SpellcheckState>({
+    key: spellcheckKey,
+    state: {
+      init: () => ({ issues: [], decorations: DecorationSet.empty }),
+      apply(transaction, previous) {
+        const replacement = transaction.getMeta(spellcheckKey) as SpellcheckIssue[] | undefined;
+        if (replacement) return { issues: replacement, decorations: decorate(transaction.doc, replacement) };
+        if (!transaction.docChanged) return previous;
+        let issues = previous.issues;
+        transaction.mapping.maps.forEach((map, index) => {
+          issues = issues.flatMap((issue) => {
+            const start = transaction.docs[index].resolve(issue.from);
+            let touched = false;
+            map.forEach((from, to) => {
+              if (from <= start.end() && to >= start.start()) touched = true;
+            });
+            if (touched) return [];
+            const from = map.map(issue.from), to = map.map(issue.to, -1);
+            return from < to ? [{ ...issue, from, to }] : [];
+          });
+        });
+        return { issues, decorations: decorate(transaction.doc, issues) };
+      },
+    },
+    props: {
+      decorations(state) {
+        return spellcheckKey.getState(state)?.decorations ?? DecorationSet.empty;
+      },
+      handleClick(view, _position, event) {
+        const target = event.target instanceof HTMLElement ? event.target.closest<HTMLElement>("[data-spellcheck-issue]") : null;
+        if (!target) return false;
+        const coordinates = view.posAtCoords({ left: event.clientX, top: event.clientY });
+        const issue = (spellcheckKey.getState(view.state)?.issues ?? []).find((candidate) => coordinates?.pos != null && candidate.from <= coordinates.pos && candidate.to >= coordinates.pos);
+        if (!issue) return false;
+        onIssueClick(issue, target);
+        return true;
+      },
+      handleKeyDown(view, event) {
+        if (!event.altKey || !["F7", "Enter"].includes(event.key)) return false;
+        const issues = spellcheckKey.getState(view.state)?.issues ?? [];
+        const cursor = view.state.selection.from;
+        const issue = event.key === "F7" ? issues.find((item) => item.from > cursor) ?? issues[0]
+          : issues.find((item) => item.from <= cursor && cursor <= item.to);
+        if (!issue) return false;
+        view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, issue.from, issue.to)).scrollIntoView());
+        const dom = view.domAtPos(Math.min(issue.from + 1, issue.to)).node;
+        const target = (dom instanceof HTMLElement ? dom : dom.parentElement)?.closest<HTMLElement>("[data-spellcheck-issue]")
+          ?? view.nodeDOM(issue.from)?.parentElement?.querySelector<HTMLElement>("[data-spellcheck-issue]");
+        if (!target) return false;
+        onIssueClick(issue, target);
+        return true;
+      },
+    },
+  });
+}
+
 export function createSpellcheckExtension(onIssueClick: (issue: SpellcheckIssue, target: HTMLElement) => void) {
   return Extension.create({
     name: "wikiSpellcheck",
     addProseMirrorPlugins() {
-      return [new Plugin<SpellcheckIssue[]>({
-        key: spellcheckKey,
-        state: {
-          init: () => [],
-          apply(transaction, issues) {
-            const replacement = transaction.getMeta(spellcheckKey) as SpellcheckIssue[] | undefined;
-            return replacement ?? issues.map((issue) => ({
-              ...issue,
-              from: transaction.mapping.map(issue.from),
-              to: transaction.mapping.map(issue.to, -1),
-            })).filter((issue) => issue.from < issue.to);
-          },
-        },
-        props: {
-          decorations(state) {
-            const issues = spellcheckKey.getState(state) ?? [];
-            return DecorationSet.create(state.doc, issues.map((issue) => Decoration.inline(issue.from, issue.to, {
-              class: "wiki-spellcheck-issue wiki-spellcheck-issue--" + issue.kind,
-              "data-spellcheck-issue": "true",
-              title: issue.message,
-            })));
-          },
-          handleClick(view, _position, event) {
-            const target = event.target instanceof HTMLElement ? event.target.closest<HTMLElement>("[data-spellcheck-issue]") : null;
-            if (!target) return false;
-            const coordinates = view.posAtCoords({ left: event.clientX, top: event.clientY });
-            const issue = (spellcheckKey.getState(view.state) ?? []).find((candidate) => coordinates?.pos != null && candidate.from <= coordinates.pos && candidate.to >= coordinates.pos);
-            if (!issue) return false;
-            onIssueClick(issue, target);
-            return true;
-          },
-        },
-      })];
+      return [createSpellcheckPlugin(onIssueClick)];
     },
   });
 }

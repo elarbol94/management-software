@@ -159,6 +159,15 @@ export function SvgGraphicsPanel({ pageId, open, onOpenChange, variables, docume
     return () => window.removeEventListener("resize", remeasure);
   }, [activeId, boxFor]);
 
+  // The layer list can arrive before the SVG preview. Preserve an early click
+  // and open its editor once the preview exists, without moving an open field
+  // as the user types.
+  useEffect(() => {
+    if (!activeId || activeBox) return;
+    const frame = requestAnimationFrame(() => setActiveBox(boxFor(activeId)));
+    return () => cancelAnimationFrame(frame);
+  }, [activeId, activeBox, boxFor, previewSvg]);
+
   const load = useCallback(async (preferredId: string) => {
     const response = await fetch(`/api/wiki/pages/${encodeURIComponent(pageId)}/svg-assets`);
     if (!response.ok) throw new Error(t("loadFailed"));

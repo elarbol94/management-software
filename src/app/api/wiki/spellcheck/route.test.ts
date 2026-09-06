@@ -120,4 +120,28 @@ describe("POST /api/wiki/spellcheck", () => {
     await POST(new Request("http://test/api/wiki/spellcheck", { method: "POST", headers: { "content-type": "application/json" }, body }));
     expect(fetchMock).toHaveBeenCalledOnce();
   });
+
+  it("preserves deletion suggestions and grammar rules for dictionary words", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ matches: [
+      { offset: 0, length: 6, message: "Repeated word", rule: { issueType: "grammar" }, replacements: [{ value: "" }, { value: "" }] },
+      null, { offset: -1, length: 2, message: "Bad range" }, { offset: 0, length: 0, message: "Empty" },
+    ] }));
+    const response = await POST(new Request("http://test/api/wiki/spellcheck", { method: "POST", body: JSON.stringify({ paragraphs: ["Repeat repeat"], language: "en-US", dictionary: ["Repeat"] }) }));
+    expect(response.status).toBe(200);
+    expect((await response.json()).matches).toEqual([expect.objectContaining({ replacements: [""], kind: "writing" })]);
+  });
+
+  it("does not present malformed service responses as a successful check", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ error: "warming up" }));
+    const response = await POST(new Request("http://test/api/wiki/spellcheck", { method: "POST", body: JSON.stringify({ paragraphs: ["Invalid response test"], language: "en-US" }) }));
+    expect(response.status).toBe(503);
+  });
+
+  it("requires authentication before sending document text to the service", async () => {
+    getSession.mockResolvedValue(null);
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+    const response = await POST(new Request("http://test/api/wiki/spellcheck", { method: "POST", body: "{}" }));
+    expect(response.status).toBe(401);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
 });

@@ -2358,6 +2358,19 @@
     },
     "editor": {
       "proofing": {
+        "shortTitle": "Proofing",
+        "saving": "Saving…",
+        "preferenceFailed": "This setting applies to this session for now. Saving failed.",
+        "moreActions": "More actions",
+        "deleteText": "Remove",
+        "hint": "Click an underlined word. Alt+Enter opens the suggestion at the cursor.",
+        "nextIssue": "Next suggestion",
+        "retry": "Check again",
+        "issueCount": "{count, plural, one {# suggestion} other {# suggestions}}",
+        "fallbackShort": "Browser checking",
+        "ready": "Check complete",
+        "language": "Proofing language",
+        "title": "Proofreading",
         "languages": {
           "de": "German",
           "deAt": "German (Austria)",
@@ -2366,7 +2379,7 @@
         "switch": "Proofing language: {language}. Switch to {nextLanguage}.",
         "checking": "Checking",
         "unavailable": "Spelling and grammar checking is currently unavailable",
-        "browserFallback": "Fast browser proofing is active. Advanced grammar checking is currently unavailable.",
+        "browserFallback": "Advanced checking is unavailable. Browser checking is enabled if your browser supports this language. We will retry automatically.",
         "saveFailed": "The proofing language could not be saved.",
         "picky": "Stricter proofing",
         "dialog": "Correction suggestions",
@@ -2375,7 +2388,7 @@
           "writing": "Grammar & style"
         },
         "noReplacement": "No replacement suggested.",
-        "replaceAll": "Replace all matching occurrences",
+        "replaceAll": "Replace all identically marked occurrences",
         "ignore": "Ignore this suggestion",
         "addToDictionary": "Add to shared dictionary",
         "disableRule": "Disable rule",
