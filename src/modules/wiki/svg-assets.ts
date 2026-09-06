@@ -11,6 +11,7 @@ import {
   wikiPages,
   wikiSources,
   wikiSvgAssets,
+  wikiFigureRevisions,
   wikiSvgRevisions,
 } from "@/db/schema";
 import { linkSupportingSource, saveSource } from "./research-actions";
@@ -98,10 +99,11 @@ function backfillOwnTextLabels(assetId: string, currentSvg: string) {
 export function listSvgAssets(pageId: string, userId: string): SvgAssetDto[] {
   const page = db.select({ version: wikiPages.version }).from(wikiPages).where(eq(wikiPages.id, pageId)).get();
   const pageVersion = page?.version ?? 0;
+  const immutableFiles = new Set(db.select({ id: wikiFigureRevisions.attachmentId }).from(wikiFigureRevisions).all().map((row) => row.id));
   const files = db.select().from(attachments)
     .where(and(eq(attachments.entityType, "wikiPage"), eq(attachments.entityId, pageId)))
     .all()
-    .filter((file) => file.mimeType === "image/svg+xml" || /\.svgz?$/i.test(file.fileName));
+    .filter((file) => !immutableFiles.has(file.id) && (file.mimeType === "image/svg+xml" || /\.svgz?$/i.test(file.fileName)));
   for (const file of files) {
     const existing = db.select().from(wikiSvgAssets).where(eq(wikiSvgAssets.attachmentId, file.id)).get();
     if (existing) continue;
@@ -176,13 +178,10 @@ export function listSvgAssets(pageId: string, userId: string): SvgAssetDto[] {
  * synced diagram is not listed twice in the same sidebar.
  */
 export function listGraphicAttachmentIds(pageId: string) {
-  return new Set(
-    db.select({ attachmentId: wikiSvgAssets.attachmentId })
-      .from(wikiSvgAssets)
-      .where(eq(wikiSvgAssets.pageId, pageId))
-      .all()
-      .map((row) => row.attachmentId),
-  );
+  return new Set([
+    ...db.select({ attachmentId: wikiSvgAssets.attachmentId }).from(wikiSvgAssets).where(eq(wikiSvgAssets.pageId, pageId)).all(),
+    ...db.select({ attachmentId: wikiFigureRevisions.attachmentId }).from(wikiFigureRevisions).innerJoin(attachments, eq(attachments.id, wikiFigureRevisions.attachmentId)).where(eq(attachments.entityId, pageId)).all(),
+  ].map((row) => row.attachmentId));
 }
 
 export type SvgFolderSyncResult = {

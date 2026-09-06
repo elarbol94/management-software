@@ -48,7 +48,9 @@ For wiki presentation editing, save recovery, live following and PDF export,
 see [docs/presentations.md](docs/presentations.md).
 
 For Wiki document saving, recovery, templates, Word import and validation,
-see [docs/wiki-documents.md](docs/wiki-documents.md).
+see [docs/wiki-documents.md](docs/wiki-documents.md). Image captions, references,
+figure lists and live laptop/server folder setup are covered in
+[docs/wiki-figures.md](docs/wiki-figures.md).
 
 ### Schema changes
 

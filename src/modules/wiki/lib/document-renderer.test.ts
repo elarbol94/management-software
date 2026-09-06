@@ -130,10 +130,10 @@ describe("document renderer", () => {
       figures: { ...DEFAULT_DOCUMENT_SETTINGS.figures, enabled: true, heading: "Figures" },
     };
     const result = await renderDocumentHtml({ title: "Proposal", doc, settings });
-    expect(result.html).toContain('<section class="figure-index">');
+    expect(result.html).toContain('<section class="figure-index" data-page-break-before="true">');
     expect(result.html).toContain("Quarterly revenue");
-    expect(result.html).toContain('href="#figure-1"');
-    expect(result.html).toContain("Figure 1.");
+    expect(result.html).toContain('href="#figure-one"');
+    expect(result.html).toContain("Figure 1:");
   });
 
   it("numbers figures in the document language", async () => {
@@ -143,11 +143,11 @@ describe("document renderer", () => {
       figures: { ...DEFAULT_DOCUMENT_SETTINGS.figures, enabled: true, heading: "Abbildungen" },
     };
     const result = await renderDocumentHtml({ title: "Antrag", doc, settings, figureLabel: "Abbildung" });
-    expect(result.html).toContain("Abbildung 1.");
+    expect(result.html).toContain("Abbildung 1:");
     expect(result.html).not.toContain("Figure 1");
   });
 
-  it("leaves a caption that already carries its own number unnumbered", async () => {
+  it("renumbers legacy captions without repeating their prefix", async () => {
     const settings = {
       ...DEFAULT_DOCUMENT_SETTINGS,
       cover: { ...DEFAULT_DOCUMENT_SETTINGS.cover, enabled: false },
@@ -161,8 +161,8 @@ describe("document renderer", () => {
       }],
     };
     const result = await renderDocumentHtml({ title: "Antrag", doc: numbered, settings, figureLabel: "Abbildung" });
-    expect(result.html).toContain("Abbildung 4: Hauseigentum nach Gemeindegröße");
-    expect(result.html).not.toContain("Abbildung 1.");
+    expect(result.html).toContain("Abbildung 1: Hauseigentum nach Gemeindegröße");
+    expect(result.html).not.toContain("Abbildung 4:");
     expect(result.html).not.toContain('class="figure-number"');
   });
 
@@ -209,8 +209,7 @@ describe("mermaid diagrams", () => {
       doc: withDiagram({ code: "flowchart TD\n A --> B", svg: "<svg id=\"drawn\"></svg>" }),
       settings,
     });
-    expect(result.html).toContain('<figure class="mermaid-diagram">');
-    expect(result.html).toContain('<svg id="drawn">');
+    expect(result.html).toContain("data:image/svg+xml;base64," + Buffer.from('<svg id="drawn"></svg>').toString("base64"));
   });
 
   it("falls back to the source when nothing was cached, rather than dropping the node", async () => {

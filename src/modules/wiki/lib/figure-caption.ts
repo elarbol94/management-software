@@ -1,12 +1,4 @@
-/**
- * Figure numbering shared by the on-screen document and the export.
- *
- * A caption may already carry its own number — the graphics sidecars written for
- * the Projektbeschreibung start with "Abbildung 4: …" so the wording is fixed in
- * the source of truth. Numbering such a caption again produced "Figure 1.
- * Abbildung 4: …", so a caption that numbers itself keeps that number and the
- * document adds none.
- */
+/** Figure labels are sequential; legacy table captions retain their own numbering. */
 
 /** "Abbildung 4:", "Figure 12.", "Fig. 3 —" and the like, at the very start. */
 const OWN_FIGURE_NUMBER = /^\s*(?:abbildung|abb\.|figure|fig\.)\s*\d+\s*[.:—–-]/i;
@@ -23,9 +15,9 @@ export function ownFigureNumber(caption: string): number | null {
   return match ? Number(match[2]) : null;
 }
 
-/** The label a document puts in front of a caption, empty when the caption numbers itself. */
-export function figureNumberLabel(caption: string, label: string, number: number) {
-  return hasOwnFigureNumber(caption) ? "" : `${label} ${number}`;
+/** The sequential label a document puts in front of a normalized figure caption. */
+export function figureNumberLabel(_caption: string, label: string, number: number) {
+  return `${label} ${number}`;
 }
 
 /** The number a reference to this item should show: its own embedded number if it has one, else its position in document order. */
@@ -65,7 +57,7 @@ export function resolveCrossReferenceLabels(sources: CrossReferenceSources): Map
   for (const annex of sources.annexes) if (annex.id) labels.set(annex.id, annex.title);
   sources.figures.forEach((figure, index) => {
     if (!figure.id) return;
-    labels.set(figure.id, referenceLabel(figure.caption, `${sources.figureLabel} ${index + 1}`));
+    labels.set(figure.id, `${sources.figureLabel} ${index + 1}`);
   });
   sources.tables.forEach((table, index) => {
     if (!table.id) return;

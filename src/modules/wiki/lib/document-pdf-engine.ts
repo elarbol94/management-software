@@ -1,4 +1,4 @@
-import { PDFDocument } from "pdf-lib";
+import { PDFDocument, PDFArray, PDFDict, PDFName } from "pdf-lib";
 import type { DocumentSettingsV1 } from "./document-settings";
 import type { RenderedDocument } from "./document-renderer";
 
@@ -8,6 +8,57 @@ type PdfMetadata = {
   subject?: string;
   keywords?: string;
 };
+
+export function pdfFigurePages(pdf: PDFDocument) {
+  const destinations = pdf.catalog.lookup(PDFName.of("Dests"));
+  const result: Record<string, number> = {};
+  if (!(destinations instanceof PDFDict)) return result;
+  const refs = pdf.getPages().map((page) => page.ref.toString());
+  for (const [name, value] of destinations.entries()) {
+    const destination = pdf.context.lookup(value);
+    if (!(destination instanceof PDFArray)) continue;
+    const page = refs.indexOf(destination.get(0).toString());
+    if (page >= 0) result[name.decodeText()] = page + 1;
+  }
+  return result;
+}
+
+/** copyPages does not copy a source catalog's named destinations. Rebuild them against the new page refs. */
+export async function appendPdfWithLinks(merged: PDFDocument, part: PDFDocument) {
+  const originals = part.getPages();
+  const copied = await merged.copyPages(part, part.getPageIndices());
+  copied.forEach((page) => merged.addPage(page));
+  const remap = (destination: PDFArray) => {
+    const index = originals.findIndex((page) => page.ref.toString() === destination.get(0).toString());
+    if (index < 0) return undefined;
+    return merged.context.obj([copied[index].ref, ...destination.asArray().slice(1)]);
+  };
+  const names = part.catalog.lookup(PDFName.of("Dests"));
+  if (names instanceof PDFDict) {
+    let target = merged.catalog.lookup(PDFName.of("Dests"));
+    if (!(target instanceof PDFDict)) { target = merged.context.obj({}); merged.catalog.set(PDFName.of("Dests"), target); }
+    for (const [name, ref] of names.entries()) {
+      const destination = part.context.lookup(ref);
+      if (destination instanceof PDFArray) { const mapped = remap(destination); if (mapped) (target as PDFDict).set(name, mapped); }
+    }
+  }
+  originals.forEach((page, index) => {
+    const sourceAnnotations = page.node.lookup(PDFName.of("Annots"));
+    const targetAnnotations = copied[index].node.lookup(PDFName.of("Annots"));
+    if (!(sourceAnnotations instanceof PDFArray) || !(targetAnnotations instanceof PDFArray)) return;
+    sourceAnnotations.asArray().forEach((ref, annotationIndex) => {
+      const original = part.context.lookup(ref), clone = merged.context.lookup(targetAnnotations.get(annotationIndex));
+      if (!(original instanceof PDFDict) || !(clone instanceof PDFDict)) return;
+      const direct = original.lookup(PDFName.of("Dest"));
+      if (direct instanceof PDFArray) { const mapped = remap(direct); if (mapped) clone.set(PDFName.of("Dest"), mapped); }
+      const action = original.lookup(PDFName.of("A")), clonedAction = clone.lookup(PDFName.of("A"));
+      if (action instanceof PDFDict && clonedAction instanceof PDFDict) {
+        const destination = action.lookup(PDFName.of("D"));
+        if (destination instanceof PDFArray) { const mapped = remap(destination); if (mapped) clonedAction.set(PDFName.of("D"), mapped); }
+      }
+    });
+  });
+}
 
 export async function renderDocumentPdfBytes(input: {
   rendered: RenderedDocument;
@@ -63,18 +114,36 @@ export async function renderDocumentPdfBytes(input: {
       }));
     }
     await prepare(input.rendered.bodyDocumentHtml);
-    parts.push(await page.pdf({
+    const bodyOptions = {
       ...pdfOptions,
       displayHeaderFooter: input.settings.header.enabled || input.settings.footer.enabled,
       headerTemplate: input.rendered.headerTemplate,
       footerTemplate: input.rendered.footerTemplate,
-    }));
+    };
+    let bodyBytes = await page.pdf(bodyOptions);
+    let pages = pdfFigurePages(await PDFDocument.load(bodyBytes));
+    const hasFigurePages = await page.locator("[data-figure-page]").count();
+    if (hasFigurePages) {
+      for (let attempt = 0; attempt < 5; attempt++) {
+        await page.evaluate(({ pages, start }) => {
+          document.querySelectorAll<HTMLElement>("[data-figure-page]").forEach((element) => {
+            const page = pages[element.dataset.figurePage || ""];
+            element.textContent = page ? String(page + start - 1) : "—";
+          });
+        }, { pages, start: input.settings.footer.pageNumberStart });
+        bodyBytes = await page.pdf(bodyOptions);
+        const next = pdfFigurePages(await PDFDocument.load(bodyBytes));
+        if (JSON.stringify(next) === JSON.stringify(pages)) break;
+        if (attempt === 4) throw new Error("Figure-list pagination did not stabilize");
+        pages = next;
+      }
+    }
+    parts.push(bodyBytes);
 
     const merged = await PDFDocument.create();
     for (const bytes of parts) {
       const part = await PDFDocument.load(bytes);
-      const pages = await merged.copyPages(part, part.getPageIndices());
-      for (const copied of pages) merged.addPage(copied);
+      await appendPdfWithLinks(merged, part);
     }
     merged.setTitle(input.metadata.title);
     if (input.metadata.author) merged.setAuthor(input.metadata.author);

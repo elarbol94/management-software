@@ -23,9 +23,9 @@ describe("figure captions", () => {
     expect(hasOwnFigureNumber("2024: Ausgabenstruktur")).toBe(false);
   });
 
-  it("adds a label only where the caption has none", () => {
+  it("numbers figures by document order even when a legacy caption had a number", () => {
     expect(figureNumberLabel("Sparquote der Haushalte", "Abbildung", 3)).toBe("Abbildung 3");
-    expect(figureNumberLabel("Abbildung 4: Hauseigentum", "Abbildung", 1)).toBe("");
+    expect(figureNumberLabel("Abbildung 4: Hauseigentum", "Abbildung", 1)).toBe("Abbildung 1");
   });
 });
 
@@ -78,8 +78,8 @@ describe("resolveCrossReferenceLabels", () => {
     expect(labels.get("intro")).toBe("Introduction");
     expect(labels.get("annex-1")).toBe("Budget breakdown");
     expect(labels.get("fig-a")).toBe("Figure 1");
-    // The second figure already numbers itself, so the reference echoes that number, not its position (2).
-    expect(labels.get("fig-b")).toBe("Abbildung 9");
+    // Legacy caption numbers cannot override document order.
+    expect(labels.get("fig-b")).toBe("Figure 2");
     expect(labels.get("tbl-a")).toBe("Table 1");
   });
 

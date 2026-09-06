@@ -1,5 +1,10 @@
 # Graphics sidecar files
 
+Sidecars also work with the general [live figure links](wiki-figures.md), for
+raster artwork as well as SVG. Their captions seed new figures; later syncs
+preserve captions edited in the document. Number prefixes, including “Abbildung
+X”, are normalized to the document's automatic numbering.
+
 A graphic in a synced folder can carry its Literaturstelle in a JSON file with
 the **same name**:
 

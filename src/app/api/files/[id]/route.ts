@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
 import { db } from "@/db";
-import { wikiPages } from "@/db/schema";
+import { wikiPages, wikiFigureRevisions } from "@/db/schema";
 import { getSession } from "@/lib/auth";
 import { presentationRole } from "@/modules/wiki/presentation-access";
 import { parseByteRange } from "@/lib/http-range";
@@ -85,6 +85,9 @@ export async function DELETE(_request: Request, { params }: Params) {
     if (role !== "edit" && role !== "owner") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
   if (attachment.entityType === "wikiPage") {
+    if (db.select({ id: wikiFigureRevisions.id }).from(wikiFigureRevisions).where(eq(wikiFigureRevisions.attachmentId, id)).get()) {
+      return NextResponse.json({ error: "attachmentInUse" }, { status: 409 });
+    }
     const page = db.select({ contentJson: wikiPages.contentJson }).from(wikiPages).where(eq(wikiPages.id, attachment.entityId)).get();
     if (page) {
       try {

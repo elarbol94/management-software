@@ -20,6 +20,8 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_CALENDAR_MODEL: ${OPENAI_CALENDAR_MODEL:-gpt-6-astra}
       OPENAI_MINUTES_MODEL: ${OPENAI_MINUTES_MODEL:-gpt-6-astra}
+      # Named figure roots; mount each source directory read-only in an override.
+      WIKI_FIGURE_ROOTS: ${WIKI_FIGURE_ROOTS:-}
     volumes:
       - app_data:/data
     restart: unless-stopped

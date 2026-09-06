@@ -22,6 +22,11 @@ function block(item: Partial<PaginationItem> & Pick<PaginationItem, "top" | "bot
 }
 
 describe("computeDocumentPagination", () => {
+  it("keeps a legacy figure list on a new page without adding an empty first page", () => {
+    const list = block({ position: 10, top: 400, bottom: 700, breakBefore: true });
+    expect(computeDocumentPagination([block({ top: 100, bottom: 400 }), list], geometry).breaks).toEqual([{ position: 10, height: 800, page: 2, kind: "block" }]);
+    expect(computeDocumentPagination([{ ...list, top: 100, bottom: 400 }], geometry).breaks).toEqual([]);
+  });
   it("moves a whole block that would cross the page edge", () => {
     const plan = computeDocumentPagination([
       block({ position: 0, top: 100, bottom: 800 }),

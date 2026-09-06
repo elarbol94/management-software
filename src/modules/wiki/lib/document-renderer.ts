@@ -7,7 +7,8 @@ import {
 } from "./document-settings";
 import type { TiptapNode } from "./tiptap";
 import { formatIeeeCitation } from "./citations";
-import { figureNumberLabel, resolveCrossReferenceLabels } from "./figure-caption";
+import { resolveCrossReferenceLabels } from "./figure-caption";
+import { documentFigures, figureCrop, figureWidth, hasFigureList, stripFigureNumber } from "./figure";
 import {
   normalizeWikiTypography,
   wikiFontStack,
@@ -19,6 +20,7 @@ const DEFAULT_TABLE_LABEL = "Table";
 
 export type DocumentAssetResolver = (input: {
   attachmentId: string;
+  assetId?: string;
   src: string;
   alt: string;
 }) => Promise<string | null>;
@@ -125,17 +127,10 @@ export function collectHeadings(doc: TiptapNode) {
   return headings;
 }
 
-export function collectFigures(doc: TiptapNode) {
-  const figures: Array<{ nodeId: string; caption: string }> = [];
-  function walk(node: TiptapNode) {
-    if (node.type === "commentableImage" && node.attrs?.includeInFigureIndex !== false) {
-      const caption = String(node.attrs?.caption ?? "").trim();
-      if (caption) figures.push({ nodeId: String(node.attrs?.nodeId ?? ""), caption });
-    }
-    for (const child of node.content ?? []) walk(child);
-  }
-  walk(doc);
-  return figures;
+export const collectFigures = documentFigures;
+
+function figureListHtml(title: string, figures: ReturnType<typeof documentFigures>, label: string, pageBreakBefore = false) {
+  return `<section class="figure-index"${pageBreakBefore ? ' data-page-break-before="true"' : ""}><h2>${escapeHtml(title)}</h2><ol>${figures.filter((figure) => figure.included).map((figure) => `<li><a href="#${escapeHtml(figure.nodeId)}"><span>${escapeHtml(label)} ${figure.number}: ${escapeHtml(figure.caption)}</span><span class="figure-list-leader"></span><span class="figure-page" data-figure-page="${escapeHtml(figure.nodeId)}"></span></a></li>`).join("")}</ol></section>`;
 }
 
 export function collectTables(doc: TiptapNode) {
@@ -236,24 +231,22 @@ async function renderNode(
     }
     case "commentableImage": {
       const attachmentId = String(attrs.attachmentId ?? "");
+      const assetId = String(attrs.assetId ?? "");
       const src = String(attrs.src ?? "");
-      const alt = String(attrs.alt ?? attrs.caption ?? "");
-      const resolved = input.resolveAsset
-        ? await input.resolveAsset({ attachmentId, src, alt })
-        : src.startsWith("data:") ? src : null;
-      if (!resolved) return `<figure class="image image-missing"><div>Image unavailable</div>${alt ? `<figcaption>${escapeHtml(alt)}</figcaption>` : ""}</figure>`;
-      const width = clampNumber(attrs.widthPercent, 100, 20, 100);
+      const alt = String(attrs.alt ?? "");
+      const resolved = input.resolveAsset ? await input.resolveAsset({ attachmentId, assetId, src, alt }) : src.startsWith("data:image/") ? src : null;
+      const id = String(attrs.nodeId || "");
+      const figure = figures.find((item) => item.nodeId === id);
+      const caption = stripFigureNumber(String(attrs.caption || ""));
+      const label = figure ? `${input.figureLabel ?? DEFAULT_FIGURE_LABEL} ${figure.number}: ` : "";
+      const width = figureWidth(attrs.widthPercent);
       const alignment = ["left", "right"].includes(String(attrs.alignment)) ? String(attrs.alignment) : "center";
-      const cropX = clampNumber(attrs.cropX, 50, 0, 100);
-      const cropY = clampNumber(attrs.cropY, 50, 0, 100);
-      const caption = String(attrs.caption ?? "");
-      const figureNumber = figures.findIndex((figure) => figure.nodeId && figure.nodeId === String(attrs.nodeId ?? "")) + 1;
-      const figureId = figureNumber ? `figure-${figureNumber}` : "";
-      const numbering = figureNumber && input.settings.figures.enabled
-        ? figureNumberLabel(caption, input.figureLabel ?? DEFAULT_FIGURE_LABEL, figureNumber)
-        : "";
-      const figureLabel = numbering ? `<span class="figure-number">${escapeHtml(numbering)}.</span> ` : "";
-      return `<figure${figureId ? ` id="${figureId}"` : ""} class="image align-${alignment}" style="width:${width}%" ${keepAttrs}><img src="${resolved}" alt="${escapeHtml(alt)}" style="object-position:${cropX}% ${cropY}%">${caption ? `<figcaption>${figureLabel}${escapeHtml(caption)}</figcaption>` : ""}</figure>`;
+      const wrap = ["left", "right"].includes(String(attrs.wrap)) ? String(attrs.wrap) : "none";
+      const crop = figureCrop(attrs.crop);
+      const ratio = Number(attrs.aspectRatio) || 1.5;
+      const cropped = crop.x || crop.y || crop.width !== 1 || crop.height !== 1;
+      const artwork = resolved ? `<div class="figure-artwork"${cropped ? ` style="aspect-ratio:${ratio * crop.width / crop.height}"` : ""}><img src="${escapeHtml(resolved)}" alt="${escapeHtml(alt)}" style="${cropped ? `width:${100 / crop.width}%;max-width:none;transform:translate(${-crop.x * 100}%,${-crop.y * 100}%);` : "width:100%;"}"></div>` : `<div class="image-missing">${input.figureLabel === "Abbildung" ? "Bild nicht verfügbar" : "Image unavailable"}</div>`;
+      return `<figure id="${escapeHtml(id)}" data-figure-id="${escapeHtml(id)}" class="image align-${alignment} wrap-${wrap}" style="width:${width}%;--figure-ratio:${ratio * crop.width / crop.height}" data-keep-together>${artwork}${label || caption ? `<figcaption>${escapeHtml(label)}${escapeHtml(caption)}</figcaption>` : ""}</figure>`;
     }
     case "footnoteReference": {
       const label = escapeHtml(attrs.label ?? "");
@@ -276,7 +269,7 @@ async function renderNode(
       const renderRows = async (items: TiptapNode[]) => (await Promise.all(items.map((row) => renderNode(row, input, headings, figures, tables, crossReferenceLabels)))).join("");
       const caption = String(attrs.caption ?? "").trim();
       const tableNumber = tables.findIndex((table) => table.tableId && table.tableId === String(attrs.tableId ?? "")) + 1;
-      const tableId = tableNumber ? " id=\"table-" + tableNumber + "\"" : "";
+      const tableId = attrs.tableId ? ` id="${escapeHtml(attrs.tableId)}"` : "";
       const label = tableNumber && input.settings.tables.enabled ? "<span class=\"table-number\">" + escapeHtml(input.tableLabel ?? "Table") + " " + tableNumber + ".</span> " : "";
       return "<div" + tableId + " class=\"table-wrap\" " + keepAttrs + ">" + (caption ? "<p class=\"table-caption\">" + label + escapeHtml(caption) + "</p>" : "") + "<table>" + (headerRows.length ? "<thead>" + await renderRows(headerRows) + "</thead>" : "") + "<tbody>" + await renderRows(bodyRows) + "</tbody></table></div>";
     }
@@ -289,12 +282,12 @@ async function renderNode(
     case "pageBreak":
       return `<div class="page-break" aria-hidden="true"></div>`;
     case "mermaidDiagram": {
-      // The editor caches the render, so exporting needs no mermaid runtime on the
-      // server. Without a cache the source is emitted, which still carries the meaning.
       const svg = String(attrs.svg ?? "");
-      if (svg.trim()) return `<figure class="mermaid-diagram">${svg}</figure>`;
+      if (svg.trim()) return renderNode({ ...node, type: "commentableImage", attrs: { ...attrs, src: attrs.src || `data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}` } }, input, headings, figures, tables, crossReferenceLabels);
       return `<pre class="mermaid-source">${escapeHtml(String(attrs.code ?? ""))}</pre>`;
     }
+    case "figureList": return figureListHtml(String(attrs.title || input.settings.figures.heading), figures, input.figureLabel || DEFAULT_FIGURE_LABEL, attrs.pageBreakBefore === true);
+    case "figureListEntry": return "";
     case "tableOfContents": {
       const title = escapeHtml(attrs.title || "Contents");
       const maxLevel = clampNumber(attrs.maxLevel, 3, 1, 6);
@@ -311,7 +304,7 @@ async function renderNode(
         : `<span class="document-variable unresolved">${escapeHtml(`{${attrs.key || "variable"}}`)}</span>`;
     }
     case "crossReference":
-      return `<a class="cross-reference" href="#${escapeHtml(attrs.targetId)}">${escapeHtml(crossReferenceLabels.get(String(attrs.targetId ?? "")) || attrs.label || "Reference")}</a>`;
+      return crossReferenceLabels.has(String(attrs.targetId)) ? `<a class="cross-reference" href="#${escapeHtml(attrs.targetId)}">${escapeHtml(crossReferenceLabels.get(String(attrs.targetId)))}</a>` : `<span class="cross-reference unresolved">${input.figureLabel === "Abbildung" ? "Verweisziel fehlt" : "Reference target missing"}</span>`;
     case "annexMarker":
       return `<section id="${escapeHtml(attrs.annexId)}" class="annex"><h1>${escapeHtml(attrs.title || "Annex")}</h1></section>`;
     case "signatureBlock":
@@ -440,7 +433,7 @@ function printCss(settings: DocumentSettingsV1, typography: WikiTypographySettin
     .bibliography { ${settings.bibliography.pageBreakBefore ? "break-before: page; page-break-before: always;" : ""} }
     .bibliography ol { list-style: none; padding: 0; }
     .bibliography li { padding-left: 6mm; text-indent: -6mm; }
-    .figure-index { ${settings.figures.pageBreakBefore ? "break-before: page; page-break-before: always;" : ""} }
+    .figure-index[data-page-break-before="true"] { break-before: page; page-break-before: always; }
     .figure-index ol { list-style: none; padding: 0; }
     .figure-index li { display: grid; grid-template-columns: 24mm 1fr; gap: 4mm; padding: 2mm 0; border-bottom: .5pt solid #e4e7ec; }
     .figure-index a { color: inherit; text-decoration: none; }
@@ -453,6 +446,19 @@ function printCss(settings: DocumentSettingsV1, typography: WikiTypographySettin
       body { background: #e7ebf1; padding: 24px; }
       .print-sheet { max-width: ${page.orientation === "portrait" ? "210mm" : "297mm"}; min-height: ${page.orientation === "portrait" ? "297mm" : "210mm"}; margin: 0 auto; padding: ${page.marginsMm.top}mm ${page.marginsMm.right}mm ${page.marginsMm.bottom}mm ${page.marginsMm.left}mm; background: white; box-shadow: 0 18px 60px rgba(23,32,51,.16); }
     }
+
+    .image { break-inside:avoid; clear:both; max-width:min(100%, calc((var(--content-height, 230mm) - 14mm) * var(--figure-ratio, 1.5))); }
+    .figure-artwork { position:relative; overflow:hidden; background:white; }
+    .image .figure-artwork img { display:block; height:auto; margin:0; max-height:none; border-radius:0; }
+    .image.wrap-left { float:left; clear:left; margin:1em 1em 1em 0; }
+    .image.wrap-right { float:right; clear:right; margin:1em 0 1em 1em; }
+    .figure-index { clear:both; }
+    .figure-index ol { padding:0; list-style:none; }
+    .figure-index li { display:block; break-inside:avoid; margin:.35em 0; }
+    .figure-index li a { display:flex; align-items:baseline; gap:.5em; text-decoration:none; }
+    .figure-list-leader { flex:1; min-width:1em; border-bottom:1px dotted currentColor; }
+    .figure-page { min-width:2.5em; text-align:right; font-variant-numeric:tabular-nums; }
+    article::after { content:""; display:block; clear:both; }
   `;
 }
 
@@ -499,11 +505,10 @@ export async function renderDocumentHtml(input: RenderDocumentInput): Promise<Re
   const references = settings.bibliography.enabled && input.references?.length
     ? `<section class="bibliography"><h2>${escapeHtml(settings.bibliography.heading)}</h2><ol>${input.references.map((entry) => `<li>${escapeHtml(entry)}</li>`).join("")}</ol></section>`
     : "";
-  const figureIndex = settings.figures.enabled && figures.length
-    ? `<section class="figure-index"><h2>${escapeHtml(settings.figures.heading)}</h2><ol>${figures.map((figure, index) => `<li><a class="figure-index-number" href="#figure-${index + 1}">${escapeHtml(figureNumberLabel(figure.caption, figureLabel, index + 1))}</a><a href="#figure-${index + 1}">${escapeHtml(figure.caption)}</a></li>`).join("")}</ol></section>`
-    : "";
+  const figureIndex = settings.figures.enabled && !hasFigureList(normalizedDoc) && figures.some((figure) => figure.included)
+    ? figureListHtml(settings.figures.heading, figures, figureLabel, settings.figures.pageBreakBefore) : "";
   const tableIndex = settings.tables.enabled && tables.length
-    ? "<section class=\"table-index\"><h2>" + escapeHtml(settings.tables.heading) + "</h2><ol>" + tables.map((table, index) => "<li><a href=\"#table-" + (index + 1) + "\">" + escapeHtml(tableLabel) + " " + (index + 1) + "</a><a href=\"#table-" + (index + 1) + "\">" + escapeHtml(table.caption) + "</a></li>").join("") + "</ol></section>"
+    ? "<section class=\"table-index\"><h2>" + escapeHtml(settings.tables.heading) + "</h2><ol>" + tables.map((table, index) => "<li><a href=\"#" + escapeHtml(table.tableId) + "\">" + escapeHtml(tableLabel) + " " + (index + 1) + "</a><a href=\"#" + escapeHtml(table.tableId) + "\">" + escapeHtml(table.caption) + "</a></li>").join("") + "</ol></section>"
     : "";
   const article = "<article class=\"" + (settings.page.numberedHeadings ? "numbered-headings" : "") + "\">" + content + figureIndex + tableIndex + references + "</article>";
   const bodyHtml = `${cover}${article}`;

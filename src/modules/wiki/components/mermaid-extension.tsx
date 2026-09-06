@@ -2,8 +2,10 @@
 
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { Node, mergeAttributes } from "@tiptap/core";
-import { NodeViewWrapper, ReactNodeViewRenderer, type NodeViewProps } from "@tiptap/react";
+import { ReactNodeViewRenderer, type NodeViewProps } from "@tiptap/react";
 import { useTranslations } from "next-intl";
+import { FIGURE_ATTRIBUTES } from "../lib/figure";
+import { FigureView } from "./figure-view";
 
 export const MERMAID_PLACEHOLDER = `flowchart TD
   A[Antrag] --> B{Prüfung}
@@ -19,9 +21,9 @@ function loadMermaid(dark: boolean) {
   mermaidReady ??= import("mermaid").then((module) => {
     module.default.initialize({
       startOnLoad: false,
-      // The editor renders trusted, locally authored diagrams; "strict" would strip the
-      // labels people actually write.
-      securityLevel: "loose",
+      // Keep active links and HTML disabled; vector labels survive in stored/exported SVG.
+      securityLevel: "strict",
+      flowchart: { htmlLabels: false },
       theme: dark ? "dark" : "default",
       fontFamily: "inherit",
     });
@@ -30,7 +32,30 @@ function loadMermaid(dark: boolean) {
   return mermaidReady;
 }
 
-function MermaidView({ node, updateAttributes, selected, editor }: NodeViewProps) {
+// Mermaid's scoped stylesheet is flattened inside a shadow root, so the stored SVG
+// needs neither HTML labels nor a stylesheet and passes the attachment validator.
+function inlineDiagramStyles(svg: string) {
+  const host = document.createElement("div"); host.style.cssText = "position:fixed;left:-100000px;top:0;visibility:hidden";
+  const shadow = host.attachShadow({ mode: "closed" });
+  shadow.innerHTML = svg;
+  document.body.append(host);
+  try {
+    for (const element of Array.from(shadow.querySelectorAll<SVGElement>("svg *"))) {
+      if (element.tagName.toLowerCase() === "style") continue;
+      const computed = getComputedStyle(element);
+      const properties = ["fill", "stroke", "stroke-width", "stroke-dasharray", "stroke-linecap", "stroke-linejoin", "opacity", "fill-opacity", "stroke-opacity", "font-family", "font-size", "font-weight", "font-style", "text-anchor", "dominant-baseline", "color"];
+      for (const property of properties) element.style.setProperty(property, computed.getPropertyValue(property));
+      for (const attribute of Array.from(element.attributes)) {
+        if (/^on/i.test(attribute.name) || ((attribute.name === "href" || attribute.name === "xlink:href") && !attribute.value.startsWith("#"))) element.removeAttribute(attribute.name);
+      }
+    }
+    shadow.querySelectorAll("style, foreignObject, script").forEach((element) => element.remove());
+    return shadow.querySelector("svg")?.outerHTML || "";
+  } finally { host.remove(); }
+}
+
+function MermaidView(props: NodeViewProps) {
+  const { node, updateAttributes, editor } = props;
   const t = useTranslations("wiki");
   const code = String(node.attrs.code ?? "");
   const cachedSvg = String(node.attrs.svg ?? "");
@@ -47,7 +72,8 @@ function MermaidView({ node, updateAttributes, selected, editor }: NodeViewProps
     try {
       const dark = document.documentElement.classList.contains("dark");
       const mermaid = await loadMermaid(dark);
-      const { svg: output } = await mermaid.render(`mermaid-${renderId}-${request}`, source);
+      const { svg: rendered } = await mermaid.render(`mermaid-${renderId}-${request}`, source);
+      const output = inlineDiagramStyles(rendered);
       if (latestRender.current !== request) return "";
       setSvg(output);
       setError("");
@@ -61,8 +87,8 @@ function MermaidView({ node, updateAttributes, selected, editor }: NodeViewProps
 
   // Render the stored source when the cache is empty, e.g. a diagram pasted as JSON.
   useEffect(() => {
-    if (!cachedSvg && code.trim()) void render(code);
-  }, [cachedSvg, code, render]);
+    if ((!cachedSvg || /<style\b|<foreignObject\b/i.test(cachedSvg)) && code.trim()) void render(code).then((output) => { if (output && editor.isEditable) updateAttributes({ svg: output }); });
+  }, [cachedSvg, code, render, editor, updateAttributes]);
 
   async function commit() {
     setEditing(false);
@@ -81,46 +107,16 @@ function MermaidView({ node, updateAttributes, selected, editor }: NodeViewProps
 
   const editable = editor.isEditable;
 
-  return (
-    <NodeViewWrapper
-      className={`my-3 rounded-lg border ${selected ? "ring-2 ring-indigo-400" : ""}`}
-      data-mermaid-diagram=""
-    >
-      {editing && editable ? (
-        <div className="p-2">
-          <textarea
-            autoFocus
-            value={draft}
-            spellCheck={false}
-            onChange={(event) => setDraft(event.target.value)}
-            onBlur={() => void commit()}
-            onKeyDown={(event) => {
-              if (event.key === "Escape") { event.preventDefault(); setDraft(code); setEditing(false); }
-              if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) { event.preventDefault(); void commit(); }
-            }}
-            aria-label={t("mermaid.source")}
-            className="min-h-32 w-full resize-y rounded-md border bg-muted/20 p-2 font-mono text-xs outline-none focus-visible:ring-1"
-          />
-          <p className="mt-1 text-[11px] text-muted-foreground">{t("mermaid.editHint")}</p>
-        </div>
-      ) : (
-        <button
-          type="button"
-          disabled={!editable}
-          onClick={() => { setDraft(code); setEditing(true); }}
-          className="block w-full cursor-text p-3 text-left disabled:cursor-default"
-          aria-label={t("mermaid.edit")}
-        >
-          {svg
-            // Output comes from mermaid rendering source the user typed in their own
-            // workspace, the same trust level as the rest of the document.
-            ? <span className="block [&_svg]:mx-auto [&_svg]:h-auto [&_svg]:max-w-full" dangerouslySetInnerHTML={{ __html: svg }} />
-            : <span className="block whitespace-pre-wrap font-mono text-xs text-muted-foreground">{code || t("mermaid.empty")}</span>}
-        </button>
-      )}
-      {error && <p role="alert" className="border-t px-3 py-2 text-xs text-destructive">{error}</p>}
-    </NodeViewWrapper>
-  );
+  return <FigureView {...props} imageSrc={svg ? `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}` : undefined}>
+    {editable && (props.selected || editing || error) && <div contentEditable={false} className="wiki-figure-controls">
+      {editing ? <textarea autoFocus value={draft} spellCheck={false} aria-label={t("mermaid.source")}
+        onChange={(event) => setDraft(event.target.value)} onBlur={() => void commit()}
+        onKeyDown={(event) => { event.stopPropagation(); if (event.key === "Escape") { setDraft(code); setEditing(false); } if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) { event.preventDefault(); void commit(); } }}
+        className="min-h-32 w-full rounded border p-2 font-mono text-xs" />
+        : <button type="button" onClick={() => { setDraft(code); setEditing(true); }} className="text-xs underline">{t("mermaid.edit")}</button>}
+      {error && <p role="alert" className="text-xs text-destructive">{error}</p>}
+    </div>}
+  </FigureView>;
 }
 
 export const MermaidDiagram = Node.create({
@@ -132,6 +128,7 @@ export const MermaidDiagram = Node.create({
 
   addAttributes() {
     return {
+      ...FIGURE_ATTRIBUTES,
       code: { default: "" },
       /** Cached render, so exports need no mermaid runtime on the server. */
       svg: { default: "" },
@@ -141,15 +138,15 @@ export const MermaidDiagram = Node.create({
   parseHTML() {
     return [{
       tag: "div[data-mermaid-diagram]",
-      getAttrs: (element) => ({
-        code: (element as HTMLElement).getAttribute("data-code") ?? "",
-        svg: "",
-      }),
+      getAttrs: (element) => {
+        try { const stored = element.getAttribute("data-figure-attrs"); if (stored) return JSON.parse(stored); } catch { /* Legacy diagrams only stored source. */ }
+        return { code: element.getAttribute("data-code") ?? "", svg: "" };
+      },
     }];
   },
 
-  renderHTML({ HTMLAttributes }) {
-    return ["div", mergeAttributes({ "data-mermaid-diagram": "", "data-code": HTMLAttributes.code })];
+  renderHTML({ node }) {
+    return ["div", mergeAttributes({ "data-mermaid-diagram": "", "data-code": node.attrs.code, "data-figure-attrs": JSON.stringify(node.attrs) })];
   },
 
   addNodeView() {

@@ -1,3 +1,5 @@
+import { db } from "@/db";
+import { wikiFigureRevisions } from "@/db/schema";
 import { NextResponse } from "next/server";
 import { revalidatePath } from "next/cache";
 import { getSession } from "@/lib/auth";
@@ -23,7 +25,8 @@ export async function GET(request: Request) {
   }
 
   if (entityType === "wikiPresentation" && !presentationRole(entityId, session.user)) return NextResponse.json({ error: "Not found" }, { status: 404 });
-  return NextResponse.json(listAttachmentsFor(entityType, entityId));
+  const immutable = entityType === "wikiPage" ? new Set(db.select({ id: wikiFigureRevisions.attachmentId }).from(wikiFigureRevisions).all().map((row) => row.id)) : new Set<string>();
+  return NextResponse.json(listAttachmentsFor(entityType, entityId).filter((file) => !immutable.has(file.id)));
 }
 
 export async function POST(request: Request) {
