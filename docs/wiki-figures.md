@@ -13,13 +13,27 @@ labels such as “Abbildung 4:” or “Abbildung X:” are removed through norm
 document history. Alternative text remains separate. Mark a decorative image
 as unnumbered to exclude it from references and the figure list.
 
-Select artwork to resize it with the corner handle or width field, align it,
-wrap text on either side, or crop it. The handle supports arrow keys in 5% steps.
-Choose **Done** (German: **Fertig**) or press Escape in the controls to return to writing.
-Cropping keeps the original bytes and can be reset. Floating figures move with
-their surrounding text; captions stay attached. Page and column widths limit
-their size. Moving and replacing preserve figure identity; duplication creates
-a separate target.
+Selecting an image opens one **Image / Bild** side panel for sizing, alignment,
+text wrapping, alternative text, numbering, comments, replacement, SVG editing
+and linked-source controls. Captions are edited directly below the image, so
+there is no second caption form. PDF evidence uses the same panel for comments.
+The panel replaces the ordinary side tools while selected; on smaller screens
+it stays at the right edge without a modal backdrop.
+
+Resize using the corner handle, width slider, percentage field or presets. The
+handle follows the free edge for right-aligned images and supports arrow keys
+in 5% steps. **Crop / Zuschneiden** shows the original image with a draggable
+frame and corner handles. Arrow keys make 1% adjustments (Shift: 10%); exact
+percentage fields remain available under the crop dimensions disclosure.
+**Apply crop** commits the preview, while closing cropping or pressing Escape
+cancels it. Cropping retains the original bytes and can be reset.
+
+Drag the image itself or its grip to another position in the text; a blue line
+marks the insertion position. Captions and figure identity move with it, keeping
+references intact. Duplication creates a separate target. Floating figures move
+with their surrounding text, and page and column widths limit their size.
+Choose **Done / Fertig** or press Escape in the panel to return to writing.
+
 
 **Insert reference** searches captions and current numbers. References navigate
 to their figures and renumber automatically. A missing target offers a replacement

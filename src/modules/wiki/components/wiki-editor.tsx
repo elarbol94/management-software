@@ -14,7 +14,7 @@ import Placeholder from "@tiptap/extension-placeholder";
 import TaskList from "@tiptap/extension-task-list";
 import TaskItem from "@tiptap/extension-task-item";
 import { DOMParser as ProseMirrorDOMParser, Fragment, Slice } from "@tiptap/pm/model";
-import { AlertCircle, AlignCenter, AlignLeft, AlignRight, ArrowLeftRight, Bold, BookMarked, CalendarClock, Captions, Check, ClipboardCheck, CloudOff, Code, Columns2, FileText, Heading1, Heading2, Heading3, Highlighter, ImagePlus, Italic, Keyboard, Layers3, Link2, List, ListOrdered, ListTree, ListTodo, MessageSquareText, Minus, MoreHorizontal, PanelRightClose, PanelRightOpen, Paperclip, Pilcrow, Quote, Redo2, RotateCcw, Rows3, Scan, ScissorsLineDashed, Search, Settings2, Strikethrough, Trash2, Underline as UnderlineIcon, Undo2, WifiOff, Workflow } from "lucide-react";
+import { AlertCircle, AlignCenter, AlignLeft, AlignRight, ArrowLeftRight, Bold, BookMarked, CalendarClock, Check, ClipboardCheck, CloudOff, Code, Columns2, FileText, Heading1, Heading2, Heading3, Highlighter, ImagePlus, Italic, Keyboard, Layers3, Link2, List, ListOrdered, ListTree, ListTodo, MessageSquareText, Minus, MoreHorizontal, PanelRightClose, PanelRightOpen, Paperclip, Pilcrow, Quote, Redo2, RotateCcw, Rows3, ScissorsLineDashed, Search, Settings2, Strikethrough, Trash2, Underline as UnderlineIcon, Undo2, WifiOff, Workflow } from "lucide-react";
 import { addComment } from "../research-actions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -65,6 +65,7 @@ import { CommentableImage, FigureIdentity, figureRepairs } from "./figure-extens
 import { FigureUploads, addUpload, removeUpload, uploadPosition } from "./figure-upload";
 import { FigureList, FigureListEntry, FigureListSync } from "./figure-list";
 import { FigureLibraryContext, figureAssetAttributes, useFigureLibrary } from "./figure-library";
+import { FigurePanel } from "./figure-panel";
 import { FigurePicker } from "./figure-picker";
 import { FigureReferencePicker } from "./figure-reference-picker";
 import type { FigureAssetDto } from "../lib/figure-types";
@@ -823,10 +824,7 @@ export function WikiEditor({
   const [personalTypography, setPersonalTypography] = useState(() => normalizeWikiTypography(editableTypography));
   const [personalTypographyTemplates, setPersonalTypographyTemplates] = useState(typographyTemplates);
   const [typographyOpen, setTypographyOpen] = useState(false);
-  const [imageDescriptionOpen, setImageDescriptionOpen] = useState(false);
-  const [imageCaptionDraft, setImageCaptionDraft] = useState("");
-  const [imageAltDraft, setImageAltDraft] = useState("");
-  const [imageInFigureIndexDraft, setImageInFigureIndexDraft] = useState(true);
+
   const [spellcheckIssue, setSpellcheckIssue] = useState<OpenProofingIssue | null>(null);
   const [proofingLanguage, setProofingLanguage] = useState<ProofingLanguage>(initialProofingLanguage);
   const [suggesting, setSuggesting] = useState(false);
@@ -1214,7 +1212,7 @@ export function WikiEditor({
   ];
   const slashExtension = createSlashCommandExtension({ commands: slashCommands, ariaLabel: t("slash.ariaLabel"), emptyLabel: t("slash.empty") });
 
-  const editor = useEditor({ immediatelyRender: false, editable: false, enableInputRules: ["blockquote", "bulletList", "codeBlock", "heading", "orderedList", "taskItem"], extensions: [StarterKit.configure({ bold: false, code: false, heading: false, listItem: false, italic: false, link: { openOnClick: false }, strike: false }), CollapsibleHeading.configure({ levels: [1, 2, 3] }), HeadingListItem, ...MarkdownShortcutMarks, ...MarkdownDocumentExtensions, ...DocumentExtensions, FigureIdentity, FigureUploads, FigureList, FigureListEntry, FigureListSync, TaskList, TaskItem.configure({ nested: true }), Citation, PdfEvidence, TaskReference, DeadlineReference, CommentableImage, MermaidDiagram, CommentMark, SuggestionInsert, SuggestionDelete, SuggestionMode, Highlight, Placeholder.configure({ placeholder: ({ node }) => node.type.name === "heading" ? t("editor.placeholder.heading") : t("editor.placeholder.empty") }), EditorSearchExtension, createSpellcheckExtension((issue, target) => {
+  const editor = useEditor({ immediatelyRender: false, editable: false, enableInputRules: ["blockquote", "bulletList", "codeBlock", "heading", "orderedList", "taskItem"], extensions: [StarterKit.configure({ dropcursor: { color: "#3b82f6", width: 3 }, bold: false, code: false, heading: false, listItem: false, italic: false, link: { openOnClick: false }, strike: false }), CollapsibleHeading.configure({ levels: [1, 2, 3] }), HeadingListItem, ...MarkdownShortcutMarks, ...MarkdownDocumentExtensions, ...DocumentExtensions, FigureIdentity, FigureUploads, FigureList, FigureListEntry, FigureListSync, TaskList, TaskItem.configure({ nested: true }), Citation, PdfEvidence, TaskReference, DeadlineReference, CommentableImage, MermaidDiagram, CommentMark, SuggestionInsert, SuggestionDelete, SuggestionMode, Highlight, Placeholder.configure({ placeholder: ({ node }) => node.type.name === "heading" ? t("editor.placeholder.heading") : t("editor.placeholder.empty") }), EditorSearchExtension, createSpellcheckExtension((issue, target) => {
       const source = liveEditor.current?.state.doc.textBetween(issue.from, issue.to) ?? "";
       setSpellcheckIssue({ issue, target, source });
     }), MarkdownShortcuts, slashExtension], content,
@@ -2078,7 +2076,9 @@ export function WikiEditor({
     setSuggestionCounts({ inserted: 0, deleted: 0 });
   }
 
-  const layoutVisible = documentMode && documentLayoutVisible;
+  const imageSelection = activeEditor.state.selection;
+  const panelImage = imageSelection instanceof NodeSelection && ["commentableImage", "pdfEvidence"].includes(imageSelection.node.type.name) ? imageSelection.node : null;
+  const layoutVisible = documentMode && documentLayoutVisible && !panelImage;
   const figureIndexVisible = documentMode && documentSettings.figures.enabled && !hasFigureList(activeEditor.getJSON()) && figureCaptions.length > 0;
   const tableIndexVisible = documentMode && documentSettings.tables.enabled && tableCaptions.length > 0;
   const bibliography = formatBibliography(
@@ -2156,22 +2156,6 @@ export function WikiEditor({
     if (!image) return;
     if (mode === "region") setRegionTarget(image);
     else openCommentComposer({ type: "image", ...image, mode: "whole" });
-  }
-  function openImageDescription() {
-    const current = activeEditor.state.selection;
-    if (!(current instanceof NodeSelection) || current.node.type.name !== "commentableImage") return;
-    setImageCaptionDraft(String(current.node.attrs.caption ?? ""));
-    setImageAltDraft(String(current.node.attrs.alt ?? ""));
-    setImageInFigureIndexDraft(current.node.attrs.includeInFigureIndex !== false);
-    setImageDescriptionOpen(true);
-  }
-  function saveImageDescription() {
-    activeEditor.chain().focus().updateAttributes("commentableImage", {
-      caption: imageCaptionDraft.trim(),
-      alt: imageAltDraft.trim(),
-      includeInFigureIndex: imageInFigureIndexDraft,
-    }).run();
-    setImageDescriptionOpen(false);
   }
   async function insertInlineImage(file: File) {
     await insertFigureFiles([file], toolbarSelection.current?.from ?? activeEditor.state.selection.from, figureTargetId);
@@ -2524,7 +2508,7 @@ export function WikiEditor({
   {leaseState === "locked" && <div className="flex flex-wrap items-center gap-3 rounded-lg border border-indigo-200 bg-indigo-50/70 p-3 text-sm text-indigo-950 dark:border-indigo-900 dark:bg-indigo-950/30 dark:text-indigo-100"><CloudOff className="size-4" /><span className="flex-1">{t("editor.lease.locked")}</span><Button size="sm" onClick={() => void takeOverEditing()}>{t("editor.lease.takeover")}</Button></div>}
   {saveState === "conflict" && conflictRevision && <div className="flex flex-wrap items-center gap-3 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950 dark:bg-amber-950/30 dark:text-amber-100"><RotateCcw className="size-4" /><span className="flex-1">{t("editConflictDescription")}</span><Button size="sm" variant="outline" onClick={discardDraftAndReload}>{t("loadCurrent")}</Button><Button size="sm" onClick={() => void restoreConflictDraft()}>{t("restoreMine")}</Button></div>}
   <div className={
-    documentMode
+    panelImage ? "grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_20rem]" : documentMode
       ? commentsVisible && layoutVisible
         ? "grid items-start gap-4 2xl:grid-cols-[minmax(0,1fr)_8rem_18rem_18rem]"
         : commentsVisible || layoutVisible
@@ -2557,20 +2541,6 @@ export function WikiEditor({
         <Button type="button" size="sm" variant={activeEditor.isActive("highlight") ? "secondary" : "ghost"} onClick={() => activeEditor.chain().focus().toggleMark("highlight", { createdBy: currentUserId }).run()}><Highlighter className="size-4" />{t("highlightSelection")}</Button>
         <Button type="button" size="sm" variant="ghost" onClick={prepareComment}><MessageSquareText className="size-4" />{t("commentSelection")}</Button>
         <Button type="button" size="sm" variant="ghost" onClick={() => requestWikiTask(activeEditor)}><ClipboardCheck className="size-4" />{tTasks("createTask")}</Button>
-      </BubbleMenu>
-      <BubbleMenu editor={editor} pluginKey="wikiImageCommentMenu" options={{ strategy: "fixed", placement: "bottom", flip: true, shift: true, offset: 8 }} shouldShow={({ state }) => state.selection instanceof NodeSelection && ["commentableImage", "pdfEvidence"].includes(state.selection.node.type.name)} className="z-40 flex items-center gap-1 rounded-lg border bg-background p-1 shadow-lg">
-        <Button type="button" size="sm" variant="ghost" onClick={() => prepareImageComment("whole")}><MessageSquareText className="size-4" />{t("commentWholeImage")}</Button>
-        <Button type="button" size="sm" variant="ghost" onClick={() => prepareImageComment("region")}><Scan className="size-4" />{t("selectImageRegion")}</Button>
-        {activeEditor.isActive("commentableImage") && <>
-          <Button type="button" size="sm" variant="ghost" onClick={openImageDescription}><Captions className="size-4" />{t("imageDescription.button")}</Button>
-        </>}
-        {activeEditor.isActive("commentableImage") && documentMode && <>
-          <span className="mx-1 h-5 w-px bg-border" />
-          {[50, 75, 100].map((width) => <Button key={width} type="button" size="xs" variant="ghost" onClick={() => activeEditor.chain().focus().updateAttributes("commentableImage", { widthPercent: width }).run()}>{width}%</Button>)}
-          <Button type="button" size="icon-sm" variant="ghost" aria-label={t("document.image.alignLeft")} onClick={() => activeEditor.chain().focus().updateAttributes("commentableImage", { alignment: "left" }).run()}><AlignLeft /></Button>
-          <Button type="button" size="icon-sm" variant="ghost" aria-label={t("document.image.alignCenter")} onClick={() => activeEditor.chain().focus().updateAttributes("commentableImage", { alignment: "center" }).run()}><AlignCenter /></Button>
-          <Button type="button" size="icon-sm" variant="ghost" aria-label={t("document.image.alignRight")} onClick={() => activeEditor.chain().focus().updateAttributes("commentableImage", { alignment: "right" }).run()}><AlignRight /></Button>
-        </>}
       </BubbleMenu>
       {documentMode && <BubbleMenu editor={editor} pluginKey="wikiDocumentTableMenu" options={{ strategy: "fixed", placement: "bottom", flip: true, shift: true, offset: 8 }} shouldShow={() => activeEditor.isActive("markdownTable")} className="z-40 flex flex-wrap items-center gap-1 rounded-lg border bg-background p-1 shadow-lg">
         <Button type="button" size="sm" variant="ghost" onClick={() => addMarkdownTableRow(activeEditor)}><Rows3 />{t("document.table.addRow")}</Button>
@@ -2631,7 +2601,7 @@ export function WikiEditor({
         editable={activeEditor.isEditable} busy={proofingDictionarySaving} />}
       <CommentAnchorOverlay visible={commentsVisible} comments={commentThreads} editor={editor} rootRef={editorRootRef} activeThreadId={activeThreadId} onActiveThreadChange={setActiveThreadId} />
     </div>
-    <aside data-testid="editor-side-tools" aria-label={t("editor.toolbar.sideTools")} className="sticky top-16 hidden w-32 flex-col gap-2 rounded-xl border bg-background/95 p-2 shadow-sm backdrop-blur xl:flex">
+    {!panelImage && <aside data-testid="editor-side-tools" aria-label={t("editor.toolbar.sideTools")} className="sticky top-16 hidden w-32 flex-col gap-2 rounded-xl border bg-background/95 p-2 shadow-sm backdrop-blur xl:flex">
       <WikiProofingMenu {...proofingMenuProps} />
       <Button type="button" variant={outlineOpen ? "secondary" : "outline"} className="h-auto w-full justify-start gap-2 px-2 py-2 text-xs" aria-label={t("editor.outline.title")} aria-pressed={outlineOpen} onClick={() => setOutlineOpen(true)}><ListTree className="size-4" />{t("editor.toolbar.outline")}</Button>
       <Button type="button" variant={commentsVisible ? "secondary" : "outline"} className="h-auto w-full justify-start gap-2 px-2 py-2 text-xs" aria-label={commentsVisible ? t("hideComments") : t("showComments")} aria-pressed={commentsVisible} onClick={() => setCommentsVisible((value) => !value)}><MessageSquareText className="size-4" /><span className="min-w-0 flex-1 truncate text-left">{t("comments")}</span>{unresolvedCommentCount > 0 && <span className="rounded-full bg-muted px-1.5 py-0.5 text-[9px] tabular-nums">{unresolvedCommentCount}</span>}</Button>
@@ -2639,8 +2609,9 @@ export function WikiEditor({
         <span className="flex items-center gap-1.5 text-xs font-medium"><FileText className="size-4" />{t("editor.toolbar.view")}</span>
         <span className="flex items-center justify-center gap-1 text-[10px]"><span className={!documentMode ? "font-semibold text-foreground" : "text-muted-foreground"}>{t("document.noteMode")}</span><ArrowLeftRight className="size-3 text-muted-foreground" /><span className={documentMode ? "font-semibold text-foreground" : "text-muted-foreground"}>{t("document.documentMode")}</span></span>
       </Button>
-    </aside>
-    <CommentRail ref={commentRailRef} visible={commentsVisible} onVisibleChange={setCommentsVisible} pageId={pageId} comments={commentThreads} currentUserId={currentUserId} editor={editor} editorRootRef={editorRootRef} activeThreadId={activeThreadId} onActiveThreadChange={setActiveThreadId} />
+    </aside>}
+    {panelImage && <FigurePanel key={String(panelImage.attrs.nodeId)} editor={activeEditor} node={panelImage} onComment={prepareImageComment} />}
+    <CommentRail ref={commentRailRef} visible={commentsVisible && !panelImage} onVisibleChange={setCommentsVisible} pageId={pageId} comments={commentThreads} currentUserId={currentUserId} editor={editor} editorRootRef={editorRootRef} activeThreadId={activeThreadId} onActiveThreadChange={setActiveThreadId} />
     {layoutVisible && <DocumentLayoutPanel
       pageId={pageId}
       editor={activeEditor}
@@ -2675,14 +2646,6 @@ export function WikiEditor({
   </footer>}
   {regionTarget && <ImageRegionSelector rootRef={editorRootRef} {...regionTarget} onCancel={() => setRegionTarget(null)} onSelect={(anchor) => { setRegionTarget(null); openCommentComposer(anchor); }} />}
   <SvgGraphicsPanel preferredId={preferredSvgId} pageId={pageId} open={graphicsOpen} onOpenChange={setGraphicsOpen} variables={{ title: pageTitle, author: documentSettings.metadata.author, ...documentSettings.variables }} documentSettings={documentSettings} typography={typography} onDocumentSettingsChange={changeDocumentSettings} onAssetReady={handleSvgAssetReady} />
-  <Dialog open={imageDescriptionOpen} onOpenChange={setImageDescriptionOpen}><DialogContent className="w-[min(28rem,calc(100vw-2rem))]"><DialogHeader><DialogTitle>{t("imageDescription.title")}</DialogTitle></DialogHeader>
-    <div className="grid gap-4">
-      <label className="grid gap-1.5 text-sm font-medium">{t("imageDescription.caption")}<Input value={imageCaptionDraft} onChange={(event) => setImageCaptionDraft(event.target.value)} placeholder={t("imageDescription.captionPlaceholder")} /></label>
-      <label className="grid gap-1.5 text-sm font-medium">{t("imageDescription.alt")}<Textarea value={imageAltDraft} onChange={(event) => setImageAltDraft(event.target.value)} placeholder={t("imageDescription.altPlaceholder")} /></label>
-      <label className="flex items-start gap-2 rounded-lg border bg-muted/35 p-3 text-sm"><input className="mt-0.5 size-4 accent-indigo-600" type="checkbox" checked={imageInFigureIndexDraft} onChange={(event) => setImageInFigureIndexDraft(event.target.checked)} /><span><strong className="block font-medium">{t("imageDescription.include")}</strong><span className="text-xs text-muted-foreground">{t("imageDescription.includeHint")}</span></span></label>
-      <Button type="button" onClick={saveImageDescription}>{t("imageDescription.save")}</Button>
-    </div>
-  </DialogContent></Dialog>
   <Dialog open={commentOpen} onOpenChange={(open) => { setCommentOpen(open); if (!open) setPendingAnchor(null); }}><DialogContent className="w-[min(26rem,calc(100vw-2rem))]"><DialogHeader><DialogTitle>{pendingAnchor?.type === "image" ? t("imageComment") : t("inlineComment")}</DialogTitle></DialogHeader>{pendingAnchor?.type !== "page" && pendingAnchor && <blockquote className="border-l-2 border-amber-400 pl-3 text-sm italic text-muted-foreground">{pendingAnchor.type === "text" ? pendingAnchor.quote : pendingAnchor.label}</blockquote>}<Textarea autoFocus value={commentBody} onChange={(event) => setCommentBody(event.target.value)} placeholder={t("commentPlaceholder")} /><Select value={assigneeId} onValueChange={(value) => setAssigneeId(value ?? "none")}><SelectTrigger className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="none">{t("unassigned")}</SelectItem>{users.map((person) => <SelectItem key={person.id} value={person.id}>{person.name}</SelectItem>)}</SelectContent></Select><Button onClick={submitComment} disabled={!commentBody.trim()}>{t("addComment")}</Button></DialogContent></Dialog>
   <MarkdownReferenceDialog open={markdownHelpOpen} onOpenChange={setMarkdownHelpOpen} />
   <WikiShortcutsDialog open={shortcutsOpen} onOpenChange={setShortcutsOpen} bindings={wikiShortcuts} onBindingsChange={setWikiShortcuts} />

@@ -2,6 +2,8 @@
 import { useEffect, useRef, useState, type PointerEvent, type ReactNode } from "react";
 import { NodeViewWrapper, type NodeViewProps } from "@tiptap/react";
 import { closeHistory } from "@tiptap/pm/history";
+import { GripVertical } from "lucide-react";
+import { figureResizeDelta } from "../lib/figure-transform";
 import { TextSelection } from "@tiptap/pm/state";
 import { useTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";
@@ -66,7 +68,7 @@ export function FigureView(props: NodeViewProps & { imageSrc?: string; children?
   function moveResize(event: PointerEvent<HTMLButtonElement>) {
     const state = resize.current;
     if (!state) return;
-    setResizing(figureWidth(state.width + (event.clientX - state.start) / state.container * 100));
+    setResizing(figureWidth(state.width + figureResizeDelta(event.clientX - state.start, alignment, wrap) / state.container * 100));
   }
   function finishResize() {
     if (resizing !== null && editor.isEditable) updateAttributes({ widthPercent: Math.round(resizing) });
@@ -77,19 +79,19 @@ export function FigureView(props: NodeViewProps & { imageSrc?: string; children?
     className={`wiki-commentable-media wiki-editable-figure${selected ? " is-selected" : ""}`}
     style={{ width: `${width}%`, maxWidth: `min(100%, calc(var(--figure-available-height, 200mm) * ${ratio * crop.width / crop.height}))`, float: wrap === "none" ? undefined : wrap, clear: wrap === "none" ? "both" : wrap,
       marginLeft: wrap === "right" ? "1em" : alignment === "left" ? 0 : "auto", marginRight: wrap === "left" ? "1em" : alignment === "right" ? 0 : "auto" }}>
-    <div className="wiki-figure-artwork" contentEditable={false} style={{ aspectRatio: ratio * crop.width / crop.height }} onMouseDown={(event) => { if (event.target instanceof HTMLImageElement) { event.preventDefault(); event.stopPropagation(); select(); } }} onClick={(event) => { if (event.target instanceof HTMLImageElement) { event.stopPropagation(); select(); } }}>
+    <div className="wiki-figure-artwork" data-drag-handle={editable ? "" : undefined} contentEditable={false} style={{ aspectRatio: ratio * crop.width / crop.height }} onClick={(event) => { if (event.target instanceof HTMLImageElement) { event.stopPropagation(); select(); } }}>
       {/* Authenticated artwork is rendered directly, including SVG and immutable linked revisions. */}
       {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src={src} alt={String(node.attrs.alt || "")} draggable={false} style={cropImageStyle(crop)} onLoad={(event) => { setLoadError(false); if (event.currentTarget.naturalWidth) setRatio(event.currentTarget.naturalWidth / event.currentTarget.naturalHeight); }} onError={() => setLoadError(true)} />
+      <img src={src} alt={String(node.attrs.alt || "")} draggable={editable} style={cropImageStyle(crop)} onLoad={(event) => { setLoadError(false); if (event.currentTarget.naturalWidth) setRatio(event.currentTarget.naturalWidth / event.currentTarget.naturalHeight); }} onError={() => setLoadError(true)} />
       {loadError && <span className="absolute inset-0 grid place-items-center bg-muted text-sm">{t("imageUnavailable")}</span>}
       {selected && editable && <>
-        <button type="button" data-drag-handle className="wiki-figure-move" aria-label={t("move")} title={t("move")}>⠿</button>
-        <button type="button" className="wiki-figure-resize" aria-label={t("resize")} onPointerDown={startResize} onPointerMove={moveResize} onPointerUp={finishResize} onPointerCancel={() => { resize.current = null; setResizing(null); }}
+        <span data-drag-handle draggable className="wiki-figure-move" title={t("move")}><GripVertical className="size-4" /></span>
+        <button type="button" className={`wiki-figure-resize${wrap === "right" || (wrap === "none" && alignment === "right") ? " is-left" : ""}`} aria-label={t("resize")} onPointerDown={startResize} onPointerMove={moveResize} onPointerUp={finishResize} onPointerCancel={() => { resize.current = null; setResizing(null); }}
           onKeyDown={(event) => { if (event.key === "ArrowLeft" || event.key === "ArrowRight") { event.preventDefault(); updateAttributes({ widthPercent: figureWidth(width + (event.key === "ArrowRight" ? 5 : -5)) }); } }} />
       </>}
     </div>
     <FigureCaptionEditor {...props} />
-    {selected && editable && <div className="wiki-figure-controls" contentEditable={false} onKeyDown={(event) => { event.stopPropagation(); if (event.key === "Escape") { event.preventDefault(); finish(); } }}>
+    {selected && editable && node.type.name !== "commentableImage" && <div className="wiki-figure-controls" contentEditable={false} onKeyDown={(event) => { event.stopPropagation(); if (event.key === "Escape") { event.preventDefault(); finish(); } }}>
       <div className="flex flex-wrap items-center gap-1">
         <label className="flex items-center gap-1 text-xs">{t("width")}<Input className="h-7 w-16" type="number" min={10} max={100} value={Math.round(width)} onChange={(event) => updateAttributes({ widthPercent: figureWidth(event.target.value) })} />%</label>
         <select aria-label={t("layout")} value={wrap === "none" ? alignment : `wrap-${wrap}`} onChange={(event) => { const value = event.target.value; updateAttributes({ wrap: value.startsWith("wrap-") ? value.slice(5) : "none", alignment: value.replace("wrap-", ""), ...(value.startsWith("wrap-") && width > 70 ? { widthPercent: 50 } : {}) }); }} className="h-7 rounded border bg-background text-xs">

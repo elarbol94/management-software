@@ -3447,7 +3447,22 @@
       "sourceConflict": "This file is already linked to another graphic.",
       "staleExport": "At least one source file could not be refreshed. Export using the last saved image version?",
       "browseFolder": "Choose a file in the folder",
-      "chooseFile": "Choose linked file"
+      "chooseFile": "Choose linked file",
+      "panelTitle": "Image",
+      "textWrap": "Text wrapping",
+      "noWrap": "On its own line",
+      "moveHint": "Drag the image or its grip to a new position in the text. The blue line shows where it will land.",
+      "cropHint": "Drag the corners to crop, or drag the frame to move it. Arrow keys make fine adjustments. Apply when ready; Escape cancels.",
+      "preciseCrop": "Precise crop dimensions",
+      "applyCrop": "Apply crop",
+      "captionHint": "Edit the caption directly below the image.",
+      "cropHandle": {
+        "move": "Move crop frame",
+        "nw": "Crop top left",
+        "ne": "Crop top right",
+        "sw": "Crop bottom left",
+        "se": "Crop bottom right"
+      }
     }
   },
   "settings": {

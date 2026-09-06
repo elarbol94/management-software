@@ -43,11 +43,14 @@ test("insert, caption, resize, wrap, crop and insert a live reference and figure
   await figure.getByLabel("Bildunterschrift", { exact: true }).pressSequentially("Umsatz nach Quartal", { delay: 15 });
   await expect(figure.getByLabel("Bildunterschrift", { exact: true })).toHaveValue("Umsatz nach Quartal");
   await figure.locator("img").click();
-  await figure.getByRole("spinbutton", { name: "Breite %", exact: true }).fill("50");
-  await figure.getByRole("combobox", { name: "Anordnung" }).selectOption("wrap-left");
-  await figure.getByRole("button", { name: "Zuschneiden", exact: true }).click();
-  await figure.getByLabel("Links (%)", { exact: true }).fill("10");
+  await page.getByTestId("figure-panel").getByRole("spinbutton", { name: "Breite", exact: true }).fill("50");
+  await page.getByTestId("figure-panel").getByRole("combobox", { name: "Textumbruch" }).selectOption("left");
+  await page.getByTestId("figure-panel").getByRole("button", { name: "Zuschneiden", exact: true }).click();
+  await page.getByText("Genaue Zuschnittmaße", { exact: true }).click();
+  await page.getByTestId("figure-panel").getByLabel("Links (%)", { exact: true }).fill("10");
+  await page.getByRole("button", { name: "Zuschnitt übernehmen", exact: true }).click();
   await expect(figure).toHaveAttribute("data-figure-wrap", "left");
+  await page.getByTestId("figure-panel").getByRole("button", { name: "Fertig", exact: true }).click();
   await page.getByTestId("document-mode-toggle").click();
   await page.getByRole("button", { name: "Einfügen", exact: true }).click();
   await page.getByRole("menuitem", { name: "Querverweis einfügen", exact: true }).click();
@@ -193,8 +196,8 @@ test("English controls support batch insertion, renumbering, undo and decorative
   await page.keyboard.press("Control+z"); await expect(figures).toHaveCount(2);
   expect(await figures.evaluateAll((nodes) => nodes.map((node) => node.getAttribute("data-comment-node-id")))).toEqual(originalIds);
   await page.keyboard.press("Control+Shift+z"); await expect(figures).toHaveCount(1);
-  await figures.locator("img").click(); await figures.getByRole("button", { name: "Details", exact: true }).click();
-  await figures.getByLabel("Decorative image without a number").check();
+  await figures.locator("img").click();
+  await page.getByTestId("figure-panel").getByLabel("Decorative image without a number").check();
   await expect(figures.locator("figcaption > span")).toHaveCount(0);
   await page.setViewportSize({ width: 600, height: 800 });
   await page.screenshot({ path: testInfo.outputPath("figure-narrow-en.png") });
@@ -224,7 +227,7 @@ test("clipboard copies get new identities, cut moves keep their identity, and dr
     const bounds = element.getBoundingClientRect(); element.dispatchEvent(new DragEvent("drop", { dataTransfer, clientX: bounds.left + 5, clientY: bounds.top + 5, bubbles: true, cancelable: true }));
   }, artwork("#771199").toString());
   await expect(figures).toHaveCount(3);
-  await figures.last().locator("img").click(); await figures.last().getByRole("button", { name: "Fertig", exact: true }).click();
+  await figures.last().locator("img").click(); await page.getByTestId("figure-panel").getByRole("button", { name: "Fertig", exact: true }).click();
   await expect(editor.locator(".wiki-figure-controls")).toHaveCount(0);
   await page.keyboard.press("Control+End"); await editor.evaluate((element, svg) => {
     const clipboardData = new DataTransfer(); clipboardData.items.add(new File([svg], "pasted.svg", { type: "image/svg+xml" })); element.dispatchEvent(new ClipboardEvent("paste", { clipboardData, bubbles: true, cancelable: true }));
