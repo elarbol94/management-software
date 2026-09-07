@@ -19,7 +19,10 @@ the destination. Renaming or moving a heading preserves its identity; copying a
 heading creates a new one. Missing sections remain explicit instead of being
 silently matched to similarly named text. Navigation badges never become document
 content and do not appear in exports. See [presentations.md](presentations.md) for
-source inheritance, manual linking and access behavior.
+source inheritance, manual linking and access behavior. Presentations also show
+a preview and flag saved changes to linked sections, including their subsections.
+Authors review these changes in the presentation; document edits never
+automatically replace presentation content.
 
 ## Saving and recovery
 

@@ -37,8 +37,32 @@ not matched retrospectively by heading text; use the manual link picker.
 Document backlinks include only presentations the current user can access. Public
 players and reusable company templates exclude document source references.
 Presenter view opens a linked source in a separate tab, leaving the audience's
-presentation in place. Source previews, change notifications and adding individual
-sections to an existing deck are future additions.
+presentation in place. Presenter view also shows a read-only source preview.
+
+### Source previews and review
+
+**Document source** shows a plain-text preview of the selected section (including
+its subsections), with image counts and a link to read the full document. Previews
+are limited to 2,000 characters; change detection compares the full section,
+including formatting and media references. Moving an unchanged section or
+collapsing a heading does not trigger a change. Edits outside the linked section
+do not affect its status. Checks refresh every 30 seconds while the tab is visible,
+on returning to the tab, and with **Refresh document sources**.
+
+The source panel lists links needing attention across the presentation; select one
+to focus its element. New generated presentations remember the source at creation.
+Older and manually assigned links show **Not reviewed yet** until you compare the
+preview with the presentation and choose **Mark source as reviewed**. Reviews of
+an inherited link apply to its parent frame and inheriting children; explicit links
+on other elements keep their own review status. Missing sections cannot be marked
+as reviewed. Failed checks remain visible and can be retried.
+
+Reviewing saves a content fingerprint through the normal canvas save, undo, history,
+lease and conflict handling. It never overwrites slide content or stores a document
+text copy in the canvas. Fingerprints and source references are stripped from public
+players and reusable templates. Source previews are authenticated, uncached reads;
+wiki pages currently share workspace access. No database migration is required.
+Adding individual document sections to an existing deck remains a future addition.
 
 ## Editing and recovery
 
@@ -189,7 +213,7 @@ offline media and presenter previews/notes/timers.
 
 Document linking is covered by `npm run e2e -- e2e/document-presentation-links.spec.ts`
 (generation, heading rename, section expansion, canvas restoration, manual linking,
-backlinks and failed-save navigation). No database migration is needed for links.
+backlinks, source previews, change detection, review persistence and failed-save navigation). No database migration is needed for links.
 
 Migration `0055_redundant_nebula.sql` adds access settings, membership, comments and
 the design library. Existing canvases remain backwards-compatible. Deploy through

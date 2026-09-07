@@ -42,6 +42,9 @@ test("document sections and presentation elements support saved round trips and 
   await page.getByRole("button", { name: "Forecast", exact: true }).click();
   const source = page.getByRole("region", { name: "Dokumentquelle" });
   await expect(source.getByRole("button", { name: "Dokumentabschnitt öffnen" })).toBeVisible();
+  await expect(source.getByText("Forecast details", { exact: false })).toBeVisible();
+  await expect(source.getByText("Quelle seit der letzten Prüfung unverändert", { exact: true })).toBeVisible();
+  expect(frame.source.reviewedFingerprint).toMatch(/^[a-f0-9]{64}$/);
   await page.screenshot({ path: test.info().outputPath("presentation.png") });
   // A focused title must be committed even when navigating before autosave.
   const renamed = `Linked deck ${Date.now()}`;
@@ -74,11 +77,33 @@ test("document sections and presentation elements support saved round trips and 
     return Math.max(Math.abs(actual.x - savedPosition.viewport.x), Math.abs(actual.y - savedPosition.viewport.y), Math.abs(actual.zoom - savedPosition.viewport.zoom));
   }).toBeLessThan(0.001);
   await expect(page.getByRole("button", { name: "Zurück zum Dokument", exact: true })).toBeVisible();
+  await expect(source.getByText("Quelle seit der letzten Prüfung geändert", { exact: true })).toBeVisible();
+  await expect(source.getByText("Updated forecast", { exact: false }).last()).toBeVisible();
+  await source.getByText("Zu prüfende Quellen anzeigen", { exact: true }).click();
+  await expect(source.getByRole("button", { name: "Forecast · Quelle seit der letzten Prüfung geändert", exact: true })).toBeVisible();
+  await page.screenshot({ path: test.info().outputPath("source-review.png") });
+  await source.getByRole("button", { name: "Quelle als geprüft markieren", exact: true }).click();
+  await expect(source.getByText("Quelle seit der letzten Prüfung unverändert", { exact: true })).toBeVisible();
+  await expect.poll(async () => (await (await page.request.get(`/api/wiki/presentations/${presentationId}`)).json()).elements.find((item: { id: string }) => item.id === frame.id).source.reviewedFingerprint).not.toBe(frame.source.reviewedFingerprint);
+  await page.reload();
+  await expect(source.getByText("Quelle seit der letzten Prüfung unverändert", { exact: true })).toBeVisible();
+  // A failed refresh must stay visible and offer recovery.
+  await page.route("**/api/wiki/presentation-sources", async (route) => {
+    if (route.request().method() === "POST") await route.fulfill({ status: 503, body: "unavailable" });
+    else await route.continue();
+  });
+  await source.getByRole("button", { name: "Dokumentquellen aktualisieren", exact: true }).click();
+  await expect(source.getByText("Quellenprüfung fehlgeschlagen. Zum Wiederholen aktualisieren.", { exact: true }).first()).toBeVisible();
+  await page.unroute("**/api/wiki/presentation-sources");
+  await source.getByRole("button", { name: "Dokumentquellen aktualisieren", exact: true }).click();
+  await expect(source.getByText("Quelle seit der letzten Prüfung unverändert", { exact: true })).toBeVisible();
   // Existing elements can override their source.
   await source.getByRole("button", { name: "Verknüpfung ändern" }).click();
   await source.getByRole("combobox", { name: "Abschnitt", exact: true }).selectOption("budget");
   await source.getByRole("button", { name: "Verknüpfung speichern" }).click();
   await expect.poll(async () => (await (await page.request.get(`/api/wiki/presentations/${presentationId}`)).json()).elements.find((item: { id: string }) => item.id === frame.id).source.sectionId).toBe("budget");
+  await expect(source.getByText("Noch nicht geprüft", { exact: true })).toBeVisible();
+  await expect(source.getByText(/Budget details/).last()).toBeVisible();
   await page.getByRole("button", { name: "Zurück zum Dokument", exact: true }).click();
   await page.waitForURL(/\/wiki\/pages\//);
   const badge = editor.locator('button.wiki-presentation-section-badge[data-section-id="budget"]');

@@ -1,6 +1,7 @@
 import type { PresentationElement, PresentationFrameElement, PresentationStep } from "./presentation";
 import { parseStoredDocument, type TiptapNode } from "./tiptap";
 import { withDocumentSectionIds } from "./document-sections";
+import { documentSourceSnapshots } from "./document-source-snapshot";
 import type { PresentationSource } from "./presentation-source";
 
 /**
@@ -156,12 +157,14 @@ export function presentationFromWikiPage(
   const includeImages = options.includeImages ?? true;
   const doc = withDocumentSectionIds(parseStoredDocument(page.contentJson));
   const outline = buildOutline(doc, page.id);
+  const snapshot = documentSourceSnapshots(doc);
+  for (const section of walkSections(outline)) if (section.source) section.source.reviewedFingerprint = snapshot(section.source.sectionId)?.fingerprint;
   if (!includeImages) for (const section of walkSections(outline)) section.images = [];
 
   if (!outline.length) {
     const id = "id-1";
     return {
-      elements: [{ ...frameElement(id, 0, 0, FALLBACK_WIDTH, FALLBACK_HEIGHT, page.title), ...(page.id ? { source: { pageId: page.id, sectionId: "" } } : {}) }],
+      elements: [{ ...frameElement(id, 0, 0, FALLBACK_WIDTH, FALLBACK_HEIGHT, page.title), ...(page.id ? { source: { pageId: page.id, sectionId: "", reviewedFingerprint: snapshot("")!.fingerprint } } : {}) }],
       steps: [{ id: "id-2", elementId: id }],
     };
   }

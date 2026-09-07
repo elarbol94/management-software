@@ -2,14 +2,17 @@
 
 import { useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
-import { BookOpen, Link2 } from "lucide-react";
+import { BookOpen, Link2, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import { presentationSource, type PresentationSource, type PresentationSourceDocument } from "../lib/presentation-source";
-import type { PresentationElement } from "../lib/presentation";
+import { presentationSource, presentationSourceOwner, sourceKey, sourceReviewStatus, type PresentationSource, type PresentationSourceDocument } from "../lib/presentation-source";
+import { isPresentationElementLocked, stepLabel, type PresentationElement } from "../lib/presentation";
+import { usePresentationSourcePreviews } from "./use-presentation-source-previews";
 
-export function PresentationSourcePanel({ elements, selected, disabled, onChange, onOpen }: {
+export function PresentationSourcePanel({ elements, selected, disabled, onChange, onOpen, onReview, onSelect }: {
   elements: PresentationElement[]; selected: PresentationElement | null; disabled: boolean;
+  onReview: (elementId: string, source: PresentationSource) => void;
+  onSelect: (elementId: string) => void;
   onChange: (source: PresentationSource | null | undefined) => void;
   onOpen: (document: PresentationSourceDocument, sectionId: string) => void;
 }) {
@@ -21,7 +24,17 @@ export function PresentationSourcePanel({ elements, selected, disabled, onChange
   const [pageId, setPageId] = useState("");
   const [sectionId, setSectionId] = useState("");
   const [filter, setFilter] = useState("");
+  const previews = usePresentationSourcePreviews(elements.map((element) => element.source));
+  const owner = selected ? presentationSourceOwner(elements, selected.id) : null;
   const source = selected ? presentationSource(elements, selected.id) : null;
+  const preview = source ? previews.previews.get(sourceKey(source)) : undefined;
+  const status = source && preview ? sourceReviewStatus(source, preview) : null;
+  const attention = elements.flatMap((element, index) => {
+    const current = element.source && previews.previews.get(sourceKey(element.source));
+    if (!element.source || !current) return [];
+    const status = sourceReviewStatus(element.source, current);
+    return status === "current" ? [] : [{ id: element.id, label: stepLabel(element, index), status }];
+  });
   const document = documents.find((item) => item.id === source?.pageId);
   const section = document?.sections.find((item) => item.id === source?.sectionId);
   const pickedDocument = documents.find((item) => item.id === pageId);
@@ -48,14 +61,35 @@ export function PresentationSourcePanel({ elements, selected, disabled, onChange
     const frame = requestAnimationFrame(() => setEditing(false));
     return () => cancelAnimationFrame(frame);
   }, [selected?.id]);
-  if (!selected) return null;
+  if (!selected && !elements.some((element) => element.source)) return null;
   const missing = loaded && source && (!document || (source.sectionId && !section));
   return <section className="mb-4 space-y-2 rounded-md border p-3" aria-label={t("source")}>
     <h2 className="flex items-center gap-2 text-sm font-medium"><Link2 className="size-4" />{t("source")}</h2>
+    {elements.some((element) => element.source) && <div className="space-y-2 border-b pb-2">
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-xs" role="status">{previews.error ? t("previewFailed") : previews.loading ? t("checkingSources") : attention.length ? t("needsReview", { count: attention.length }) : t("allSourcesCurrent")}</p>
+        <Button size="icon-sm" variant="ghost" aria-label={t("refreshSources")} onClick={previews.refresh}><RefreshCw className="size-3.5" /></Button>
+      </div>
+      {attention.length > 0 && <details><summary className="cursor-pointer text-xs">{t("reviewSources")}</summary><ul className="mt-1 max-h-40 space-y-1 overflow-y-auto">{attention.map((item) => <li key={item.id}><button type="button" className="w-full rounded px-2 py-1 text-left text-xs hover:bg-muted" onClick={() => onSelect(item.id)}>{item.label} · {t(item.status)}</button></li>)}</ul></details>}
+    </div>}
+    {selected && <>
     {error ? <Button size="sm" variant="outline" onClick={() => void load()}>{t("retry")}</Button> : !loaded ? <p className="text-xs text-muted-foreground">{t("loading")}</p> : source ? <>
       <p className="break-words text-xs text-muted-foreground">{document?.title}{section ? ` › ${section.title}` : ""}</p>
       {selected.source === undefined && <p className="text-xs text-muted-foreground">{t("inherited")}</p>}
       {missing && <p role="status" className="text-xs text-amber-700 dark:text-amber-300">{t("missingSource")}</p>}
+      {source && <div className="space-y-2 rounded-md bg-muted/50 p-2" aria-label={t("preview")}>
+        <p role="status" className={status === "changed" || status === "missing" ? "text-xs font-medium text-amber-700 dark:text-amber-300" : "text-xs font-medium"}>{previews.error ? t("previewFailed") : status ? t(status) : t("checkingSources")}</p>
+        {preview?.snapshot && <>
+          <p className="max-h-48 overflow-y-auto whitespace-pre-wrap break-words text-xs">{preview.snapshot.text || t("emptyPreview")}</p>
+          {preview.snapshot.imageCount > 0 && <p className="text-xs text-muted-foreground">{t("previewImages", { count: preview.snapshot.imageCount })}</p>}
+          {preview.snapshot.truncated && <p className="text-xs text-muted-foreground">{t("previewTruncated")}</p>}
+          {status !== "current" && <>
+            <p className="text-xs text-muted-foreground">{t("reviewHint")}</p>
+            {owner && owner.id !== selected.id && <p className="text-xs text-muted-foreground">{t("reviewInheritedHint")}</p>}
+            <Button size="sm" variant="outline" disabled={disabled || previews.error || !owner || isPresentationElementLocked(elements, owner.id)} onClick={() => { if (owner) onReview(owner.id, { ...source, reviewedFingerprint: preview.snapshot!.fingerprint }); }}>{t("markReviewed")}</Button>
+          </>}
+        </>}
+      </div>}
       {document && <Button size="sm" variant="outline" className="w-full" onClick={async () => {
         try {
           const response = await fetch(`/api/wiki/presentation-sources?source=${encodeURIComponent(document.id)}`, { cache: "no-store" });
@@ -82,5 +116,6 @@ export function PresentationSourcePanel({ elements, selected, disabled, onChange
       </select></label>
       <div className="flex gap-2"><Button size="sm" disabled={!pickedDocument || Boolean(sectionId && !pickedDocument.sections.some((item) => item.id === sectionId))} onClick={() => { onChange({ pageId, sectionId }); setEditing(false); }}>{t("saveLink")}</Button><Button size="sm" variant="ghost" onClick={() => setEditing(false)}>{t("cancel")}</Button></div>
     </fieldset>}
+    </>}
   </section>;
 }

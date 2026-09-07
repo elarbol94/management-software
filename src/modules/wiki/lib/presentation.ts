@@ -27,7 +27,7 @@ const geometrySchema = {
   background: z.string().max(32).optional(),
   parentId: z.string().min(1).max(64).optional(),
   locked: z.boolean().optional(),
-  source: z.object({ pageId: z.string().min(1).max(64), sectionId: z.string().max(200) }).nullable().optional(),
+  source: z.object({ pageId: z.string().min(1).max(64), sectionId: z.string().max(200), reviewedFingerprint: z.string().regex(/^[a-f0-9]{64}$/).optional() }).nullable().optional(),
 };
 
 export const presentationFonts = ["sans", "serif", "mono", "arial", "georgia"] as const;

@@ -3,6 +3,8 @@ import "server-only";
 import { asc, eq, isNull } from "drizzle-orm";
 import { db } from "@/db";
 import { wikiPages, wikiPresentations } from "@/db/schema";
+import { documentSourceSnapshots } from "./lib/document-source-snapshot";
+import type { PresentationSource, PresentationSourcePreview } from "./lib/presentation-source";
 import { documentSections } from "./lib/document-sections";
 import { parseStoredDocument } from "./lib/tiptap";
 import { parsePresentationCanvas, stepLabel } from "./lib/presentation";
@@ -31,4 +33,18 @@ export function documentPresentationLinks(pageId: string, viewer: { id: string; 
     .filter((row) => presentationRole(row.id, viewer))
     .flatMap((row) => parsePresentationCanvas(row.elementsJson).elements.flatMap((element, index) =>
       element.source?.pageId === pageId ? [{ presentationId: row.id, title: row.title, elementId: element.id, label: stepLabel(element, index), sectionId: element.source.sectionId }] : []));
+}
+
+/** Resolve each document once, never embedding its text into presentation storage. */
+export function presentationSourcePreviews(sources: Pick<PresentationSource, "pageId" | "sectionId">[]): PresentationSourcePreview[] {
+  const pages = new Map(sources.map(({ pageId }) => [pageId, null] as const));
+  const resolved = new Map([...pages.keys()].map((id) => {
+    const page = db.select({ id: wikiPages.id, title: wikiPages.title, slug: wikiPages.slug, contentJson: wikiPages.contentJson, deletedAt: wikiPages.deletedAt })
+      .from(wikiPages).where(eq(wikiPages.id, id)).get();
+    return [id, page && !page.deletedAt ? { document: { id: page.id, title: page.title, slug: page.slug }, snapshot: documentSourceSnapshots(parseStoredDocument(page.contentJson)) } : null] as const;
+  }));
+  return sources.map(({ pageId, sectionId }) => {
+    const page = resolved.get(pageId);
+    return { pageId, sectionId, document: page?.document ?? null, snapshot: page?.snapshot(sectionId) ?? null };
+  });
 }

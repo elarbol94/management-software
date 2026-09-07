@@ -3618,6 +3618,23 @@
     "presentations": "Verknüpfte Präsentationen",
     "choosePresentation": "Den zugehörigen Rahmen oder das Element öffnen.",
     "missingElement": "Das verknüpfte Präsentationselement existiert nicht mehr.",
-    "presenterSource": "Quelle in neuem Tab öffnen"
+    "presenterSource": "Quelle in neuem Tab öffnen",
+    "preview": "Quellenvorschau",
+    "checkingSources": "Dokumentquellen werden geprüft…",
+    "previewFailed": "Quellenprüfung fehlgeschlagen. Zum Wiederholen aktualisieren.",
+    "needsReview": "{count, plural, one {# Quelle muss geprüft werden} other {# Quellen müssen geprüft werden}}",
+    "allSourcesCurrent": "Alle verknüpften Quellen sind aktuell",
+    "refreshSources": "Dokumentquellen aktualisieren",
+    "reviewSources": "Zu prüfende Quellen anzeigen",
+    "current": "Quelle seit der letzten Prüfung unverändert",
+    "changed": "Quelle seit der letzten Prüfung geändert",
+    "unreviewed": "Noch nicht geprüft",
+    "missing": "Quelle nicht mehr verfügbar",
+    "emptyPreview": "Dieser Abschnitt enthält keinen Text.",
+    "previewImages": "{count, plural, one {# Bild in diesem Abschnitt} other {# Bilder in diesem Abschnitt}}",
+    "previewTruncated": "Gekürzte Vorschau. Öffne das Dokument, um den vollständigen Abschnitt zu lesen.",
+    "reviewHint": "Vergleiche deine Präsentation mit der Quelle und markiere sie anschließend als geprüft. Deine Präsentationsinhalte bleiben erhalten.",
+    "reviewInheritedHint": "Dies bestätigt die Prüfung für den übergeordneten Rahmen und alle Elemente, die seine Verknüpfung erben.",
+    "markReviewed": "Quelle als geprüft markieren"
   }
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { documentSectionHref, presentationElementHref, presentationSource, withoutPresentationSources } from "./presentation-source";
+import { documentSectionHref, presentationElementHref, presentationSource, presentationSourceOwner, sourceReviewStatus, withoutPresentationSources } from "./presentation-source";
 import { presentationFromWikiPage } from "./presentation-from-wiki";
 import { initialPresentationCanvasState, presentationCanvasReducer, presentationElementsSchema, type PresentationElement } from "./presentation";
 import { mergePresentation } from "./presentation-merge";
@@ -29,10 +29,10 @@ describe("presentation document sources", () => {
       { type: "heading", attrs: { level: 1, id: "budget" }, content: [{ type: "text", text: "Financial plan" }] },
       { type: "commentableImage", attrs: { attachmentId: "image" } },
     ] }) });
-    expect(generated.elements[0].source).toEqual({ pageId: "page", sectionId: "budget" });
+    expect(generated.elements[0].source).toMatchObject({ pageId: "page", sectionId: "budget", reviewedFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/) });
     expect(presentationSource(generated.elements, generated.elements[1].id)).toEqual(generated.elements[0].source);
     const empty = presentationFromWikiPage({ id: "page", title: "Doc", contentJson: "" });
-    expect(empty.elements[0].source).toEqual({ pageId: "page", sectionId: "" });
+    expect(empty.elements[0].source).toMatchObject({ pageId: "page", sectionId: "", reviewedFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/) });
   });
   it("strips all document references from public and reusable copies", () => {
     const snapshot = { elements: [parent, child] };
@@ -49,4 +49,25 @@ describe("presentation document sources", () => {
     const remote = { ...base, elements: [{ ...parent, source: { pageId: "page", sectionId: "other-section" } }] };
     expect(mergePresentation(base, local, remote).conflicts).toContain("elements.parent.source");
   });
+});
+
+it("keeps review baselines through saves and undo, including inherited links", () => {
+  const reviewed = { ...parent, source: { ...parent.source!, reviewedFingerprint: "a".repeat(64) } };
+  const parsed = presentationElementsSchema.parse([reviewed, child]);
+  expect(presentationSourceOwner(parsed, child.id)?.id).toBe(parent.id);
+  expect(presentationSource(parsed, child.id)?.reviewedFingerprint).toBe("a".repeat(64));
+  const before = initialPresentationCanvasState(parsed, []);
+  const after = presentationCanvasReducer(before, { type: "edit", at: 1000, elements: (items) => items.map((item) => item.source ? { ...item, source: { ...item.source, reviewedFingerprint: "b".repeat(64) } } : item) });
+  expect(presentationCanvasReducer(after, { type: "undo" }).elements).toEqual(parsed);
+  expect(withoutPresentationSources({ elements: parsed }).elements[0]).not.toHaveProperty("source");
+  expect(presentationElementsSchema.safeParse([{ ...reviewed, source: { ...reviewed.source, reviewedFingerprint: "bad" } }]).success).toBe(false);
+});
+
+it("distinguishes legacy, changed, reviewed and missing sources", () => {
+  const source = { pageId: "page", sectionId: "section" };
+  const preview = { ...source, document: { id: "page", title: "Doc", slug: "doc" }, snapshot: { fingerprint: "a".repeat(64), text: "Preview", truncated: false, imageCount: 0 } };
+  expect(sourceReviewStatus(source, preview)).toBe("unreviewed");
+  expect(sourceReviewStatus({ ...source, reviewedFingerprint: "b".repeat(64) }, preview)).toBe("changed");
+  expect(sourceReviewStatus({ ...source, reviewedFingerprint: "a".repeat(64) }, preview)).toBe("current");
+  expect(sourceReviewStatus(source, { ...preview, snapshot: null })).toBe("missing");
 });

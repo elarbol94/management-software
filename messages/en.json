@@ -3616,6 +3616,23 @@
     "presentations": "Linked presentations",
     "choosePresentation": "Open the corresponding frame or element.",
     "missingElement": "The linked presentation element no longer exists.",
-    "presenterSource": "Open source in a new tab"
+    "presenterSource": "Open source in a new tab",
+    "preview": "Source preview",
+    "checkingSources": "Checking document sources…",
+    "previewFailed": "Source check failed. Refresh to try again.",
+    "needsReview": "{count, plural, one {# source needs review} other {# sources need review}}",
+    "allSourcesCurrent": "All linked sources are up to date",
+    "refreshSources": "Refresh document sources",
+    "reviewSources": "Show sources to review",
+    "current": "Source unchanged since last review",
+    "changed": "Source changed since last review",
+    "unreviewed": "Not reviewed yet",
+    "missing": "Source no longer available",
+    "emptyPreview": "This section has no text.",
+    "previewImages": "{count, plural, one {# image in this section} other {# images in this section}}",
+    "previewTruncated": "Preview shortened. Open the document to read the full section.",
+    "reviewHint": "Check your presentation against the source, then mark it as reviewed. Your presentation content stays as you edited it.",
+    "reviewInheritedHint": "This reviews the parent frame and elements inheriting its link.",
+    "markReviewed": "Mark source as reviewed"
   }
 }
