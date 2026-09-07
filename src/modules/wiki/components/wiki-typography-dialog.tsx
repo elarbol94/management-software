@@ -3,6 +3,7 @@
 import { useState, useTransition, type CSSProperties } from "react";
 import { useTranslations } from "next-intl";
 import { BookmarkPlus, Check, RotateCcw, Settings2, SlidersHorizontal, Trash2, Type } from "lucide-react";
+import { ColorPicker } from "@/components/ui/color-picker";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -402,11 +403,10 @@ export function WikiTypographyDialog({
                       <Label className="grid gap-1.5 rounded-lg border bg-background/70 p-3 text-xs" key={field}>
                         <span>{t(`controls.${field}`)}</span>
                         <span className="flex items-center gap-2">
-                          <Input
+                          <ColorPicker
                             aria-label={t(`controls.${field}`)}
-                            className="size-8 shrink-0 cursor-pointer p-1"
-                            onChange={(event) => patch(field, event.target.value)}
-                            type="color"
+                            className="h-8 w-14 shrink-0"
+                            onChange={(color) => patch(field, color)}
                             value={draft[field]}
                           />
                           <Input

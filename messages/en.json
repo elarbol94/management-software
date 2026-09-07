@@ -1,4 +1,13 @@
 {
+  "colorPicker": {
+    "themeColors": "Theme colors",
+    "standardColors": "Standard colors",
+    "customColor": "More colors",
+    "hexColor": "Hex color",
+    "selectColor": "Select color {color}",
+    "apply": "Apply",
+    "automatic": "Automatic"
+  },
   "presentationStudio": {
     "pieHint": "Pie charts show positive values only. All values remain in the data table.",
     "pptxWarnings": {

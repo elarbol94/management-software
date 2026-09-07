@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
+import { ColorPicker } from "@/components/ui/color-picker";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { presentationFonts, presentationIconNames, type PresentationSnapshot } from "../lib/presentation";
@@ -62,7 +63,7 @@ export function PresentationLibraryPanel({ id, selectedId, canEdit, flush, onThe
       <p className="text-xs text-muted-foreground">{t("companyLibraryHint")}</p>
       <fieldset disabled={!canEdit || busy} className="space-y-3">
         <label className="block text-xs">{t("designName")}<Input value={name} maxLength={100} onChange={(event) => setName(event.target.value)} /></label>
-        <div className="flex flex-wrap gap-3">{(["background", "foreground", "accent"] as const).map((key) => <label className="text-xs" key={key}>{t(key)}<input className="block" type="color" value={theme[key]} onChange={(event) => setTheme({ ...theme, [key]: event.target.value })} /></label>)}</div>
+        <div className="flex flex-wrap gap-3">{(["background", "foreground", "accent"] as const).map((key) => <label className="text-xs" key={key}>{t(key)}<ColorPicker disabled={!canEdit || busy} aria-label={t(key)} className="flex" value={theme[key]} onChange={(color) => setTheme({ ...theme, [key]: color })} /></label>)}</div>
         <label className="block text-xs">{t("font")}<select className={selectClass} value={theme.font} onChange={(event) => setTheme({ ...theme, font: event.target.value as Theme["font"] })}>{presentationFonts.map((font) => <option key={font} value={font}>{t(`fonts.${font}`)}</option>)}</select></label>
         <div className="flex flex-wrap gap-2"><Button type="button" variant="outline" size="sm" onClick={() => onTheme(theme)}>{t("applyTheme")}</Button><Button type="button" variant="outline" size="sm" disabled={!name.trim()} onClick={() => void act({ action: "theme", name, theme })}>{t("saveTheme")}</Button><Button type="button" variant="outline" size="sm" disabled={!name.trim()} onClick={() => void act({ action: "template", name })}>{t("saveTemplate")}</Button></div>
       </fieldset>

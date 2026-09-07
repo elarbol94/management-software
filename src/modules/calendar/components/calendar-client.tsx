@@ -41,6 +41,7 @@ import {
   X,
 } from "lucide-react";
 import { toast } from "sonner";
+import { ColorPicker } from "@/components/ui/color-picker";
 import { Button } from "@/components/ui/button";
 import { MobileBottomSheet } from "@/components/ui/mobile-bottom-sheet";
 import {
@@ -2387,10 +2388,10 @@ function CalendarSettingsDialog({
             </label>
             <label className="grid gap-1.5">
               <span className="text-xs font-medium">{t("calendarColor")}</span>
-              <Input
-                type="color"
+              <ColorPicker
+                aria-label={t("calendarColor")}
                 value={draft.color}
-                onChange={(event) => setDraft({ ...draft, color: event.target.value })}
+                onChange={(color) => setDraft({ ...draft, color })}
                 className="h-9 w-20 p-1"
               />
             </label>

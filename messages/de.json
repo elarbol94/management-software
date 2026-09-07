@@ -1,4 +1,13 @@
 {
+  "colorPicker": {
+    "themeColors": "Designfarben",
+    "standardColors": "Standardfarben",
+    "customColor": "Weitere Farben",
+    "hexColor": "Hex-Farbe",
+    "selectColor": "Farbe {color} auswählen",
+    "apply": "Übernehmen",
+    "automatic": "Automatisch"
+  },
   "presentationStudio": {
     "pieHint": "Kreisdiagramme zeigen nur positive Werte. Alle Werte bleiben in der Datentabelle erhalten.",
     "pptxWarnings": {

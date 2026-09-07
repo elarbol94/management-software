@@ -64,6 +64,16 @@ canvas. It remains alongside the canvas on larger screens.
   The plain-text field and canvas double-click are plain-text edits and clear
   span-level formatting when their text changes.
 
+## Color selection
+
+Color controls share an Office-style palette with ten base-color columns and
+five shades per column, a standard-color row, and custom hex/native color input.
+The same picker is used for presentation text, frames, shapes, backgrounds,
+charts, icons and company themes, as well as wiki typography, projects, calendars
+and categories. Reset/automatic options retain the existing theme or transparent
+behavior. Use arrow keys to move between swatches and Enter or Space to select.
+Personal annotation identity colors keep their reserved, per-user choices.
+
 ## Company designs and assets
 
 - Ten built-in starters cover timeline, hub, pitch, mind map, roadmap, workshop,

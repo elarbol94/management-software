@@ -13,6 +13,7 @@ import {
 } from "@/modules/projects/actions";
 import type { projects as projectsTable } from "@/modules/projects/schema";
 import { Badge } from "@/components/ui/badge";
+import { ColorPicker } from "@/components/ui/color-picker";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -298,11 +299,11 @@ export function ProjectsClient({
             </div>
             <div className="flex flex-col gap-2">
               <Label htmlFor="project-color">{t("color")}</Label>
-              <input
+              <ColorPicker
+                aria-label={t("color")}
                 id="project-color"
-                type="color"
                 value={color}
-                onChange={(e) => setColor(e.target.value)}
+                onChange={setColor}
                 className="h-9 w-16 cursor-pointer rounded-md border bg-background p-1"
               />
             </div>

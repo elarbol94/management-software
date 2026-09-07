@@ -65,6 +65,7 @@ import {
   X,
 } from "lucide-react";
 import { toast } from "sonner";
+import { ColorPicker } from "@/components/ui/color-picker";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -113,8 +114,6 @@ import { PresentationStudioInspector } from "./presentation-studio-inspector";
 import { PresentationLibraryPanel } from "./presentation-library-panel";
 import { mergePresentation, presentationValuesEqual } from "../lib/presentation-merge";
 
-/** Empty means "follow the theme"; the rest read acceptably on light and dark canvases. */
-const COLORS = ["", "#6366f1", "#0d9488", "#f59e0b", "#e11d48", "#0ea5e9"] as const;
 const AUTOSAVE_DELAY = 1_200;
 const CAMERA_DURATION = 700;
 const MAX_IMAGE_SIDE = 480;
@@ -1088,38 +1087,13 @@ function Editor({
   }[saveState];
 
   const colorSwatches = (value: string, onPick: (color: string) => void) => (
-    <div className="flex flex-wrap gap-1.5">
-      {COLORS.map((color) => (
-        <button
-          key={color || "default"}
-          type="button"
-          aria-label={color ? t("presentations.colorNamed", { color }) : t("presentations.colorDefault")}
-          onClick={() => onPick(color)}
-          className={cn(
-            "size-6 rounded-full border-2",
-            value === color ? "border-indigo-500" : "border-transparent",
-            !color && "bg-foreground",
-          )}
-          style={color ? { backgroundColor: color } : undefined}
-        />
-      ))}
-    </div>
+    <ColorPicker aria-label={studio("color")} value={value} onChange={onPick} disabled={disabled || Boolean(selected?.locked)} clearLabel={t("presentations.colorDefault")} />
   );
 
-  /** Native picker plus a reset, because `<input type="color">` cannot express "none". */
   const colorField = (label: string, value: string, onPick: (color: string) => void) => (
     <div className="flex items-center gap-2 text-xs text-muted-foreground">
       <span className="min-w-0 flex-1 truncate">{label}</span>
-      <input
-        type="color"
-        aria-label={label}
-        value={/^#[0-9a-f]{6}$/i.test(value) ? value : "#ffffff"}
-        onChange={(event) => onPick(event.target.value)}
-        className="h-7 w-10 cursor-pointer rounded border bg-transparent p-0.5"
-      />
-      <Button type="button" variant="ghost" size="icon-sm" aria-label={t("presentations.clearColor")} onClick={() => onPick("")}>
-        <X className="size-3.5" />
-      </Button>
+      <ColorPicker aria-label={label} value={value} onChange={onPick} disabled={disabled} clearLabel={t("presentations.clearColor")} />
     </div>
   );
 

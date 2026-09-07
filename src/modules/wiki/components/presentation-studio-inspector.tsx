@@ -2,6 +2,7 @@
 
 import { createId } from "@paralleldrive/cuid2";
 import { useTranslations } from "next-intl";
+import { ColorPicker } from "@/components/ui/color-picker";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { groupPresentationElements, ungroupPresentationElements, presentationDescendants, presentationFonts, presentationIconNames, isPresentationElementLocked, type PresentationElement, type PresentationStep } from "../lib/presentation";
@@ -77,9 +78,9 @@ export function PresentationStudioInspector({ elements, selectedIds, activeStep,
           <Button type="button" variant="ghost" size="sm" aria-label={t("removePoint")} disabled={selected.content.data.length <= 1} onClick={() => content({ data: selected.content.data.filter((_, i) => i !== index) })}>×</Button>
         </div>)}</div>
         <Button type="button" size="sm" variant="outline" disabled={selected.content.data.length >= 50} onClick={() => content({ data: [...selected.content.data, { label: t("newPoint"), value: 0 }] })}>{t("addPoint")}</Button>
-        <label className="block text-xs">{t("color")}<input type="color" value={selected.content.color || "#6366f1"} onChange={(event) => content({ color: event.target.value })} /></label>
+        <label className="block text-xs">{t("color")}<ColorPicker disabled={disabled || locked} aria-label={t("color")} value={selected.content.color || "#6366f1"} onChange={(color) => content({ color })} /></label>
       </>}
-      {selected?.type === "icon" && <><label className="block text-xs">{t("icon")}<select className={selectClass} value={selected.content.name} onChange={(event) => content({ name: event.target.value })}>{presentationIconNames.map((name) => <option key={name} value={name}>{t(`icons.${name}`)}</option>)}</select></label><label className="block text-xs">{t("color")}<input type="color" value={selected.content.color || "#6366f1"} onChange={(event) => content({ color: event.target.value })} /></label></>}
+      {selected?.type === "icon" && <><label className="block text-xs">{t("icon")}<select className={selectClass} value={selected.content.name} onChange={(event) => content({ name: event.target.value })}>{presentationIconNames.map((name) => <option key={name} value={name}>{t(`icons.${name}`)}</option>)}</select></label><label className="block text-xs">{t("color")}<ColorPicker disabled={disabled || locked} aria-label={t("color")} value={selected.content.color || "#6366f1"} onChange={(color) => content({ color })} /></label></>}
       {(selected?.type === "video" || selected?.type === "audio") && <><label className="block text-xs">{t("mediaTitle")}<Input value={selected.content.title} maxLength={500} onChange={(event) => content({ title: event.target.value })} /></label><label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={Boolean(selected.content.loop)} onChange={(event) => content({ loop: event.target.checked })} />{t("loopMedia")}</label></>}
       </fieldset>
     </details>

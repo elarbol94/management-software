@@ -89,6 +89,7 @@ import {
   type GanttRoutePoint,
 } from "@/modules/projects/gantt-routing";
 import { ProjectsClient } from "./projects-client";
+import { ColorPicker } from "@/components/ui/color-picker";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -1451,7 +1452,7 @@ function NewProjectDialog({
           <div className="grid gap-2"><Label htmlFor="portfolio-project-name">{t("name")}</Label><Input id="portfolio-project-name" value={name} onChange={(event) => setName(event.target.value)} required /></div>
           <div className="grid gap-2"><Label htmlFor="portfolio-project-description">{t("description")}</Label><Textarea id="portfolio-project-description" value={description} onChange={(event) => setDescription(event.target.value)} rows={3} /></div>
           <div className="grid grid-cols-[5rem_1fr] gap-3">
-            <div className="grid gap-2"><Label htmlFor="portfolio-project-color">{t("color")}</Label><input id="portfolio-project-color" type="color" value={color} onChange={(event) => setColor(event.target.value)} className="h-9 w-full cursor-pointer rounded-md border bg-background p-1" /></div>
+            <div className="grid gap-2"><Label htmlFor="portfolio-project-color">{t("color")}</Label><ColorPicker aria-label={t("color")} id="portfolio-project-color" value={color} onChange={setColor} className="h-9 w-full cursor-pointer rounded-md border bg-background p-1" /></div>
             <div className="grid gap-2"><Label htmlFor="portfolio-project-manager">{t("manager")}</Label><Select value={managerId} onValueChange={(value) => setManagerId(value ?? "none")}><SelectTrigger id="portfolio-project-manager" className="w-full"><SelectValue>{managerId === "none" ? t("unassigned") : members.find((member) => member.id === managerId)?.name ?? t("unassigned")}</SelectValue></SelectTrigger><SelectContent><SelectItem value="none">{t("unassigned")}</SelectItem>{members.map((member) => <SelectItem key={member.id} value={member.id}>{member.name}</SelectItem>)}</SelectContent></Select></div>
           </div>
           <div className="grid grid-cols-2 gap-3">
