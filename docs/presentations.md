@@ -77,6 +77,35 @@ players and reusable templates. Source previews are authenticated, uncached read
 wiki pages currently share workspace access. No database migration is required.
 Adding individual document sections to an existing deck remains a future addition.
 
+### Approving heading structure changes
+
+Changing a document heading level (for example `##` to `#`) adds **Review structure
+change** in **Document source**. The review shows the old and new heading levels,
+parent frames, and affected objects. Dependent changes are approved together: a
+promoted heading can become the parent of sections that follow it. **Not now** keeps
+the proposal pending. **Mark source as reviewed** only acknowledges source content;
+it never approves structural changes.
+
+**Apply change** checks the current document and canvas again. If either structure
+or canvas changed during review, inspect the refreshed proposal and approve again.
+Approval moves existing frames with their contents, uses 60-unit spacing, and refits
+affected containers. Expanded containers that would collide with neighbours move
+with their contents into free space. Unrelated objects, playback order, notes,
+animations, object sizes, styling and custom titles are preserved. No frames are
+created or deleted. The change is one undo/redo step and uses normal save, history,
+lease and conflict handling. Open or reload playback after saving to see the approved
+layout; an already running presentation does not rearrange itself.
+
+New generated presentations record their approved heading structure. Older or
+manually linked frames offer an initial review with the previous level shown as
+**Not recorded**. No layout is silently accepted or changed. A missing or ambiguous
+parent link must be corrected before applying; locked objects must be unlocked.
+Rotated containers that need refitting and layouts outside size limits require
+manual adjustment. Missing source sections retain their current layout.
+
+Structure metadata is optional canvas JSON; no database migration is required.
+Public players and templates strip it together with the other source metadata.
+
 ## Editing and recovery
 
 - Title, elements, stops, backgrounds and playback settings save together after

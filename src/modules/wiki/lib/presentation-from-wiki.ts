@@ -158,7 +158,11 @@ export function presentationFromWikiPage(
   const doc = withDocumentSectionIds(parseStoredDocument(page.contentJson));
   const outline = buildOutline(doc, page.id);
   const snapshot = documentSourceSnapshots(doc);
-  for (const section of walkSections(outline)) if (section.source) section.source.reviewedFingerprint = snapshot(section.source.sectionId)?.fingerprint;
+  for (const section of walkSections(outline)) if (section.source) {
+    const current = snapshot(section.source.sectionId);
+    section.source.reviewedFingerprint = current?.fingerprint;
+    section.source.approvedStructure = current?.headingStructure;
+  }
   if (!includeImages) for (const section of walkSections(outline)) section.images = [];
 
   if (!outline.length) {

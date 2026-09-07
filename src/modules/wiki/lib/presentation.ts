@@ -27,7 +27,7 @@ const geometrySchema = {
   background: z.string().max(32).optional(),
   parentId: z.string().min(1).max(64).optional(),
   locked: z.boolean().optional(),
-  source: z.object({ pageId: z.string().min(1).max(64), sectionId: z.string().max(200), reviewedFingerprint: z.string().regex(/^[a-f0-9]{64}$/).optional(), syncHeading: z.boolean().optional() }).nullable().optional(),
+  source: z.object({ pageId: z.string().min(1).max(64), sectionId: z.string().max(200), reviewedFingerprint: z.string().regex(/^[a-f0-9]{64}$/).optional(), syncHeading: z.boolean().optional(), approvedStructure: z.object({ level: z.number().int().min(1).max(6), parentSectionId: z.string().min(1).max(200).nullable() }).optional() }).nullable().optional(),
 };
 
 export const presentationFonts = ["sans", "serif", "mono", "arial", "georgia"] as const;
@@ -679,6 +679,7 @@ export type PresentationCanvasAction =
   | {
     type: "edit";
     at: number;
+    separate?: boolean;
     elements?: (current: PresentationElement[]) => PresentationElement[];
     steps?: (current: PresentationStep[]) => PresentationStep[];
   }
@@ -717,16 +718,17 @@ function commitCanvas(
   elements: PresentationElement[],
   steps: PresentationStep[],
   at: number,
+  separate = false,
 ): PresentationCanvasState {
   if (elements === state.elements && steps === state.steps) return state;
-  const coalesce = state.past.length > 0 && at - state.editedAt <= PRESENTATION_HISTORY_COALESCE_MS;
+  const coalesce = !separate && state.past.length > 0 && at - state.editedAt <= PRESENTATION_HISTORY_COALESCE_MS;
   return {
     ...state,
     elements,
     steps,
     dirty: true,
     failed: false,
-    editedAt: at,
+    editedAt: separate ? 0 : at,
     past: coalesce ? state.past : [...state.past, canvasSnapshot(state)].slice(-PRESENTATION_HISTORY_LIMIT),
     future: [],
   };
@@ -774,6 +776,7 @@ export function presentationCanvasReducer(
         action.elements ? action.elements(state.elements) : state.elements,
         action.steps ? action.steps(state.steps) : state.steps,
         action.at,
+        action.separate,
       );
     case "source-headings": {
       const elements = action.elements(state.elements);

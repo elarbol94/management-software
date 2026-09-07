@@ -7,6 +7,14 @@ const paragraph = (text: string): TiptapNode => ({ type: "paragraph", content: [
 const doc = (...content: TiptapNode[]): TiptapNode => ({ type: "doc", content });
 
 describe("document source snapshots", () => {
+  it("reports outline parents across wrappers, skipped levels and empty headings", () => {
+    const wrapped = doc(heading("root"), { type: "layoutSection", content: [heading("child", 4), { ...heading("empty", 1), content: [] }, heading("sibling", 2)] });
+    const snapshot = documentSourceSnapshots(wrapped);
+    expect(snapshot("child")?.headingStructure).toEqual({ level: 4, parentSectionId: "root" });
+    expect(snapshot("sibling")?.headingStructure).toEqual({ level: 2, parentSectionId: "root" });
+    expect(snapshot("sibling")?.headingParentTitle).toBe("root");
+    expect(snapshot("empty")?.headingStructure).toBeUndefined();
+  });
   it("includes subsection content but excludes sibling sections and outside changes", () => {
     const original = doc(heading("a"), paragraph("Details"), heading("child", 2), paragraph("Child details"), heading("b"), paragraph("Outside"));
     const snapshot = documentSourceSnapshots(original)("a")!;

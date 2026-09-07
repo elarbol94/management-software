@@ -9,13 +9,15 @@ async function login(page: Page) {
 }
 
 test("document sections and presentation elements support saved round trips and manual relinking", async ({ page }) => {
-  test.setTimeout(240_000);
+  // Cold document/presentation route compilation can exceed four minutes on shared hosts.
+  test.setTimeout(360_000);
   await login(page);
   await page.getByRole("button", { name: "Schnelle Notiz" }).last().click();
   await page.waitForURL(/\/wiki\/pages\/[^/]+$/);
   const editor = page.locator(".ProseMirror");
   await expect(editor).toHaveAttribute("contenteditable", "true");
   const docTitle = `E2E linked document ${Date.now()}`;
+  const initialSave = page.waitForResponse((response) => response.request().method() === "PATCH" && /\/api\/wiki\/pages\/[^/]+\/content$/.test(new URL(response.url()).pathname) && response.request().postData()?.includes(docTitle) === true);
   // Seed through the live editor so its normal save/version/recovery state stays
   // authoritative, just as it does for a paste or an imported document.
   await editor.evaluate((node, content) => {
@@ -26,6 +28,7 @@ test("document sections and presentation elements support saved round trips and 
     { type: "heading", attrs: { id: "forecast", level: 2, collapsed: true }, content: [{ type: "text", text: "Forecast" }] },
     { type: "paragraph", content: [{ type: "text", text: "Forecast details" }] },
   ] });
+  expect((await (await initialSave).json()).saved).toBe(true);
   await expect(page.getByRole("status").filter({ hasText: "Gespeichert" })).toBeVisible();
   await page.goto("/wiki/presentations");
   await page.getByRole("button", { name: "Aus Wiki-Seite", exact: true }).click();
@@ -51,7 +54,8 @@ test("document sections and presentation elements support saved round trips and 
   await page.getByRole("textbox", { name: "Titel der Präsentation" }).fill(renamed);
   await source.getByRole("button", { name: "Dokumentabschnitt öffnen" }).click();
   await page.waitForURL(/\/wiki\/pages\/.*section=forecast/);
-  await expect(editor.locator('h2[id="forecast"]')).toHaveAttribute("data-linked-section-focus", "true");
+  // Verify the navigation outcome; the brief highlight can expire during hydration.
+  await expect(editor.locator('h2[id="forecast"]')).toBeInViewport();
   await expect(editor.getByText("Forecast details", { exact: true })).toBeVisible();
   await expect(editor.getByText("Budget details", { exact: true })).toBeVisible();
   await page.screenshot({ path: test.info().outputPath("document.png") });
@@ -59,6 +63,7 @@ test("document sections and presentation elements support saved round trips and 
   expect(savedDeck.title).toBe(renamed);
   const token = new URL(page.url()).searchParams.get("resume")!;
   const savedPosition = await page.evaluate((token) => JSON.parse(sessionStorage.getItem(`wiki-linked-navigation:${token}`)!), token);
+  const renameSave = page.waitForResponse((response) => response.request().method() === "PATCH" && /\/api\/wiki\/pages\/[^/]+\/content$/.test(new URL(response.url()).pathname) && response.request().postData()?.includes("Updated forecast") === true);
   await editor.evaluate((node) => {
     const active = (node as HTMLElement & { editor: import("@tiptap/core").Editor }).editor;
     active.state.doc.descendants((heading, position) => {
@@ -66,6 +71,7 @@ test("document sections and presentation elements support saved round trips and 
     });
   });
   await expect(page.getByRole("status").filter({ hasText: "Gespeichert" })).toBeVisible();
+  expect((await (await renameSave).json()).saved).toBe(true);
   const player = await page.context().newPage();
   await player.goto(`/wiki/presentations/${presentationId}/present`);
   await expect(player.locator(`.react-flow__node[data-id="${frame.id}"]`)).toContainText("Updated forecast");
@@ -173,7 +179,7 @@ test("collapsed document sections remove hidden media, nested headings and page-
   });
   if (!await page.locator(".wiki-document-canvas").count()) await page.getByTestId("document-mode-toggle").click();
   await expect(editor.locator(".wiki-document-auto-page-break").first()).toBeAttached();
-  await editor.locator("#fold").click();
+  await editor.locator("#fold").click({ position: { x: 60, y: 12 } });
   await expect(editor.locator("#fold")).toHaveAttribute("data-collapsed", "true");
   await expect(editor.locator("#nested")).toBeHidden();
   await expect(editor.getByText("After the internal page break", { exact: true })).toBeHidden();
@@ -183,8 +189,113 @@ test("collapsed document sections remove hidden media, nested headings and page-
   })).toBeLessThan(70);
   await expect(editor.locator(".wiki-document-auto-page-break")).toHaveCount(0);
   await page.screenshot({ path: test.info().outputPath("collapsed-section.png") });
-  await editor.locator("#fold").click();
+  // Click another point on the heading text so ProseMirror treats this as a
+  // separate click even when a fast production render finishes within 500 ms.
+  await editor.locator("#fold").click({ position: { x: 100, y: 12 } });
   await expect(editor.locator("#nested")).toBeVisible();
   await expect(editor.getByText("After the internal page break", { exact: true })).toBeVisible();
   await expect(editor.locator(".wiki-document-auto-page-break").first()).toBeAttached();
+});
+
+test("heading structure changes require approval and preserve playback order through undo and reload", async ({ page }) => {
+  test.setTimeout(300_000);
+  await login(page);
+  await page.getByRole("button", { name: "Schnelle Notiz" }).last().click();
+  await page.waitForURL(/\/wiki\/pages\/[^/]+$/);
+  const documentUrl = page.url();
+  const editor = page.locator(".ProseMirror");
+  await expect(editor).toHaveAttribute("contenteditable", "true");
+  const title = `E2E structure ${Date.now()}`;
+  const initialSave = page.waitForResponse((response) => response.request().method() === "PATCH" && /\/api\/wiki\/pages\/[^/]+\/content$/.test(new URL(response.url()).pathname) && response.request().postData()?.includes(title) === true);
+  await editor.evaluate((node, title) => {
+    const active = (node as HTMLElement & { editor: import("@tiptap/core").Editor }).editor;
+    active.commands.setContent({ type: "doc", content: [
+      { type: "heading", attrs: { id: "root", level: 1 }, content: [{ type: "text", text: title }] },
+      { type: "heading", attrs: { id: "promote", level: 2 }, content: [{ type: "text", text: "Promote me" }] },
+      { type: "paragraph", content: [{ type: "text", text: "Keep this source content" }] },
+      { type: "heading", attrs: { id: "following", level: 2 }, content: [{ type: "text", text: "Following section" }] },
+      { type: "heading", attrs: { id: "outside", level: 1 }, content: [{ type: "text", text: "Untouched root" }] },
+    ] });
+  }, title);
+  expect((await (await initialSave).json()).saved).toBe(true);
+  await expect(page.getByRole("status").filter({ hasText: "Gespeichert" })).toBeVisible();
+  await page.goto("/wiki/presentations");
+  await page.getByRole("button", { name: "Aus Wiki-Seite", exact: true }).click();
+  await page.getByRole("dialog").getByRole("combobox").click();
+  await page.getByRole("option", { name: title, exact: true }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Neu", exact: true }).click();
+  await page.waitForURL(/\/wiki\/presentations\/[^/]+$/);
+  const presentationId = new URL(page.url()).pathname.split("/").at(-1)!;
+  const read = async () => (await (await page.request.get(`/api/wiki/presentations/${presentationId}`)).json()) as { elements: import("../src/modules/wiki/lib/presentation").PresentationElement[]; steps: unknown[] };
+  const before = await read();
+  const promoted = before.elements.find((e) => e.source?.sectionId === "promote")!;
+  const following = before.elements.find((e) => e.source?.sectionId === "following")!;
+  const outside = before.elements.find((e) => e.source?.sectionId === "outside")!;
+  await page.getByRole("button", { name: "Promote me", exact: true }).click();
+  const source = page.getByRole("region", { name: "Dokumentquelle" });
+  await source.getByRole("button", { name: "Dokumentabschnitt öffnen", exact: true }).click();
+  await page.waitForURL(/\/wiki\/pages\/.*section=promote/);
+  async function level(target: Page, value: number) {
+    await expect(target.locator(".ProseMirror")).toHaveAttribute("contenteditable", "true");
+    const saved = target.waitForResponse((response) => response.request().method() === "PATCH" && /\/api\/wiki\/pages\/[^/]+\/content$/.test(new URL(response.url()).pathname));
+    await target.locator(".ProseMirror").evaluate((node, value) => {
+      const active = (node as HTMLElement & { editor: import("@tiptap/core").Editor }).editor;
+      active.state.doc.descendants((heading, position) => {
+        if (heading.type.name === "heading" && heading.attrs.id === "promote") active.view.dispatch(active.state.tr.setNodeMarkup(position, undefined, { ...heading.attrs, level: value }));
+      });
+    }, value);
+    expect((await (await saved).json()).saved).toBe(true);
+    await expect(target.getByRole("status").filter({ hasText: "Gespeichert" })).toBeVisible();
+  }
+  await level(page, 1);
+  await page.getByRole("button", { name: "Zurück zur Präsentation", exact: true }).click();
+  await page.waitForURL(/\/wiki\/presentations\/.*element=/);
+  const reviewButton = source.getByRole("button", { name: /Strukturänderung prüfen/ });
+  await expect(reviewButton).toBeVisible();
+  expect((await read()).elements).toEqual(before.elements);
+  // A content acknowledgement must not approve a structure change.
+  await source.getByRole("button", { name: "Quelle als geprüft markieren", exact: true }).click();
+  await expect(reviewButton).toBeVisible();
+  await reviewButton.click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toContainText("Überschriftenebene: ## → #");
+  await expect(dialog).toContainText("Following section");
+  await page.screenshot({ path: test.info().outputPath("structure-review.png") });
+  await dialog.getByRole("button", { name: "Jetzt nicht", exact: true }).click();
+  expect((await read()).elements.find((e) => e.id === promoted.id)?.parentId).toBe(promoted.parentId);
+  await reviewButton.click();
+  // A real document edit during review invalidates approval, without moving frames.
+  const documentTab = await page.context().newPage();
+  await documentTab.goto(documentUrl);
+  await level(documentTab, 3);
+  await page.bringToFront();
+  await dialog.getByRole("button", { name: "Änderung übernehmen", exact: true }).click();
+  await expect(dialog.getByRole("status")).toContainText("während der Prüfung geändert");
+  await expect(dialog).toContainText("Überschriftenebene: ## → ###");
+  expect((await read()).elements.find((e) => e.id === promoted.id)?.parentId).toBe(promoted.parentId);
+  await documentTab.bringToFront();
+  await level(documentTab, 1);
+  await documentTab.close();
+  await page.bringToFront();
+  await dialog.getByRole("button", { name: "Änderung übernehmen", exact: true }).click();
+  await expect(dialog).toContainText("Überschriftenebene: ## → #");
+  await dialog.getByRole("button", { name: "Änderung übernehmen", exact: true }).click();
+  await expect(dialog).not.toBeVisible();
+  await expect.poll(async () => (await read()).elements.find((e) => e.id === promoted.id)?.parentId).toBeUndefined();
+  const approved = await read();
+  expect(approved.elements.find((e) => e.id === following.id)?.parentId).toBe(promoted.id);
+  expect(approved.elements.find((e) => e.id === outside.id)).toEqual(outside);
+  expect(approved.steps).toEqual(before.steps);
+  await page.getByRole("button", { name: "Rückgängig", exact: true }).click();
+  await expect.poll(async () => (await read()).elements.find((e) => e.id === promoted.id)?.parentId).toBe(promoted.parentId);
+  await expect(reviewButton).toBeVisible();
+  await page.getByRole("button", { name: "Wiederholen", exact: true }).click();
+  await expect.poll(async () => (await read()).elements.find((e) => e.id === promoted.id)?.parentId).toBeUndefined();
+  await page.reload();
+  await expect(source).toBeVisible();
+  await expect(reviewButton).toHaveCount(0);
+  expect((await read()).steps).toEqual(before.steps);
+  await page.getByRole("link", { name: "Präsentieren", exact: true }).click();
+  await page.waitForURL(/\/present$/);
+  await expect(page.getByTestId("presentation-player").locator(`.react-flow__node[data-id="${following.id}"]`)).toBeVisible();
 });

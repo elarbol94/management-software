@@ -1,5 +1,7 @@
 "use client";
 
+import { PresentationStructureReview } from "./presentation-structure-review";
+import type { StructureProposal } from "../lib/presentation-structure";
 import { useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
 import { BookOpen, Link2, RefreshCw } from "lucide-react";
@@ -9,7 +11,9 @@ import { presentationSource, presentationSourceOwner, sourceKey, sourceReviewSta
 import { isPresentationElementLocked, stepLabel, type PresentationElement } from "../lib/presentation";
 import type { PresentationSourcePreviewsState } from "./use-presentation-source-previews";
 
-export function PresentationSourcePanel({ elements, selected, disabled, previews, onChange, onOpen, onReview, onSelect }: {
+export function PresentationSourcePanel({ elements, selected, disabled, previews, onChange, onOpen, onReview, onSelect, onStructureApply, structureDisabled }: {
+  onStructureApply: (expected: PresentationElement[], proposal: StructureProposal) => void;
+  structureDisabled: boolean;
   previews: PresentationSourcePreviewsState;
   elements: PresentationElement[]; selected: PresentationElement | null; disabled: boolean;
   onReview: (elementId: string, source: PresentationSource) => void;
@@ -72,6 +76,7 @@ export function PresentationSourcePanel({ elements, selected, disabled, previews
       </div>
       {attention.length > 0 && <details><summary className="cursor-pointer text-xs">{t("reviewSources")}</summary><ul className="mt-1 max-h-40 space-y-1 overflow-y-auto">{attention.map((item) => <li key={item.id}><button type="button" className="w-full rounded px-2 py-1 text-left text-xs hover:bg-muted" onClick={() => onSelect(item.id)}>{item.label} · {t(item.status)}</button></li>)}</ul></details>}
     </div>}
+    <PresentationStructureReview elements={elements} previews={previews} disabled={structureDisabled} onApply={onStructureApply} />
     {selected && <>
     {error ? <Button size="sm" variant="outline" onClick={() => void load()}>{t("retry")}</Button> : !loaded ? <p className="text-xs text-muted-foreground">{t("loading")}</p> : source ? <>
       <p className="break-words text-xs text-muted-foreground">{document?.title}{section ? ` › ${preview?.snapshot?.headingTitle ?? section.title}` : ""}</p>

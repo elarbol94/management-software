@@ -1,8 +1,8 @@
 import type { PresentationElement } from "./presentation";
 import type { DocumentSourceSnapshot } from "./document-source-snapshot";
-import type { DocumentSection } from "./document-sections";
+import type { DocumentSection, DocumentHeadingStructure } from "./document-sections";
 
-export type PresentationSource = { pageId: string; sectionId: string; reviewedFingerprint?: string; syncHeading?: boolean };
+export type PresentationSource = { pageId: string; sectionId: string; reviewedFingerprint?: string; syncHeading?: boolean; approvedStructure?: DocumentHeadingStructure };
 export type PresentationSourceDocument = { id: string; title: string; slug: string; sections: DocumentSection[] };
 export type DocumentPresentationLink = { presentationId: string; title: string; elementId: string; label: string; sectionId: string };
 

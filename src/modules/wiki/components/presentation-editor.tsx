@@ -7,6 +7,7 @@ import { flushSync } from "react-dom";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { usePresentationSourcePreviews } from "./use-presentation-source-previews";
+import { applyStructureProposal } from "../lib/presentation-structure";
 import { PresentationSourcePanel } from "./presentation-source-panel";
 import { documentSectionHref, synchronizePresentationHeadings, preservePresentationHeadingOverride, type PresentationSourceDocument } from "../lib/presentation-source";
 import { readLinkedPosition, rememberLinkedPosition } from "../lib/linked-navigation";
@@ -1418,7 +1419,12 @@ function Editor({
         </div>
 
         <aside id="presentation-properties" aria-label={t("presentations.showPanel")} className={cn("max-h-[45%] w-full shrink-0 overflow-y-auto border-t bg-background p-3 lg:block lg:max-h-none lg:w-80 lg:border-t-0 lg:border-l", panelOpen ? "block" : "hidden")}>
-          <PresentationSourcePanel previews={sourcePreviews} elements={elements} selected={selected} disabled={disabled || Boolean(selected && isPresentationElementLocked(elements, selected.id))} onChange={(source) => { if (selected) updateElement(selected.id, (element) => ({ ...element, source })); }} onOpen={openDocument} onReview={(id, source) => updateElement(id, (element) => element.source?.pageId === source.pageId && element.source.sectionId === source.sectionId ? { ...element, source } : element)} onSelect={(id) => { setSelectedIds([id]); const element = elements.find((item) => item.id === id); if (element) flyTo(element); }} />
+          <PresentationSourcePanel structureDisabled={disabled} onStructureApply={(expected, proposal) => {
+            if (disabled) return;
+            dispatch({ type: "edit", at: Date.now(), separate: true, elements: (current) => applyStructureProposal(current, expected, proposal) });
+            const target = proposal.elements.find((element) => element.id === (selected?.id ?? proposal.changes[0].elementId));
+            if (target) flyTo(target);
+          }} previews={sourcePreviews} elements={elements} selected={selected} disabled={disabled || Boolean(selected && isPresentationElementLocked(elements, selected.id))} onChange={(source) => { if (selected) updateElement(selected.id, (element) => ({ ...element, source })); }} onOpen={openDocument} onReview={(id, source) => updateElement(id, (element) => element.source?.pageId === source.pageId && element.source.sectionId === source.sectionId ? { ...element, source } : element)} onSelect={(id) => { setSelectedIds([id]); const element = elements.find((item) => item.id === id); if (element) flyTo(element); }} />
           <PresentationLibraryPanel id={presentation.id} selectedId={selected?.id} canEdit={canEdit && !disabled} onSelect={(id) => { setSelectedIds([id]); const element = elements.find((element) => element.id === id); if (element) flyTo(element); }} flush={flush}
             onTheme={(theme) => { commitElements((current) => current.map((element) => element.type === "text" ? { ...element, content: { ...element.content, color: theme.foreground, font: theme.font } } : element.type === "frame" ? { ...element, content: { ...element.content, color: theme.accent } } : element)); dispatch({ type: "touch", background: theme.background }); }}
             onTemplate={(snapshot) => { dispatch({ type: "edit", at: Date.now(), elements: () => snapshot.elements, steps: () => snapshot.steps }); dispatch({ type: "touch", background: snapshot.background, settings: snapshot.settings }); setSelectedIds([]); }}

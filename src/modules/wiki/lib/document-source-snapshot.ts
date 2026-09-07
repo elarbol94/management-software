@@ -1,10 +1,12 @@
 import { createHash } from "node:crypto";
-import { withDocumentSectionIds } from "./document-sections";
+import { documentSections, documentHeadingStructures, type DocumentHeadingStructure, withDocumentSectionIds } from "./document-sections";
 import type { TiptapNode } from "./tiptap";
 
 export type DocumentSourceSnapshot = {
   fingerprint: string;
   headingTitle?: string;
+  headingStructure?: DocumentHeadingStructure;
+  headingParentTitle?: string;
   text: string;
   truncated: boolean;
   imageCount: number;
@@ -40,6 +42,8 @@ function previewText(node: TiptapNode): string {
 /** Prepare once per document, then resolve only requested sections. Hash the full
  * section (including descendants), independently of the bounded text preview. */
 export function documentSourceSnapshots(doc: TiptapNode) {
+  const structures = documentHeadingStructures(doc);
+  const titles = new Map(documentSections(doc).map((s) => [s.id, s.title]));
   const content = blocks(withDocumentSectionIds(doc));
   const indices = new Map(content.flatMap((node, index) => node.type === "heading" ? [[String(node.attrs?.id), index] as const] : []));
   return (sectionId: string): DocumentSourceSnapshot | null => {
@@ -59,6 +63,7 @@ export function documentSourceSnapshots(doc: TiptapNode) {
     section.forEach(count);
     return {
       ...(sectionId ? { headingTitle: previewText(content[start]).trim().replace(/\s+/g, " ").slice(0, 200) } : {}),
+      ...(sectionId && structures.has(sectionId) ? { headingStructure: structures.get(sectionId)!, headingParentTitle: titles.get(structures.get(sectionId)!.parentSectionId ?? "") } : {}),
       fingerprint: createHash("sha256").update(JSON.stringify(canonical(section.map(semanticNode)))).digest("hex"),
       text: text.slice(0, 2000), truncated: text.length > 2000, imageCount,
     };

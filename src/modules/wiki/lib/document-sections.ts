@@ -44,3 +44,18 @@ export function documentSections(doc: TiptapNode): DocumentSection[] {
   visit(withDocumentSectionIds(doc));
   return sections;
 }
+
+export type DocumentHeadingStructure = { level: number; parentSectionId: string | null };
+
+/** Match the generator's stack, including skipped levels and empty headings. */
+export function documentHeadingStructures(doc: TiptapNode): Map<string, DocumentHeadingStructure> {
+  const result = new Map<string, DocumentHeadingStructure>();
+  const stack: DocumentSection[] = [];
+  for (const section of documentSections(doc)) {
+    if (!section.title) continue;
+    while (stack.length && stack[stack.length - 1].level >= section.level) stack.pop();
+    result.set(section.id, { level: section.level, parentSectionId: stack.at(-1)?.id ?? null });
+    stack.push(section);
+  }
+  return result;
+}
