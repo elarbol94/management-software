@@ -3668,6 +3668,24 @@
     "reviewHint": "Vergleiche deine Präsentation mit der Quelle und markiere sie anschließend als geprüft. Deine Präsentationsinhalte bleiben erhalten.",
     "reviewInheritedHint": "Dies bestätigt die Prüfung für den übergeordneten Rahmen und alle Elemente, die seine Verknüpfung erben.",
     "markReviewed": "Quelle als geprüft markieren",
-    "syncHeading": "Dokumentüberschrift als Rahmentitel verwenden"
+    "syncHeading": "Dokumentüberschrift als Rahmentitel verwenden",
+    "syncSubsections": "Neue Unterabschnitte automatisch übernehmen",
+    "syncSubsectionsHint": "Übernimmt künftige Ergänzungen in diesem Abschnitt. Bisher ausgelassene Abschnitte und dein Präsentationsweg bleiben wie angeordnet.",
+    "subsectionsAdded": "{count, plural, one {Ein Unterabschnitt wurde} other {# Unterabschnitte wurden}} in „{parent}“ ergänzt.",
+    "subsectionsShow": "Anzeigen",
+    "subsectionsUndo": "Rückgängig",
+    "subsectionsDismiss": "Hinweis zu Unterabschnitten schließen",
+    "subsectionsPending": "{count, plural, one {Ein Abschnitt muss vor dem Ergänzen von Unterabschnitten geprüft werden.} other {# Abschnitte müssen vor dem Ergänzen von Unterabschnitten geprüft werden.}}",
+    "subsectionsReview": "Neue Unterabschnitte prüfen",
+    "subsectionsReviewHint": "Prüfe die vorgeschlagene Anordnung vor dem Ergänzen. Nur der betroffene Abschnitt und sein Inhalt werden verschoben; andere Abschnitte behalten ihre Position.",
+    "subsectionsBefore": "Aktuelle Anordnung",
+    "subsectionsAfter": "Vorgeschlagene Anordnung",
+    "subsectionsApply": "Unterabschnitte ergänzen",
+    "subsectionsMoving": "Diese Abschnitte werden mit ihrem Inhalt verschoben: {frames}",
+    "subsectionsLocked": "Entsperre den betroffenen Abschnitt und seinen Inhalt, um diese Unterabschnitte zu ergänzen.",
+    "subsectionsGeometry": "Dieser Abschnitt lässt sich bei seiner aktuellen Drehung oder Größe nicht sicher erweitern. Passe die Anordnung an und aktualisiere die Dokumentquellen.",
+    "subsectionsLimit": "Diese Ergänzungen überschreiten die unterstützte Gliederungs- oder Leinwandgröße. Verringere die Anzahl der Objekte oder verknüpften Unterabschnitte und aktualisiere die Dokumentquellen.",
+    "subsectionsAmbiguous": "Mehrere Rahmen verweisen auf diesen Abschnitt. Behalte eine Abschnittsverknüpfung bei, bevor Unterabschnitte automatisch ergänzt werden.",
+    "subsectionsStructure": "Prüfe zuerst die ausstehende Gliederungsänderung unter Dokumentquellen. Danach werden Unterabschnitte erneut geprüft."
   }
 }

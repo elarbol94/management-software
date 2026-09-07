@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { retainObservedPresentationSections } from "./presentation-source";
 import { mergePresentation, presentationValuesEqual } from "./presentation-merge";
 
 /**
@@ -27,7 +28,7 @@ const geometrySchema = {
   background: z.string().max(32).optional(),
   parentId: z.string().min(1).max(64).optional(),
   locked: z.boolean().optional(),
-  source: z.object({ pageId: z.string().min(1).max(64), sectionId: z.string().max(200), reviewedFingerprint: z.string().regex(/^[a-f0-9]{64}$/).optional(), syncHeading: z.boolean().optional(), approvedStructure: z.object({ level: z.number().int().min(1).max(6), parentSectionId: z.string().min(1).max(200).nullable() }).optional() }).nullable().optional(),
+  source: z.object({ pageId: z.string().min(1).max(64), sectionId: z.string().max(200), reviewedFingerprint: z.string().regex(/^[a-f0-9]{64}$/).optional(), syncHeading: z.boolean().optional(), syncSubsections: z.boolean().optional(), knownSectionIds: z.array(z.string().min(1).max(200)).max(5000).optional(), approvedStructure: z.object({ level: z.number().int().min(1).max(6), parentSectionId: z.string().min(1).max(200).nullable() }).optional() }).nullable().optional(),
 };
 
 export const presentationFonts = ["sans", "serif", "mono", "arial", "georgia"] as const;
@@ -747,6 +748,7 @@ function travelCanvas(state: PresentationCanvasState, direction: "undo" | "redo"
   return {
     ...state,
     ...snapshot,
+    elements: retainObservedPresentationSections(snapshot.elements, state.elements),
     guides: [],
     past: direction === "undo" ? source.slice(0, -1) : [...state.past, current],
     future: direction === "undo" ? [...state.future, current] : source.slice(0, -1),

@@ -2,7 +2,11 @@ import { createHash } from "node:crypto";
 import { documentSections, documentHeadingStructures, type DocumentHeadingStructure, withDocumentSectionIds } from "./document-sections";
 import type { TiptapNode } from "./tiptap";
 
+export type DocumentSubsection = { id: string; title: string; level: number; parentSectionId: string | null };
+
 export type DocumentSourceSnapshot = {
+  subsections?: DocumentSubsection[];
+  subsectionsTruncated?: boolean;
   fingerprint: string;
   headingTitle?: string;
   headingStructure?: DocumentHeadingStructure;
@@ -61,7 +65,13 @@ export function documentSourceSnapshots(doc: TiptapNode) {
     let imageCount = 0;
     const count = (node: TiptapNode) => { if (node.type === "commentableImage") imageCount++; node.content?.forEach(count); };
     section.forEach(count);
+    const subsections = section.flatMap((node): DocumentSubsection[] => {
+      const id = String(node.attrs?.id ?? "");
+      const structure = structures.get(id);
+      return node.type === "heading" && id !== sectionId && structure ? [{ id, title: titles.get(id)?.slice(0, 200) ?? "", ...structure }] : [];
+    });
     return {
+      subsections: subsections.slice(0, 500), subsectionsTruncated: subsections.length > 500,
       ...(sectionId ? { headingTitle: previewText(content[start]).trim().replace(/\s+/g, " ").slice(0, 200) } : {}),
       ...(sectionId && structures.has(sectionId) ? { headingStructure: structures.get(sectionId)!, headingParentTitle: titles.get(structures.get(sectionId)!.parentSectionId ?? "") } : {}),
       fingerprint: createHash("sha256").update(JSON.stringify(canonical(section.map(semanticNode)))).digest("hex"),

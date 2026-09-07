@@ -3666,6 +3666,24 @@
     "reviewHint": "Check your presentation against the source, then mark it as reviewed. Your presentation content stays as you edited it.",
     "reviewInheritedHint": "This reviews the parent frame and elements inheriting its link.",
     "markReviewed": "Mark source as reviewed",
-    "syncHeading": "Use document heading as frame title"
+    "syncHeading": "Use document heading as frame title",
+    "syncSubsections": "Automatically include new subsections",
+    "syncSubsectionsHint": "Follows future additions within this section. Existing omissions and your playback path stay as arranged.",
+    "subsectionsAdded": "{count, plural, one {Added a subsection} other {Added # subsections}} inside “{parent}”.",
+    "subsectionsShow": "Show",
+    "subsectionsUndo": "Undo",
+    "subsectionsDismiss": "Dismiss subsection update",
+    "subsectionsPending": "{count, plural, one {A section needs attention before adding subsections.} other {# sections need attention before adding subsections.}}",
+    "subsectionsReview": "Review new subsections",
+    "subsectionsReviewHint": "Check the proposed layout before adding these subsections. Only the affected section and its contents move; other sections keep their positions.",
+    "subsectionsBefore": "Current layout",
+    "subsectionsAfter": "Proposed layout",
+    "subsectionsApply": "Add subsections",
+    "subsectionsMoving": "Sections that move with their contents: {frames}",
+    "subsectionsLocked": "Unlock the affected section and its contents to add these subsections.",
+    "subsectionsGeometry": "This section cannot expand safely at its current rotation or size. Adjust its layout, then refresh document sources.",
+    "subsectionsLimit": "These additions exceed the supported outline or canvas size. Reduce the number of objects or linked subsections, then refresh document sources.",
+    "subsectionsAmbiguous": "More than one frame links to this section. Keep one section link before adding subsections automatically.",
+    "subsectionsStructure": "Review the pending heading structure change in Document sources first. Subsections will be checked again afterwards."
   }
 }

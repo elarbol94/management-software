@@ -79,7 +79,47 @@ lease and conflict handling. Reviewing never overwrites slide content or stores 
 document text copy in the canvas; automatic heading synchronization is separate. Fingerprints and source references are stripped from public
 players and reusable templates. Source previews are authenticated, uncached reads;
 wiki pages currently share workspace access. No database migration is required.
-Adding individual document sections to an existing deck remains a future addition.
+Manually inserting arbitrary document sections into an existing deck remains a future addition.
+
+### Automatically adding subsections
+
+New presentations generated from documents enable **Automatically include new
+subsections** on their linked frames. After a document save, additions are checked
+when opening/returning to the editor and during the existing visible-tab source
+checks. New heading frames appear inside the linked parent's current canvas
+position, including any newly added nested headings. They use a sibling's frame
+style (or the parent's when there is no sibling). Document prose and images are
+not copied by these incremental updates. The playback path, notes and timing are
+preserved; use the existing path controls to add a separate stop when desired.
+
+Existing decks opt in through the selected frame's **Document source** panel.
+Changing the switch also applies to its currently linked, unlocked descendant
+frames. Enabling starts with the current outline, preserving sections already
+omitted from the presentation. Moving a frame on the canvas never breaks its link.
+
+Updates wait until pending edits have saved and typing, gestures and dialogs have
+finished. The editor searches for space within the parent and expands only the
+necessary containers. Existing content keeps its position. If expansion would
+collide with another section, a visible **Review new subsections** action opens
+current/proposed previews. Approval can move the affected section with its contents
+into free space; unrelated sections stay put. Approval rechecks both the document
+and the canvas and asks for a fresh review if either proposal changed. Locked,
+rotated, oversized or ambiguously linked containers remain pending with an
+explanation. Existing heading moves must be reviewed first.
+
+Successful additions show **Show** and **Undo**, without moving the camera or
+selection. Undo remains available in the notification until another canvas edit;
+the regular undo history also includes the addition as one separate edit. Section
+identities are remembered through undo, deletion and saved reloads, preventing
+removed frames from reappearing on the next source check. Ordinary source reviews
+do not approve pending additions. Disabling the switch pauses future additions;
+missing document sections retain their presentation content.
+
+Only editable presentation workspaces add frames, through the usual autosave,
+lease, optimistic version, conflict and history handling. Active players and
+exports never insert frames. Optional tracking data lives in the existing canvas
+JSON and is stripped from public copies and templates with other source metadata;
+no database migration is needed.
 
 ### Approving heading structure changes
 

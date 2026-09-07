@@ -27,7 +27,9 @@ source inheritance, manual linking and access behavior. Presentations also show
 a preview and flag saved changes to linked sections, including their subsections.
 Authors review body changes in the presentation. Linked frame titles follow heading
 renames unless the author has chosen a custom title; other presentation content
-is preserved.
+is preserved. New document-based presentations also follow newly added subsection
+headings inside their linked frames, preserving your canvas arrangement. Existing
+decks can enable this in Document source; overlaps require a layout review.
 
 Collapsed sections hide their body, nested headings and internal page breaks through
 the next heading of the same or higher level. Hidden blocks and their pagination

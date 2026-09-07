@@ -7,7 +7,9 @@ import { flushSync } from "react-dom";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { usePresentationSourcePreviews } from "./use-presentation-source-previews";
+import { subsectionBaseline } from "../lib/presentation-subsections";
 import { applyStructureProposal } from "../lib/presentation-structure";
+import { PresentationSubsectionUpdates } from "./presentation-subsection-updates";
 import { PresentationSourcePanel } from "./presentation-source-panel";
 import { documentSectionHref, sourceKey, sourceReviewStatus, synchronizePresentationHeadings, preservePresentationHeadingOverride, type PresentationSourceDocument } from "../lib/presentation-source";
 import { readLinkedPosition, rememberLinkedPosition } from "../lib/linked-navigation";
@@ -1202,7 +1204,13 @@ function Editor({
     const preview = sourcePreviews.previews.get(sourceKey(element.source));
     return preview && (sourceReviewStatus(element.source, preview) !== "current" || (element.type === "frame" && preview.snapshot?.headingStructure && !presentationValuesEqual(element.source.approvedStructure, preview.snapshot.headingStructure)));
   }).length;
-  const sourcePanel = (          <PresentationSourcePanel structureDisabled={disabled} onStructureApply={(expected, proposal) => {
+  const sourcePanel = (          <PresentationSourcePanel onSubsectionsChange={(enabled) => {
+            if (disabled || !selected?.source) return;
+            const descendants = presentationDescendants(elements, new Set([selected.id]));
+            commitElements((current) => current.map((element) => element.type === "frame" && descendants.has(element.id) && element.source?.pageId === selected.source!.pageId && !isPresentationElementLocked(current, element.id)
+              ? { ...element, source: { ...element.source, syncSubsections: enabled,
+                knownSectionIds: enabled ? [...new Set([...(element.source.knownSectionIds ?? []), ...subsectionBaseline(sourcePreviews.previews.get(sourceKey(element.source)))])] : element.source.knownSectionIds } } : element));
+          }} structureDisabled={disabled} onStructureApply={(expected, proposal) => {
             if (disabled) return;
             dispatch({ type: "edit", at: Date.now(), separate: true, elements: (current) => applyStructureProposal(current, expected, proposal) });
             const target = proposal.elements.find((element) => element.id === (selected?.id ?? proposal.changes[0].elementId));
@@ -1420,6 +1428,14 @@ function Editor({
           {(["properties", "sources", "design", "assets", "comments"] as const).map((panel) => <DropdownMenuItem key={panel} onClick={() => { setActivePanel(panel); if (!window.matchMedia("(min-width: 1280px)").matches) setPathOpen(false); }}>{t(`workspace.${panel}`)}</DropdownMenuItem>)}
         </DropdownMenuContent></DropdownMenu>
       </div>
+      <PresentationSubsectionUpdates elements={elements} previews={sourcePreviews} disabled={disabled} undoElements={canvas.past.at(-1)?.elements}
+        busy={canvas.dirty || canvas.failed || status === "saving" || Boolean(workspaceDialog)}
+        onReviewOpen={() => { setActivePanel(null); setPathOpen(false); }}
+        onApply={(expected, proposal) => {
+          if (disabled || paused.current || proposal.issue || latest.current.canvas.failed || !presentationValuesEqual(latest.current.canvas.elements, expected)) return false;
+          dispatch({ type: "edit", at: Date.now(), separate: true, elements: (current) => presentationValuesEqual(current, expected) ? proposal.elements : current });
+          return true;
+        }} onUndo={() => dispatch({ type: "undo" })} onShow={(id) => { const element = elements.find((item) => item.id === id); if (element) { setSelectedIds([id]); flyTo(element); } }} />
       {(sourcePreviews.error || sourceAttention > 0) && <button type="button" onClick={() => setActivePanel("sources")} className="flex items-center gap-2 border-b bg-amber-50 px-4 py-2 text-left text-xs text-amber-900 dark:bg-amber-950/30 dark:text-amber-200"><TriangleAlert className="size-3.5 shrink-0" /><span role="status">{sourcePreviews.error ? linkText("previewFailed") : linkText("needsReview", { count: sourceAttention })}</span></button>}
 
       {conflict && (

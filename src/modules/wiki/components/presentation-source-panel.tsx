@@ -11,7 +11,8 @@ import { presentationSource, presentationSourceOwner, sourceKey, sourceReviewSta
 import { isPresentationElementLocked, stepLabel, type PresentationElement } from "../lib/presentation";
 import type { PresentationSourcePreviewsState } from "./use-presentation-source-previews";
 
-export function PresentationSourcePanel({ elements, selected, disabled, previews, onChange, onOpen, onReview, onSelect, onStructureApply, structureDisabled }: {
+export function PresentationSourcePanel({ elements, selected, disabled, previews, onChange, onOpen, onReview, onSelect, onStructureApply, structureDisabled, onSubsectionsChange }: {
+  onSubsectionsChange: (enabled: boolean) => void;
   onStructureApply: (expected: PresentationElement[], proposal: StructureProposal) => void;
   structureDisabled: boolean;
   previews: PresentationSourcePreviewsState;
@@ -108,6 +109,14 @@ export function PresentationSourcePanel({ elements, selected, disabled, previews
     {selected.type === "frame" && selected.source?.sectionId && <label className="flex items-start gap-2 text-xs">
       <input type="checkbox" className="mt-0.5" checked={selected.source.syncHeading !== false} disabled={disabled} onChange={(event) => onChange({ ...selected.source!, syncHeading: event.target.checked })} />{t("syncHeading")}
     </label>}
+    {selected.type === "frame" && selected.source && <div className="space-y-1">
+      <label className="flex items-start gap-2 text-xs">
+        <input type="checkbox" className="mt-0.5" checked={selected.source.syncSubsections === true}
+          disabled={disabled || (selected.source.syncSubsections !== true && (previews.error || previews.loading || !preview?.snapshot || preview.snapshot.subsectionsTruncated))}
+          onChange={(event) => onSubsectionsChange(event.target.checked)} />{t("syncSubsections")}
+      </label>
+      <p className="text-xs text-muted-foreground">{t("syncSubsectionsHint")}</p>
+    </div>}
     {!editing ? <div className="flex flex-wrap gap-2">
       <Button size="sm" variant="ghost" disabled={disabled} onClick={() => { setPageId(source?.pageId ?? ""); setSectionId(source?.sectionId ?? ""); setFilter(""); setEditing(true); }}>{source ? t("changeLink") : t("linkSection")}</Button>
       {source && <Button size="sm" variant="ghost" disabled={disabled} onClick={() => onChange(null)}>{t("unlink")}</Button>}

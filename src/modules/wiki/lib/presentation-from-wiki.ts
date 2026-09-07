@@ -162,13 +162,15 @@ export function presentationFromWikiPage(
     const current = snapshot(section.source.sectionId);
     section.source.reviewedFingerprint = current?.fingerprint;
     section.source.approvedStructure = current?.headingStructure;
+    section.source.syncSubsections = true;
+    section.source.knownSectionIds = current?.subsections?.map((child) => child.id) ?? [];
   }
   if (!includeImages) for (const section of walkSections(outline)) section.images = [];
 
   if (!outline.length) {
     const id = "id-1";
     return {
-      elements: [{ ...frameElement(id, 0, 0, FALLBACK_WIDTH, FALLBACK_HEIGHT, page.title), ...(page.id ? { source: { pageId: page.id, sectionId: "", reviewedFingerprint: snapshot("")!.fingerprint } } : {}) }],
+      elements: [{ ...frameElement(id, 0, 0, FALLBACK_WIDTH, FALLBACK_HEIGHT, page.title), ...(page.id ? { source: { pageId: page.id, sectionId: "", syncSubsections: true, knownSectionIds: [], reviewedFingerprint: snapshot("")!.fingerprint } } : {}) }],
       steps: [{ id: "id-2", elementId: id }],
     };
   }

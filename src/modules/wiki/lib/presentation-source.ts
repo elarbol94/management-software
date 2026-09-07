@@ -2,7 +2,7 @@ import type { PresentationElement } from "./presentation";
 import type { DocumentSourceSnapshot } from "./document-source-snapshot";
 import type { DocumentSection, DocumentHeadingStructure } from "./document-sections";
 
-export type PresentationSource = { pageId: string; sectionId: string; reviewedFingerprint?: string; syncHeading?: boolean; approvedStructure?: DocumentHeadingStructure };
+export type PresentationSource = { pageId: string; sectionId: string; reviewedFingerprint?: string; syncHeading?: boolean; syncSubsections?: boolean; knownSectionIds?: string[]; approvedStructure?: DocumentHeadingStructure };
 export type PresentationSourceDocument = { id: string; title: string; slug: string; sections: DocumentSection[] };
 export type DocumentPresentationLink = { presentationId: string; title: string; elementId: string; label: string; sectionId: string };
 
@@ -77,4 +77,19 @@ export function preservePresentationHeadingOverride(before: PresentationElement,
     return { ...after, source: { ...after.source, syncHeading: false } };
   }
   return after;
+}
+
+/** Source observations outlive canvas undo: removing/undoing an automatic frame
+ * must not make the next poll insert it again. Link changes remain ordinary undo. */
+export function retainObservedPresentationSections(elements: PresentationElement[], observed: PresentationElement[]): PresentationElement[] {
+  let changed = false;
+  const next = elements.map((element) => {
+    const current = observed.find((item) => item.id === element.id)?.source;
+    if (!element.source || !current || sourceKey(element.source) !== sourceKey(current) || !current.knownSectionIds?.length) return element;
+    const knownSectionIds = [...new Set([...(element.source.knownSectionIds ?? []), ...current.knownSectionIds])];
+    if (knownSectionIds.length === element.source.knownSectionIds?.length) return element;
+    changed = true;
+    return { ...element, source: { ...element.source, knownSectionIds } };
+  });
+  return changed ? next : elements;
 }
