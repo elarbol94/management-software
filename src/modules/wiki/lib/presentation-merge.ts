@@ -15,7 +15,8 @@ export function mergePresentation(base: PresentationSnapshot, local: Presentatio
   function merge(before: unknown, ours: unknown, theirs: unknown, path: string): unknown {
     if (equal(ours, before)) return theirs;
     if (equal(theirs, before) || equal(ours, theirs)) return ours;
-    if (object(before) && object(ours) && object(theirs)) {
+    // A source is one reference; merging its fields could point at the wrong section.
+    if (!path.endsWith(".source") && object(before) && object(ours) && object(theirs)) {
       return Object.fromEntries([...new Set([...Object.keys(before), ...Object.keys(ours), ...Object.keys(theirs)])].map((key) => [key, merge(before[key], ours[key], theirs[key], `${path}.${key}`)]));
     }
     conflicts.push(path); return ours;

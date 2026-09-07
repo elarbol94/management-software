@@ -30,6 +30,7 @@ import {
   slugify,
 } from "./lib/tiptap";
 import { parseEditorDocument } from "./lib/editor-document";
+import { withDocumentSectionIds } from "./lib/document-sections";
 import { normalizeDocumentSettings, serializeDocumentSettings } from "./lib/document-settings";
 
 function uniqueSlug(title: string, excludePageId?: string): string {
@@ -273,7 +274,9 @@ export async function savePageContent(input: z.infer<typeof saveSchema>) {
     return { saved: false as const, locked: true as const, contentVersion: page.contentVersion };
   }
 
-  const doc = parseEditorDocument(data.contentJson);
+  const parsedDoc = parseEditorDocument(data.contentJson);
+  const doc = withDocumentSectionIds(parsedDoc);
+  if (doc !== parsedDoc) data.contentJson = JSON.stringify(doc);
 
   const contentText = extractText(doc);
   const inferredTitle = /^(Unbenannte Notiz|Untitled note)$/.test(page.title)

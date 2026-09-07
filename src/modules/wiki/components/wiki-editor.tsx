@@ -27,6 +27,10 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { createSlashCommandExtension, type SlashCommandDefinition } from "./slash-command-menu";
 import { CommentRail, type CommentRailHandle, type CommentThread } from "./comment-rail";
 import { CommentAnchorOverlay } from "./comment-anchor-overlay";
+import { DocumentPresentationLinks } from "./document-presentation-links";
+import { HeadingIdentity } from "./heading-identity";
+import { withDocumentSectionIds } from "../lib/document-sections";
+import type { TiptapNode } from "../lib/tiptap";
 import { CollapsibleHeading, HeadingListItem } from "./collapsible-heading";
 import { MarkdownDocumentExtensions, MarkdownShortcutMarks, MarkdownShortcuts } from "./markdown-shortcut-extension";
 import { MarkdownReferenceDialog } from "./markdown-reference-dialog";
@@ -863,6 +867,7 @@ export function WikiEditor({
     documentSettingsJson: serializeDocumentSettings(localizedInitialDocumentSettings),
   }));
   if (recoveredDraft) content = JSON.parse(recoveredDraft.contentJson);
+  if (content) content = withDocumentSectionIds(content as TiptapNode);
 
   function currentSnapshot() {
     return {
@@ -1213,7 +1218,7 @@ export function WikiEditor({
   ];
   const slashExtension = createSlashCommandExtension({ commands: slashCommands, ariaLabel: t("slash.ariaLabel"), emptyLabel: t("slash.empty") });
 
-  const editor = useEditor({ immediatelyRender: false, editable: false, enableInputRules: ["blockquote", "bulletList", "codeBlock", "heading", "orderedList", "taskItem"], extensions: [StarterKit.configure({ dropcursor: { color: "#3b82f6", width: 3 }, bold: false, code: false, heading: false, listItem: false, italic: false, link: { openOnClick: false }, strike: false }), CollapsibleHeading.configure({ levels: [1, 2, 3] }), HeadingListItem, ...MarkdownShortcutMarks, ...MarkdownDocumentExtensions, ...DocumentExtensions, FigureIdentity, FigureTextDrop, FigureUploads, FigureList, FigureListEntry, FigureListSync, TaskList, TaskItem.configure({ nested: true }), Citation, PdfEvidence, TaskReference, DeadlineReference, CommentableImage, MermaidDiagram, CommentMark, SuggestionInsert, SuggestionDelete, SuggestionMode, Highlight, Placeholder.configure({ placeholder: ({ node }) => node.type.name === "heading" ? t("editor.placeholder.heading") : t("editor.placeholder.empty") }), EditorSearchExtension, createSpellcheckExtension((issue, target) => {
+  const editor = useEditor({ immediatelyRender: false, editable: false, enableInputRules: ["blockquote", "bulletList", "codeBlock", "heading", "orderedList", "taskItem"], extensions: [StarterKit.configure({ dropcursor: { color: "#3b82f6", width: 3 }, bold: false, code: false, heading: false, listItem: false, italic: false, link: { openOnClick: false }, strike: false }), CollapsibleHeading.configure({ levels: [1, 2, 3] }), HeadingListItem, HeadingIdentity, ...MarkdownShortcutMarks, ...MarkdownDocumentExtensions, ...DocumentExtensions, FigureIdentity, FigureTextDrop, FigureUploads, FigureList, FigureListEntry, FigureListSync, TaskList, TaskItem.configure({ nested: true }), Citation, PdfEvidence, TaskReference, DeadlineReference, CommentableImage, MermaidDiagram, CommentMark, SuggestionInsert, SuggestionDelete, SuggestionMode, Highlight, Placeholder.configure({ placeholder: ({ node }) => node.type.name === "heading" ? t("editor.placeholder.heading") : t("editor.placeholder.empty") }), EditorSearchExtension, createSpellcheckExtension((issue, target) => {
       const source = liveEditor.current?.state.doc.textBetween(issue.from, issue.to) ?? "";
       setSpellcheckIssue({ issue, target, source });
     }), MarkdownShortcuts, slashExtension], content,
@@ -2412,7 +2417,7 @@ export function WikiEditor({
   const currentDocumentModeLabel = t(documentMode ? "document.documentMode" : "document.noteMode");
   const nextDocumentModeLabel = t(documentMode ? "document.noteMode" : "document.documentMode");
 
-  return <FigureLibraryContext.Provider value={{ ...figureLibrary, editArtwork: (nodeId) => void editFigureArtwork(nodeId), replace: (nodeId) => { rememberToolbarSelection(); setFigureSourceMode(false); setFigureTargetId(nodeId); setInlineImagePickerOpen(true); }, editSource: (nodeId) => { rememberToolbarSelection(); setFigureSourceMode(true); setFigureTargetId(nodeId); setInlineImagePickerOpen(true); } }}><div className="relative flex flex-col gap-3"><div className="sticky top-0 z-40 flex flex-wrap items-center gap-1.5 rounded-xl border bg-background/95 p-1.5 shadow-sm backdrop-blur supports-[backdrop-filter]:bg-background/80">
+  return <FigureLibraryContext.Provider value={{ ...figureLibrary, editArtwork: (nodeId) => void editFigureArtwork(nodeId), replace: (nodeId) => { rememberToolbarSelection(); setFigureSourceMode(false); setFigureTargetId(nodeId); setInlineImagePickerOpen(true); }, editSource: (nodeId) => { rememberToolbarSelection(); setFigureSourceMode(true); setFigureTargetId(nodeId); setInlineImagePickerOpen(true); } }}><div className="relative flex flex-col gap-3"><DocumentPresentationLinks editor={activeEditor} pageId={pageId} slug={pageSlug} flush={() => flushSaveRef.current()} /><div className="sticky top-0 z-40 flex flex-wrap items-center gap-1.5 rounded-xl border bg-background/95 p-1.5 shadow-sm backdrop-blur supports-[backdrop-filter]:bg-background/80">
     <ToolbarGroup label={t("editor.toolbar.groups.history")}>
       <ToolbarButton title={t("editor.toolbar.undo")} shortcut={shortcutLabel("undo")} onClick={() => activeEditor.chain().focus().undo().run()}><Undo2 className="size-4" /></ToolbarButton>
       <ToolbarButton title={t("editor.toolbar.redo")} shortcut={shortcutLabel("redo")} onClick={() => activeEditor.chain().focus().redo().run()}><Redo2 className="size-4" /></ToolbarButton>

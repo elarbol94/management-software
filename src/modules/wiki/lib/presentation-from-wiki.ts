@@ -1,5 +1,7 @@
 import type { PresentationElement, PresentationFrameElement, PresentationStep } from "./presentation";
 import { parseStoredDocument, type TiptapNode } from "./tiptap";
+import { withDocumentSectionIds } from "./document-sections";
+import type { PresentationSource } from "./presentation-source";
 
 /**
  * Turns a wiki page's heading outline into a starting presentation canvas: each heading
@@ -10,6 +12,7 @@ import { parseStoredDocument, type TiptapNode } from "./tiptap";
  */
 
 export type WikiPresentationSourcePage = {
+  id?: string;
   title: string;
   contentJson: string;
 };
@@ -20,6 +23,7 @@ export type PresentationFromWikiOptions = {
 };
 
 type Section = {
+  source?: PresentationSource;
   title: string;
   images: Array<{ attachmentId: string; alt: string }>;
   children: Section[];
@@ -51,18 +55,24 @@ function collectImages(node: TiptapNode, out: Array<{ attachmentId: string; alt:
   for (const child of node.content ?? []) collectImages(child, out);
 }
 
-/** Builds the heading tree from the page's top-level blocks, nesting by heading level. */
-function buildOutline(doc: TiptapNode): Section[] {
+/** Walk structural wrappers too, including headings inside lists and columns. */
+function* outlineNodes(node: TiptapNode): Generator<TiptapNode> {
+  if (node.type === "heading" || node.type === "commentableImage") yield node;
+  else for (const child of node.content ?? []) yield* outlineNodes(child);
+}
+
+/** Builds the heading tree in document order, nesting by heading level. */
+function buildOutline(doc: TiptapNode, pageId?: string): Section[] {
   const roots: Section[] = [];
   const stack: Array<{ level: number; section: Section }> = [];
 
-  for (const node of doc.content ?? []) {
+  for (const node of outlineNodes(doc)) {
     if (node.type === "heading") {
       const level = Number(node.attrs?.level) || 1;
       const title = nodeText(node).trim().replace(/\s+/g, " ");
       if (!title) continue;
       while (stack.length && stack[stack.length - 1].level >= level) stack.pop();
-      const section: Section = { title, images: [], children: [] };
+      const section: Section = { title, images: [], children: [], ...(pageId ? { source: { pageId, sectionId: String(node.attrs?.id) } } : {}) };
       const parent = stack[stack.length - 1]?.section;
       if (parent) parent.children.push(section);
       else roots.push(section);
@@ -114,7 +124,7 @@ function place(
   parentId?: string,
 ) {
   const id = nextId();
-  elements.push({ ...frameElement(id, x, y, section.width, section.height, section.title), parentId });
+  elements.push({ ...frameElement(id, x, y, section.width, section.height, section.title), parentId, ...(section.source ? { source: section.source } : {}) });
   steps.push({ id: nextId(), elementId: id });
 
   let cursorX = x + GAP;
@@ -144,14 +154,14 @@ export function presentationFromWikiPage(
   options: PresentationFromWikiOptions = {},
 ): { elements: PresentationElement[]; steps: PresentationStep[] } {
   const includeImages = options.includeImages ?? true;
-  const doc = parseStoredDocument(page.contentJson);
-  const outline = buildOutline(doc);
+  const doc = withDocumentSectionIds(parseStoredDocument(page.contentJson));
+  const outline = buildOutline(doc, page.id);
   if (!includeImages) for (const section of walkSections(outline)) section.images = [];
 
   if (!outline.length) {
     const id = "id-1";
     return {
-      elements: [frameElement(id, 0, 0, FALLBACK_WIDTH, FALLBACK_HEIGHT, page.title)],
+      elements: [{ ...frameElement(id, 0, 0, FALLBACK_WIDTH, FALLBACK_HEIGHT, page.title), ...(page.id ? { source: { pageId: page.id, sectionId: "" } } : {}) }],
       steps: [{ id: "id-2", elementId: id }],
     };
   }

@@ -1124,3 +1124,20 @@
 /* The standard cursor retains its last block marker briefly when disabled. */
 .wiki-figure-text-drop-active > .prosemirror-dropcursor-block,
 .wiki-figure-text-drop-active > .prosemirror-dropcursor-inline { display: none; }
+
+/* Editor-only navigation widgets; these never become document/export content. */
+.wiki-presentation-section-badge {
+  display: inline-flex;
+  margin-inline-start: .75rem;
+  padding: .15rem .45rem;
+  border: 1px solid var(--border);
+  border-radius: .375rem;
+  background: var(--background);
+  color: var(--muted-foreground);
+  font: 500 11px/1.5 system-ui, sans-serif;
+  vertical-align: middle;
+  cursor: pointer;
+}
+.wiki-presentation-section-badge:hover { color: var(--foreground); background: var(--accent); }
+.wiki-presentation-section-badge:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+[data-linked-section-focus="true"] { outline: 2px solid var(--ring); outline-offset: 4px; border-radius: 4px; }

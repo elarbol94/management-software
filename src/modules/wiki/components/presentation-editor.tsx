@@ -5,7 +5,10 @@ import "@xyflow/react/dist/style.css";
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
+import { PresentationSourcePanel } from "./presentation-source-panel";
+import { documentSectionHref, type PresentationSourceDocument } from "../lib/presentation-source";
+import { readLinkedPosition, rememberLinkedPosition } from "../lib/linked-navigation";
 import { useFormatter, useTranslations } from "next-intl";
 import { useTheme } from "next-themes";
 import { createId } from "@paralleldrive/cuid2";
@@ -16,6 +19,7 @@ import {
   ReactFlow,
   ReactFlowProvider,
   ViewportPortal,
+  useStore,
   useReactFlow,
   useViewport,
   type NodeChange,
@@ -419,6 +423,11 @@ function Editor({
 }) {
   const t = useTranslations("wiki");
   const studio = useTranslations("presentationStudio");
+  const linkText = useTranslations("documentPresentationLinks");
+  const navigationQuery = useSearchParams();
+  // Canvas geometry is already stored; viewport sizing is the readiness signal.
+  const viewportSized = useStore((state) => state.width > 0 && state.height > 0);
+  const viewportEngine = useStore((state) => state.panZoom);
   const format = useFormatter();
   const router = useRouter();
   const reactFlow = useReactFlow<PresentationNode>();
@@ -985,6 +994,35 @@ function Editor({
     [reactFlow],
   );
 
+  const requestedElement = navigationQuery.get("element");
+  const resumeToken = navigationQuery.get("resume");
+  const documentResumeToken = navigationQuery.get("documentResume");
+  const appliedNavigation = useRef("");
+  const appliedViewportEngine = useRef(viewportEngine);
+  useEffect(() => {
+    if (!viewportEngine || !reactFlow.viewportInitialized || !viewportSized) return;
+    const navigationKey = `${presentation.id}:${requestedElement}:${resumeToken}`;
+    if (appliedNavigation.current === navigationKey && appliedViewportEngine.current === viewportEngine) return;
+    // Next can reactivate a cached editor with a recreated pan/zoom controller.
+    // Restore once per controller, as well as once per destination.
+    const timer = setTimeout(() => {
+      appliedNavigation.current = navigationKey;
+      appliedViewportEngine.current = viewportEngine;
+      const saved = readLinkedPosition(resumeToken);
+      if (saved?.kind === "presentation" && saved.id === presentation.id) {
+        setSelectedIds(saved.selectedIds.filter((id) => elements.some((element) => element.id === id)));
+        setActiveStepId(steps.some((step) => step.id === saved.activeStepId) ? saved.activeStepId : null);
+        void reactFlow.setViewport(saved.viewport);
+        if (saved.selectedIds.length) setPanelOpen(true);
+      } else if (requestedElement) {
+        const target = elements.find((element) => element.id === requestedElement);
+        if (target) { setSelectedIds([target.id]); setActiveStepId(steps.find((step) => step.elementId === target.id)?.id ?? null); flyTo(target); setPanelOpen(true); }
+        else { toast.error(linkText("missingElement")); void reactFlow.fitView({ padding: 0.2 }); }
+      } else if (resumeToken) void reactFlow.fitView({ padding: 0.2 });
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [elements, flyTo, linkText, viewportSized, presentation.id, reactFlow, requestedElement, resumeToken, steps, viewportEngine]);
+
   const addStep = useCallback(() => {
     if (!selected || disabled) return;
     const step = { id: createId(), elementId: selected.id };
@@ -1048,6 +1086,25 @@ function Editor({
     }).finally(() => { paused.current = false; });
   }, [flush, presentation.id, router, sessionId, t]);
 
+  function openDocument(document: PresentationSourceDocument, sectionId: string, restoreDocument = false) {
+    const token = rememberLinkedPosition({ kind: "presentation", id: presentation.id, viewport: reactFlow.getViewport(), selectedIds, activeStepId });
+    let href = documentSectionHref(document.slug, sectionId, presentation.id, selected?.id ?? requestedElement ?? "", token);
+    const previousDocument = readLinkedPosition(documentResumeToken);
+    if (restoreDocument && previousDocument?.kind === "document" && previousDocument.id === document.id && documentResumeToken) href += `&documentResume=${encodeURIComponent(documentResumeToken)}`;
+    flushThen(href, false);
+  }
+  async function returnToDocument() {
+    const saved = readLinkedPosition(documentResumeToken);
+    if (saved?.kind !== "document") return;
+    try {
+      const response = await fetch(`/api/wiki/presentation-sources?source=${encodeURIComponent(saved.id)}`, { cache: "no-store" });
+      if (!response.ok) throw new Error();
+      const result = await response.json();
+      if (!result.document) { toast.error(linkText("missingSource")); return; }
+      openDocument(result.document, saved.sectionId, true);
+    } catch { toast.error(linkText("loadFailed")); }
+  }
+
   // The app and wiki navigation live outside this component. Save before their Link
   // handlers can unmount the editor, just as for its own breadcrumb and Present action.
   useEffect(() => {
@@ -1100,6 +1157,7 @@ function Editor({
   return (
     <div className="flex h-[calc(100dvh-7rem)] min-h-0 min-w-0 flex-col md:h-dvh" data-testid="presentation-editor" data-presentation-workspace>
       <header className="flex flex-wrap items-center gap-2 border-b bg-background px-3 py-2">
+        {documentResumeToken && <Button size="sm" variant="outline" onClick={() => void returnToDocument()}>{linkText("backDocument")}</Button>}
         <div className="flex w-full min-w-0 items-center gap-2 sm:w-auto">
         <Link
           href={listHref}
@@ -1296,7 +1354,7 @@ function Editor({
             nodeTypes={presentationNodeTypes}
             onNodesChange={onNodesChange}
             colorMode={resolvedTheme === "dark" ? "dark" : "light"}
-            fitView
+            fitView={!resumeToken && !requestedElement}
             fitViewOptions={{ padding: 0.2 }}
             minZoom={0.02}
             maxZoom={8}
@@ -1342,6 +1400,7 @@ function Editor({
         </div>
 
         <aside id="presentation-properties" aria-label={t("presentations.showPanel")} className={cn("max-h-[45%] w-full shrink-0 overflow-y-auto border-t bg-background p-3 lg:block lg:max-h-none lg:w-80 lg:border-t-0 lg:border-l", panelOpen ? "block" : "hidden")}>
+          <PresentationSourcePanel elements={elements} selected={selected} disabled={disabled || Boolean(selected && isPresentationElementLocked(elements, selected.id))} onChange={(source) => { if (selected) updateElement(selected.id, (element) => ({ ...element, source })); }} onOpen={openDocument} />
           <PresentationLibraryPanel id={presentation.id} selectedId={selected?.id} canEdit={canEdit && !disabled} onSelect={(id) => { setSelectedIds([id]); const element = elements.find((element) => element.id === id); if (element) flyTo(element); }} flush={flush}
             onTheme={(theme) => { commitElements((current) => current.map((element) => element.type === "text" ? { ...element, content: { ...element.content, color: theme.foreground, font: theme.font } } : element.type === "frame" ? { ...element, content: { ...element.content, color: theme.accent } } : element)); dispatch({ type: "touch", background: theme.background }); }}
             onTemplate={(snapshot) => { dispatch({ type: "edit", at: Date.now(), elements: () => snapshot.elements, steps: () => snapshot.steps }); dispatch({ type: "touch", background: snapshot.background, settings: snapshot.settings }); setSelectedIds([]); }}

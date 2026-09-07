@@ -7,6 +7,20 @@ The Wiki editor uses one content version for text and document layout. A save
 includes that version and the tab's edit-lease session. Metadata changes such as
 renaming a page do not invalidate a text save.
 
+## Linked presentations
+
+Headings used by presentations display a small presentation badge. It opens a list
+of the linked frames/elements; the document toolbar also lists links to the whole
+page. Following a link saves pending document edits first. Returning from the
+presentation can restore the document selection and scroll position.
+
+Opening a section from a presentation expands its collapsed headings and highlights
+the destination. Renaming or moving a heading preserves its identity; copying a
+heading creates a new one. Missing sections remain explicit instead of being
+silently matched to similarly named text. Navigation badges never become document
+content and do not appear in exports. See [presentations.md](presentations.md) for
+source inheritance, manual linking and access behavior.
+
 ## Saving and recovery
 
 - A successful response acknowledges only the submitted text and layout. Edits

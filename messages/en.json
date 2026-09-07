@@ -3585,5 +3585,37 @@
       "de": "German",
       "en": "English"
     }
+  },
+  "documentPresentationLinks": {
+    "source": "Document source",
+    "loading": "Loading document links…",
+    "retry": "Retry loading document links",
+    "inherited": "Linked through the parent frame",
+    "missingSource": "Source section missing. You can open the document or choose another section.",
+    "openDocument": "Open document section",
+    "noSource": "This element has no document link.",
+    "changeLink": "Change link",
+    "linkSection": "Link to document section",
+    "unlink": "Remove link",
+    "useParent": "Use parent link",
+    "findDocument": "Find a document",
+    "document": "Document",
+    "chooseDocument": "Choose a document",
+    "section": "Section",
+    "wholeDocument": "Whole document",
+    "untitledSection": "Untitled section",
+    "saveLink": "Save link",
+    "cancel": "Cancel",
+    "loadFailed": "Could not load document links. Please try again.",
+    "saveFailed": "Your changes could not be saved. Please resolve the save issue before leaving.",
+    "badge": "{count, plural, one {# presentation} other {# presentations}}",
+    "sectionPresentations": "{section}: {count, plural, one {# linked presentation} other {# linked presentations}}",
+    "backPresentation": "Back to presentation",
+    "backDocument": "Back to document",
+    "linkedPresentations": "{count, plural, one {# linked presentation} other {# linked presentations}}",
+    "presentations": "Linked presentations",
+    "choosePresentation": "Open the corresponding frame or element.",
+    "missingElement": "The linked presentation element no longer exists.",
+    "presenterSource": "Open source in a new tab"
   }
 }

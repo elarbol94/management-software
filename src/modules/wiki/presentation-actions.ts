@@ -1,7 +1,7 @@
 "use server";
 
 import { z } from "zod";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, isNull } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { db } from "@/db";
 import {
@@ -75,9 +75,9 @@ export async function createPresentationFromWikiPage(input: { pageId: string; in
     .object({ pageId: idSchema, includeImages: z.boolean().optional() })
     .parse(input);
   const page = db
-    .select({ title: wikiPages.title, contentJson: wikiPages.contentJson })
+    .select({ id: wikiPages.id, title: wikiPages.title, contentJson: wikiPages.contentJson })
     .from(wikiPages)
-    .where(eq(wikiPages.id, pageId))
+    .where(and(eq(wikiPages.id, pageId), isNull(wikiPages.deletedAt)))
     .get();
   if (!page) throw new Error("Page not found");
   const { elements, steps } = presentationFromWikiPage(page, { includeImages });

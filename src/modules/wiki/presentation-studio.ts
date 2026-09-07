@@ -1,3 +1,4 @@
+import { withoutPresentationSources } from "./lib/presentation-source";
 import { randomBytes } from "node:crypto";
 import fs from "node:fs/promises";
 import { and, desc, eq } from "drizzle-orm";
@@ -83,7 +84,7 @@ export async function changePresentationStudio(id: string, input: unknown) {
     const libraryId = createId();
     try {
       const source = getPresentation(id, viewer)!;
-      const snapshot = await copyDocumentAssets({ ...source, steps: source.steps.map((step) => ({ ...step, notes: undefined })) }, libraryId, viewer, true);
+      const snapshot = await copyDocumentAssets(withoutPresentationSources({ ...source, steps: source.steps.map((step) => ({ ...step, notes: undefined })) }), libraryId, viewer, true);
       db.insert(wikiPresentationLibrary).values({ id: libraryId, name: data.name, kind: "template", documentJson: JSON.stringify(snapshot), createdBy: viewer.id }).run();
     } catch (error) { deleteAttachmentsFor("wikiPresentationLibrary", libraryId); throw error; }
   } else if (data.action === "applyTemplate") {

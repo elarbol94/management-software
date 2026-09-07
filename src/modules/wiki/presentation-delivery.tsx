@@ -1,3 +1,4 @@
+import { withoutPresentationSources } from "./lib/presentation-source";
 import fs from "node:fs/promises";
 import { gunzipSync } from "node:zlib";
 import { renderStaticHtml } from "@/lib/render-static-html";
@@ -15,7 +16,7 @@ export function publicPresentation(token: string): PresentationSnapshot | null {
   const row = id ? db.select().from(wikiPresentations).where(eq(wikiPresentations.id, id)).get() : null;
   if (!row) return null;
   const canvas = parsePresentationCanvas(row.elementsJson);
-  return { ...canvas, title: row.title, steps: normalizeSteps(parsePresentationSteps(row.pathJson), canvas.elements).map((step) => ({ ...step, notes: undefined })) };
+  return withoutPresentationSources({ ...canvas, title: row.title, steps: normalizeSteps(parsePresentationSteps(row.pathJson), canvas.elements).map((step) => ({ ...step, notes: undefined })) });
 }
 
 export async function offlinePresentationMedia(snapshot: PresentationSnapshot) {

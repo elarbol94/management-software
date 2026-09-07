@@ -3587,5 +3587,37 @@
       "de": "Deutsch",
       "en": "Englisch"
     }
+  },
+  "documentPresentationLinks": {
+    "source": "Dokumentquelle",
+    "loading": "Dokumentverknüpfungen werden geladen…",
+    "retry": "Dokumentverknüpfungen erneut laden",
+    "inherited": "Über den übergeordneten Rahmen verknüpft",
+    "missingSource": "Quellabschnitt fehlt. Du kannst das Dokument öffnen oder einen anderen Abschnitt auswählen.",
+    "openDocument": "Dokumentabschnitt öffnen",
+    "noSource": "Dieses Element ist mit keinem Dokument verknüpft.",
+    "changeLink": "Verknüpfung ändern",
+    "linkSection": "Mit Dokumentabschnitt verknüpfen",
+    "unlink": "Verknüpfung entfernen",
+    "useParent": "Verknüpfung des Rahmens verwenden",
+    "findDocument": "Dokument suchen",
+    "document": "Dokument",
+    "chooseDocument": "Dokument auswählen",
+    "section": "Abschnitt",
+    "wholeDocument": "Gesamtes Dokument",
+    "untitledSection": "Unbenannter Abschnitt",
+    "saveLink": "Verknüpfung speichern",
+    "cancel": "Abbrechen",
+    "loadFailed": "Dokumentverknüpfungen konnten nicht geladen werden. Bitte erneut versuchen.",
+    "saveFailed": "Deine Änderungen konnten nicht gespeichert werden. Bitte behebe das Speicherproblem vor dem Verlassen.",
+    "badge": "{count, plural, one {# Präsentation} other {# Präsentationen}}",
+    "sectionPresentations": "{section}: {count, plural, one {# verknüpfte Präsentation} other {# verknüpfte Präsentationen}}",
+    "backPresentation": "Zurück zur Präsentation",
+    "backDocument": "Zurück zum Dokument",
+    "linkedPresentations": "{count, plural, one {# verknüpfte Präsentation} other {# verknüpfte Präsentationen}}",
+    "presentations": "Verknüpfte Präsentationen",
+    "choosePresentation": "Den zugehörigen Rahmen oder das Element öffnen.",
+    "missingElement": "Das verknüpfte Präsentationselement existiert nicht mehr.",
+    "presenterSource": "Quelle in neuem Tab öffnen"
   }
 }

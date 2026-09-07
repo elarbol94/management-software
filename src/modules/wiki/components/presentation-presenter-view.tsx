@@ -6,6 +6,7 @@ import { ChevronLeft, ChevronRight, Clock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { PresentationScene } from "./presentation-scene";
+import { documentSectionHref, presentationSource } from "../lib/presentation-source";
 import { stepLabel, stepTarget } from "../lib/presentation";
 import { formatElapsed, parsePresenterMessage, presenterChannelName } from "../lib/presenter";
 import type { PresentationRecord } from "../presentation-queries";
@@ -20,6 +21,7 @@ const subscribeHydration = () => () => {};
 export function PresentationPresenterView({ presentation, sessionId }: { presentation: PresentationRecord; sessionId?: string }) {
   const t = useTranslations("wiki");
   const studio = useTranslations("presentationStudio");
+  const linkText = useTranslations("documentPresentationLinks");
   const hydrated = useSyncExternalStore(subscribeHydration, () => true, () => false);
   const { elements, steps } = presentation;
   const [index, setIndex] = useState(0);
@@ -66,6 +68,20 @@ export function PresentationPresenterView({ presentation, sessionId }: { present
 
   const currentStep = steps[index] ?? null;
   const currentTarget = currentStep ? stepTarget(currentStep, elements) : null;
+  const source = currentTarget ? presentationSource(elements, currentTarget.id) : null;
+  async function openSource() {
+    if (!source) return;
+    const tab = window.open("about:blank", "_blank");
+    if (!tab) { toast.error(t("presentations.popupBlocked")); return; }
+    try {
+      const response = await fetch(`/api/wiki/presentation-sources?source=${encodeURIComponent(source.pageId)}`, { cache: "no-store" });
+      if (!response.ok) throw new Error();
+      const result = await response.json();
+      if (!result.document) { tab.close(); toast.error(linkText("missingSource")); return; }
+      tab.opener = null;
+      tab.location.href = documentSectionHref(result.document.slug, source.sectionId);
+    } catch { tab.close(); toast.error(linkText("loadFailed")); }
+  }
   const nextStep = steps[index + 1] ?? null;
   const nextTarget = nextStep ? stepTarget(nextStep, elements) : null;
   const notesValue = currentStep ? drafts[currentStep.id] ?? savedNotes[currentStep.id] ?? currentStep.notes ?? "" : "";
@@ -114,6 +130,7 @@ export function PresentationPresenterView({ presentation, sessionId }: { present
           <h1 className="text-xl font-semibold">
             {currentTarget ? stepLabel(currentTarget, index) : t("presentations.missingStep")}
           </h1>
+          {source && <Button size="sm" variant="outline" className="mt-2" onClick={() => void openSource()}>{linkText("presenterSource")}</Button>}
           {!currentStep && <p className="mt-4 text-sm text-muted-foreground">{t("presentations.noNotes")}</p>}
           {currentStep && <><textarea className="mt-3 min-h-28 w-full rounded-md border p-3 text-base" disabled={!hydrated} aria-label={t("presentations.speakerNotes")} value={notesValue} maxLength={5000} onChange={(event) => { const value = event.target.value; setDrafts((drafts) => ({ ...drafts, [currentStep.id]: value })); }} /><Button type="button" className="mt-2" size="sm" disabled={!hydrated || saving || notesValue === (savedNotes[currentStep.id] ?? currentStep.notes ?? "")} onClick={() => void saveNotes()}>{studio("saveNotes")}</Button></>}
         </section>

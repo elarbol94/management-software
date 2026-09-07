@@ -6,6 +6,40 @@ uploaded video and audio. The editor, player, previews and PDF export share the
 stored content model. Internal editing and live following require sign-in;
 owners can explicitly publish a separate read-only link or website embed.
 
+## Links to document sections
+
+New presentations created from a wiki page retain a source link on every heading
+frame. Objects inside a linked frame inherit its source unless they have their
+own link or explicitly remove it. Documents without headings link to the whole
+page. Headings inside lists and layout sections are included in the outline.
+
+Select an element and use **Document source → Open document section** to open the
+current document at its heading. Navigation waits for pending presentation edits,
+expands collapsed sections without editing the document and briefly highlights
+the target. **Back to
+presentation** restores the selected objects, camera position and active stop.
+Heading badges and **Linked presentations** in the document open the corresponding
+presentation element. **Back to document** restores the document selection and
+scroll position. Return positions are kept in bounded, per-tab browser storage;
+if storage is unavailable, ordinary section/element navigation still works.
+
+Use **Link to document section** or **Change link** for existing decks, imported
+presentations and individual elements. Choose a document and section (or the whole
+document). **Remove link** also stops inheritance; **Use parent link** restores it.
+These changes use the same save, undo, history and conflict checks as other canvas
+edits. Competing changes to a source reference are treated as a single conflict.
+
+Section identities survive heading renames and moves. Legacy headings get IDs
+when loaded/saved; newly inserted or pasted headings receive distinct identities.
+Deleted sections are reported as missing and can be relinked. Existing decks are
+not matched retrospectively by heading text; use the manual link picker.
+
+Document backlinks include only presentations the current user can access. Public
+players and reusable company templates exclude document source references.
+Presenter view opens a linked source in a separate tab, leaving the audience's
+presentation in place. Source previews, change notifications and adding individual
+sections to an existing deck are future additions.
+
 ## Editing and recovery
 
 - Title, elements, stops, backgrounds and playback settings save together after
@@ -152,6 +186,10 @@ database described in the README and covers editing, autosave, restore, mobile
 layout, rotation, PDF notes, edit leases, live following, hierarchy, rich content,
 animations, simultaneous editors, roles, comments, company designs, public links,
 offline media and presenter previews/notes/timers.
+
+Document linking is covered by `npm run e2e -- e2e/document-presentation-links.spec.ts`
+(generation, heading rename, section expansion, canvas restoration, manual linking,
+backlinks and failed-save navigation). No database migration is needed for links.
 
 Migration `0055_redundant_nebula.sql` adds access settings, membership, comments and
 the design library. Existing canvases remain backwards-compatible. Deploy through
