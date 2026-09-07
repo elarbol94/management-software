@@ -2,6 +2,7 @@ import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { createAuthMiddleware, APIError } from "better-auth/api";
 import { admin, username } from "better-auth/plugins";
+import { adminAc, userAc } from "better-auth/plugins/admin/access";
 import { nextCookies } from "better-auth/next-js";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
@@ -51,8 +52,15 @@ export const auth = betterAuth({
   databaseHooks: {
     user: {
       create: {
-        before: async (user) => ({
-          data: { ...user, role: userCount() === 0 ? "admin" : "member" },
+        before: async (user, context) => ({
+          data: {
+            ...user,
+            // Only bootstrap signup determines the role here. Admin-created
+            // accounts retain the role selected by the administrator.
+            ...(context?.path === "/sign-up/email"
+              ? { role: userCount() === 0 ? "admin" : "member" }
+              : {}),
+          },
         }),
         after: async (createdUser) => {
           ensureUserMarkColor(createdUser.id);
@@ -65,7 +73,11 @@ export const auth = betterAuth({
       maxUsernameLength: 254,
       usernameValidator: (value) => /^[a-zA-Z0-9_.@+-]+$/.test(value),
     }),
-    admin({ defaultRole: "member", adminRoles: ["admin"] }),
+    admin({
+      defaultRole: "member",
+      adminRoles: ["admin"],
+      roles: { admin: adminAc, member: userAc, personnel: userAc },
+    }),
     nextCookies(),
   ],
 });

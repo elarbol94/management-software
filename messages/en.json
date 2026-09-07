@@ -3593,8 +3593,17 @@
       "roleAdmin": "Administrator",
       "rolePersonnel": "Personnel and accounting",
       "roleMember": "Member",
-      "created": "User created",
-      "banned": "Banned"
+      "created": "User created. Share their username and initial password securely.",
+      "banned": "Banned",
+      "accessDescription": "Give your team access to the platform and view existing accounts.",
+      "manageUsers": "View users",
+      "loginHint": "The new user can sign in immediately with their username and password. Share these details securely; no invitation email is sent.",
+      "usernameHint": "3–254 characters: letters, numbers, or _ . @ + -",
+      "passwordHint": "Use 8–128 characters.",
+      "creating": "Creating user…",
+      "invalidInput": "Check the name, username, email, password length, and role.",
+      "usernameTaken": "This username is already in use. Choose another username.",
+      "emailTaken": "An account with this email already exists."
     },
     "language": {
       "label": "Language",

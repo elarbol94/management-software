@@ -3595,8 +3595,17 @@
       "roleAdmin": "Administrator",
       "rolePersonnel": "Personal und Buchhaltung",
       "roleMember": "Mitglied",
-      "created": "Benutzer wurde angelegt",
-      "banned": "Gesperrt"
+      "created": "Benutzer wurde angelegt. Teile Benutzername und Anfangspasswort sicher mit.",
+      "banned": "Gesperrt",
+      "accessDescription": "Gib deinem Team Zugang zur Plattform und sieh bestehende Konten ein.",
+      "manageUsers": "Benutzer anzeigen",
+      "loginHint": "Der neue Benutzer kann sich sofort mit Benutzername und Passwort anmelden. Teile diese Daten sicher mit; es wird keine Einladungs-E-Mail versendet.",
+      "usernameHint": "3–254 Zeichen: Buchstaben, Zahlen oder _ . @ + -",
+      "passwordHint": "Verwende 8–128 Zeichen.",
+      "creating": "Benutzer wird angelegt…",
+      "invalidInput": "Prüfe Name, Benutzername, E-Mail, Passwortlänge und Rolle.",
+      "usernameTaken": "Dieser Benutzername wird bereits verwendet. Wähle einen anderen.",
+      "emailTaken": "Ein Konto mit dieser E-Mail-Adresse existiert bereits."
     },
     "language": {
       "label": "Sprache",

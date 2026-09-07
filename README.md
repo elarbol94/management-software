@@ -37,8 +37,12 @@ Docker image already includes both tools and the German/English OCR packs.
   created through the guarded `/api/auth/sign-up/email` bootstrap endpoint
   becomes the administrator.
   Afterwards public signup is disabled — admins create accounts and assign
-  usernames under *Einstellungen → Benutzer*. Existing accounts receive their
-  email address as their initial username during migration.
+  usernames under *Einstellungen → Benutzer*. The settings landing page also
+  offers **Benutzer anlegen**. Enter the name, username, email, initial password
+  (8–128 characters), and role (member, personnel/accounting, or administrator).
+  The account can sign in immediately; share the username and password securely.
+  No invitation email is sent. Existing accounts receive their email address as
+  their initial username during migration.
 - Migrations and default categories are applied automatically on server boot
   (`src/instrumentation.ts`). Manual commands: `npm run db:migrate`,
   `npm run db:seed`, `npx drizzle-kit studio`.
