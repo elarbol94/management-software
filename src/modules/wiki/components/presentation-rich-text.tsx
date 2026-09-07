@@ -48,7 +48,8 @@ export function PresentationRichText({ content, onChange, disabled }: { content:
       else editor.commands.undo();
     },
   });
-  useEffect(() => { editor?.setEditable(!disabled); }, [editor, disabled]);
+  // Access changes are not content edits and must not add autosaves or undo steps.
+  useEffect(() => { editor?.setEditable(!disabled, false); }, [editor, disabled]);
   useEffect(() => {
     if (editor && JSON.stringify(fromDoc(editor.getJSON())) !== JSON.stringify({ text: content.text, runs: content.runs })) {
       // Avoid replacing the selection for an update emitted by this editor.
