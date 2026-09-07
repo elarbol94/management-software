@@ -9,7 +9,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { usePresentationSourcePreviews } from "./use-presentation-source-previews";
 import { applyStructureProposal } from "../lib/presentation-structure";
 import { PresentationSourcePanel } from "./presentation-source-panel";
-import { documentSectionHref, synchronizePresentationHeadings, preservePresentationHeadingOverride, type PresentationSourceDocument } from "../lib/presentation-source";
+import { documentSectionHref, sourceKey, sourceReviewStatus, synchronizePresentationHeadings, preservePresentationHeadingOverride, type PresentationSourceDocument } from "../lib/presentation-source";
 import { readLinkedPosition, rememberLinkedPosition } from "../lib/linked-navigation";
 import { useFormatter, useTranslations } from "next-intl";
 import { useTheme } from "next-themes";
@@ -55,6 +55,9 @@ import {
   Lock,
   Maximize2,
   PanelRight,
+  PanelLeft,
+  MoreHorizontal,
+  Share2,
   Play,
   Plus,
   Redo2,
@@ -76,7 +79,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { WorkspacePanel } from "./workspace-panel";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import {
   restorePresentationRevision,
@@ -443,7 +448,10 @@ function Editor({
   const [lockedBy, setLockedBy] = useState<string | null>(null);
   const [leaseReady, setLeaseReady] = useState(false);
   const [conflict, setConflict] = useState(false);
-  const [panelOpen, setPanelOpen] = useState(false);
+  const [activePanel, setActivePanel] = useState<"properties" | "sources" | "design" | "assets" | "comments" | null>(null);
+  const [pathOpen, setPathOpen] = useState(false);
+  const [workspaceDialog, setWorkspaceDialog] = useState<"sharing" | "history" | "playback" | null>(null);
+  const mediaInputRef = useRef<HTMLInputElement>(null);
   const [restoring, setRestoring] = useState<string | null>(null);
   const readOnly = !canEdit || !leaseReady || lockedBy !== null || conflict;
   const disabled = readOnly || restoring !== null;
@@ -479,6 +487,13 @@ function Editor({
     return () => { cancelAnimationFrame(frame); document.removeEventListener("focusout", sync); };
   }, [disabled, elements, sourcePreviews.error, sourcePreviews.previews]);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const selectionKey = selectedIds.join(":");
+  const [inspectedSelection, setInspectedSelection] = useState(selectionKey);
+  if (selectionKey !== inspectedSelection) {
+    setInspectedSelection(selectionKey);
+    if (selectionKey && !(pathOpen && !window.matchMedia("(min-width: 1280px)").matches)) setActivePanel((current) => current === "sources" || current === "comments" ? current : "properties");
+    else if (!selectionKey) setActivePanel((current) => current === "properties" ? null : current);
+  }
   const [activeStepId, setActiveStepId] = useState<string | null>(null);
   const [status, setStatus] = useState<Exclude<SaveState, "unsaved">>("idle");
   const [uploading, setUploading] = useState(false);
@@ -1006,9 +1021,18 @@ function Editor({
     [addElement, presentation.id, t, viewportCenter],
   );
 
+  const pendingFly = useRef(0);
+  useEffect(() => () => cancelAnimationFrame(pendingFly.current), []);
   const flyTo = useCallback(
     (element: PresentationElement) => {
-      void reactFlow.fitBounds(presentationCameraBounds(element), { padding: PRESENTATION_CAMERA_PADDING, duration: CAMERA_DURATION });
+      cancelAnimationFrame(pendingFly.current);
+      // Tool panels can open in the same selection event. Let the canvas resize
+      // before fitting an explicitly requested stop; ordinary panel toggles do not pan.
+      pendingFly.current = requestAnimationFrame(() => {
+        pendingFly.current = requestAnimationFrame(() => {
+          void reactFlow.fitBounds(presentationCameraBounds(element), { padding: PRESENTATION_CAMERA_PADDING, duration: CAMERA_DURATION });
+        });
+      });
     },
     [reactFlow],
   );
@@ -1032,10 +1056,10 @@ function Editor({
         setSelectedIds(saved.selectedIds.filter((id) => elements.some((element) => element.id === id)));
         setActiveStepId(steps.some((step) => step.id === saved.activeStepId) ? saved.activeStepId : null);
         void reactFlow.setViewport(saved.viewport);
-        if (saved.selectedIds.length) setPanelOpen(true);
+        if (saved.selectedIds.length) setActivePanel(requestedElement ? "sources" : "properties");
       } else if (requestedElement) {
         const target = elements.find((element) => element.id === requestedElement);
-        if (target) { setSelectedIds([target.id]); setActiveStepId(steps.find((step) => step.elementId === target.id)?.id ?? null); flyTo(target); setPanelOpen(true); }
+        if (target) { setSelectedIds([target.id]); setActiveStepId(steps.find((step) => step.elementId === target.id)?.id ?? null); flyTo(target); setActivePanel("sources"); }
         else { toast.error(linkText("missingElement")); void reactFlow.fitView({ padding: 0.2 }); }
       } else if (resumeToken) void reactFlow.fitView({ padding: 0.2 });
     }, 0);
@@ -1173,268 +1197,31 @@ function Editor({
     </div>
   );
 
-  return (
-    <div className="flex h-[calc(100dvh-7rem)] min-h-0 min-w-0 flex-col md:h-dvh" data-testid="presentation-editor" data-presentation-workspace>
-      <header className="flex flex-wrap items-center gap-2 border-b bg-background px-3 py-2">
-        {documentResumeToken && <Button size="sm" variant="outline" onClick={() => void returnToDocument()}>{linkText("backDocument")}</Button>}
-        <div className="flex w-full min-w-0 items-center gap-2 sm:w-auto">
-        <Link
-          href={listHref}
-          className="text-sm text-muted-foreground hover:text-foreground"
-          onClick={(event) => leaveVia(event, listHref)}
-          onAuxClick={(event) => auxFlush(event, listHref)}
-        >
-          {t("presentations.title")}
-        </Link>
-        <span className="text-muted-foreground">/</span>
-        <DraftInput
-          value={title}
-          maxLength={200}
-          disabled={disabled}
-          aria-label={t("presentations.presentationTitle")}
-          className="h-8 min-w-0 flex-1 font-medium sm:w-56 sm:flex-none"
-          normalise={(raw) => raw.trim() || title}
-          onCommit={(next) => dispatch({ type: "touch", title: next })}
-        />
-        </div>
-        <span className="mx-1 hidden h-5 w-px bg-border sm:block" />
-        <Button type="button" variant="outline" size="sm" disabled={disabled || elements.length >= 500} onClick={addText}><Type className="size-3.5" />{t("presentations.addText")}</Button>
-        <Button type="button" variant="outline" size="sm" disabled={uploading || disabled || elements.length >= 500} onClick={() => imageInputRef.current?.click()}>
-          {uploading ? <Loader2 className="size-3.5 animate-spin" /> : <ImagePlus className="size-3.5" />}
-          {t("presentations.addImage")}
-        </Button>
-        <Button type="button" variant="outline" size="sm" disabled={disabled || elements.length >= 500} onClick={addFrame}><Square className="size-3.5" />{t("presentations.addFrame")}</Button>
-        <Button type="button" variant="outline" size="sm" disabled={disabled || elements.length >= 500} onClick={addShape}><Shapes className="size-3.5" />{t("presentations.addShape")}</Button>
-        <input
-          ref={imageInputRef}
-          hidden
-          type="file"
-          accept="image/png,image/jpeg,image/webp,image/svg+xml"
-          onChange={(event) => {
-            const file = event.target.files?.[0];
-            event.target.value = "";
-            if (file) void uploadImage(file);
-          }}
-        />
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-sm"
-          aria-label={t("presentations.undo")}
-          title={t("presentations.undo")}
-          disabled={disabled || !canvas.past.length}
-          onClick={() => dispatch({ type: "undo" })}
-        >
-          <Undo2 className="size-4" />
-        </Button>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-sm"
-          aria-label={t("presentations.redo")}
-          title={t("presentations.redo")}
-          disabled={disabled || !canvas.future.length}
-          onClick={() => dispatch({ type: "redo" })}
-        >
-          <Redo2 className="size-4" />
-        </Button>
-        <Button type="button" variant="ghost" size="sm" onClick={() => void reactFlow.fitView({ padding: 0.15, duration: CAMERA_DURATION })}>
-          <Maximize2 className="size-3.5" />{t("presentations.overview")}
-        </Button>
-        <Popover>
-          <PopoverTrigger render={<Button type="button" variant="ghost" size="sm" disabled={!leaseReady || restoring !== null} />}>
-            <Settings className="size-3.5" />{t("presentations.playbackSettings")}
-          </PopoverTrigger>
-          <PopoverContent className="w-72 p-3">
-            <fieldset disabled={disabled} className="space-y-3">
-            <label className="block text-xs text-muted-foreground">
-              {t("presentations.defaultStepDuration")}
-              <DraftInput
-                type="number"
-                min={0.5}
-                max={120}
-                step={0.5}
-                className="mt-1 h-8"
-                value={secondsText(settings.defaultStepDurationMs)}
-                normalise={(raw) => secondsText(parseSecondsInput(raw, STEP_DURATION_RANGE) ?? settings.defaultStepDurationMs)}
-                onCommit={(next) => updateSettings({ defaultStepDurationMs: msFromSecondsText(next) })}
-              />
-            </label>
-            <label className="flex items-center gap-2 text-xs text-muted-foreground">
-              <Checkbox checked={settings.loop} onCheckedChange={(checked) => updateSettings({ loop: checked === true })} />
-              {t("presentations.loopPlayback")}
-            </label>
-            <label className="block text-xs text-muted-foreground">
-              {t("presentations.cameraTransition")}
-              <DraftInput
-                type="number"
-                min={0.1}
-                max={5}
-                step={0.1}
-                className="mt-1 h-8"
-                value={secondsText(settings.cameraTransitionMs)}
-                normalise={(raw) => secondsText(parseSecondsInput(raw, CAMERA_TRANSITION_RANGE) ?? settings.cameraTransitionMs)}
-                onCommit={(next) => updateSettings({ cameraTransitionMs: msFromSecondsText(next) })}
-              />
-            </label>
-            <label className="block text-xs text-muted-foreground">
-              {t("presentations.cameraEasing")}
-              <select
-                className="mt-1 h-8 w-full rounded-lg border border-input bg-transparent px-2 text-sm outline-none dark:bg-input/30"
-                value={settings.cameraEasing}
-                onChange={(event) => updateSettings({ cameraEasing: event.target.value as PresentationCameraEasing })}
-              >
-                {presentationCameraEasings.map((easing) => (
-                  <option key={easing} value={easing}>{t(`presentations.easings.${easing}`)}</option>
-                ))}
-              </select>
-            </label>
-            </fieldset>
-          </PopoverContent>
-        </Popover>
-        <Button type="button" variant={panelOpen ? "secondary" : "outline"} size="sm" className="lg:hidden" aria-expanded={panelOpen} aria-controls="presentation-properties" onClick={() => setPanelOpen((open) => !open)}>
-          <PanelRight className="size-3.5" />{t("presentations.showPanel")}
-        </Button>
-        <div className="ml-auto flex flex-wrap items-center gap-2 text-xs">
-          <span role="status" aria-live="polite" className="w-full sm:w-auto">{saveIndicator}</span>
-          <Button type="button" variant="outline" size="sm" onClick={() => void flush()} disabled={saveState === "saving" || disabled}>
-            <Save className="size-3.5" />{t("presentations.save")}
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            disabled={!steps.length || restoring !== null || uploading}
-            nativeButton={false}
-            role="link"
-            // The print view reads the saved canvas, so the pending edit has to land first.
-            render={(
-              <a
-                href={printHref}
-                target="_blank"
-                rel="noopener noreferrer"
-                onClick={(event) => {
-                  event.preventDefault();
-                  flushThen(printHref, true);
-                }}
-                onAuxClick={(event) => auxFlush(event, printHref)}
-              />
-            )}
-          >
-            <FileDown className="size-3.5" />{t("presentations.exportPdf")}
-          </Button>
-          <Button
-            type="button"
-            size="sm"
-            disabled={!steps.length || restoring !== null || uploading}
-            nativeButton={false}
-            role="link"
-            // The player is server-rendered from the saved canvas, so the navigation waits
-            // for the write, rather than presenting a stale canvas. A modifier click still
-            // means "new tab" -- it just gets one with the edit in it.
-            render={(
-              <Link
-                href={presentHref}
-                onClick={(event) => leaveVia(event, presentHref)}
-                onAuxClick={(event) => auxFlush(event, presentHref)}
-              />
-            )}
-          >
-            <Play className="size-3.5" />{t("presentations.present")}
-          </Button>
-          {!steps.length && <p className="w-full text-xs text-muted-foreground">{t("presentations.addStepHint")}</p>}
-        </div>
-      </header>
-
-      {conflict && (
-        <div role="alert" className="flex flex-wrap items-center gap-2 border-b bg-destructive/10 px-3 py-2 text-sm">
-          <TriangleAlert className="size-4 shrink-0" />
-          <span className="flex-1">{t("presentations.saveConflict")}</span>
-          <Button type="button" variant="outline" size="sm" onClick={() => {
-            const url = URL.createObjectURL(new Blob([JSON.stringify(latest.current.canvas, null, 2)], { type: "application/json" }));
-            const link = document.createElement("a"); link.href = url; link.download = "presentation-draft.json"; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
-          }}>{studio("downloadDraft")}</Button>
-          <Button type="button" variant="outline" size="sm" onClick={() => window.location.reload()}>{t("presentations.reloadLatest")}</Button>
-        </div>
-      )}
-
-      {!conflict && readOnly && (
-        <div className="flex items-center gap-2 border-b border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100">
-          <Lock className="size-4 shrink-0" />
-          <span>{!canEdit ? studio("viewOnly") : !leaseReady && lockedBy === null ? t("presentations.checkingAccess") : lockedBy ? t("presentations.lockedBy", { name: lockedBy }) : t("presentations.locked")}</span>
-        </div>
-      )}
-
-      <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
-        <div ref={canvasRef} className="relative min-h-40 min-w-0 flex-1">
-          <ReactFlow
-            nodes={nodes}
-            edges={[]}
-            nodeTypes={presentationNodeTypes}
-            onNodesChange={onNodesChange}
-            colorMode={resolvedTheme === "dark" ? "dark" : "light"}
-            fitView={!resumeToken && !requestedElement}
-            fitViewOptions={{ padding: 0.2 }}
-            minZoom={0.02}
-            maxZoom={8}
-            nodesConnectable={false}
-            nodesDraggable={!disabled}
-            // Delete is handled by the editor's own shortcut, so there is one delete path.
-            deleteKeyCode={null}
-            // Shift draws a marquee on the pane and adds to the selection on an element,
-            // which is the pair of gestures every canvas tool has trained authors to expect.
-            selectionKeyCode="Shift"
-            multiSelectionKeyCode={["Shift", "Meta", "Control"]}
-            selectionOnDrag={false}
-            style={background ? { backgroundColor: background } : undefined}
-            panOnDrag
-            onPaneClick={() => setSelectedIds([])}
-            proOptions={{ hideAttribution: false }}
-          >
-            <Background gap={24} size={1} />
-            <Controls position="bottom-left" showInteractive={false} />
-            {elements.length > 3 && <MiniMap className="!hidden sm:!block" position="bottom-right" pannable zoomable maskColor="rgb(15 23 42 / 0.08)" />}
-            <SnapGuides guides={guides} />
-            {!disabled && selectionBounds && !selection.some((element) => isPresentationElementLocked(elements, element.id)) && (
-              <SelectionOverlay
-                bounds={selectionBounds}
-                // One element resizes with React Flow's own handles; a group needs its own.
-                scalable={selection.length > 1}
-                rotateLabel={t("presentations.rotateHandle")}
-                scaleLabel={t("presentations.scaleHandle")}
-                onRotate={rotateSelection}
-                onScale={scaleSelection}
-              />
-            )}
-          </ReactFlow>
-          {!elements.length && (
-            <div className="pointer-events-none absolute inset-0 grid place-items-center p-6 text-center">
-              <div>
-                <Square className="mx-auto size-8 text-muted-foreground" />
-                <p className="mt-2 text-sm font-semibold">{t("presentations.emptyCanvasTitle")}</p>
-                <p className="mt-1 max-w-xs text-xs text-muted-foreground">{t("presentations.emptyCanvasDescription")}</p>
-              </div>
-            </div>
-          )}
-        </div>
-
-        <aside id="presentation-properties" aria-label={t("presentations.showPanel")} className={cn("max-h-[45%] w-full shrink-0 overflow-y-auto border-t bg-background p-3 lg:block lg:max-h-none lg:w-80 lg:border-t-0 lg:border-l", panelOpen ? "block" : "hidden")}>
-          <PresentationSourcePanel structureDisabled={disabled} onStructureApply={(expected, proposal) => {
+  const sourceAttention = elements.filter((element) => {
+    if (!element.source) return false;
+    const preview = sourcePreviews.previews.get(sourceKey(element.source));
+    return preview && (sourceReviewStatus(element.source, preview) !== "current" || (element.type === "frame" && preview.snapshot?.headingStructure && !presentationValuesEqual(element.source.approvedStructure, preview.snapshot.headingStructure)));
+  }).length;
+  const sourcePanel = (          <PresentationSourcePanel structureDisabled={disabled} onStructureApply={(expected, proposal) => {
             if (disabled) return;
             dispatch({ type: "edit", at: Date.now(), separate: true, elements: (current) => applyStructureProposal(current, expected, proposal) });
             const target = proposal.elements.find((element) => element.id === (selected?.id ?? proposal.changes[0].elementId));
             if (target) flyTo(target);
           }} previews={sourcePreviews} elements={elements} selected={selected} disabled={disabled || Boolean(selected && isPresentationElementLocked(elements, selected.id))} onChange={(source) => { if (selected) updateElement(selected.id, (element) => ({ ...element, source })); }} onOpen={openDocument} onReview={(id, source) => updateElement(id, (element) => element.source?.pageId === source.pageId && element.source.sectionId === source.sectionId ? { ...element, source } : element)} onSelect={(id) => { setSelectedIds([id]); const element = elements.find((item) => item.id === id); if (element) flyTo(element); }} />
-          <PresentationLibraryPanel id={presentation.id} selectedId={selected?.id} canEdit={canEdit && !disabled} onSelect={(id) => { setSelectedIds([id]); const element = elements.find((element) => element.id === id); if (element) flyTo(element); }} flush={flush}
+);
+  const libraryPanel = (          <PresentationLibraryPanel section={activePanel === "assets" ? "assets" : activePanel === "comments" ? "comments" : "design"} id={presentation.id} selectedId={selected?.id} canEdit={canEdit && !disabled} onSelect={(id) => { setSelectedIds([id]); const element = elements.find((element) => element.id === id); if (element) flyTo(element); }} flush={flush}
             onTheme={(theme) => { commitElements((current) => current.map((element) => element.type === "text" ? { ...element, content: { ...element.content, color: theme.foreground, font: theme.font } } : element.type === "frame" ? { ...element, content: { ...element.content, color: theme.accent } } : element)); dispatch({ type: "touch", background: theme.background }); }}
             onTemplate={(snapshot) => { dispatch({ type: "edit", at: Date.now(), elements: () => snapshot.elements, steps: () => snapshot.steps }); dispatch({ type: "touch", background: snapshot.background, settings: snapshot.settings }); setSelectedIds([]); }}
             onAsset={(attachmentId, alt) => { const { x, y } = viewportCenter(); addElement({ id: createId(), type: "image", x, y, width: 360, height: 240, rotation: 0, content: { attachmentId, alt } }); }}
             onIcon={(name) => { const { x, y } = viewportCenter(); addElement({ id: createId(), type: "icon", x, y, width: 100, height: 100, rotation: 0, content: { name, color: "#6366f1" } }); }} />
-          <fieldset disabled={disabled} className="min-w-0">
-          <PresentationStudioInspector elements={elements} selectedIds={selectedIds} activeStep={activeStep}
-            onElements={commitElements} onSelect={setSelectedIds} onUpdate={(element) => updateElement(element.id, () => element)} onSteps={commitSteps}
-            onAdd={addStudioElement} onUpload={(file) => void uploadMedia(file)} disabled={disabled || uploading} />
-          <h2 className="text-xs font-semibold tracking-wide uppercase">{t("presentations.path")}</h2>
+);
+  const sharingPanel = (          <PresentationLibraryPanel section="sharing" id={presentation.id} selectedId={selected?.id} canEdit={canEdit && !disabled} onSelect={(id) => { setSelectedIds([id]); const element = elements.find((element) => element.id === id); if (element) flyTo(element); }} flush={flush}
+            onTheme={(theme) => { commitElements((current) => current.map((element) => element.type === "text" ? { ...element, content: { ...element.content, color: theme.foreground, font: theme.font } } : element.type === "frame" ? { ...element, content: { ...element.content, color: theme.accent } } : element)); dispatch({ type: "touch", background: theme.background }); }}
+            onTemplate={(snapshot) => { dispatch({ type: "edit", at: Date.now(), elements: () => snapshot.elements, steps: () => snapshot.steps }); dispatch({ type: "touch", background: snapshot.background, settings: snapshot.settings }); setSelectedIds([]); }}
+            onAsset={(attachmentId, alt) => { const { x, y } = viewportCenter(); addElement({ id: createId(), type: "image", x, y, width: 360, height: 240, rotation: 0, content: { attachmentId, alt } }); }}
+            onIcon={(name) => { const { x, y } = viewportCenter(); addElement({ id: createId(), type: "icon", x, y, width: 100, height: 100, rotation: 0, content: { name, color: "#6366f1" } }); }} />
+);
+  const pathPanel = (<>
           <p className="mt-1 text-xs text-muted-foreground">{t("presentations.pathDescription")}</p>
           <Button type="button" variant="outline" size="sm" className="mt-2 w-full" disabled={!selected || disabled || steps.length >= 500} onClick={addStep}>
             <Plus className="size-3.5" />{t("presentations.addStep")}
@@ -1522,6 +1309,201 @@ function Editor({
             </section>
           )}
 
+</>);
+  return (
+    <div className="flex h-[calc(100dvh-7rem)] min-h-0 min-w-0 flex-col md:h-dvh" data-testid="presentation-editor" data-presentation-workspace>
+      <header className="flex flex-wrap items-center gap-2 border-b border-border/60 bg-background px-4 py-3">
+        {documentResumeToken && <Button size="sm" variant="outline" onClick={() => void returnToDocument()}>{linkText("backDocument")}</Button>}
+        <div className="flex w-full min-w-0 items-center gap-2 sm:w-auto sm:flex-1">
+        <Link
+          href={listHref}
+          className="text-sm text-muted-foreground hover:text-foreground"
+          onClick={(event) => leaveVia(event, listHref)}
+          onAuxClick={(event) => auxFlush(event, listHref)}
+        >
+          {t("presentations.title")}
+        </Link>
+        <span className="text-muted-foreground">/</span>
+        <DraftInput
+          value={title}
+          maxLength={200}
+          disabled={disabled}
+          aria-label={t("presentations.presentationTitle")}
+          className="h-8 min-w-0 flex-1 border-transparent bg-transparent font-medium shadow-none hover:border-input sm:w-auto sm:max-w-xl sm:flex-1"
+          normalise={(raw) => raw.trim() || title}
+          onCommit={(next) => dispatch({ type: "touch", title: next })}
+        />
+        </div>
+        <div className="flex w-full items-center justify-end gap-2 text-xs sm:ml-auto sm:w-auto">
+          <span role="status" aria-live="polite" className="mr-auto sm:mr-0">{saveIndicator}</span>
+          {saveState === "error" && <Button size="sm" variant="ghost" onClick={() => void flush()} disabled={disabled}><Save className="size-3.5" />{t("presentations.save")}</Button>}
+          <Button size="sm" variant="ghost" aria-label={t("workspace.share")} onClick={() => setWorkspaceDialog("sharing")}><Share2 className="size-4" /><span className="hidden sm:inline">{t("workspace.share")}</span></Button>
+          <DropdownMenu><DropdownMenuTrigger render={<Button size="icon-sm" variant="ghost" aria-label={t("workspace.actions")} />}><MoreHorizontal className="size-4" /></DropdownMenuTrigger><DropdownMenuContent align="end">
+            <DropdownMenuItem disabled={!steps.length || restoring !== null || uploading} onClick={() => flushThen(printHref, true)}><FileDown />{t("presentations.exportPdf")}</DropdownMenuItem>
+            <DropdownMenuItem onClick={() => setWorkspaceDialog("history")}><History />{t("presentations.history")}</DropdownMenuItem>
+            <DropdownMenuItem onClick={() => setWorkspaceDialog("playback")}><Settings />{t("presentations.playbackSettings")}</DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem disabled={disabled} onClick={() => void flush()}><Save />{t("presentations.save")}</DropdownMenuItem>
+          </DropdownMenuContent></DropdownMenu>
+          <Button
+            type="button"
+            size="sm"
+            disabled={!steps.length || restoring !== null || uploading}
+            nativeButton={false}
+            role="link"
+            // The player is server-rendered from the saved canvas, so the navigation waits
+            // for the write, rather than presenting a stale canvas. A modifier click still
+            // means "new tab" -- it just gets one with the edit in it.
+            render={(
+              <Link
+                href={presentHref}
+                onClick={(event) => leaveVia(event, presentHref)}
+                onAuxClick={(event) => auxFlush(event, presentHref)}
+              />
+            )}
+          >
+            <Play className="size-3.5" />{t("presentations.present")}
+          </Button>
+        </div>
+      </header>
+      <div data-testid="presentation-toolbar" className="flex flex-wrap items-center gap-1 border-b border-border/60 bg-background px-3 py-2">
+        <Button size="sm" variant={pathOpen ? "secondary" : "ghost"} aria-expanded={pathOpen} onClick={() => { setPathOpen((value) => !value); if (!window.matchMedia("(min-width: 1280px)").matches) setActivePanel(null); }}><PanelLeft className="size-4" />{t("presentations.path")}</Button>
+        <span className="mx-1 h-5 w-px bg-border/60" />
+        <Button type="button" variant="ghost" size="sm" disabled={disabled || elements.length >= 500} onClick={addText}><Type className="size-3.5" />{t("presentations.addText")}</Button>
+        <Button type="button" variant="ghost" size="sm" disabled={uploading || disabled || elements.length >= 500} onClick={() => imageInputRef.current?.click()}>
+          {uploading ? <Loader2 className="size-3.5 animate-spin" /> : <ImagePlus className="size-3.5" />}
+          {t("presentations.addImage")}
+        </Button>
+        <Button type="button" variant="ghost" size="sm" disabled={disabled || elements.length >= 500} onClick={addFrame}><Square className="size-3.5" />{t("presentations.addFrame")}</Button>
+        <DropdownMenu><DropdownMenuTrigger render={<Button size="sm" variant="ghost" disabled={disabled || uploading || elements.length >= 500} />}>{t("editor.toolbar.insert")}</DropdownMenuTrigger><DropdownMenuContent>
+          <DropdownMenuItem onClick={addShape}><Shapes />{t("presentations.addShape")}</DropdownMenuItem>
+          <DropdownMenuItem onClick={() => addStudioElement("chart")}>{studio("addChart")}</DropdownMenuItem>
+          <DropdownMenuItem onClick={() => addStudioElement("icon")}>{studio("addIcon")}</DropdownMenuItem>
+          <DropdownMenuItem onClick={() => mediaInputRef.current?.click()}>{studio("uploadMedia")}</DropdownMenuItem>
+        </DropdownMenuContent></DropdownMenu>
+        <input ref={mediaInputRef} aria-label={studio("uploadMedia")} hidden type="file" accept="video/mp4,video/webm,audio/mpeg,audio/mp4,audio/ogg,audio/wav" onChange={(event) => { const file = event.target.files?.[0]; if (file) void uploadMedia(file); event.target.value = ""; }} />
+        <input
+          ref={imageInputRef}
+          hidden
+          type="file"
+          accept="image/png,image/jpeg,image/webp,image/svg+xml"
+          onChange={(event) => {
+            const file = event.target.files?.[0];
+            event.target.value = "";
+            if (file) void uploadImage(file);
+          }}
+        />
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-sm"
+          aria-label={t("presentations.undo")}
+          title={t("presentations.undo")}
+          disabled={disabled || !canvas.past.length}
+          onClick={() => dispatch({ type: "undo" })}
+        >
+          <Undo2 className="size-4" />
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-sm"
+          aria-label={t("presentations.redo")}
+          title={t("presentations.redo")}
+          disabled={disabled || !canvas.future.length}
+          onClick={() => dispatch({ type: "redo" })}
+        >
+          <Redo2 className="size-4" />
+        </Button>
+
+        <DropdownMenu><DropdownMenuTrigger render={<Button size="sm" variant={activePanel ? "secondary" : "ghost"} className="ml-auto" />}><PanelRight className="size-4" />{t("workspace.tools")}</DropdownMenuTrigger><DropdownMenuContent align="end">
+          {(["properties", "sources", "design", "assets", "comments"] as const).map((panel) => <DropdownMenuItem key={panel} onClick={() => { setActivePanel(panel); if (!window.matchMedia("(min-width: 1280px)").matches) setPathOpen(false); }}>{t(`workspace.${panel}`)}</DropdownMenuItem>)}
+        </DropdownMenuContent></DropdownMenu>
+      </div>
+      {(sourcePreviews.error || sourceAttention > 0) && <button type="button" onClick={() => setActivePanel("sources")} className="flex items-center gap-2 border-b bg-amber-50 px-4 py-2 text-left text-xs text-amber-900 dark:bg-amber-950/30 dark:text-amber-200"><TriangleAlert className="size-3.5 shrink-0" /><span role="status">{sourcePreviews.error ? linkText("previewFailed") : linkText("needsReview", { count: sourceAttention })}</span></button>}
+
+      {conflict && (
+        <div role="alert" className="flex flex-wrap items-center gap-2 border-b bg-destructive/10 px-3 py-2 text-sm">
+          <TriangleAlert className="size-4 shrink-0" />
+          <span className="flex-1">{t("presentations.saveConflict")}</span>
+          <Button type="button" variant="outline" size="sm" onClick={() => {
+            const url = URL.createObjectURL(new Blob([JSON.stringify(latest.current.canvas, null, 2)], { type: "application/json" }));
+            const link = document.createElement("a"); link.href = url; link.download = "presentation-draft.json"; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+          }}>{studio("downloadDraft")}</Button>
+          <Button type="button" variant="outline" size="sm" onClick={() => window.location.reload()}>{t("presentations.reloadLatest")}</Button>
+        </div>
+      )}
+
+      {!conflict && readOnly && (
+        <div className="flex items-center gap-2 border-b border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100">
+          <Lock className="size-4 shrink-0" />
+          <span>{!canEdit ? studio("viewOnly") : !leaseReady && lockedBy === null ? t("presentations.checkingAccess") : lockedBy ? t("presentations.lockedBy", { name: lockedBy }) : t("presentations.locked")}</span>
+        </div>
+      )}
+
+      <div className="flex min-h-0 flex-1">
+        <WorkspacePanel title={t("presentations.path")} open={pathOpen} onClose={() => setPathOpen(false)} side="left" narrow className="h-full max-h-full overflow-y-auto"><fieldset disabled={disabled} className="min-w-0">{pathPanel}</fieldset></WorkspacePanel>
+        <div ref={canvasRef} className="relative min-h-40 min-w-0 flex-1 bg-muted/30">
+          <div className="absolute right-3 bottom-3 z-10 rounded-lg border bg-background shadow-sm">        <Button type="button" variant="ghost" size="sm" onClick={() => void reactFlow.fitView({ padding: 0.15, duration: CAMERA_DURATION })}>
+          <Maximize2 className="size-3.5" />{t("presentations.overview")}
+        </Button>
+</div>
+          <ReactFlow
+            nodes={nodes}
+            edges={[]}
+            nodeTypes={presentationNodeTypes}
+            onNodesChange={onNodesChange}
+            colorMode={resolvedTheme === "dark" ? "dark" : "light"}
+            fitView={!resumeToken && !requestedElement}
+            fitViewOptions={{ padding: 0.2 }}
+            minZoom={0.02}
+            maxZoom={8}
+            nodesConnectable={false}
+            nodesDraggable={!disabled}
+            // Delete is handled by the editor's own shortcut, so there is one delete path.
+            deleteKeyCode={null}
+            // Shift draws a marquee on the pane and adds to the selection on an element,
+            // which is the pair of gestures every canvas tool has trained authors to expect.
+            selectionKeyCode="Shift"
+            multiSelectionKeyCode={["Shift", "Meta", "Control"]}
+            selectionOnDrag={false}
+            style={background ? { backgroundColor: background } : undefined}
+            panOnDrag
+            onPaneClick={() => setSelectedIds([])}
+            proOptions={{ hideAttribution: false }}
+          >
+            <Background gap={24} size={1} />
+            <Controls position="bottom-left" showInteractive={false} />
+            {elements.length > 3 && <MiniMap className="!hidden sm:!block" position="top-right" pannable zoomable maskColor="rgb(15 23 42 / 0.08)" />}
+            <SnapGuides guides={guides} />
+            {!disabled && selectionBounds && !selection.some((element) => isPresentationElementLocked(elements, element.id)) && (
+              <SelectionOverlay
+                bounds={selectionBounds}
+                // One element resizes with React Flow's own handles; a group needs its own.
+                scalable={selection.length > 1}
+                rotateLabel={t("presentations.rotateHandle")}
+                scaleLabel={t("presentations.scaleHandle")}
+                onRotate={rotateSelection}
+                onScale={scaleSelection}
+              />
+            )}
+          </ReactFlow>
+          {!elements.length && (
+            <div className="pointer-events-none absolute inset-0 grid place-items-center p-6 text-center">
+              <div>
+                <Square className="mx-auto size-8 text-muted-foreground" />
+                <p className="mt-2 text-sm font-semibold">{t("presentations.emptyCanvasTitle")}</p>
+                <p className="mt-1 max-w-xs text-xs text-muted-foreground">{t("presentations.emptyCanvasDescription")}</p>
+              </div>
+            </div>
+          )}
+        </div>
+
+        <WorkspacePanel title={t(`workspace.${activePanel ?? "properties"}`)} open={activePanel !== null} onClose={() => setActivePanel(null)} className="h-full max-h-full overflow-y-auto">
+          <div hidden={activePanel !== "sources"}>{sourcePanel}</div>
+          <div hidden={!["design", "assets", "comments"].includes(activePanel ?? "")}>{libraryPanel}</div>
+          <div hidden={activePanel !== "properties"}>
+          <fieldset disabled={disabled} className="min-w-0">
           {selection.length > 1 && (
             <section className="mt-5 border-t pt-4">
               <div className="flex items-center justify-between gap-1">
@@ -1775,6 +1757,9 @@ function Editor({
             </section>
           )}
 
+          <PresentationStudioInspector elements={elements} selectedIds={selectedIds} activeStep={activeStep}
+            onElements={commitElements} onSelect={setSelectedIds} onUpdate={(element) => updateElement(element.id, () => element)} onSteps={commitSteps}
+            disabled={disabled || uploading} />
           <section className="mt-5 border-t pt-4">
             <h2 className="text-xs font-semibold tracking-wide uppercase">{t("presentations.canvas")}</h2>
             <div className="mt-3">
@@ -1784,7 +1769,15 @@ function Editor({
             </div>
           </section>
 
-          <section className="mt-5 border-t pt-4">
+          </fieldset>
+          </div>
+        </WorkspacePanel>
+      </div>
+      <Dialog open={workspaceDialog !== null} onOpenChange={(open) => { if (!open) setWorkspaceDialog(null); }}>
+        <DialogContent className="max-h-[85dvh] overflow-y-auto sm:max-w-lg" aria-describedby={undefined}>
+          <DialogHeader><DialogTitle>{workspaceDialog === "sharing" ? studio("sharing") : workspaceDialog === "history" ? t("presentations.history") : t("presentations.playbackSettings")}</DialogTitle></DialogHeader>
+          {workspaceDialog === "sharing" && sharingPanel}
+          {workspaceDialog === "history" && <fieldset disabled={disabled}>          <section className="mt-5 border-t pt-4">
             <h2 className="flex items-center gap-1.5 text-xs font-semibold tracking-wide uppercase">
               <History className="size-3.5" />{t("presentations.history")}
             </h2>
@@ -1815,6 +1808,7 @@ function Editor({
                           setSelectedIds([]);
                           setActiveStepId(null);
                           setStatus("saved");
+                          setWorkspaceDialog(null);
                           router.refresh();
                         } catch {
                           toast.error(t("presentations.restoreFailed"));
@@ -1831,9 +1825,54 @@ function Editor({
               </ul>
             )}
           </section>
-          </fieldset>
-        </aside>
-      </div>
+</fieldset>}
+          {workspaceDialog === "playback" && <>            <fieldset disabled={disabled} className="space-y-3">
+            <label className="block text-xs text-muted-foreground">
+              {t("presentations.defaultStepDuration")}
+              <DraftInput
+                type="number"
+                min={0.5}
+                max={120}
+                step={0.5}
+                className="mt-1 h-8"
+                value={secondsText(settings.defaultStepDurationMs)}
+                normalise={(raw) => secondsText(parseSecondsInput(raw, STEP_DURATION_RANGE) ?? settings.defaultStepDurationMs)}
+                onCommit={(next) => updateSettings({ defaultStepDurationMs: msFromSecondsText(next) })}
+              />
+            </label>
+            <label className="flex items-center gap-2 text-xs text-muted-foreground">
+              <Checkbox checked={settings.loop} onCheckedChange={(checked) => updateSettings({ loop: checked === true })} />
+              {t("presentations.loopPlayback")}
+            </label>
+            <label className="block text-xs text-muted-foreground">
+              {t("presentations.cameraTransition")}
+              <DraftInput
+                type="number"
+                min={0.1}
+                max={5}
+                step={0.1}
+                className="mt-1 h-8"
+                value={secondsText(settings.cameraTransitionMs)}
+                normalise={(raw) => secondsText(parseSecondsInput(raw, CAMERA_TRANSITION_RANGE) ?? settings.cameraTransitionMs)}
+                onCommit={(next) => updateSettings({ cameraTransitionMs: msFromSecondsText(next) })}
+              />
+            </label>
+            <label className="block text-xs text-muted-foreground">
+              {t("presentations.cameraEasing")}
+              <select
+                className="mt-1 h-8 w-full rounded-lg border border-input bg-transparent px-2 text-sm outline-none dark:bg-input/30"
+                value={settings.cameraEasing}
+                onChange={(event) => updateSettings({ cameraEasing: event.target.value as PresentationCameraEasing })}
+              >
+                {presentationCameraEasings.map((easing) => (
+                  <option key={easing} value={easing}>{t(`presentations.easings.${easing}`)}</option>
+                ))}
+              </select>
+            </label>
+            </fieldset>
+</>}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

@@ -38,6 +38,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 type Props = {
+  embedded?: boolean;
   pageId: string;
   editor: Editor;
   settings: DocumentSettingsV1;
@@ -69,6 +70,7 @@ function Toggle({ checked, onChange, label }: { checked: boolean; onChange: (che
 }
 
 export function DocumentLayoutPanel({
+  embedded = false,
   pageId,
   editor,
   settings,
@@ -234,7 +236,7 @@ export function DocumentLayoutPanel({
   }
 
   return <aside data-testid="document-layout-panel" className="sticky top-14 max-h-[calc(100vh-5rem)] overflow-y-auto rounded-xl border bg-background/96 shadow-sm">
-    <div className="flex items-start gap-2 border-b px-3 py-3">
+    {!embedded && <div className="flex items-start gap-2 border-b px-3 py-3">
       <div className="min-w-0 flex-1">
         <p className="text-xs font-semibold">{t("panelTitle")}</p>
         <p className="mt-0.5 text-[11px] leading-4 text-muted-foreground">{t("panelDescription")}</p>
@@ -242,7 +244,7 @@ export function DocumentLayoutPanel({
       <Button type="button" size="icon-sm" variant="ghost" aria-label={t("hideLayout")} title={t("hideLayout")} onClick={onClose}>
         <X />
       </Button>
-    </div>
+    </div>}
     <Tabs defaultValue="page" className="gap-0">
       <TabsList className="mx-2 mt-2 grid grid-cols-3">
         <TabsTrigger value="page">{t("tabs.page")}</TabsTrigger>

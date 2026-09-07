@@ -158,15 +158,9 @@ export function EditorSearchPanel({ editor, open, onOpenChange, initialQuery = "
   </div>;
 }
 
-export function EditorOutlineSheet({ editor, items, activePosition, open, onOpenChange }: { editor: Editor; items: OutlineItem[]; activePosition: number | null; open: boolean; onOpenChange: (open: boolean) => void }) {
+export function EditorOutlineSheet({ editor, items, activePosition, open, onOpenChange, embedded = false }: { embedded?: boolean; editor: Editor; items: OutlineItem[]; activePosition: number | null; open: boolean; onOpenChange: (open: boolean) => void }) {
   const t = useTranslations("wiki.editor.outline");
-  return <Sheet open={open} onOpenChange={onOpenChange}>
-    <SheetContent data-testid="editor-outline" side="right" className="w-[min(88vw,22rem)]">
-      <SheetHeader className="border-b">
-        <SheetTitle>{t("title")}</SheetTitle>
-        <SheetDescription>{t("description")}</SheetDescription>
-      </SheetHeader>
-      <nav className="min-h-0 flex-1 overflow-y-auto p-3" aria-label={t("title")}>
+  const navigation = (      <nav className="min-h-0 flex-1 overflow-y-auto p-3" aria-label={t("title")}>
         {items.length ? items.map((item) => <button key={`${item.position}-${item.id}`} type="button" className={cn("block w-full rounded-md py-1.5 pr-2 text-left text-sm transition-colors hover:bg-accent focus-visible:outline-2", activePosition === item.position && "bg-indigo-50 font-medium text-indigo-700 dark:bg-indigo-950/40 dark:text-indigo-300")} style={{ paddingLeft: `${0.5 + (item.level - 1) * 0.85}rem` }} onClick={() => {
           const heading = editor.view.nodeDOM(item.position) as HTMLElement | null;
           const top = heading?.getBoundingClientRect().top ?? 0;
@@ -174,7 +168,15 @@ export function EditorOutlineSheet({ editor, items, activePosition, open, onOpen
           editor.chain().focus().setTextSelection(item.position + 1).run();
           onOpenChange(false);
         }}>{item.text || t("untitled")}</button>) : <p className="p-3 text-sm text-muted-foreground">{t("empty")}</p>}
-      </nav>
+      </nav>);
+  if (embedded) return <div data-testid="editor-outline">{navigation}</div>;
+  return <Sheet open={open} onOpenChange={onOpenChange}>
+    <SheetContent data-testid="editor-outline" side="right" className="w-[min(88vw,22rem)]">
+      <SheetHeader className="border-b">
+        <SheetTitle>{t("title")}</SheetTitle>
+        <SheetDescription>{t("description")}</SheetDescription>
+      </SheetHeader>
+      {navigation}
     </SheetContent>
   </Sheet>;
 }

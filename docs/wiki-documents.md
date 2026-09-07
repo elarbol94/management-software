@@ -1,5 +1,9 @@
 # Wiki document stability
 
+## Workspace tools
+
+The document opens with its utility panel closed. **Tools / Werkzeuge** opens Outline, Comments, Layout (in document mode), or Details in the same panel. Selecting an image opens its properties. Switching tools keeps comment drafts; on narrower screens the panel is a dismissible drawer. The mode switch is also under Tools. Save status appears beside the document title; export and history are in the header actions menu. Paper size, pagination and exported typography are independent of the workspace styling.
+
 For image insertion, captions, references, figure lists, live folder links and
 export behavior, see [wiki-figures.md](wiki-figures.md).
 

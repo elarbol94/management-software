@@ -1141,3 +1141,56 @@
 .wiki-presentation-section-badge:hover { color: var(--foreground); background: var(--accent); }
 .wiki-presentation-section-badge:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
 [data-linked-section-focus="true"] { outline: 2px solid var(--ring); outline-offset: 4px; border-radius: 4px; }
+
+/* Wiki tool surfaces are independent of document content and printed layouts. */
+.wiki-calm-document .wiki-document-workspace {
+  border: 0;
+  border-radius: 0.75rem;
+  background: color-mix(in oklab, var(--muted) 65%, var(--background));
+  padding: clamp(1rem, 3vw, 3rem);
+}
+.wiki-calm-document .wiki-note-workspace {
+  background: color-mix(in oklab, var(--muted) 35%, var(--background));
+  border-radius: 0.75rem;
+  min-height: 65vh;
+}
+.wiki-note-workspace > .wiki-editor-surface {
+  max-width: 52rem;
+  margin-inline: auto;
+}
+.workspace-panel-body :is([data-testid="document-layout-panel"], [data-testid="figure-panel"]) {
+  position: static;
+  max-height: none;
+  width: 100%;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+.workspace-panel-body [data-testid="document-layout-panel"] > div:first-child,
+.workspace-panel-body [data-testid="figure-panel"] > div:first-child {
+  padding-top: 0;
+}
+[data-presentation-workspace] .workspace-panel-body input,
+[data-presentation-workspace] .workspace-panel-body textarea {
+  max-width: 100%;
+}
+
+/* Authored ink colors need a light writing surface in either interface theme. */
+.dark .wiki-calm-document .wiki-note-workspace {
+  background: #f8fafc;
+  --background: #fff;
+  --foreground: #172033;
+  --muted-foreground: #64748b;
+  --border: #e2e8f0;
+  --accent: #eef2ff;
+}
+
+[data-presentation-workspace] {
+  --xy-controls-button-background-color: var(--background);
+  --xy-controls-button-background-color-hover: var(--accent);
+  --xy-controls-button-color: var(--foreground);
+  --xy-controls-button-color-hover: var(--foreground);
+  --xy-controls-button-border-color: var(--border);
+  --xy-minimap-background-color: var(--background);
+  --xy-minimap-node-background-color: var(--muted-foreground);
+}

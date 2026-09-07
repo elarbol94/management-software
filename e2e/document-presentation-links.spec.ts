@@ -1,4 +1,14 @@
 import { expect, test, type Page } from "@playwright/test";
+test.use({ viewport: { width: 1440, height: 1000 } });
+async function sourcesTool(page: Page) {
+  await page.getByRole("button", { name: "Werkzeuge", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Dokumentquellen", exact: true }).click();
+}
+async function showPath(page: Page) {
+  const button = page.getByRole("button", { name: "Weg", exact: true });
+  if (await button.getAttribute("aria-expanded") !== "true") await button.click();
+}
+
 
 async function login(page: Page) {
   const credentials = { username: "admin", password: "super-secret-1" };
@@ -31,7 +41,8 @@ test("document sections and presentation elements support saved round trips and 
   expect((await (await initialSave).json()).saved).toBe(true);
   await expect(page.getByRole("status").filter({ hasText: "Gespeichert" })).toBeVisible();
   await page.goto("/wiki/presentations");
-  await page.getByRole("button", { name: "Aus Wiki-Seite", exact: true }).click();
+  await page.getByRole("button", { name: "Neu", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Aus Wiki-Seite", exact: true }).click();
   const dialog = page.getByRole("dialog");
   await dialog.getByRole("combobox").click();
   await page.getByRole("option", { name: docTitle, exact: true }).click();
@@ -42,7 +53,9 @@ test("document sections and presentation elements support saved round trips and 
   const deck = await response.json();
   const frame = deck.elements.find((element: { source?: { sectionId: string } }) => element.source?.sectionId === "forecast");
   expect(frame).toBeTruthy();
+  await showPath(page);
   await page.getByRole("button", { name: "Forecast", exact: true }).click();
+  await sourcesTool(page);
   const source = page.getByRole("region", { name: "Dokumentquelle" });
   await expect(source.getByRole("button", { name: "Dokumentabschnitt öffnen" })).toBeVisible();
   await expect(source.getByText("Forecast details", { exact: false })).toBeVisible();
@@ -125,13 +138,16 @@ test("document sections and presentation elements support saved round trips and 
     for (const preview of result.previews) if (preview.sectionId === "budget" && preview.snapshot) preview.snapshot.headingTitle = "Background rename";
     await route.fulfill({ response, json: result });
   });
+  await page.getByRole("button", { name: "Werkzeuge", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Eigenschaften", exact: true }).click();
   await page.getByRole("textbox", { name: "Beschriftung", exact: true }).fill("Custom forecast");
   // Simulate another author's heading update while this field still has focus.
   await page.evaluate(() => window.dispatchEvent(new Event("focus")));
-  await expect(source.getByText(`${docTitle} › Background rename`, { exact: true })).toBeVisible();
+  await expect(page.locator('section[aria-label="Dokumentquelle"]').getByText(`${docTitle} › Background rename`, { exact: true })).toHaveCount(1);
   await expect(page.getByRole("textbox", { name: "Beschriftung", exact: true })).toHaveValue("Custom forecast");
   await page.unroute("**/api/wiki/presentation-sources");
   await page.getByRole("textbox", { name: "Beschriftung", exact: true }).press("Tab");
+  await sourcesTool(page);
   await expect(source.getByRole("checkbox", { name: "Dokumentüberschrift als Rahmentitel verwenden" })).not.toBeChecked();
   await source.getByRole("button", { name: "Dokumentquellen aktualisieren", exact: true }).click();
   await expect(page.locator(`.react-flow__node[data-id="${frame.id}"]`)).toContainText("Custom forecast");
@@ -177,7 +193,10 @@ test("collapsed document sections remove hidden media, nested headings and page-
       { type: "paragraph", content: [{ type: "text", text: "Visible content" }] },
     ] });
   });
-  if (!await page.locator(".wiki-document-canvas").count()) await page.getByTestId("document-mode-toggle").click();
+  if (!await page.locator(".wiki-document-canvas").count()) {
+    await page.getByRole("button", { name: "Werkzeuge", exact: true }).click();
+    await page.getByTestId("document-mode-toggle").click();
+  }
   await expect(editor.locator(".wiki-document-auto-page-break").first()).toBeAttached();
   await editor.locator("#fold").click({ position: { x: 60, y: 12 } });
   await expect(editor.locator("#fold")).toHaveAttribute("data-collapsed", "true");
@@ -220,7 +239,8 @@ test("heading structure changes require approval and preserve playback order thr
   expect((await (await initialSave).json()).saved).toBe(true);
   await expect(page.getByRole("status").filter({ hasText: "Gespeichert" })).toBeVisible();
   await page.goto("/wiki/presentations");
-  await page.getByRole("button", { name: "Aus Wiki-Seite", exact: true }).click();
+  await page.getByRole("button", { name: "Neu", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Aus Wiki-Seite", exact: true }).click();
   await page.getByRole("dialog").getByRole("combobox").click();
   await page.getByRole("option", { name: title, exact: true }).click();
   await page.getByRole("dialog").getByRole("button", { name: "Neu", exact: true }).click();
@@ -231,7 +251,9 @@ test("heading structure changes require approval and preserve playback order thr
   const promoted = before.elements.find((e) => e.source?.sectionId === "promote")!;
   const following = before.elements.find((e) => e.source?.sectionId === "following")!;
   const outside = before.elements.find((e) => e.source?.sectionId === "outside")!;
+  await showPath(page);
   await page.getByRole("button", { name: "Promote me", exact: true }).click();
+  await sourcesTool(page);
   const source = page.getByRole("region", { name: "Dokumentquelle" });
   await source.getByRole("button", { name: "Dokumentabschnitt öffnen", exact: true }).click();
   await page.waitForURL(/\/wiki\/pages\/.*section=promote/);

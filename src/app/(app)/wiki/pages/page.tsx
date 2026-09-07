@@ -8,14 +8,13 @@ export default async function PagesIndex() {
   const currentUser = await requireUser();
   const t = await getTranslations("wiki");
   const pages = listWorkspacePages(currentUser.id);
-  return <div className="mx-auto max-w-5xl p-5 md:p-8">
-    <header className="mb-7 flex flex-wrap items-end justify-between gap-4 border-b pb-5">
+  return <div className="mx-auto max-w-7xl px-5 py-8 md:px-10 md:py-10">
+    <header className="mb-8 flex flex-wrap items-center justify-between gap-4">
       <div>
-        <p className="mb-1 text-xs font-semibold tracking-[0.16em] text-indigo-600 uppercase">{t("knowledgeBase")}</p>
-        <h1 className="text-3xl font-semibold tracking-tight">{t("documents")}</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">{t("documents")}</h1>
         <p className="mt-1 text-sm text-muted-foreground">{t("documentsDescription")}</p>
       </div>
-      <QuickNoteButton />
+      <QuickNoteButton label={t("presentations.new")} />
     </header>
     <PageTreeList pages={pages} />
   </div>;

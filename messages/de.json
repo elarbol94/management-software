@@ -1816,6 +1816,22 @@
     }
   },
   "wiki": {
+    "workspace": {
+      "share": "Freigeben",
+      "tools": "Werkzeuge",
+      "closePanel": "Seitenbereich schließen",
+      "textStyle": "Textstil",
+      "actions": "Aktionen",
+      "properties": "Eigenschaften",
+      "sources": "Dokumentquellen",
+      "design": "Design",
+      "assets": "Medien",
+      "comments": "Kommentare",
+      "blankOrTemplate": "Leer oder aus Vorlage",
+      "searchPresentations": "Präsentationen suchen…",
+      "itemActions": "Aktionen für {title}",
+      "moreTags": "{count} weitere Tags"
+    },
     "title": "Wiki",
     "newPage": "Neue Seite",
     "newSubpage": "Unterseite anlegen",

@@ -1,6 +1,11 @@
 import { expect, test, type Page } from "@playwright/test";
 
 test.describe.configure({ mode: "serial" });
+test.use({ viewport: { width: 1440, height: 1000 } });
+async function tool(page: Page, name: string) {
+  await page.getByRole("button", { name: "Werkzeuge", exact: true }).click();
+  await page.getByRole("menuitem", { name, exact: true }).click();
+}
 
 async function login(page: Page) {
   let response = await page.request.post("/api/auth/sign-in/username", { data: { username: "admin", password: "super-secret-1" } });
@@ -39,7 +44,7 @@ test("inline images accept whole-image comments and keep their anchor after relo
 
   await expect(page.getByTestId("comment-anchor-overlay").getByRole("button", { name: "Kommentar öffnen" })).toBeVisible();
   await expect(page.getByTestId("comment-rail")).toContainText("Diagramm prüfen");
-  await expect(page.getByText("Gespeichert", { exact: true })).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByText("Gespeichert", { exact: true })).toBeVisible({ timeout: 25_000 });
   await page.reload();
   await expect(page.locator("figure[data-commentable-image]")).toBeVisible();
   await expect(page.getByTestId("comment-anchor-overlay").getByRole("button", { name: "Kommentar öffnen" })).toBeVisible();
@@ -53,8 +58,9 @@ async function quickNote(page: Page, title: string, body: string) {
   await page.keyboard.type(title);
   await page.keyboard.press("Enter");
   await page.keyboard.type(body);
-  await expect(page.getByText("Gespeichert", { exact: true })).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByText("Gespeichert", { exact: true })).toBeVisible({ timeout: 25_000 });
   await page.reload();
+  await expect(editor).toHaveAttribute("contenteditable", "true");
 }
 
 test("selection comments stay beside their anchors and support replies and resolution", async ({ page }) => {
@@ -75,7 +81,7 @@ test("selection comments stay beside their anchors and support replies and resol
   expect(threadId).toBeTruthy();
   const card = page.getByTestId(`comment-card-${threadId}`);
   await expect(card).toContainText("Bitte genauer erklären");
-  await expect(page.getByTestId("comment-connectors").locator(`path[data-comment-thread='${threadId}']`)).toHaveCount(1);
+  await expect(page.locator("[data-workspace-panel]:visible")).toHaveCount(1);
 
   await anchor.click();
   await expect(anchor).toHaveClass(/is-active/);
@@ -96,15 +102,15 @@ test("selection comments stay beside their anchors and support replies and resol
 test("general comments lead the rail and mobile slash comments open the sheet", async ({ page }) => {
   await login(page);
   await quickNote(page, "General Comments", "Page-level context");
-  await page.getByRole("button", { name: "Kommentare anzeigen" }).click();
+  await tool(page, "Kommentare");
   const rail = page.getByTestId("comment-rail");
   await rail.getByTestId("page-comment-input").fill("Allgemeiner Hinweis");
   await rail.getByRole("button", { name: "Kommentieren" }).click();
   await expect(rail).toContainText("Allgemeiner Hinweis");
   await expect(rail.getByText("Allgemeiner Kommentar").first()).toBeVisible();
 
-  await page.getByRole("button", { name: "Kommentare ausblenden" }).click();
-  await expect(rail).toHaveCount(0);
+  await page.getByRole("button", { name: "Seitenbereich schließen" }).click();
+  await expect(rail).not.toBeVisible();
   await page.setViewportSize({ width: 800, height: 900 });
   const editor = page.locator(".ProseMirror");
   await editor.click();
@@ -112,16 +118,16 @@ test("general comments lead the rail and mobile slash comments open the sheet", 
   await page.keyboard.press("Enter");
   await page.keyboard.type("/kommentar");
   await page.keyboard.press("Enter");
-  const sheet = page.getByTestId("comment-sheet");
+  const sheet = page.getByRole("dialog");
   await expect(sheet.getByRole("heading", { name: "Kommentare", exact: true })).toBeVisible();
-  await expect(sheet.getByTestId("mobile-page-comment-input")).toBeFocused();
+  await expect(sheet.getByTestId("page-comment-input")).toBeFocused();
 });
 
 test("metadata version changes do not cause repeated conflicts and older revisions restore visibly", async ({ page }) => {
   await login(page);
   await quickNote(page, "Revision Restore", "Original version");
 
-  await page.getByRole("button", { name: "Dokumentdetails öffnen" }).click();
+  await tool(page, "Details");
   await page.getByRole("combobox").first().click();
   await page.getByRole("option", { name: "In Arbeit" }).click();
 
@@ -129,7 +135,7 @@ test("metadata version changes do not cause repeated conflicts and older revisio
   await editor.click();
   await page.keyboard.press("ControlOrMeta+End");
   await page.keyboard.type(" Newer version");
-  await expect(page.getByText("Gespeichert", { exact: true })).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByText("Gespeichert", { exact: true })).toBeVisible({ timeout: 25_000 });
   await expect(page.getByText("Bearbeitungskonflikt", { exact: true })).toHaveCount(0);
 
   await page

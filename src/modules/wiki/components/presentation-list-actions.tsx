@@ -17,6 +17,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import { createPresentation, createPresentationFromWikiPage, deletePresentation } from "../presentation-actions";
 import { presentationTemplateIds, type PresentationTemplateId } from "../lib/presentation-templates";
@@ -131,12 +132,14 @@ function TemplateCard({
   );
 }
 
-export function NewPresentationForm() {
+export function NewPresentationForm({ open: controlledOpen, onOpenChange, hideTrigger = false }: { open?: boolean; onOpenChange?: (open: boolean) => void; hideTrigger?: boolean } = {}) {
   const locale = useLocale();
   const t = useTranslations("wiki");
   const router = useRouter();
   const [title, setTitle] = useState("");
-  const [open, setOpen] = useState(false);
+  const [localOpen, setLocalOpen] = useState(false);
+  const open = controlledOpen ?? localOpen;
+  const setOpen = onOpenChange ?? setLocalOpen;
   const [busy, setBusy] = useState(false);
 
   const create = async (templateId?: PresentationTemplateId) => {
@@ -156,26 +159,7 @@ export function NewPresentationForm() {
 
   return (
     <>
-      <form
-        className="flex w-full flex-wrap items-center gap-2 sm:w-auto"
-        onSubmit={(event) => {
-          event.preventDefault();
-          setOpen(true);
-        }}
-      >
-        <Input
-          value={title}
-          maxLength={200}
-          placeholder={t("presentations.newPlaceholder")}
-          aria-label={t("presentations.presentationTitle")}
-          className="h-8 min-w-0 flex-1 sm:w-56"
-          onChange={(event) => setTitle(event.target.value)}
-        />
-        <Button type="submit" size="sm" disabled={busy}>
-          {busy ? <Loader2 className="size-3.5 animate-spin" /> : <Plus className="size-3.5" />}
-          {t("presentations.new")}
-        </Button>
-      </form>
+      {!hideTrigger && <Button size="sm" onClick={() => setOpen(true)}><Plus className="size-4" />{t("presentations.new")}</Button>}
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="max-h-[85dvh] overflow-y-auto sm:max-w-2xl">
@@ -183,6 +167,7 @@ export function NewPresentationForm() {
             <DialogTitle>{t("presentations.chooseTemplate")}</DialogTitle>
             <DialogDescription>{t("presentations.chooseTemplateDescription")}</DialogDescription>
           </DialogHeader>
+          <Input autoFocus value={title} maxLength={200} placeholder={t("presentations.newPlaceholder")} aria-label={t("presentations.presentationTitle")} onChange={(event) => setTitle(event.target.value)} />
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
             <TemplateCard name={t("presentations.templates.blank")} disabled={busy} onClick={() => void create()}>
               <BlankIcon />
@@ -207,10 +192,12 @@ export function NewPresentationForm() {
   );
 }
 
-export function NewPresentationFromWikiPage({ pages }: { pages: Array<{ id: string; title: string }> }) {
+export function NewPresentationFromWikiPage({ pages, open: controlledOpen, onOpenChange, hideTrigger = false }: { pages: Array<{ id: string; title: string }>; open?: boolean; onOpenChange?: (open: boolean) => void; hideTrigger?: boolean }) {
   const t = useTranslations("wiki");
   const router = useRouter();
-  const [open, setOpen] = useState(false);
+  const [localOpen, setLocalOpen] = useState(false);
+  const open = controlledOpen ?? localOpen;
+  const setOpen = onOpenChange ?? setLocalOpen;
   const [pageId, setPageId] = useState<string>(pages[0]?.id ?? "");
   const [includeImages, setIncludeImages] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -231,10 +218,10 @@ export function NewPresentationFromWikiPage({ pages }: { pages: Array<{ id: stri
 
   return (
     <>
-      <Button type="button" variant="outline" size="sm" disabled={!pages.length} onClick={() => setOpen(true)}>
+      {!hideTrigger && <Button type="button" variant="outline" size="sm" disabled={!pages.length} onClick={() => setOpen(true)}>
         <FileText className="size-3.5" />
         {t("presentations.fromWikiPage")}
-      </Button>
+      </Button>}
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="sm:max-w-md">
@@ -273,16 +260,10 @@ export function NewPresentationFromWikiPage({ pages }: { pages: Array<{ id: stri
   );
 }
 
-export function DeletePresentationButton({ id, title }: { id: string; title: string }) {
+export function DeletePresentationButton({ id, title, menuItem = false }: { id: string; title: string; menuItem?: boolean }) {
   const t = useTranslations("wiki");
   const router = useRouter();
-  return (
-    <Button
-      type="button"
-      variant="ghost"
-      size="icon-sm"
-      aria-label={t("presentations.deletePresentation")}
-      onClick={async () => {
+  const remove = async () => {
         if (!confirm(t("presentations.deleteConfirm", { title }))) return;
         try {
           await deletePresentation({ id });
@@ -290,9 +271,7 @@ export function DeletePresentationButton({ id, title }: { id: string; title: str
         } catch {
           toast.error(t("presentations.deleteFailed"));
         }
-      }}
-    >
-      <Trash2 className="size-4" />
-    </Button>
-  );
+      };
+  if (menuItem) return <DropdownMenuItem className="text-destructive" onClick={remove}><Trash2 />{t("presentations.deletePresentation")}</DropdownMenuItem>;
+  return <Button type="button" variant="ghost" size="icon-sm" aria-label={t("presentations.deletePresentation")} onClick={remove}><Trash2 className="size-4" /></Button>;
 }

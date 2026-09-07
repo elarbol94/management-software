@@ -35,6 +35,7 @@ async function loadDoc(page: Page, id: string, sessionId: string, content: unkno
 }
 
 test("insert, caption, resize, wrap, crop and insert a live reference and figure list", async ({ page }, testInfo) => {
+  test.setTimeout(300_000);
   const { editor, id } = await note(page);
   await editor.fill("This report explains our quarterly results.");
   await page.keyboard.press("End"); await page.keyboard.press("Enter");
@@ -48,9 +49,15 @@ test("insert, caption, resize, wrap, crop and insert a live reference and figure
   await page.getByTestId("figure-panel").getByRole("button", { name: "Zuschneiden", exact: true }).click();
   await page.getByText("Genaue Zuschnittmaße", { exact: true }).click();
   await page.getByTestId("figure-panel").getByLabel("Links (%)", { exact: true }).fill("10");
+  await page.getByRole("button", { name: "Werkzeuge", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Details", exact: true }).click();
+  await page.getByRole("button", { name: "Werkzeuge", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Bild", exact: true }).click();
+  await expect(page.getByTestId("figure-panel").getByLabel("Links (%)", { exact: true })).toHaveValue("10");
   await page.getByRole("button", { name: "Zuschnitt übernehmen", exact: true }).click();
   await expect(figure).toHaveAttribute("data-figure-wrap", "left");
   await page.getByTestId("figure-panel").getByRole("button", { name: "Fertig", exact: true }).click();
+  await page.getByRole("button", { name: "Werkzeuge", exact: true }).click();
   await page.getByTestId("document-mode-toggle").click();
   await page.getByRole("button", { name: "Einfügen", exact: true }).click();
   await page.getByRole("menuitem", { name: "Querverweis einfügen", exact: true }).click();

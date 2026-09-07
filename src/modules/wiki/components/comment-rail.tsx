@@ -114,6 +114,7 @@ function CommentCard({ thread, active, orphaned, currentUserId, onActivate, onRe
 }
 
 export const CommentRail = forwardRef<CommentRailHandle, {
+  embedded?: boolean;
   pageId: string;
   comments: CommentThread[];
   currentUserId: string;
@@ -123,7 +124,7 @@ export const CommentRail = forwardRef<CommentRailHandle, {
   onActiveThreadChange: (threadId: string) => void;
   visible: boolean;
   onVisibleChange: (visible: boolean) => void;
-}>(({ pageId, comments, currentUserId, editor, editorRootRef, activeThreadId, onActiveThreadChange, visible: commentsVisible, onVisibleChange }, ref) => {
+}>(({ embedded = false, pageId, comments, currentUserId, editor, editorRootRef, activeThreadId, onActiveThreadChange, visible: commentsVisible, onVisibleChange }, ref) => {
   const t = useTranslations("wiki");
   const router = useRouter();
   const [includeResolved, setIncludeResolved] = useState(false);
@@ -246,7 +247,7 @@ export const CommentRail = forwardRef<CommentRailHandle, {
 
   useImperativeHandle(ref, () => ({
     focusGeneralComment() {
-      if (window.matchMedia("(min-width: 1280px)").matches) {
+      if (embedded || window.matchMedia("(min-width: 1280px)").matches) {
         desktopGeneralRef.current?.focus();
         desktopGeneralRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
       } else {
@@ -259,7 +260,7 @@ export const CommentRail = forwardRef<CommentRailHandle, {
       onActiveThreadChange(threadId);
       if (!window.matchMedia("(min-width: 1280px)").matches) setMobileOpen(true);
     },
-  }), [onActiveThreadChange]);
+  }), [embedded, onActiveThreadChange]);
 
   const activate = (threadId: string) => {
     onActiveThreadChange(threadId);
@@ -283,7 +284,7 @@ export const CommentRail = forwardRef<CommentRailHandle, {
       <h2 className="flex items-center gap-2 text-sm font-semibold"><MessageSquareText className="size-4 text-indigo-500" />{t("comments")}<span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-normal">{unresolvedCount}</span></h2>
       <Button data-testid="comment-filter-resolved" type="button" size="xs" variant={includeResolved ? "secondary" : "ghost"} onClick={() => setIncludeResolved((value) => !value)}>{includeResolved ? t("commentRail.hideResolved") : t("commentRail.showResolved")}</Button>
     </div>
-    <Textarea data-testid={testId} ref={textareaRef} value={generalBody} onChange={(event) => setGeneralBody(event.target.value)} rows={3} placeholder={t("pageCommentPlaceholder")} />
+    <Textarea data-workspace-autofocus data-testid={testId} ref={textareaRef} value={generalBody} onChange={(event) => setGeneralBody(event.target.value)} rows={3} placeholder={t("pageCommentPlaceholder")} />
     <Button type="button" size="sm" disabled={!generalBody.trim() || pendingGeneral} onClick={submitGeneral}>{t("addComment")}</Button>
     {deletedCommentId && <div role="status" className="flex items-center justify-between gap-2 rounded-md border border-indigo-200 bg-indigo-50 px-2 py-1.5 text-xs text-indigo-950 dark:border-indigo-900 dark:bg-indigo-950/40 dark:text-indigo-100"><span>{t("commentRail.commentDeleted")}</span><Button type="button" size="xs" variant="ghost" onClick={undoDelete}><Undo2 className="size-3" />{t("commentRail.undo")}</Button></div>}
   </>;
@@ -301,6 +302,12 @@ export const CommentRail = forwardRef<CommentRailHandle, {
     onDeleteComment={removeComment}
     cardRef={desktop ? (element) => { const previous = cardRefs.current.get(thread.id); if (previous && previous !== element) cardObserverRef.current?.unobserve(previous); if (element) { cardRefs.current.set(thread.id, element); cardObserverRef.current?.observe(element); } else cardRefs.current.delete(thread.id); } : undefined}
   />;
+
+  if (embedded) return <div data-testid="comment-rail" className="space-y-3">
+    {header(desktopGeneralRef, "page-comment-input")}
+    {visible.map((thread) => renderCard(thread, false))}
+    {visible.length === 0 && <p className="py-4 text-xs text-muted-foreground">{t("commentRail.noOpenComments")}</p>}
+  </div>;
 
   return <>
     {commentsVisible && <aside ref={railRef} data-testid="comment-rail" className="relative hidden w-72 xl:block" style={{ minHeight: railHeight }}>

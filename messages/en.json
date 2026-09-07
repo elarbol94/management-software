@@ -1816,6 +1816,22 @@
     }
   },
   "wiki": {
+    "workspace": {
+      "share": "Share",
+      "tools": "Tools",
+      "closePanel": "Close panel",
+      "textStyle": "Text style",
+      "actions": "Actions",
+      "properties": "Properties",
+      "sources": "Document sources",
+      "design": "Design",
+      "assets": "Assets",
+      "comments": "Comments",
+      "blankOrTemplate": "Blank or from template",
+      "searchPresentations": "Search presentations…",
+      "itemActions": "Actions for {title}",
+      "moreTags": "{count} more tags"
+    },
     "title": "Wiki",
     "newPage": "New page",
     "newSubpage": "Add subpage",

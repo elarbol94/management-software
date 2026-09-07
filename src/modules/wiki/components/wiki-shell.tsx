@@ -1,13 +1,13 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState, type ComponentProps } from "react";
 import { toast } from "sonner";
-import { readEditorStorage, writeEditorStorage } from "../lib/editor-draft";
+import { DocumentWorkspaceProvider, useDocumentWorkspace } from "./document-workspace";
 import { exportSavedDocument, type DocumentExportFormat } from "../lib/editor-export";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useFormatter, useLocale, useTranslations } from "next-intl";
-import { ArrowLeft, BookMarked, Check, ChevronDown, Clock3, Download, Eye, FileText, History, Link2, MoreHorizontal, PanelRightClose, PanelRightOpen, Plus, Star, Trash2, X } from "lucide-react";
+import { ArrowLeft, BookMarked, Check, ChevronDown, Clock3, Download, Eye, FileText, History, Link2, MoreHorizontal, Plus, Star, Trash2, X } from "lucide-react";
 import { createPage, deletePage, renamePage } from "../actions";
 import { createPageCheckpoint, linkSupportingSource, restorePageRevision, toggleFavorite, unlinkSupportingSource, updatePageResearchMeta, verifyPage } from "../research-actions";
 import { CITATION_STYLES, isCitationStyle, type CitationSource, type CitationStyle } from "../lib/citations";
@@ -38,11 +38,12 @@ import { ContextPanel } from "@/modules/context/components/context-panel";
 type PageRef = { id: string; title: string; slug: string };
 type SourceRef = CitationSource;
 
-function PageHeaderActions({ onExport, favorite, onNewSubpage, onToggleFavorite, onVerify, onDelete }: { onExport: (format: DocumentExportFormat, inline?: boolean) => void; favorite: boolean; onNewSubpage: () => void; onToggleFavorite: () => void; onVerify: () => void; onDelete: () => void }) {
+function PageHeaderActions({ onExport, favorite, onNewSubpage, onToggleFavorite, onVerify, onDelete, onHistory }: { onExport: (format: DocumentExportFormat, inline?: boolean) => void; favorite: boolean; onNewSubpage: () => void; onToggleFavorite: () => void; onVerify: () => void; onDelete: () => void; onHistory: () => void }) {
   const t = useTranslations("wiki");
   return <DropdownMenu>
     <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" title={t("editor.toolbar.more")} aria-label={t("editor.toolbar.more")} />}><MoreHorizontal className="size-4" /></DropdownMenuTrigger>
     <DropdownMenuContent align="end" className="w-56">
+      <DropdownMenuItem onClick={onHistory}><History />{t("history")}</DropdownMenuItem>
       <DropdownMenuItem onClick={onNewSubpage}><Plus />{t("newSubpage")}</DropdownMenuItem>
       <DropdownMenuItem onClick={onToggleFavorite}><Star className={favorite ? "fill-indigo-400 text-indigo-500" : ""} />{t("favorite")}</DropdownMenuItem>
       <DropdownMenuItem onClick={onVerify}><Check />{t("markVerified")}</DropdownMenuItem>
@@ -58,7 +59,11 @@ function PageHeaderActions({ onExport, favorite, onNewSubpage, onToggleFavorite,
   </DropdownMenu>;
 }
 
-export function WikiShell({ page, backlinks, unlinkedMentions = [], allPages, sources, research, comments, currentUserId, users, attachments, documentTemplates, typography, editableTypography, typographyTemplates, proofingPrefs, tasks, deadlines, focusTaskId, focusDeadlineId, insertEvidenceId, proposalData, allTags, meta }: {
+export function WikiShell(props: ComponentProps<typeof WikiShellContent>) {
+  return <DocumentWorkspaceProvider key={props.page.id}><WikiShellContent {...props} /></DocumentWorkspaceProvider>;
+}
+
+function WikiShellContent({ page, backlinks, unlinkedMentions = [], allPages, sources, research, comments, currentUserId, users, attachments, documentTemplates, typography, editableTypography, typographyTemplates, proofingPrefs, tasks, deadlines, focusTaskId, focusDeadlineId, insertEvidenceId, proposalData, allTags, meta }: {
   page: { id: string; title: string; slug: string; contentJson: string; status: "inbox" | "working" | "evergreen"; citationLocale: string; citationStyle: CitationStyle; verifiedUntil: string | null; proofingLanguage: ProofingLanguage; version: number; contentVersion: number; documentMode: boolean; documentSettingsJson: string; createdBy: string };
   backlinks: PageRef[]; unlinkedMentions?: PageRef[]; allPages: PageRef[]; sources: SourceRef[];
   research: { tags: Array<{ id: string; name: string; color: string }>; supportingSources: Array<{ id: string; title: string; issuedDate: string; relation: string }>; favorite: boolean; revisions: Array<{ id: string; version: number; contentVersion: number; contentHash: string; label: string | null; kind: string; createdAt: Date; createdByName: string; contentJson: string; documentSettingsJson: string }> };
@@ -102,7 +107,7 @@ export function WikiShell({ page, backlinks, unlinkedMentions = [], allPages, so
   const [supportingSourceOpen, setSupportingSourceOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [savedRevisionsOnly, setSavedRevisionsOnly] = useState(false);
-  const [detailsOpen, setDetailsOpen] = useState(false);
+  const { setPanel, saveState } = useDocumentWorkspace();
   const [supportingSourcesCollapsed, setSupportingSourcesCollapsed] = useState(true);
   const [selectedRevisionId, setSelectedRevisionId] = useState(research.revisions[0]?.id ?? "");
   const editorActions = useRef<WikiEditorHandle | null>(null);
@@ -122,23 +127,13 @@ export function WikiShell({ page, backlinks, unlinkedMentions = [], allPages, so
       )
     : [];
 
-  useEffect(() => {
-    const frame = requestAnimationFrame(() => setDetailsOpen(readEditorStorage("wiki:document-details-open") === "true"));
-    return () => cancelAnimationFrame(frame);
-  }, []);
-
-  function changeDetailsOpen(open: boolean) {
-    setDetailsOpen(open);
-    writeEditorStorage("wiki:document-details-open", String(open));
-  }
-
   function openAttachmentPicker() {
-    changeDetailsOpen(true);
+    setPanel("details");
     setTimeout(() => attachmentRef.current?.openFilePicker(), 0);
   }
 
   function openSupportingSourcePicker() {
-    changeDetailsOpen(true);
+    setPanel("details");
     setTimeout(() => {
       supportingSourceSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
       setSupportingSourceOpen(true);
@@ -154,29 +149,7 @@ export function WikiShell({ page, backlinks, unlinkedMentions = [], allPages, so
   async function rename() { const title = prompt(t("pageTitle"), page.title); if (!title?.trim()) return; const renamed = await renamePage(page.id, title.trim()); if (renamed.slug !== page.slug) router.replace(`/wiki/pages/${encodeURIComponent(renamed.slug)}`); router.refresh(); }
   async function remove() { if (!confirm(common("confirmDeleteTitle"))) return; await deletePage(page.id); router.push("/wiki/inbox"); router.refresh(); }
 
-  return <div className={isFocused ? "w-full max-w-none p-4 md:p-7" : "mx-auto max-w-[112rem] p-4 md:p-7"}>
-    <header className="mb-5 border-b pb-4">
-      <div className="flex flex-wrap items-start justify-between gap-4"><div className="flex min-w-0 items-start gap-2"><Link href="/wiki" aria-label={t("backToWikiStart")} title={t("backToWikiStart")} className="mt-1 grid size-8 shrink-0 place-items-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"><ArrowLeft className="size-4" /></Link><div className="min-w-0"><button type="button" aria-label={`${t("rename")}: ${page.title}`} onClick={rename} className={isFocused ? "max-w-4xl text-left text-2xl font-semibold tracking-tight hover:text-indigo-700 dark:hover:text-indigo-300" : "max-w-4xl text-left text-3xl font-semibold tracking-tight hover:text-indigo-700 dark:hover:text-indigo-300"}>{page.title}</button>{!isFocused && meta && <p className="mt-1 flex items-center gap-1 text-xs text-muted-foreground"><Clock3 className="size-3" />{t("lastEdited", { name: meta.updatedByName })} · {format.dateTime(new Date(meta.updatedAt), { dateStyle: "medium", timeStyle: "short" })}</p>}</div></div>
-        <div className="flex items-center gap-1">{!isFocused && <><Button variant={detailsOpen ? "secondary" : "ghost"} size="sm" className="gap-1.5" title={detailsOpen ? t("hideDocumentDetails") : t("showDocumentDetails")} aria-label={detailsOpen ? t("hideDocumentDetails") : t("showDocumentDetails")} aria-pressed={detailsOpen} onClick={() => changeDetailsOpen(!detailsOpen)}>{detailsOpen ? <PanelRightClose className="size-4" /> : <PanelRightOpen className="size-4" />}<span className="hidden text-xs sm:inline">{t("documentDetails")}</span></Button><PageHeaderActions onExport={(format, inline = false) => { void exportSavedDocument(page.id, format, inline, () => editorActions.current?.flushSave() ?? Promise.resolve(false), () => toast.error(t("document.exportSaveFailed"))); }} favorite={research.favorite} onNewSubpage={async () => { const title = prompt(t("pageTitle")); if (!title?.trim()) return; const child = await createPage({ title: title.trim(), parentId: page.id, proofingLanguage: locale === "en" ? "en-US" : "de-AT" }); router.push("/wiki/pages/" + child.slug); router.refresh(); }} onToggleFavorite={async () => { await toggleFavorite("page", page.id); router.refresh(); }} onVerify={() => void runVerify(6)} onDelete={remove} /></>}<FocusModeToggle compact={isFocused} /></div></div>
-    </header>
-
-    <div className={isFocused || !detailsOpen ? "w-full" : "grid gap-7 xl:grid-cols-[minmax(0,1fr)_17rem]"}>
-      <section className="min-w-0">
-        {!isFocused && (verifiedUntil || verificationOverdue) && (
-          <div className={`mb-3 flex flex-wrap items-center gap-2 rounded-md border px-3 py-2 text-sm ${verificationOverdue ? "border-amber-500/40 bg-amber-500/10" : "border-emerald-500/30 bg-emerald-500/5"}`}>
-            <Check className={`size-4 ${verificationOverdue ? "text-amber-600" : "text-emerald-600"}`} />
-            <span>{verificationOverdue
-              ? t("verificationOverdue", { date: format.dateTime(new Date(verifiedUntil!), { dateStyle: "medium" }) })
-              : t("verifiedUntilLabel", { date: format.dateTime(new Date(verifiedUntil!), { dateStyle: "medium" }) })}</span>
-            <Button type="button" size="xs" variant="ghost" className="ml-auto" onClick={() => void runVerify(6)}>{t("verifyAgain")}</Button>
-          </div>
-        )}
-        <WikiEditor key={page.id} actionsRef={editorActions} focused={isFocused} pageId={page.id} pageTitle={page.title} pageSlug={page.slug} pageVersion={page.version} pageContentVersion={page.contentVersion} initialContent={page.contentJson} initialProofingLanguage={page.proofingLanguage} initialProofingPrefs={proofingPrefs} initialDocumentMode={page.documentMode} initialDocumentSettings={page.documentSettingsJson} initialTypography={typography} editableTypography={editableTypography} typographyTemplates={typographyTemplates} isPrimaryAuthor={page.createdBy === currentUserId} documentTemplates={documentTemplates} allPages={allPages} sources={sources} users={users} citationLocale={citationLocale} citationStyle={citationStyle} insertEvidenceId={insertEvidenceId} comments={comments} contextTasks={tasks} contextDeadlines={deadlines} focusTaskId={focusTaskId} focusDeadlineId={focusDeadlineId} proposalData={proposalData} currentUserId={currentUserId} pageActions={{ addAttachment: openAttachmentPicker, linkSupportingSource: openSupportingSourcePicker }} />
-        {!isFocused && backlinks.length > 0 && <section className="mt-8 border-t pt-5"><h2 className="mb-3 flex items-center gap-2 text-sm font-medium"><Link2 className="size-4 text-indigo-500" />{t("backlinks")}</h2><div className="flex flex-wrap gap-2">{backlinks.map((item) => <Link key={item.id} href={`/wiki/pages/${item.slug}`} className="rounded-md border px-2 py-1 text-sm hover:bg-accent">{item.title}</Link>)}</div></section>}
-        {!isFocused && unlinkedMentions.length > 0 && <section className="mt-6"><h2 className="mb-1 flex items-center gap-2 text-sm font-medium"><Link2 className="size-4 text-muted-foreground" />{t("unlinkedMentions")}</h2><p className="mb-3 text-xs text-muted-foreground">{t("unlinkedMentionsHint")}</p><div className="flex flex-wrap gap-2">{unlinkedMentions.map((item) => <Link key={item.id} href={`/wiki/pages/${item.slug}`} className="rounded-md border border-dashed px-2 py-1 text-sm text-muted-foreground hover:bg-accent hover:text-foreground">{item.title}</Link>)}</div></section>}
-      </section>
-
-      {!isFocused && detailsOpen && <aside data-testid="note-metadata-sidebar" className="mt-6 space-y-6 border-t pt-5 xl:sticky xl:top-4 xl:mt-0 xl:self-start xl:border-l xl:border-t-0 xl:pl-6 xl:pt-0">
+  const details = (<aside data-testid="note-metadata-sidebar" className="space-y-6">
         <section data-testid="note-metadata-controls" className="space-y-2">
           <div className="grid grid-cols-2 gap-2">
             <Select value={status} onValueChange={(value) => { if (!value) return; const next = value as typeof status; setStatus(next); void saveMeta(next, citationLocale); }}><SelectTrigger aria-label={t("allPageStatuses")} className="h-8 w-full"><SelectValue /></SelectTrigger><SelectContent>{["inbox","working","evergreen"].map((item) => <SelectItem key={item} value={item}>{t(`pageStatuses.${item}`)}</SelectItem>)}</SelectContent></Select>
@@ -199,7 +172,31 @@ export function WikiShell({ page, backlinks, unlinkedMentions = [], allPages, so
         <EvidencePanel targetType="wikiPage" targetId={page.id} compact />
         <section ref={supportingSourceSectionRef}><button type="button" aria-expanded={!supportingSourcesCollapsed} onClick={() => setSupportingSourcesCollapsed((collapsed) => !collapsed)} className="flex w-full items-center gap-2 text-left text-sm font-medium"><ChevronDown className={`size-4 shrink-0 text-muted-foreground transition-transform ${supportingSourcesCollapsed ? "-rotate-90" : ""}`} /><BookMarked className="size-4 text-indigo-500" />{t("supportingSources")}</button>{!supportingSourcesCollapsed && <><div className="mt-2 flex gap-1"><Select open={supportingSourceOpen} onOpenChange={setSupportingSourceOpen} value={sourceToLink} onValueChange={(value) => setSourceToLink(value ?? "")}><SelectTrigger aria-label={t("chooseSource")} data-testid="supporting-source-picker" ref={supportingSourceTriggerRef} className="min-w-0 flex-1"><SelectValue placeholder={t("chooseSource")} /></SelectTrigger><SelectContent>{sources.filter((source) => !research.supportingSources.some((linked) => linked.id === source.id)).map((source) => <SelectItem key={source.id} value={source.id}>{source.title}</SelectItem>)}</SelectContent></Select><Button aria-label={t("linkSupportingSource")} title={t("linkSupportingSource")} size="icon" variant="outline" disabled={!sourceToLink} onClick={async () => { await linkSupportingSource(page.id, sourceToLink); setSourceToLink(""); router.refresh(); }}><Plus className="size-4" /></Button></div><div className="mt-2 space-y-1">{research.supportingSources.map((source) => <div key={source.id} className="group flex items-center gap-1 rounded-md border p-2 text-xs"><Link href={`/wiki/sources/${source.id}`} className="min-w-0 flex-1 truncate font-medium">{source.title}</Link><button type="button" aria-label={`${t("editor.link.remove")}: ${source.title}`} title={t("editor.link.remove")} onClick={async () => { await unlinkSupportingSource(page.id, source.id); router.refresh(); }} className="rounded-sm p-1 opacity-0 transition-opacity hover:bg-accent group-hover:opacity-100 focus-visible:opacity-100"><X className="size-3" /></button></div>)}</div></>}</section>
         <div className="flex justify-end gap-2 border-t pt-4"><Button type="button" variant="ghost" size="sm" onClick={async () => { const label = prompt(t("checkpointLabelPrompt")) ?? ""; await createPageCheckpoint(page.id, label); router.refresh(); }}><Plus className="size-4" />{t("checkpoint")}</Button><Button type="button" variant="outline" size="sm" onClick={() => setHistoryOpen(true)}><History className="size-4" />{t("history")}</Button></div>
-      </aside>}
+      </aside>);
+
+  return <div className="wiki-calm-document mx-auto min-h-dvh max-w-[112rem] px-3 py-4 md:px-6">
+    <header className="mb-3 border-b border-border/60 pb-3">
+      <div className="flex flex-wrap items-start justify-between gap-4"><div className="flex min-w-0 items-start gap-2"><Link href="/wiki" aria-label={t("backToWikiStart")} title={t("backToWikiStart")} className="mt-1 grid size-8 shrink-0 place-items-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"><ArrowLeft className="size-4" /></Link><div className="min-w-0"><button type="button" aria-label={`${t("rename")}: ${page.title}`} onClick={rename} className="max-w-4xl break-words text-left text-xl font-semibold tracking-tight hover:text-indigo-700 dark:hover:text-indigo-300">{page.title}</button>{!isFocused && meta && <p className="mt-1 flex items-center gap-1 text-xs text-muted-foreground"><Clock3 className="size-3" />{t("lastEdited", { name: meta.updatedByName })} · {format.dateTime(new Date(meta.updatedAt), { dateStyle: "medium", timeStyle: "short" })}</p>}</div></div>
+        <div className="flex items-center gap-1"><span data-testid="document-save-status" role={saveState === "error" || saveState === "conflict" ? "alert" : "status"} className={`mr-2 text-xs ${saveState === "error" || saveState === "conflict" || saveState === "offline" ? "text-destructive" : "text-muted-foreground"}`}>{saveState === "idle" ? "" : saveState === "saving" ? t("saving") : saveState === "saved" ? t("saved") : saveState === "conflict" ? t("editConflict") : t(`editor.save.${saveState}`)}</span><PageHeaderActions onExport={(format, inline = false) => { void exportSavedDocument(page.id, format, inline, () => editorActions.current?.flushSave() ?? Promise.resolve(false), () => toast.error(t("document.exportSaveFailed"))); }} favorite={research.favorite} onNewSubpage={async () => { const title = prompt(t("pageTitle")); if (!title?.trim()) return; const child = await createPage({ title: title.trim(), parentId: page.id, proofingLanguage: locale === "en" ? "en-US" : "de-AT" }); router.push("/wiki/pages/" + child.slug); router.refresh(); }} onToggleFavorite={async () => { await toggleFavorite("page", page.id); router.refresh(); }} onVerify={() => void runVerify(6)} onDelete={remove} onHistory={() => setHistoryOpen(true)} /><FocusModeToggle compact={isFocused} /></div></div>
+    </header>
+
+    <div className="w-full">
+      <section className="min-w-0">
+        {!isFocused && (verifiedUntil || verificationOverdue) && (
+          <div className={`mb-3 flex flex-wrap items-center gap-2 rounded-md border px-3 py-2 text-sm ${verificationOverdue ? "border-amber-500/40 bg-amber-500/10" : "border-emerald-500/30 bg-emerald-500/5"}`}>
+            <Check className={`size-4 ${verificationOverdue ? "text-amber-600" : "text-emerald-600"}`} />
+            <span>{verificationOverdue
+              ? t("verificationOverdue", { date: format.dateTime(new Date(verifiedUntil!), { dateStyle: "medium" }) })
+              : t("verifiedUntilLabel", { date: format.dateTime(new Date(verifiedUntil!), { dateStyle: "medium" }) })}</span>
+            <Button type="button" size="xs" variant="ghost" className="ml-auto" onClick={() => void runVerify(6)}>{t("verifyAgain")}</Button>
+          </div>
+        )}
+        <WikiEditor details={details} key={page.id} actionsRef={editorActions} focused={isFocused} pageId={page.id} pageTitle={page.title} pageSlug={page.slug} pageVersion={page.version} pageContentVersion={page.contentVersion} initialContent={page.contentJson} initialProofingLanguage={page.proofingLanguage} initialProofingPrefs={proofingPrefs} initialDocumentMode={page.documentMode} initialDocumentSettings={page.documentSettingsJson} initialTypography={typography} editableTypography={editableTypography} typographyTemplates={typographyTemplates} isPrimaryAuthor={page.createdBy === currentUserId} documentTemplates={documentTemplates} allPages={allPages} sources={sources} users={users} citationLocale={citationLocale} citationStyle={citationStyle} insertEvidenceId={insertEvidenceId} comments={comments} contextTasks={tasks} contextDeadlines={deadlines} focusTaskId={focusTaskId} focusDeadlineId={focusDeadlineId} proposalData={proposalData} currentUserId={currentUserId} pageActions={{ addAttachment: openAttachmentPicker, linkSupportingSource: openSupportingSourcePicker }} />
+        {!isFocused && backlinks.length > 0 && <section className="mt-8 border-t pt-5"><h2 className="mb-3 flex items-center gap-2 text-sm font-medium"><Link2 className="size-4 text-indigo-500" />{t("backlinks")}</h2><div className="flex flex-wrap gap-2">{backlinks.map((item) => <Link key={item.id} href={`/wiki/pages/${item.slug}`} className="rounded-md border px-2 py-1 text-sm hover:bg-accent">{item.title}</Link>)}</div></section>}
+        {!isFocused && unlinkedMentions.length > 0 && <section className="mt-6"><h2 className="mb-1 flex items-center gap-2 text-sm font-medium"><Link2 className="size-4 text-muted-foreground" />{t("unlinkedMentions")}</h2><p className="mb-3 text-xs text-muted-foreground">{t("unlinkedMentionsHint")}</p><div className="flex flex-wrap gap-2">{unlinkedMentions.map((item) => <Link key={item.id} href={`/wiki/pages/${item.slug}`} className="rounded-md border border-dashed px-2 py-1 text-sm text-muted-foreground hover:bg-accent hover:text-foreground">{item.title}</Link>)}</div></section>}
+      </section>
+
+
     </div>
     <Dialog open={historyOpen} onOpenChange={setHistoryOpen}>
       <DialogContent className="max-h-[90dvh] overflow-hidden sm:max-w-5xl">

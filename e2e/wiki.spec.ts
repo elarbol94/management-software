@@ -162,11 +162,12 @@ test("document mode persists page layout, document blocks, templates, and PDF ex
   await login(page);
   await quickNote(page, "Funding application", "A structured project description.");
 
+  await page.getByRole("button", { name: "Werkzeuge", exact: true }).click();
   await page.getByTestId("document-mode-toggle").click();
   const panel = page.getByTestId("document-layout-panel");
   await expect(panel).toBeHidden();
-  await openEditorMore(page);
-  await page.getByRole("menuitem", { name: "Dokumentlayout anzeigen" }).click();
+  await page.getByRole("button", { name: "Werkzeuge", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Dokumentlayout", exact: true }).click();
   await expect(panel).toBeVisible();
   await expect(page.getByTestId("wiki-editor")).toHaveAttribute("data-document-mode", "true");
 

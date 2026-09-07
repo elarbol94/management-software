@@ -10,12 +10,12 @@ import { PresentationRichText } from "./presentation-rich-text";
 
 const selectClass = "mt-1 h-9 w-full rounded-md border bg-background px-2 text-sm";
 
-export function PresentationStudioInspector({ elements, selectedIds, activeStep, onElements, onSelect, onUpdate, onSteps, onAdd, onUpload, disabled }: {
+export function PresentationStudioInspector({ elements, selectedIds, activeStep, onElements, onSelect, onUpdate, onSteps, disabled }: {
   elements: PresentationElement[]; selectedIds: string[]; activeStep: PresentationStep | null;
   onElements: (update: (elements: PresentationElement[]) => PresentationElement[]) => void;
   onSelect: (ids: string[]) => void; onUpdate: (element: PresentationElement) => void;
   onSteps: (update: (steps: PresentationStep[]) => PresentationStep[]) => void;
-  onAdd: (type: "chart" | "icon") => void; onUpload: (file: File) => void; disabled: boolean;
+  disabled: boolean;
 }) {
   const t = useTranslations("presentationStudio");
   const selected = selectedIds.length === 1 ? elements.find((element) => element.id === selectedIds[0]) : undefined;
@@ -23,7 +23,7 @@ export function PresentationStudioInspector({ elements, selectedIds, activeStep,
   const locked = selected ? isPresentationElementLocked(elements, selected.id) : false;
   const content = (patch: Record<string, unknown>) => selected && onUpdate({ ...selected, content: { ...selected.content, ...patch } } as PresentationElement);
   return <div className="mb-4 space-y-3 border-b pb-4">
-    <details open className="space-y-2"><summary className="cursor-pointer text-sm font-semibold">{t("structure")}</summary>
+    <details className="space-y-2"><summary className="cursor-pointer text-sm font-semibold">{t("structure")}</summary>
       <div className="flex flex-wrap gap-2">
         <Button size="sm" variant="outline" type="button" disabled={disabled || selectedIds.length < 2 || elements.length >= 500} onClick={() => {
           const id = createId(); onElements((current) => groupPresentationElements(current, new Set(selectedIds), id)); onSelect([id]);
@@ -50,13 +50,8 @@ export function PresentationStudioInspector({ elements, selectedIds, activeStep,
         </select>
       </label>
     </details>
-    <details className="space-y-3" open={Boolean(selected && ["text", "image", "chart", "icon", "audio", "video"].includes(selected.type))}>
+    <details className="space-y-3" open={Boolean(selected && ["image", "chart", "icon", "audio", "video"].includes(selected.type))}>
       <summary className="cursor-pointer text-sm font-semibold">{t("content")}</summary>
-      <div className="flex flex-wrap gap-2">
-        <Button size="sm" variant="outline" type="button" disabled={disabled} onClick={() => onAdd("chart")}>{t("addChart")}</Button>
-        <Button size="sm" variant="outline" type="button" disabled={disabled} onClick={() => onAdd("icon")}>{t("addIcon")}</Button>
-        <label className="block w-full text-xs">{t("uploadMedia")}<input className="mt-1 block w-full text-xs" type="file" accept="video/mp4,video/webm,audio/mpeg,audio/mp4,audio/ogg,audio/wav" disabled={disabled} onChange={(event) => { const file = event.target.files?.[0]; if (file) onUpload(file); event.target.value = ""; }} /></label>
-      </div>
       <fieldset disabled={disabled || locked} className="space-y-3">
       {selected?.type === "text" && <>
         <PresentationRichText key={selected.id} content={selected.content} disabled={disabled || locked} onChange={(next) => onUpdate({ ...selected, content: next })} />

@@ -1,6 +1,21 @@
 import { expect, test, type Page } from "@playwright/test";
 import { zipSync, strToU8 } from "fflate";
 
+test.use({ viewport: { width: 1440, height: 1000 } });
+async function tool(page: Page, name: string) {
+  await page.getByRole("button", { name: "Werkzeuge", exact: true }).click();
+  await page.getByRole("menuitem", { name, exact: true }).click();
+}
+async function save(page: Page) {
+  await page.getByRole("button", { name: "Aktionen", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Speichern", exact: true }).click();
+}
+async function properties(page: Page) {
+  await tool(page, "Eigenschaften");
+  const structure = page.locator("summary").filter({ hasText: /^Struktur$/ });
+  if (await structure.locator("..").getAttribute("open") === null) await structure.click();
+}
+
 async function login(page: Page) {
   const credentials = { username: "admin", password: "super-secret-1" };
   let response = await page.request.post("/api/auth/sign-in/username", { data: credentials });
@@ -32,12 +47,14 @@ async function seed(page: Page) {
 async function open(page: Page, id: string) {
   await page.goto(`/wiki/presentations/${id}`);
   await expect(page.getByRole("button", { name: "Text", exact: true })).toBeEnabled();
+  await properties(page);
 }
 const documentOf = async (page: Page, id: string) => (await page.request.get(`/api/wiki/presentations/${id}`)).json();
 
 test("PowerPoint import is available from the presentation list", async ({ page }) => {
   await login(page); await page.goto("/wiki/presentations");
-  await page.getByRole("button", { name: "PowerPoint importieren" }).click();
+  await page.getByRole("button", { name: "Neu", exact: true }).click();
+  await page.getByRole("menuitem", { name: "PowerPoint importieren" }).click();
   await page.getByLabel("PowerPoint-Datei auswählen").setInputFiles({ name: "Imported workshop.pptx", mimeType: "application/vnd.openxmlformats-officedocument.presentationml.presentation", buffer: pptx() });
   await expect(page.getByRole("heading", { name: "Importhinweise" })).toBeVisible();
   await page.getByRole("button", { name: "Importierte Präsentation öffnen" }).click();
@@ -51,17 +68,17 @@ test("nested groups persist, transform descendants, lock and ungroup", async ({ 
   await page.locator('[data-testid="rf__node-b"]').click({ modifiers: ["Shift"] });
   await page.getByRole("button", { name: "Auswahl gruppieren", exact: true }).click();
   await page.getByRole("spinbutton", { name: "Drehung (Grad)" }).fill("30");
-  await page.getByRole("button", { name: "Speichern", exact: true }).click();
+  await save(page);
   await expect.poll(async () => (await documentOf(page, id)).elements.find((element: { id: string }) => element.id === "a").rotation).toBe(30);
   await page.getByRole("button", { name: "Objekt sperren", exact: true }).click();
-  await page.getByRole("button", { name: "Speichern", exact: true }).click();
+  await save(page);
   const saved = await documentOf(page, id);
   const group = saved.elements.find((element: { content: { isGroup?: boolean } }) => element.content.isGroup);
   expect(group.locked).toBe(true);
   await page.screenshot({ path: info.outputPath("groups-editor.png") });
   await page.getByRole("button", { name: "Objekt entsperren" }).click();
   await page.getByRole("button", { name: "Gruppierung aufheben" }).click();
-  await page.getByRole("button", { name: "Speichern", exact: true }).click();
+  await save(page);
   await expect.poll(async () => (await documentOf(page, id)).elements.find((element: { id: string }) => element.id === "a").parentId).toBe("frame");
 });
 
@@ -71,17 +88,20 @@ test("rich text, charts, icons and reveal/hide playback survive saving", async (
   const rich = page.getByRole("textbox", { name: "Formatierter Text" });
   await rich.fill("Formatted idea");
   await rich.press("Control+a");
+  await page.locator("summary").filter({ hasText: /^Inhalt$/ }).click();
   await page.getByRole("button", { name: "Kursiv", exact: true }).click();
   await page.getByRole("combobox", { name: "Schriftart", exact: true }).selectOption("georgia");
-  await page.getByRole("button", { name: "Diagramm hinzufügen" }).click();
+  await page.getByRole("button", { name: "Einfügen", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Diagramm hinzufügen" }).click();
   await page.getByRole("textbox", { name: "Diagrammtitel" }).fill("Revenue");
   await page.getByRole("combobox", { name: "Diagrammtyp" }).selectOption("pie");
-  await page.getByRole("button", { name: "Symbol hinzufügen" }).click();
+  await page.getByRole("button", { name: "Einfügen", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Symbol hinzufügen" }).click();
   await page.getByRole("combobox", { name: "Objekt auswählen" }).selectOption("a");
   await page.locator("summary").filter({ hasText: /^Animation$/ }).click();
   await page.getByRole("button", { name: "Einblenden", exact: true }).click();
   await page.getByRole("button", { name: "Ausblenden", exact: true }).click();
-  await page.getByRole("button", { name: "Speichern", exact: true }).click();
+  await save(page);
   const saved = await documentOf(page, id);
   expect(saved.elements.find((element: { id: string }) => element.id === "a").content).toMatchObject({ font: "georgia", runs: [{ text: "Formatted idea", italic: true }] });
   expect(saved.elements.some((element: { type: string }) => element.type === "chart")).toBe(true);
@@ -172,7 +192,7 @@ test("typing during a merged save retains the local draft when it conflicts", as
 
 test("company themes, templates and object comments are usable from the inspector", async ({ page }) => {
   await login(page); const id = await seed(page); await open(page, id);
-  await page.locator("summary").filter({ hasText: /^Themen und Vorlagen$/ }).click();
+  await tool(page, "Design");
   const name = `Brand ${Date.now()}`;
   await page.getByRole("textbox", { name: "Designname" }).fill(name);
   await page.getByRole("button", { name: "Firmenthema speichern" }).click();
@@ -181,14 +201,16 @@ test("company themes, templates and object comments are usable from the inspecto
   await page.getByRole("button", { name: "Firmenvorlage speichern" }).click();
   await expect(page.getByText(`${name} template`, { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Text", exact: true }).click();
-  await page.getByRole("button", { name: "Speichern", exact: true }).click();
+  await save(page);
   expect((await documentOf(page, id)).elements).toHaveLength(4);
+  await tool(page, "Design");
   page.once("dialog", (dialog) => void dialog.accept());
   await page.getByText(`${name} template`, { exact: true }).locator("..").getByRole("button", { name: "Anwenden", exact: true }).click();
-  await page.getByRole("button", { name: "Speichern", exact: true }).click();
+  await save(page);
   await expect.poll(async () => (await documentOf(page, id)).elements.length).toBe(3);
+  await properties(page);
   await page.getByRole("combobox", { name: "Objekt auswählen" }).selectOption("a");
-  await page.locator("summary").filter({ hasText: /^Kommentare$/ }).click();
+  await tool(page, "Kommentare");
   await page.getByRole("textbox", { name: "Neuer Kommentar" }).fill("Clarify this idea");
   await page.getByRole("button", { name: "Kommentar senden" }).click();
   await expect(page.getByText("Clarify this idea", { exact: true })).toBeVisible();
@@ -235,7 +257,7 @@ test("viewer and commenter roles protect editing, notes and restricted attachmen
   await viewer.goto(`/wiki/presentations/${id}`);
   await expect(viewer.getByRole("button", { name: "Text", exact: true })).toBeDisabled();
   await viewer.locator('[data-testid="rf__node-a"]').click();
-  await viewer.locator("summary").filter({ hasText: /^Kommentare$/ }).click();
+  await tool(viewer, "Kommentare");
   await viewer.getByRole("textbox", { name: "Neuer Kommentar" }).fill("Commenter feedback");
   await viewer.getByRole("button", { name: "Kommentar senden" }).click();
   await expect(viewer.getByText("Commenter feedback", { exact: true })).toBeVisible();
@@ -262,7 +284,7 @@ test("cropped images and uploaded audio play publicly and offline with scoped me
   wave.write("RIFF"); wave.writeUInt32LE(wave.length - 8, 4); wave.write("WAVEfmt ", 8); wave.writeUInt32LE(16, 16); wave.writeUInt16LE(1, 20); wave.writeUInt16LE(1, 22); wave.writeUInt32LE(8000, 24); wave.writeUInt32LE(16000, 28); wave.writeUInt16LE(2, 32); wave.writeUInt16LE(16, 34); wave.write("data", 36); wave.writeUInt32LE(1600, 40);
   await page.getByLabel("Video oder Audio hochladen").setInputFiles({ name: "Voice.wav", mimeType: "audio/wav", buffer: wave });
   await expect(page.getByRole("textbox", { name: "Medientitel" })).toHaveValue("Voice.wav");
-  await page.getByRole("button", { name: "Speichern", exact: true }).click();
+  await save(page);
   const saved = await documentOf(page, id); expect(saved.elements.find((element: { id: string }) => element.id === "image").content).toMatchObject({ mask: "circle", fit: "cover" });
   const audio = saved.elements.find((element: { type: string }) => element.type === "audio"); expect(audio).toBeTruthy();
   const spoofed = await page.request.post("/api/files", { multipart: { entityType: "wikiPresentation", entityId: id, file: { name: "fake.mp4", mimeType: "video/mp4", buffer: Buffer.from("<html>not a video</html>") } } });

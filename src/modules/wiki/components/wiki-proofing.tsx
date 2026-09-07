@@ -75,7 +75,7 @@ export function WikiProofingMenu({ language, status, count, picky, saving, onLan
   const label = saving ? t("saving") : status === "error" ? t("fallbackShort") : count ? t("issueCount", { count }) : status === "checking" ? t("checking") : t("ready");
   const icon: ReactElement = status === "checking" ? <RotateCcw className="size-3 animate-spin" /> : <Languages className="size-3.5" />;
   return <Popover open={open} onOpenChange={setOpen}>
-    <PopoverTrigger render={<Button type="button" data-testid={compact ? "proofing-menu-compact" : "proofing-language-toggle"} variant="outline" className={compact ? "xl:hidden" : "h-auto w-full flex-col items-stretch gap-1.5 px-2 py-2"} aria-label={t("title")} />}>
+    <PopoverTrigger render={<Button type="button" data-testid="proofing-language-toggle" variant="outline" className={compact ? "h-8 gap-1.5 px-2" : "h-auto w-full flex-col items-stretch gap-1.5 px-2 py-2"} aria-label={t("title")} />}>
       <span className="flex items-center gap-1.5 text-xs font-medium">{icon}{t(compact ? "title" : "shortTitle")}<ChevronDown className="ml-auto size-3" /></span>
       {!compact && <span className="whitespace-normal text-[10px] leading-tight text-muted-foreground" data-testid="proofing-status">{label}</span>}
       {!compact && !saving && status === "checking" && count > 0 && <span className="whitespace-normal text-[10px] leading-tight text-muted-foreground" data-testid="proofing-pending">{t("checkingChanges")}</span>}

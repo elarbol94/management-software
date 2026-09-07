@@ -1,5 +1,9 @@
 # Wiki presentations
 
+## Workspace tools
+
+The editor separates the document header from its creation toolbar. **Path / Weg** opens a collapsible playback-order panel, including timing and speaker notes. Selecting an object opens Properties; **Tools / Werkzeuge** opens Properties, Document sources, Design, Assets or Comments in one right panel. Narrower screens use dismissible drawers. Sharing, history and playback settings open in dialogs; export and explicit Save are in the header actions menu. Save failures and pending source reviews remain visible with panels closed. The presentation library uses noninteractive first-stop previews and a single New menu for templates, document conversion and PowerPoint import.
+
 Presentations use an infinite canvas and an ordered path of camera stops and
 object animations. Content includes text, images, frames, shapes, icons, charts,
 uploaded video and audio. The editor, player, previews and PDF export share the
@@ -136,8 +140,8 @@ Public players and templates strip it together with the other source metadata.
 - At most 500 elements and 500 stops are supported. Geometry remains within the
   save schema's limits during group scaling.
 
-On phones and tablets, **Path and properties** opens the editor panel below the
-canvas. It remains alongside the canvas on larger screens.
+On phones and tablets, the path and tools open as drawers over the canvas.
+On desktop, the path and the active utility panel dock beside the canvas.
 
 ## Structure, animation and content
 

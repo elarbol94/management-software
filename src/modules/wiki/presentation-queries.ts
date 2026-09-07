@@ -3,6 +3,7 @@ import "server-only";
 import { desc, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { user, wikiPresentationLiveSessions, wikiPresentationRevisions, wikiPresentations } from "@/db/schema";
+import { withoutPresentationSources } from "./lib/presentation-source";
 import { isLiveSessionStale } from "./lib/live-session";
 import { presentationRole, presentationAccessSettings, requirePresentationAccess } from "./presentation-access";
 import {
@@ -26,13 +27,18 @@ export function listPresentations(viewer: { id: string; role?: string | null }) 
     .orderBy(desc(wikiPresentations.updatedAt))
     .all()
     .filter((row) => presentationRole(row.id, viewer))
-    .map(({ elementsJson, pathJson, ...row }) => ({
-      ...row,
-      role: presentationRole(row.id, viewer),
-      updatedAt: row.updatedAt.getTime(),
-      elementCount: parsePresentationCanvas(elementsJson).elements.length,
-      stepCount: parsePresentationSteps(pathJson).length,
-    }));
+    .map(({ elementsJson, pathJson, ...row }) => {
+      const canvas = parsePresentationCanvas(elementsJson);
+      const steps = normalizeSteps(parsePresentationSteps(pathJson), canvas.elements);
+      return {
+        ...row,
+        role: presentationRole(row.id, viewer),
+        updatedAt: row.updatedAt.getTime(),
+        elementCount: canvas.elements.length,
+        stepCount: steps.length,
+        preview: withoutPresentationSources({ title: row.title, ...canvas, steps: steps.map((step) => ({ ...step, notes: undefined })) }),
+      };
+    });
 }
 
 export type PresentationListItem = ReturnType<typeof listPresentations>[number];

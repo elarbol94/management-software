@@ -65,7 +65,7 @@ export function PresentationSourcePanel({ elements, selected, disabled, previews
     const frame = requestAnimationFrame(() => setEditing(false));
     return () => cancelAnimationFrame(frame);
   }, [selected?.id]);
-  if (!selected && !elements.some((element) => element.source)) return null;
+  if (!selected && !elements.some((element) => element.source)) return <p className="text-sm text-muted-foreground">{t("noSource")}</p>;
   const missing = loaded && source && (!document || (source.sectionId && !section));
   return <section className="mb-4 space-y-2 rounded-md border p-3" aria-label={t("source")}>
     <h2 className="flex items-center gap-2 text-sm font-medium"><Link2 className="size-4" />{t("source")}</h2>

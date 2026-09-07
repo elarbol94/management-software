@@ -7,9 +7,11 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import type { PptxImportWarning } from "../lib/presentation-pptx";
 
-export function PresentationImport() {
+export function PresentationImport({ open: controlledOpen, onOpenChange, hideTrigger = false }: { open?: boolean; onOpenChange?: (open: boolean) => void; hideTrigger?: boolean } = {}) {
   const t = useTranslations("presentationStudio"), router = useRouter();
-  const [open, setOpen] = useState(false), [busy, setBusy] = useState(false);
+  const [localOpen, setLocalOpen] = useState(false), [busy, setBusy] = useState(false);
+  const open = controlledOpen ?? localOpen;
+  const setOpen = onOpenChange ?? setLocalOpen;
   const [result, setResult] = useState<{ id: string; warnings: PptxImportWarning[] } | null>(null);
   const upload = async (file: File) => {
     setBusy(true);
@@ -20,7 +22,7 @@ export function PresentationImport() {
       setResult(await response.json());
     } catch { toast.error(t("importFailed")); } finally { setBusy(false); }
   };
-  return <><Button type="button" variant="outline" size="sm" onClick={() => setOpen(true)}>{t("importPptx")}</Button><Dialog open={open} onOpenChange={(open) => { if (!busy) setOpen(open); }}><DialogContent><DialogHeader><DialogTitle>{t("importPptx")}</DialogTitle><DialogDescription>{t("importHint")}</DialogDescription></DialogHeader>
+  return <>{!hideTrigger && <Button type="button" variant="outline" size="sm" onClick={() => setOpen(true)}>{t("importPptx")}</Button>}<Dialog open={open} onOpenChange={(open) => { if (!busy) setOpen(open); }}><DialogContent><DialogHeader><DialogTitle>{t("importPptx")}</DialogTitle><DialogDescription>{t("importHint")}</DialogDescription></DialogHeader>
     {!result ? <label className="space-y-2 text-sm">{busy ? t("importing") : t("choosePptx")}<input type="file" className="block w-full" accept=".pptx" disabled={busy} onChange={(event) => { const file = event.target.files?.[0]; if (file) void upload(file); event.target.value = ""; }} /></label> : <div className="space-y-3"><h3 className="font-medium">{t("importWarnings")}</h3><ul className="max-h-72 list-disc overflow-auto pl-5 text-sm">{result.warnings.map((warning, i) => <li key={i}>{t(`pptxWarnings.${warning.code}`, { slide: warning.slide })}</li>)}{!result.warnings.length && <li>{t("pptxWarnings.none")}</li>}</ul><Button type="button" onClick={() => { router.push(`/wiki/presentations/${result.id}`); setOpen(false); setResult(null); }}>{t("openImported")}</Button></div>}
   </DialogContent></Dialog></>;
 }

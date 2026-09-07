@@ -1,5 +1,16 @@
 import { expect, test, type Page } from "@playwright/test";
 
+test.use({ viewport: { width: 1440, height: 1000 } });
+async function action(page: Page, name: string) {
+  await page.getByRole("button", { name: "Aktionen", exact: true }).click();
+  await page.getByRole("menuitem", { name, exact: true }).click();
+}
+async function pathPanel(page: Page) {
+  const button = page.getByRole("button", { name: "Weg", exact: true });
+  if (await button.getAttribute("aria-expanded") !== "true") await button.click();
+}
+
+
 /**
  * Golden-path coverage for the wiki presentation mode: create from a template, edit the
  * canvas, add a path step, then present and confirm the presenter-notes popup follows
@@ -45,8 +56,9 @@ test("create from a template, edit an element, add a step, then present and chec
   const title = `E2E Pitch ${Date.now()}`;
 
   // 1. Create a presentation from the "Pitch" template.
-  await page.getByRole("textbox", { name: "Titel der Präsentation" }).fill(title);
   await page.getByRole("button", { name: "Neu", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Leer oder aus Vorlage", exact: true }).click();
+  await page.getByRole("textbox", { name: "Titel der Präsentation" }).fill(title);
   const dialog = page.getByRole("dialog");
   await expect(dialog).toBeVisible();
   await dialog.getByRole("button", { name: "Pitch", exact: true }).click();
@@ -62,6 +74,7 @@ test("create from a template, edit an element, add a step, then present and chec
   await contentField.blur();
 
   // 3. Add it as a path step, then attach speaker notes to it.
+  await pathPanel(page);
   await page.getByRole("button", { name: "Auswahl als Station" }).click();
   const newStepRow = page.getByRole("button", { name: stepText, exact: true });
   await expect(newStepRow).toBeVisible();
@@ -182,8 +195,9 @@ test("create from a template, edit an element, add a step, then present and chec
  * presentation open in the editor.
  */
 async function openNewPitchEditor(page: Page, title: string) {
-  await page.getByRole("textbox", { name: "Titel der Präsentation" }).fill(title);
   await page.getByRole("button", { name: "Neu", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Leer oder aus Vorlage", exact: true }).click();
+  await page.getByRole("textbox", { name: "Titel der Präsentation" }).fill(title);
   const dialog = page.getByRole("dialog");
   await expect(dialog).toBeVisible();
   await dialog.getByRole("button", { name: "Pitch", exact: true }).click();
@@ -198,13 +212,14 @@ test("mobile editing exposes the path and saves a focused title before presentin
   await page.setViewportSize({ width: 390, height: 844 });
   await login(page);
   await openNewPitchEditor(page, `E2E Mobile ${Date.now()}`);
-  await page.getByRole("button", { name: "Pfad und Eigenschaften" }).click();
-  const panel = page.getByRole("complementary", { name: "Pfad und Eigenschaften" });
-  await expect(panel.getByRole("heading", { name: "Weg", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Text", exact: true }).click();
-  await panel.getByRole("textbox", { name: "Text", exact: true }).fill("Mobile stop");
+  await page.getByRole("textbox", { name: "Text", exact: true }).fill("Mobile stop");
+  await page.getByRole("button", { name: "Seitenbereich schließen" }).click();
+  await pathPanel(page);
+  const panel = page.getByRole("dialog");
   await panel.getByRole("button", { name: "Auswahl als Station" }).click();
   await expect(panel.getByRole("button", { name: "Mobile stop", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Seitenbereich schließen" }).click();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   expect(await page.evaluate(() => document.documentElement.scrollHeight <= window.innerHeight + 1)).toBe(true);
   await page.screenshot({ path: testInfo.outputPath("mobile-editor.png"), fullPage: true });
@@ -244,7 +259,7 @@ test("rotation keeps an element in place and Save commits the currently focused 
   expect(after.y).toBeCloseTo(before.y, 0);
   const text = "Saved directly from the focused property field";
   await page.getByRole("textbox", { name: "Text", exact: true }).fill(text);
-  await page.getByRole("button", { name: "Speichern", exact: true }).click();
+  await action(page, "Speichern");
   await expect(page.getByText("Gespeichert", { exact: true })).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath("desktop-editor.png"), fullPage: true });
   await page.reload();
@@ -259,11 +274,12 @@ test("restoring history drains pending edits and cannot be overwritten by autosa
   await page.getByTestId("rf__node-pitch-title").click();
   const content = page.getByRole("textbox", { name: "Text", exact: true });
   await content.fill("First edit");
-  await page.getByRole("button", { name: "Speichern", exact: true }).click();
+  await action(page, "Speichern");
   await expect(page.getByText("Gespeichert", { exact: true })).toBeVisible();
+  await content.fill("Pending edit immediately before restoring");
+  await action(page, "Versionen");
   const restore = page.getByRole("button", { name: "Wiederherstellen", exact: true }).first();
   await expect(restore).toBeVisible();
-  await content.fill("Pending edit immediately before restoring");
   page.once("dialog", (dialog) => dialog.accept());
   await restore.click();
   await expect(page.getByTestId("rf__node-pitch-title")).toContainText("Your Pitch");
@@ -277,11 +293,12 @@ test("PDF notes are opt-in and keyboard activation advances exactly one stop", a
   test.setTimeout(120_000);
   await login(page);
   await openNewPitchEditor(page, `E2E Print ${Date.now()}`);
+  await pathPanel(page);
   await page.getByRole("button", { name: "Your Pitch", exact: true }).click();
   const notes = "Private presenter notes should not appear in the audience PDF";
   await page.getByRole("textbox", { name: "Sprechernotizen" }).fill(notes);
   const popupPromise = context.waitForEvent("page");
-  await page.getByRole("link", { name: "PDF-Export", exact: true }).click();
+  await action(page, "PDF-Export");
   const print = await popupPromise;
   await expect(print.getByTestId("presentation-print")).toBeVisible();
   await expect(print.getByText(notes, { exact: true })).toHaveCount(0);
@@ -307,9 +324,10 @@ test("a tab that loses its lease disables all editing controls", async ({ page, 
   await expect(second.getByRole("button", { name: "Text", exact: true })).toBeEnabled();
   await expect(page.getByRole("textbox", { name: "Titel der Präsentation" })).toBeDisabled({ timeout: 30_000 });
   await expect(page.getByRole("textbox", { name: "Text", exact: true })).toBeDisabled();
+  await pathPanel(page);
   await expect(page.getByRole("button", { name: "Auswahl als Station" })).toBeDisabled();
   await expect(page.getByRole("button", { name: "Element löschen" })).toBeDisabled();
-  await page.getByRole("button", { name: "Wiedergabeeinstellungen" }).click();
+  await action(page, "Wiedergabeeinstellungen");
   await expect(page.getByLabel("Standard-Stationsdauer (s)")).toBeDisabled();
   await second.getByTestId("presentation-editor").getByRole("link", { name: "Präsentationen", exact: true }).click();
   await second.close();
@@ -347,7 +365,7 @@ test("panel inputs: a playback duration is typed digit by digit and clamped only
   await login(page);
   await openNewPitchEditor(page, `E2E Panel Duration ${Date.now()}`);
 
-  await page.getByRole("button", { name: "Wiedergabeeinstellungen" }).click();
+  await action(page, "Wiedergabeeinstellungen");
   const duration = page.getByLabel("Standard-Stationsdauer (s)");
   await expect(duration).toBeVisible();
 
@@ -419,8 +437,9 @@ test("presenting flushes the pending autosave instead of losing the last edit", 
 
   const title = `E2E Autosave ${Date.now()}`;
 
-  await page.getByRole("textbox", { name: "Titel der Präsentation" }).fill(title);
   await page.getByRole("button", { name: "Neu", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Leer oder aus Vorlage", exact: true }).click();
+  await page.getByRole("textbox", { name: "Titel der Präsentation" }).fill(title);
   const dialog = page.getByRole("dialog");
   await expect(dialog).toBeVisible();
   await dialog.getByRole("button", { name: "Pitch", exact: true }).click();
@@ -453,8 +472,9 @@ test("reloading the editor reclaims the author's own lease so edits still save",
   await login(page);
 
   const title = `E2E Reload ${Date.now()}`;
-  await page.getByRole("textbox", { name: "Titel der Präsentation" }).fill(title);
   await page.getByRole("button", { name: "Neu", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Leer oder aus Vorlage", exact: true }).click();
+  await page.getByRole("textbox", { name: "Titel der Präsentation" }).fill(title);
   const dialog = page.getByRole("dialog");
   await expect(dialog).toBeVisible();
   await dialog.getByRole("button", { name: "Pitch", exact: true }).click();
@@ -494,8 +514,9 @@ test("a follower leaves a live session from the badge, and the presenter exiting
   const title = `E2E Live ${Date.now()}`;
 
   // 1. A presentation to broadcast, same as the golden path's first step.
-  await page.getByRole("textbox", { name: "Titel der Präsentation" }).fill(title);
   await page.getByRole("button", { name: "Neu", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Leer oder aus Vorlage", exact: true }).click();
+  await page.getByRole("textbox", { name: "Titel der Präsentation" }).fill(title);
   const dialog = page.getByRole("dialog");
   await expect(dialog).toBeVisible();
   await dialog.getByRole("button", { name: "Pitch", exact: true }).click();

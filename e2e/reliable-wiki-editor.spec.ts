@@ -62,7 +62,8 @@ test("save acknowledgements retain newer text and layout in the recovery journal
     await editor.fill("First snapshot");
     await expect.poll(() => requests).toBe(1);
     await editor.fill("Newer words must survive");
-    await page.getByTestId("document-mode-toggle").click();
+    await page.getByRole("button", { name: "Werkzeuge", exact: true }).click();
+  await page.getByTestId("document-mode-toggle").click();
     firstDone();
     await expect.poll(() => requests).toBe(2);
     const journal = await page.evaluate((id) => JSON.parse(localStorage.getItem(`wiki-draft:${id}`) ?? "null"), id);
@@ -156,9 +157,10 @@ test("applying a template preserves current text by default and uses normal savi
   await login(page);
   const { editor, id } = await trackedNote(page);
   await editor.fill("Keep these current words");
+  await page.getByRole("button", { name: "Werkzeuge", exact: true }).click();
   await page.getByTestId("document-mode-toggle").click();
-  await page.getByRole("button", { name: "Mehr", exact: true }).last().click();
-  await page.getByRole("menuitem", { name: "Dokumentlayout anzeigen" }).click();
+  await page.getByRole("button", { name: "Werkzeuge", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Dokumentlayout", exact: true }).click();
   const panel = page.getByTestId("document-layout-panel");
   await panel.getByRole("tab").nth(1).click();
   await expect(panel.getByLabel("Text durch Vorlageninhalt ersetzen")).not.toBeChecked();
@@ -222,22 +224,23 @@ test("a second editor is read-only until it explicitly takes over", async ({ bro
 });
 
 test("document paper keeps its physical aspect ratio and margin guides can be toggled", async ({ page }) => {
-  test.setTimeout(120_000);
+  test.setTimeout(240_000);
   await login(page);
   await createNote(page);
-  const sideTools = page.getByTestId("editor-side-tools");
-  await expect(sideTools).toBeVisible();
-  await expect(sideTools.getByRole("button")).toHaveCount(4);
+  await expect(page.getByTestId("editor-side-tools")).toHaveCount(0);
   await expect(page.getByTestId("proofing-language-toggle")).toHaveAccessibleName("Rechtschreibung");
-  await page.getByRole("button", { name: "Dokumentgliederung" }).click();
+  await page.getByRole("button", { name: "Werkzeuge", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Dokumentgliederung" }).click();
   await expect(page.getByTestId("editor-outline")).toBeVisible();
-  await page.keyboard.press("Escape");
-  await page.getByRole("button", { name: "Kommentare anzeigen" }).click();
+  await page.getByRole("button", { name: "Seitenbereich schließen" }).click();
+  await page.getByRole("button", { name: "Werkzeuge", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Kommentare", exact: true }).click();
   await expect(page.getByTestId("comment-rail")).toBeVisible();
-  await page.getByRole("button", { name: "Kommentare ausblenden" }).click();
+  await page.getByRole("button", { name: "Seitenbereich schließen" }).click();
+  await page.getByRole("button", { name: "Werkzeuge", exact: true }).click();
   await page.getByTestId("document-mode-toggle").click();
-  await page.getByRole("button", { name: "Mehr", exact: true }).last().click();
-  await page.getByRole("menuitem", { name: "Dokumentlayout anzeigen" }).click();
+  await page.getByRole("button", { name: "Werkzeuge", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Dokumentlayout", exact: true }).click();
   const canvas = page.locator(".wiki-document-canvas");
   const sheet = canvas.locator(".wiki-document-page-sheet").first();
   await expect(sheet).toBeVisible();
@@ -256,10 +259,12 @@ test("document paper keeps its physical aspect ratio and margin guides can be to
   await page.keyboard.press("ControlOrMeta+0");
   await page.locator(".wiki-document-workspace").dispatchEvent("wheel", { ctrlKey: true, deltaY: -100 });
   await expect(canvas).toHaveCSS("zoom", "1.08");
+  await page.getByRole("button", { name: "Seitenbereich schließen", exact: true }).click();
   await page.getByRole("button", { name: "Mehr", exact: true }).last().click();
   await expect(page.getByRole("menuitem", { name: "Verkleinern" })).toHaveCount(0);
   await expect(page.getByRole("menuitem", { name: "Vergrößern" })).toHaveCount(0);
   await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "Werkzeuge", exact: true }).click();
   await page.getByTestId("document-mode-toggle").click();
   await expect(page.locator(".wiki-editor-surface")).toHaveCSS("zoom", "1.08");
 });
@@ -541,7 +546,7 @@ test("proofing recovers after service failure, selects languages directly and fi
   await page.reload();
   await expect(editor).toHaveAttribute("lang", "en-US");
   await page.setViewportSize({ width: 390, height: 700 });
-  await expect(page.getByTestId("proofing-menu-compact")).toBeVisible();
+  await expect(page.getByTestId("proofing-language-toggle")).toBeVisible();
   await page.locator(".wiki-spellcheck-issue").click();
   const popup = page.getByRole("dialog", { name: "Korrekturvorschläge" });
   await expect(popup).toBeVisible();

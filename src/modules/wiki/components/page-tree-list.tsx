@@ -12,6 +12,8 @@ import type { WorkspacePage } from "../research-queries";
 import { parseTagList } from "../lib/tags";
 import { buildPageTree } from "../lib/page-tree";
 import { reorderPages } from "../actions";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
 type Row = WorkspacePage & { depth: number };
@@ -31,7 +33,7 @@ function PageRow({ row, sortable, children }: { row: Row; sortable: boolean; chi
         paddingLeft: `${12 + row.depth * 22}px`,
         opacity: isDragging ? 0.6 : 1,
       }}
-      className="group relative flex flex-wrap items-center gap-x-3 gap-y-1 bg-card p-3 transition-colors hover:bg-indigo-50/60 dark:hover:bg-indigo-950/20"
+      className="group relative flex flex-wrap items-center gap-x-3 gap-y-1 min-h-20 bg-card px-4 py-4 transition-colors hover:bg-muted/40"
     >
       {sortable && (
         <button
@@ -119,20 +121,21 @@ export function PageTreeList({ pages }: { pages: WorkspacePage[] }) {
   if (pages.length === 0)
     return <div className="grid min-h-72 place-items-center rounded-xl border border-dashed bg-muted/20 text-center">
       <div>
-        <FileText className="mx-auto mb-3 size-8 text-indigo-400" />
+        <FileText className="mx-auto mb-3 size-8 text-muted-foreground/60" />
         <h2 className="font-medium">{t("noDocuments")}</h2>
         <p className="mt-1 max-w-sm text-sm text-muted-foreground">{t("noDocumentsDescription")}</p>
       </div>
     </div>;
 
   const rowBody = (row: Row) => <>
-    <Link href={`/wiki/pages/${row.slug}`} className="flex min-w-0 flex-1 items-center gap-2">
-      <FileText className="size-4 shrink-0 text-indigo-400" />
-      <span className="truncate text-sm font-medium group-hover:text-indigo-700 dark:group-hover:text-indigo-300">{row.title}</span>
+    <Link href={`/wiki/pages/${row.slug}`} className="flex min-w-0 flex-1 basis-[calc(100%-2.5rem)] items-center gap-2 sm:basis-auto">
+      <FileText className="size-4 shrink-0 text-muted-foreground/60" />
+      <span className="truncate text-base font-medium tracking-tight">{row.title}</span>
     </Link>
-    {parseTagList(row.tags).map((tag) => <Link key={tag.id} href={`/wiki/tags/${tag.id}`} className="rounded-full bg-indigo-50 px-2 py-0.5 text-[10px] text-indigo-700 hover:bg-indigo-100 dark:bg-indigo-950 dark:text-indigo-200 dark:hover:bg-indigo-900">{tag.name}</Link>)}
-    <span className="rounded-full border px-2 py-0.5 text-[10px] text-muted-foreground">{t(`pageStatuses.${row.status}`)}</span>
-    <span className="flex items-center gap-1 text-xs text-muted-foreground"><UserRound className="size-3" />{row.updatedByName}</span>
+    {parseTagList(row.tags).slice(0, 2).map((tag) => <Link key={tag.id} href={`/wiki/tags/${tag.id}`} className="rounded-md bg-muted/60 px-2 py-1 text-xs text-muted-foreground hover:text-foreground">{tag.name}</Link>)}
+    {parseTagList(row.tags).length > 2 && <Popover><PopoverTrigger render={<Button size="xs" variant="ghost" aria-label={t("workspace.moreTags", { count: parseTagList(row.tags).length - 2 })} />}>+{parseTagList(row.tags).length - 2}</PopoverTrigger><PopoverContent className="flex w-60 flex-wrap gap-2">{parseTagList(row.tags).slice(2).map((tag) => <Link key={tag.id} href={`/wiki/tags/${tag.id}`} className="rounded-md bg-muted px-2 py-1 text-xs">{tag.name}</Link>)}</PopoverContent></Popover>}
+    <span className="rounded-md px-2 py-1 text-xs text-muted-foreground">{t(`pageStatuses.${row.status}`)}</span>
+    <span className="hidden items-center gap-1 text-xs text-muted-foreground lg:flex"><UserRound className="size-3" />{row.updatedByName}</span>
     <span className="flex items-center gap-1 text-xs text-muted-foreground"><Clock3 className="size-3" />{format.dateTime(new Date(row.updatedAt), { dateStyle: "medium" })}</span>
   </>;
 
@@ -142,7 +145,7 @@ export function PageTreeList({ pages }: { pages: WorkspacePage[] }) {
       <Input aria-label={t("searchDocuments")} value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t("searchDocuments")} className="pl-9" />
     </div>
     {visible.length === 0 ? <p className="rounded-xl border border-dashed p-6 text-center text-sm text-muted-foreground">{t("noSearchResults")}</p> :
-    <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={(event) => void handleDragEnd(event)}>
+    <DndContext id="wiki-document-tree" sensors={sensors} collisionDetection={closestCenter} onDragEnd={(event) => void handleDragEnd(event)}>
       {/* Search flattens the tree, so dragging is disabled while filtering: the visible
           order is no longer the sibling order the drop would write. */}
       <SortableContext items={visible.map((row) => row.id)} strategy={verticalListSortingStrategy}>
