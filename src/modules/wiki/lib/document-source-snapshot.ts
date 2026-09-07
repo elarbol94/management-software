@@ -4,6 +4,7 @@ import type { TiptapNode } from "./tiptap";
 
 export type DocumentSourceSnapshot = {
   fingerprint: string;
+  headingTitle?: string;
   text: string;
   truncated: boolean;
   imageCount: number;
@@ -57,6 +58,7 @@ export function documentSourceSnapshots(doc: TiptapNode) {
     const count = (node: TiptapNode) => { if (node.type === "commentableImage") imageCount++; node.content?.forEach(count); };
     section.forEach(count);
     return {
+      ...(sectionId ? { headingTitle: previewText(content[start]).trim().replace(/\s+/g, " ").slice(0, 200) } : {}),
       fingerprint: createHash("sha256").update(JSON.stringify(canonical(section.map(semanticNode)))).digest("hex"),
       text: text.slice(0, 2000), truncated: text.length > 2000, imageCount,
     };

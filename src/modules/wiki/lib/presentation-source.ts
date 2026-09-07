@@ -2,7 +2,7 @@ import type { PresentationElement } from "./presentation";
 import type { DocumentSourceSnapshot } from "./document-source-snapshot";
 import type { DocumentSection } from "./document-sections";
 
-export type PresentationSource = { pageId: string; sectionId: string; reviewedFingerprint?: string };
+export type PresentationSource = { pageId: string; sectionId: string; reviewedFingerprint?: string; syncHeading?: boolean };
 export type PresentationSourceDocument = { id: string; title: string; slug: string; sections: DocumentSection[] };
 export type DocumentPresentationLink = { presentationId: string; title: string; elementId: string; label: string; sectionId: string };
 
@@ -56,4 +56,25 @@ export function sourceReviewStatus(source: PresentationSource, preview: Presenta
   if (!preview.snapshot) return "missing";
   if (!source.reviewedFingerprint) return "unreviewed";
   return source.reviewedFingerprint === preview.snapshot.fingerprint ? "current" : "changed";
+}
+
+/** Only explicit frame links follow headings. Inherited links on child elements
+ * carry provenance without turning every child label into the same heading. */
+export function synchronizePresentationHeadings(elements: PresentationElement[], previews: ReadonlyMap<string, PresentationSourcePreview>): PresentationElement[] {
+  let changed = false;
+  const next = elements.map((element) => {
+    if (element.type !== "frame" || !element.source?.sectionId || element.source.syncHeading === false) return element;
+    const heading = previews.get(sourceKey(element.source))?.snapshot?.headingTitle;
+    if (heading === undefined || heading === element.content.label) return element;
+    changed = true;
+    return { ...element, content: { ...element.content, label: heading } };
+  });
+  return changed ? next : elements;
+}
+
+export function preservePresentationHeadingOverride(before: PresentationElement, after: PresentationElement): PresentationElement {
+  if (before.type === "frame" && after.type === "frame" && after.source?.sectionId && before.content.label !== after.content.label) {
+    return { ...after, source: { ...after.source, syncHeading: false } };
+  }
+  return after;
 }

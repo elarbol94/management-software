@@ -34,6 +34,19 @@ when loaded/saved; newly inserted or pasted headings receive distinct identities
 Deleted sections are reported as missing and can be relinked. Existing decks are
 not matched retrospectively by heading text; use the manual link picker.
 
+Frames linked directly to a document section follow its current heading by default,
+including links created before heading synchronization was added. Heading changes
+refresh when opening/returning to a presentation and during source checks. The editor
+saves updated labels through its normal lease and version checks. The authenticated
+player and presenter view also resolve current headings without requiring an editor
+save first. Public/offline copies retain saved titles and never fetch document sources.
+
+Editing a frame label manually keeps it as a custom title. Turn **Use document heading
+as frame title** back on to follow the source again. Child elements with inherited
+source links keep their own labels. Missing sections retain the last label. Automatic
+heading updates do not add canvas undo steps; undoing a manual title edit restores
+following the latest heading. Body content and review status remain independent.
+
 Document backlinks include only presentations the current user can access. Public
 players and reusable company templates exclude document source references.
 Presenter view opens a linked source in a separate tab, leaving the audience's
@@ -58,8 +71,8 @@ on other elements keep their own review status. Missing sections cannot be marke
 as reviewed. Failed checks remain visible and can be retried.
 
 Reviewing saves a content fingerprint through the normal canvas save, undo, history,
-lease and conflict handling. It never overwrites slide content or stores a document
-text copy in the canvas. Fingerprints and source references are stripped from public
+lease and conflict handling. Reviewing never overwrites slide content or stores a
+document text copy in the canvas; automatic heading synchronization is separate. Fingerprints and source references are stripped from public
 players and reusable templates. Source previews are authenticated, uncached reads;
 wiki pages currently share workspace access. No database migration is required.
 Adding individual document sections to an existing deck remains a future addition.

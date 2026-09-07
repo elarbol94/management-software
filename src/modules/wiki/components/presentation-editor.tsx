@@ -6,8 +6,9 @@ import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "r
 import { flushSync } from "react-dom";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
+import { usePresentationSourcePreviews } from "./use-presentation-source-previews";
 import { PresentationSourcePanel } from "./presentation-source-panel";
-import { documentSectionHref, type PresentationSourceDocument } from "../lib/presentation-source";
+import { documentSectionHref, synchronizePresentationHeadings, preservePresentationHeadingOverride, type PresentationSourceDocument } from "../lib/presentation-source";
 import { readLinkedPosition, rememberLinkedPosition } from "../lib/linked-navigation";
 import { useFormatter, useTranslations } from "next-intl";
 import { useTheme } from "next-themes";
@@ -459,6 +460,23 @@ function Editor({
     (source) => initialPresentationCanvasState(source.elements, source.steps, source.background, source.settings, source.title),
   );
   const { elements, steps, guides, background, settings, title } = canvas;
+  const sourcePreviews = usePresentationSourcePreviews(elements.map((element) => element.source));
+  useEffect(() => {
+    if (disabled || sourcePreviews.error || synchronizePresentationHeadings(elements, sourcePreviews.previews) === elements) return;
+    let frame = 0;
+    const sync = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        // A source refresh must not replace a custom label still being typed.
+        // Blur commits that draft (and its override) before this next frame.
+        if (document.activeElement?.hasAttribute("data-linked-heading-title")) return;
+        dispatch({ type: "source-headings", elements: (current) => synchronizePresentationHeadings(current, sourcePreviews.previews) });
+      });
+    };
+    sync();
+    document.addEventListener("focusout", sync);
+    return () => { cancelAnimationFrame(frame); document.removeEventListener("focusout", sync); };
+  }, [disabled, elements, sourcePreviews.error, sourcePreviews.previews]);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [activeStepId, setActiveStepId] = useState<string | null>(null);
   const [status, setStatus] = useState<Exclude<SaveState, "unsaved">>("idle");
@@ -714,7 +732,7 @@ function Editor({
       commitElements((current) => {
         const source = current.find((element) => element.id === id);
         if (!source || isPresentationElementLocked(current, id)) return current;
-        const next = update(source);
+        const next = preservePresentationHeadingOverride(source, update(source));
         let result = current;
         if (next.rotation !== source.rotation) result = rotateElements(result, new Set([id]), next.rotation - source.rotation, { x: source.x + source.width / 2, y: source.y + source.height / 2 });
         if (["x", "y", "width", "height"].some((key) => next[key as "x"] !== source[key as "x"])) result = applyGeometryChanges(result, [{ id, x: next.x, y: next.y, width: next.width, height: next.height }], 0).elements;
@@ -1400,7 +1418,7 @@ function Editor({
         </div>
 
         <aside id="presentation-properties" aria-label={t("presentations.showPanel")} className={cn("max-h-[45%] w-full shrink-0 overflow-y-auto border-t bg-background p-3 lg:block lg:max-h-none lg:w-80 lg:border-t-0 lg:border-l", panelOpen ? "block" : "hidden")}>
-          <PresentationSourcePanel elements={elements} selected={selected} disabled={disabled || Boolean(selected && isPresentationElementLocked(elements, selected.id))} onChange={(source) => { if (selected) updateElement(selected.id, (element) => ({ ...element, source })); }} onOpen={openDocument} onReview={(id, source) => updateElement(id, (element) => element.source?.pageId === source.pageId && element.source.sectionId === source.sectionId ? { ...element, source } : element)} onSelect={(id) => { setSelectedIds([id]); const element = elements.find((item) => item.id === id); if (element) flyTo(element); }} />
+          <PresentationSourcePanel previews={sourcePreviews} elements={elements} selected={selected} disabled={disabled || Boolean(selected && isPresentationElementLocked(elements, selected.id))} onChange={(source) => { if (selected) updateElement(selected.id, (element) => ({ ...element, source })); }} onOpen={openDocument} onReview={(id, source) => updateElement(id, (element) => element.source?.pageId === source.pageId && element.source.sectionId === source.sectionId ? { ...element, source } : element)} onSelect={(id) => { setSelectedIds([id]); const element = elements.find((item) => item.id === id); if (element) flyTo(element); }} />
           <PresentationLibraryPanel id={presentation.id} selectedId={selected?.id} canEdit={canEdit && !disabled} onSelect={(id) => { setSelectedIds([id]); const element = elements.find((element) => element.id === id); if (element) flyTo(element); }} flush={flush}
             onTheme={(theme) => { commitElements((current) => current.map((element) => element.type === "text" ? { ...element, content: { ...element.content, color: theme.foreground, font: theme.font } } : element.type === "frame" ? { ...element, content: { ...element.content, color: theme.accent } } : element)); dispatch({ type: "touch", background: theme.background }); }}
             onTemplate={(snapshot) => { dispatch({ type: "edit", at: Date.now(), elements: () => snapshot.elements, steps: () => snapshot.steps }); dispatch({ type: "touch", background: snapshot.background, settings: snapshot.settings }); setSelectedIds([]); }}
@@ -1649,6 +1667,7 @@ function Editor({
                       key={selected.id}
                       className="mt-1 h-8"
                       value={selected.content.label}
+                      data-linked-heading-title=""
                       maxLength={200}
                       onCommit={(label) =>
                         updateElement(selected.id, (element) =>

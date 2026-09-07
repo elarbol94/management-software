@@ -21,8 +21,14 @@ silently matched to similarly named text. Navigation badges never become documen
 content and do not appear in exports. See [presentations.md](presentations.md) for
 source inheritance, manual linking and access behavior. Presentations also show
 a preview and flag saved changes to linked sections, including their subsections.
-Authors review these changes in the presentation; document edits never
-automatically replace presentation content.
+Authors review body changes in the presentation. Linked frame titles follow heading
+renames unless the author has chosen a custom title; other presentation content
+is preserved.
+
+Collapsed sections hide their body, nested headings and internal page breaks through
+the next heading of the same or higher level. Hidden blocks and their pagination
+spacers do not reserve space. Revealing a section through a presentation link
+recalculates pagination without changing document content.
 
 ## Saving and recovery
 

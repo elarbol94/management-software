@@ -6,6 +6,7 @@ import { ReactNodeViewRenderer } from "@tiptap/react";
 import type { DocumentPaginationBreak } from "../lib/document-pagination";
 import { figureNumberLabel, resolveCrossReferenceLabels } from "../lib/figure-caption";
 import { isFigure, numberedFigure, stripFigureNumber } from "../lib/figure";
+import { collapsedHeadingRanges } from "./collapsible-heading";
 import { TableOfContentsView } from "./table-of-contents-view";
 
 export type { DocumentPaginationBreak, DocumentPaginationBreakKind } from "../lib/document-pagination";
@@ -91,7 +92,8 @@ const DocumentPagination = Extension.create({
       props: {
         decorations(state) {
           const breaks = documentPaginationKey.getState(state) ?? [];
-          return DecorationSet.create(state.doc, breaks.map((item) => Decoration.widget(item.position, () => {
+          const hidden = collapsedHeadingRanges(state);
+          return DecorationSet.create(state.doc, breaks.filter((item) => !hidden.some(({ from, to }) => item.position >= from && item.position < to)).map((item) => Decoration.widget(item.position, () => {
             const height = Math.max(0, item.height);
             // Breaks inside a paragraph, code block or table need a spacer the
             // surrounding formatting context accepts, so the element follows the kind.

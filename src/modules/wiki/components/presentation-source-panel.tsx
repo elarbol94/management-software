@@ -7,9 +7,10 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { presentationSource, presentationSourceOwner, sourceKey, sourceReviewStatus, type PresentationSource, type PresentationSourceDocument } from "../lib/presentation-source";
 import { isPresentationElementLocked, stepLabel, type PresentationElement } from "../lib/presentation";
-import { usePresentationSourcePreviews } from "./use-presentation-source-previews";
+import type { PresentationSourcePreviewsState } from "./use-presentation-source-previews";
 
-export function PresentationSourcePanel({ elements, selected, disabled, onChange, onOpen, onReview, onSelect }: {
+export function PresentationSourcePanel({ elements, selected, disabled, previews, onChange, onOpen, onReview, onSelect }: {
+  previews: PresentationSourcePreviewsState;
   elements: PresentationElement[]; selected: PresentationElement | null; disabled: boolean;
   onReview: (elementId: string, source: PresentationSource) => void;
   onSelect: (elementId: string) => void;
@@ -24,7 +25,6 @@ export function PresentationSourcePanel({ elements, selected, disabled, onChange
   const [pageId, setPageId] = useState("");
   const [sectionId, setSectionId] = useState("");
   const [filter, setFilter] = useState("");
-  const previews = usePresentationSourcePreviews(elements.map((element) => element.source));
   const owner = selected ? presentationSourceOwner(elements, selected.id) : null;
   const source = selected ? presentationSource(elements, selected.id) : null;
   const preview = source ? previews.previews.get(sourceKey(source)) : undefined;
@@ -74,7 +74,7 @@ export function PresentationSourcePanel({ elements, selected, disabled, onChange
     </div>}
     {selected && <>
     {error ? <Button size="sm" variant="outline" onClick={() => void load()}>{t("retry")}</Button> : !loaded ? <p className="text-xs text-muted-foreground">{t("loading")}</p> : source ? <>
-      <p className="break-words text-xs text-muted-foreground">{document?.title}{section ? ` › ${section.title}` : ""}</p>
+      <p className="break-words text-xs text-muted-foreground">{document?.title}{section ? ` › ${preview?.snapshot?.headingTitle ?? section.title}` : ""}</p>
       {selected.source === undefined && <p className="text-xs text-muted-foreground">{t("inherited")}</p>}
       {missing && <p role="status" className="text-xs text-amber-700 dark:text-amber-300">{t("missingSource")}</p>}
       {source && <div className="space-y-2 rounded-md bg-muted/50 p-2" aria-label={t("preview")}>
@@ -100,6 +100,9 @@ export function PresentationSourcePanel({ elements, selected, disabled, onChange
         } catch { toast.error(t("loadFailed")); }
       }}><BookOpen className="size-4" />{t("openDocument")}</Button>}
     </> : <p className="text-xs text-muted-foreground">{t("noSource")}</p>}
+    {selected.type === "frame" && selected.source?.sectionId && <label className="flex items-start gap-2 text-xs">
+      <input type="checkbox" className="mt-0.5" checked={selected.source.syncHeading !== false} disabled={disabled} onChange={(event) => onChange({ ...selected.source!, syncHeading: event.target.checked })} />{t("syncHeading")}
+    </label>}
     {!editing ? <div className="flex flex-wrap gap-2">
       <Button size="sm" variant="ghost" disabled={disabled} onClick={() => { setPageId(source?.pageId ?? ""); setSectionId(source?.sectionId ?? ""); setFilter(""); setEditing(true); }}>{source ? t("changeLink") : t("linkSection")}</Button>
       {source && <Button size="sm" variant="ghost" disabled={disabled} onClick={() => onChange(null)}>{t("unlink")}</Button>}

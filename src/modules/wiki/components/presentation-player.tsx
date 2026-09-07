@@ -21,6 +21,8 @@ import {
   presentationCameraStep,
   presentationHiddenIds,
 } from "../lib/presentation";
+import { usePresentationSourcePreviews } from "./use-presentation-source-previews";
+import { synchronizePresentationHeadings } from "../lib/presentation-source";
 import { parsePresenterMessage, presenterChannelName } from "../lib/presenter";
 import type { PresentationRecord } from "../presentation-queries";
 import { elementsToNodes, presentationNodeTypes, type PresentationNode } from "./presentation-canvas";
@@ -51,7 +53,9 @@ function Player({ presentation, follow }: { presentation: PresentationRecord; fo
   const [fullscreen, setFullscreen] = useState(false);
   const [playing, setPlaying] = useState(false);
 
-  const { elements, steps, settings } = presentation;
+  const { steps, settings } = presentation;
+  const sourcePreviews = usePresentationSourcePreviews(presentation.elements.map((element) => element.source));
+  const elements = useMemo(() => synchronizePresentationHeadings(presentation.elements, sourcePreviews.previews), [presentation.elements, sourcePreviews.previews]);
   const cameraDuration = reducedMotion ? 0 : settings.cameraTransitionMs;
   const cameraEase = presentationCameraEasingFns[settings.cameraEasing];
 

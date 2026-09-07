@@ -1,6 +1,6 @@
 @import "tailwindcss";
 
-.wiki-collapsed-section { display: none; }
+.ProseMirror .wiki-collapsed-section { display: none !important; }
 
 [data-wiki-collapsible-heading] {
   cursor: pointer;

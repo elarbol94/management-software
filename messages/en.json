@@ -3633,6 +3633,7 @@
     "previewTruncated": "Preview shortened. Open the document to read the full section.",
     "reviewHint": "Check your presentation against the source, then mark it as reviewed. Your presentation content stays as you edited it.",
     "reviewInheritedHint": "This reviews the parent frame and elements inheriting its link.",
-    "markReviewed": "Mark source as reviewed"
+    "markReviewed": "Mark source as reviewed",
+    "syncHeading": "Use document heading as frame title"
   }
 }

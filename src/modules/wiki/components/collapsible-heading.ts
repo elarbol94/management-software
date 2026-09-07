@@ -2,7 +2,7 @@ import { mergeAttributes } from "@tiptap/core";
 import Heading from "@tiptap/extension-heading";
 import ListItem from "@tiptap/extension-list-item";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
-import { Plugin, PluginKey, type Transaction } from "@tiptap/pm/state";
+import { Plugin, PluginKey, type Transaction, type EditorState } from "@tiptap/pm/state";
 
 const collapsibleHeadingKey = new PluginKey<Set<string>>("wikiCollapsibleHeading");
 
@@ -12,22 +12,41 @@ export function revealHeadingSections(transaction: Transaction, ids: string[]): 
   return transaction.setMeta(collapsibleHeadingKey, { reveal: ids });
 }
 
-function collapsedDecorations(doc: Parameters<typeof DecorationSet.create>[0], revealed: Set<string>) {
-  const headings: Array<{ position: number; level: number; collapsed: boolean }> = [];
-  const decorations: Decoration[] = [];
+export function headingVisibilityChanged(transaction: Transaction): boolean {
+  return Boolean(transaction.getMeta(collapsibleHeadingKey));
+}
+
+function headingRanges(doc: EditorState["doc"], revealed: Set<string>) {
+  const headings: Array<{ position: number; end: number; level: number; collapsed: boolean }> = [];
   doc.descendants((node, position) => {
-    if (node.type.name === "heading") headings.push({
-      position,
-      level: Number(node.attrs.level),
-      collapsed: Boolean(node.attrs.collapsed) && !revealed.has(String(node.attrs.id)),
-    });
-    if (node.type.name === "heading" && revealed.has(String(node.attrs.id))) decorations.push(Decoration.node(position, position + node.nodeSize, { "aria-expanded": "true", "data-collapsed": "false" }));
+    if (node.type.name === "heading") headings.push({ position, end: position + node.nodeSize, level: Number(node.attrs.level), collapsed: Boolean(node.attrs.collapsed) && !revealed.has(String(node.attrs.id)) });
   });
+  const ranges: Array<{ from: number; to: number }> = [];
   for (const heading of headings) {
     if (!heading.collapsed) continue;
-    const end = headings.find((candidate) => candidate.position > heading.position && candidate.level <= heading.level)?.position ?? doc.content.size;
-    doc.nodesBetween(heading.position + 1, end, (node, position) => {
-      if (node.isBlock && node.type.name !== "heading") {
+    const to = headings.find((candidate) => candidate.position > heading.position && candidate.level <= heading.level)?.position ?? doc.content.size;
+    if (heading.end >= to) continue;
+    const previous = ranges.at(-1);
+    if (previous && heading.end <= previous.to) previous.to = Math.max(previous.to, to);
+    else ranges.push({ from: heading.end, to });
+  }
+  return ranges;
+}
+
+export function collapsedHeadingRanges(state: EditorState) {
+  return headingRanges(state.doc, collapsibleHeadingKey.getState(state) ?? new Set());
+}
+
+function collapsedDecorations(doc: EditorState["doc"], revealed: Set<string>) {
+  const decorations: Decoration[] = [];
+  doc.descendants((node, position) => {
+    if (node.type.name === "heading" && revealed.has(String(node.attrs.id))) decorations.push(Decoration.node(position, position + node.nodeSize, { "aria-expanded": "true", "data-collapsed": "false" }));
+  });
+  for (const { from, to } of headingRanges(doc, revealed)) {
+    doc.nodesBetween(from, to, (node, position) => {
+      // nodesBetween also visits ancestors crossing the boundary. Hiding those
+      // would hide the heading itself when it lives inside a list or column.
+      if (node.isBlock && position >= from && position + node.nodeSize <= to) {
         decorations.push(Decoration.node(position, position + node.nodeSize, { class: "wiki-collapsed-section" }));
         return false;
       }

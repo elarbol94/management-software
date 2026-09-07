@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { PresentationSource, PresentationSourcePreview } from "../lib/presentation-source";
 import { sourceKey } from "../lib/presentation-source";
 
@@ -36,10 +36,13 @@ export function usePresentationSourcePreviews(sources: (PresentationSource | nul
     return () => { controller.abort(); window.clearInterval(timer); window.removeEventListener("focus", refresh); document.removeEventListener("visibilitychange", refresh); };
   }, [keys, version]);
   const current = state.keys === keys;
+  const previews = useMemo(() => new Map((state.keys === keys ? state.previews : []).map((preview) => [sourceKey(preview), preview])), [state.keys, state.previews, keys]);
   return {
-    previews: new Map((current ? state.previews : []).map((preview) => [sourceKey(preview), preview])),
+    previews,
     error: current && state.error,
     loading: keys !== "[]" && (!current || (!state.previews.length && !state.error)),
     refresh: () => setVersion((value) => value + 1),
   };
 }
+
+export type PresentationSourcePreviewsState = ReturnType<typeof usePresentationSourcePreviews>;

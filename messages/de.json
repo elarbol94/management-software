@@ -3635,6 +3635,7 @@
     "previewTruncated": "Gekürzte Vorschau. Öffne das Dokument, um den vollständigen Abschnitt zu lesen.",
     "reviewHint": "Vergleiche deine Präsentation mit der Quelle und markiere sie anschließend als geprüft. Deine Präsentationsinhalte bleiben erhalten.",
     "reviewInheritedHint": "Dies bestätigt die Prüfung für den übergeordneten Rahmen und alle Elemente, die seine Verknüpfung erben.",
-    "markReviewed": "Quelle als geprüft markieren"
+    "markReviewed": "Quelle als geprüft markieren",
+    "syncHeading": "Dokumentüberschrift als Rahmentitel verwenden"
   }
 }

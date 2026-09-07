@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { documentSectionHref, presentationElementHref, presentationSource, presentationSourceOwner, sourceReviewStatus, withoutPresentationSources } from "./presentation-source";
+import { documentSectionHref, presentationElementHref, presentationSource, presentationSourceOwner, synchronizePresentationHeadings, preservePresentationHeadingOverride, sourceKey, sourceReviewStatus, withoutPresentationSources } from "./presentation-source";
 import { presentationFromWikiPage } from "./presentation-from-wiki";
 import { initialPresentationCanvasState, presentationCanvasReducer, presentationElementsSchema, type PresentationElement } from "./presentation";
 import { mergePresentation } from "./presentation-merge";
@@ -70,4 +70,31 @@ it("distinguishes legacy, changed, reviewed and missing sources", () => {
   expect(sourceReviewStatus({ ...source, reviewedFingerprint: "b".repeat(64) }, preview)).toBe("changed");
   expect(sourceReviewStatus({ ...source, reviewedFingerprint: "a".repeat(64) }, preview)).toBe("current");
   expect(sourceReviewStatus(source, { ...preview, snapshot: null })).toBe("missing");
+});
+
+it("follows explicit frame headings while preserving custom titles, missing sources and inherited labels", () => {
+  const previews = new Map([[sourceKey(parent.source!), { ...parent.source!, document: null, snapshot: { headingTitle: "Renamed heading", fingerprint: "a".repeat(64), text: "Renamed heading", truncated: false, imageCount: 0 } }]]);
+  const synced = synchronizePresentationHeadings([parent, child], previews);
+  expect(synced[0].content).toMatchObject({ label: "Renamed heading" });
+  expect(synced[1]).toBe(child);
+  expect(synced[0].source).toEqual(parent.source);
+  expect(synchronizePresentationHeadings(synced, previews)).toBe(synced);
+  expect(synchronizePresentationHeadings([parent], new Map())[0]).toBe(parent);
+  const custom = preservePresentationHeadingOverride(parent, { ...parent, content: { ...parent.content, label: "My title" } });
+  expect(custom.source?.syncHeading).toBe(false);
+  expect(synchronizePresentationHeadings([custom], previews)[0]).toBe(custom);
+  const restored = { ...custom, source: { ...custom.source!, syncHeading: true } };
+  expect(synchronizePresentationHeadings([restored], previews)[0].content).toMatchObject({ label: "Renamed heading" });
+});
+
+it("updates followed headings across undo history without adding an undo step or losing custom overrides", () => {
+  let state = initialPresentationCanvasState([parent], []);
+  state = presentationCanvasReducer(state, { type: "touch", title: "Deck renamed" });
+  const previews = new Map([[sourceKey(parent.source!), { ...parent.source!, document: null, snapshot: { headingTitle: "Latest document heading", fingerprint: "a".repeat(64), text: "", truncated: false, imageCount: 0 } }]]);
+  state = presentationCanvasReducer(state, { type: "source-headings", elements: (items) => synchronizePresentationHeadings(items, previews) });
+  expect(state.past).toHaveLength(1); expect(state.dirty).toBe(true);
+  state = presentationCanvasReducer(state, { type: "undo" });
+  expect(state.title).toBe(""); expect(state.elements[0].content).toMatchObject({ label: "Latest document heading" });
+  state = presentationCanvasReducer(state, { type: "redo" });
+  expect(state.title).toBe("Deck renamed"); expect(state.elements[0].content).toMatchObject({ label: "Latest document heading" });
 });

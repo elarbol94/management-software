@@ -73,7 +73,7 @@ function buildOutline(doc: TiptapNode, pageId?: string): Section[] {
       const title = nodeText(node).trim().replace(/\s+/g, " ");
       if (!title) continue;
       while (stack.length && stack[stack.length - 1].level >= level) stack.pop();
-      const section: Section = { title, images: [], children: [], ...(pageId ? { source: { pageId, sectionId: String(node.attrs?.id) } } : {}) };
+      const section: Section = { title, images: [], children: [], ...(pageId ? { source: { pageId, sectionId: String(node.attrs?.id), syncHeading: true } } : {}) };
       const parent = stack[stack.length - 1]?.section;
       if (parent) parent.children.push(section);
       else roots.push(section);

@@ -1,13 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useTranslations } from "next-intl";
 import { ChevronLeft, ChevronRight, Clock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { usePresentationSourcePreviews } from "./use-presentation-source-previews";
 import { PresentationScene } from "./presentation-scene";
-import { documentSectionHref, presentationSource, sourceKey, sourceReviewStatus } from "../lib/presentation-source";
+import { documentSectionHref, presentationSource, synchronizePresentationHeadings, sourceKey, sourceReviewStatus } from "../lib/presentation-source";
 import { stepLabel, stepTarget } from "../lib/presentation";
 import { formatElapsed, parsePresenterMessage, presenterChannelName } from "../lib/presenter";
 import type { PresentationRecord } from "../presentation-queries";
@@ -24,7 +24,9 @@ export function PresentationPresenterView({ presentation, sessionId }: { present
   const studio = useTranslations("presentationStudio");
   const linkText = useTranslations("documentPresentationLinks");
   const hydrated = useSyncExternalStore(subscribeHydration, () => true, () => false);
-  const { elements, steps } = presentation;
+  const { steps } = presentation;
+  const sourcePreviews = usePresentationSourcePreviews(presentation.elements.map((element) => element.source));
+  const elements = useMemo(() => synchronizePresentationHeadings(presentation.elements, sourcePreviews.previews), [presentation.elements, sourcePreviews.previews]);
   const [index, setIndex] = useState(0);
   const [elapsedMs, setElapsedMs] = useState(0);
   const [running, setRunning] = useState(true);
@@ -70,7 +72,6 @@ export function PresentationPresenterView({ presentation, sessionId }: { present
   const currentStep = steps[index] ?? null;
   const currentTarget = currentStep ? stepTarget(currentStep, elements) : null;
   const source = currentTarget ? presentationSource(elements, currentTarget.id) : null;
-  const sourcePreviews = usePresentationSourcePreviews([source]);
   const sourcePreview = source ? sourcePreviews.previews.get(sourceKey(source)) : undefined;
   async function openSource() {
     if (!source) return;

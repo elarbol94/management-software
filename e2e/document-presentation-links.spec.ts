@@ -26,7 +26,7 @@ test("document sections and presentation elements support saved round trips and 
     { type: "heading", attrs: { id: "forecast", level: 2, collapsed: true }, content: [{ type: "text", text: "Forecast" }] },
     { type: "paragraph", content: [{ type: "text", text: "Forecast details" }] },
   ] });
-  await expect(page.getByText("Gespeichert", { exact: true })).toBeVisible();
+  await expect(page.getByRole("status").filter({ hasText: "Gespeichert" })).toBeVisible();
   await page.goto("/wiki/presentations");
   await page.getByRole("button", { name: "Aus Wiki-Seite", exact: true }).click();
   const dialog = page.getByRole("dialog");
@@ -65,6 +65,11 @@ test("document sections and presentation elements support saved round trips and 
       if (heading.type.name === "heading" && heading.attrs.id === "forecast") active.view.dispatch(active.state.tr.insertText("Updated forecast", position + 1, position + heading.nodeSize - 1));
     });
   });
+  await expect(page.getByRole("status").filter({ hasText: "Gespeichert" })).toBeVisible();
+  const player = await page.context().newPage();
+  await player.goto(`/wiki/presentations/${presentationId}/present`);
+  await expect(player.locator(`.react-flow__node[data-id="${frame.id}"]`)).toContainText("Updated forecast");
+  await player.close();
   await page.getByRole("button", { name: "Zurück zur Präsentation", exact: true }).click();
   await page.waitForURL(/\/wiki\/presentations\/.*element=/);
   await expect(page.locator(`.react-flow__node[data-id="${frame.id}"]`)).toHaveClass(/selected/);
@@ -78,9 +83,11 @@ test("document sections and presentation elements support saved round trips and 
   }).toBeLessThan(0.001);
   await expect(page.getByRole("button", { name: "Zurück zum Dokument", exact: true })).toBeVisible();
   await expect(source.getByText("Quelle seit der letzten Prüfung geändert", { exact: true })).toBeVisible();
+  await expect(page.locator(`.react-flow__node[data-id="${frame.id}"]`)).toContainText("Updated forecast");
+  await expect.poll(async () => (await (await page.request.get(`/api/wiki/presentations/${presentationId}`)).json()).elements.find((item: { id: string }) => item.id === frame.id).content.label).toBe("Updated forecast");
   await expect(source.getByText("Updated forecast", { exact: false }).last()).toBeVisible();
   await source.getByText("Zu prüfende Quellen anzeigen", { exact: true }).click();
-  await expect(source.getByRole("button", { name: "Forecast · Quelle seit der letzten Prüfung geändert", exact: true })).toBeVisible();
+  await expect(source.getByRole("button", { name: "Updated forecast · Quelle seit der letzten Prüfung geändert", exact: true })).toBeVisible();
   await page.screenshot({ path: test.info().outputPath("source-review.png") });
   await source.getByRole("button", { name: "Quelle als geprüft markieren", exact: true }).click();
   await expect(source.getByText("Quelle seit der letzten Prüfung unverändert", { exact: true })).toBeVisible();
@@ -104,6 +111,24 @@ test("document sections and presentation elements support saved round trips and 
   await expect.poll(async () => (await (await page.request.get(`/api/wiki/presentations/${presentationId}`)).json()).elements.find((item: { id: string }) => item.id === frame.id).source.sectionId).toBe("budget");
   await expect(source.getByText("Noch nicht geprüft", { exact: true })).toBeVisible();
   await expect(source.getByText(/Budget details/).last()).toBeVisible();
+  await expect(page.locator(`.react-flow__node[data-id="${frame.id}"]`)).toContainText(docTitle);
+  await page.route("**/api/wiki/presentation-sources", async (route) => {
+    if (route.request().method() !== "POST") { await route.continue(); return; }
+    const response = await route.fetch();
+    const result = await response.json();
+    for (const preview of result.previews) if (preview.sectionId === "budget" && preview.snapshot) preview.snapshot.headingTitle = "Background rename";
+    await route.fulfill({ response, json: result });
+  });
+  await page.getByRole("textbox", { name: "Beschriftung", exact: true }).fill("Custom forecast");
+  // Simulate another author's heading update while this field still has focus.
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await expect(source.getByText(`${docTitle} › Background rename`, { exact: true })).toBeVisible();
+  await expect(page.getByRole("textbox", { name: "Beschriftung", exact: true })).toHaveValue("Custom forecast");
+  await page.unroute("**/api/wiki/presentation-sources");
+  await page.getByRole("textbox", { name: "Beschriftung", exact: true }).press("Tab");
+  await expect(source.getByRole("checkbox", { name: "Dokumentüberschrift als Rahmentitel verwenden" })).not.toBeChecked();
+  await source.getByRole("button", { name: "Dokumentquellen aktualisieren", exact: true }).click();
+  await expect(page.locator(`.react-flow__node[data-id="${frame.id}"]`)).toContainText("Custom forecast");
   await page.getByRole("button", { name: "Zurück zum Dokument", exact: true }).click();
   await page.waitForURL(/\/wiki\/pages\//);
   const badge = editor.locator('button.wiki-presentation-section-badge[data-section-id="budget"]');
@@ -111,7 +136,7 @@ test("document sections and presentation elements support saved round trips and 
   await badge.click();
   const backlinks = page.getByRole("dialog");
   await expect(backlinks).toContainText(renamed);
-  await backlinks.getByRole("button", { name: new RegExp(`${renamed}.*Forecast`) }).click();
+  await backlinks.getByRole("button", { name: new RegExp(`${renamed}.*Custom forecast`) }).click();
   await page.waitForURL(/\/wiki\/presentations\/.*element=/);
   await expect(page.locator(`.react-flow__node[data-id="${frame.id}"]`)).toHaveClass(/selected/);
   // Failed saves block navigation and leave the draft in place.
@@ -124,4 +149,42 @@ test("document sections and presentation elements support saved round trips and 
   await expect(page.getByText("Speichern fehlgeschlagen", { exact: false }).first()).toBeVisible();
   expect(new URL(page.url()).pathname).toBe(`/wiki/presentations/${presentationId}`);
   await page.unroute("**/wiki/presentations/**");
+});
+
+test("collapsed document sections remove hidden media, nested headings and page-break spacing", async ({ page }) => {
+  test.setTimeout(240_000);
+  await login(page);
+  await page.getByRole("button", { name: "Schnelle Notiz" }).last().click();
+  await page.waitForURL(/\/wiki\/pages\/[^/]+$/);
+  const editor = page.locator(".ProseMirror");
+  await expect(editor).toHaveAttribute("contenteditable", "true");
+  await editor.evaluate((node) => {
+    const active = (node as HTMLElement & { editor: import("@tiptap/core").Editor }).editor;
+    active.commands.setContent({ type: "doc", content: [
+      { type: "heading", attrs: { id: "fold", level: 1 }, content: [{ type: "text", text: "Fold this section" }] },
+      { type: "paragraph", content: [{ type: "text", text: "Long section content. ".repeat(350) }] },
+      { type: "heading", attrs: { id: "nested", level: 2 }, content: [{ type: "text", text: "Nested heading" }] },
+      { type: "commentableImage", attrs: { attachmentId: "missing-test-image", src: "/missing-test-image.png", alt: "Section artwork", aspectRatio: 1.5 } },
+      { type: "pageBreak" },
+      { type: "paragraph", content: [{ type: "text", text: "After the internal page break" }] },
+      { type: "heading", attrs: { id: "following", level: 1 }, content: [{ type: "text", text: "Following section" }] },
+      { type: "paragraph", content: [{ type: "text", text: "Visible content" }] },
+    ] });
+  });
+  if (!await page.locator(".wiki-document-canvas").count()) await page.getByTestId("document-mode-toggle").click();
+  await expect(editor.locator(".wiki-document-auto-page-break").first()).toBeAttached();
+  await editor.locator("#fold").click();
+  await expect(editor.locator("#fold")).toHaveAttribute("data-collapsed", "true");
+  await expect(editor.locator("#nested")).toBeHidden();
+  await expect(editor.getByText("After the internal page break", { exact: true })).toBeHidden();
+  await expect.poll(async () => editor.evaluate((node) => {
+    const first = node.querySelector("#fold")!.getBoundingClientRect();
+    return node.querySelector("#following")!.getBoundingClientRect().top - first.bottom;
+  })).toBeLessThan(70);
+  await expect(editor.locator(".wiki-document-auto-page-break")).toHaveCount(0);
+  await page.screenshot({ path: test.info().outputPath("collapsed-section.png") });
+  await editor.locator("#fold").click();
+  await expect(editor.locator("#nested")).toBeVisible();
+  await expect(editor.getByText("After the internal page break", { exact: true })).toBeVisible();
+  await expect(editor.locator(".wiki-document-auto-page-break").first()).toBeAttached();
 });

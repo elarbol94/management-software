@@ -31,7 +31,7 @@ import { DocumentPresentationLinks } from "./document-presentation-links";
 import { HeadingIdentity } from "./heading-identity";
 import { withDocumentSectionIds } from "../lib/document-sections";
 import type { TiptapNode } from "../lib/tiptap";
-import { CollapsibleHeading, HeadingListItem } from "./collapsible-heading";
+import { CollapsibleHeading, HeadingListItem, headingVisibilityChanged } from "./collapsible-heading";
 import { MarkdownDocumentExtensions, MarkdownShortcutMarks, MarkdownShortcuts } from "./markdown-shortcut-extension";
 import { MarkdownReferenceDialog } from "./markdown-reference-dialog";
 import { WikiShortcutsDialog } from "./wiki-shortcuts-dialog";
@@ -1579,7 +1579,7 @@ export function WikiEditor({
       const elements: HTMLElement[] = [];
       const items: PaginationItem[] = [];
       const collectPaginationElements = (element: HTMLElement, inheritedBreak = false) => {
-        if (element.classList.contains("wiki-document-auto-page-break")) return;
+        if (element.classList.contains("wiki-document-auto-page-break") || element.closest(".wiki-collapsed-section")) return;
         // React node views have a wrapper with zero height around a floated figure.
         // Measure the artwork and attached caption, while retaining the wrapper's document position.
         const media = element.matches(".node-commentableImage, .node-mermaidDiagram") ? element.querySelector<HTMLElement>("figure[data-figure-view]") : null;
@@ -1658,6 +1658,7 @@ export function WikiEditor({
     // Re-measuring every block on each keystroke forces a full reflow and makes
     // typing lag; the mapped spacers stay put until the burst settles.
     const scheduleAfterTyping = () => schedule(PAGINATION_TYPING_DELAY);
+    const scheduleAfterReveal = ({ transaction }: { transaction: import("@tiptap/pm/state").Transaction }) => { if (headingVisibilityChanged(transaction)) schedule(); };
     const mediaResizeObserver = new ResizeObserver(() => schedule());
     for (const element of editor.view.dom.querySelectorAll("img, figure, table")) {
       mediaResizeObserver.observe(element);
@@ -1673,6 +1674,7 @@ export function WikiEditor({
       if (!disposed) schedule();
     });
     editor.on("update", scheduleAfterTyping);
+    editor.on("transaction", scheduleAfterReveal);
     window.addEventListener("resize", scheduleFromEvent);
     paginate();
     return () => {
@@ -1683,6 +1685,7 @@ export function WikiEditor({
       editor.view.dom.removeEventListener("load", scheduleAfterMediaLoad, true);
       editor.view.dom.removeEventListener("compositionend", scheduleAfterTyping);
       editor.off("update", scheduleAfterTyping);
+      editor.off("transaction", scheduleAfterReveal);
       window.removeEventListener("resize", scheduleFromEvent);
       setDocumentPaginationBreaks(editor, []);
     };
