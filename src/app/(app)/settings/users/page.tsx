@@ -1,6 +1,7 @@
-import { getTranslations } from "next-intl/server";
+import { getFormatter, getTranslations } from "next-intl/server";
 import { requireUser } from "@/lib/auth";
 import { redirect } from "next/navigation";
+import { listPendingInvitations } from "@/modules/settings/invitations";
 import { listUsers } from "@/modules/settings/queries";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -18,13 +19,15 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { CreateUserDialog } from "./create-user-dialog";
+import { InviteUserDialog } from "./invite-user-dialog";
 
 export default async function UsersSettingsPage() {
   const currentUser = await requireUser();
   if (currentUser.role !== "admin") redirect("/settings/profile");
 
   const users = listUsers();
+  const invitations = listPendingInvitations();
+  const format = await getFormatter();
   const t = await getTranslations("settings.users");
 
   return (
@@ -34,7 +37,7 @@ export default async function UsersSettingsPage() {
           <CardTitle>{t("title")}</CardTitle>
           <CardDescription>{t("description")}</CardDescription>
         </div>
-        <CreateUserDialog />
+        <InviteUserDialog />
       </CardHeader>
       <CardContent>
         <div className="grid gap-3 md:hidden">
@@ -93,6 +96,25 @@ export default async function UsersSettingsPage() {
           </TableBody>
         </Table>
         </div>
+        {invitations.length > 0 && (
+          <section className="mt-6 border-t pt-6" aria-labelledby="pending-invitations">
+            <h2 id="pending-invitations" className="font-semibold">{t("pendingInvitations")}</h2>
+            <p className="mt-1 text-sm text-muted-foreground">{t("pendingHint")}</p>
+            <ul className="mt-3 divide-y">
+              {invitations.map((invitation) => (
+                <li key={invitation.id} className="flex flex-wrap items-center justify-between gap-2 py-3 text-sm">
+                  <div className="min-w-0">
+                    <p className="break-all">{invitation.email}</p>
+                    <p className="text-muted-foreground">{t("expiresOn", { date: format.dateTime(invitation.expiresAt, { dateStyle: "medium", timeStyle: "short" }) })}</p>
+                  </div>
+                  <Badge variant="secondary">
+                    {invitation.role === "admin" ? t("roleAdmin") : invitation.role === "personnel" ? t("rolePersonnel") : t("roleMember")}
+                  </Badge>
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
       </CardContent>
     </Card>
   );

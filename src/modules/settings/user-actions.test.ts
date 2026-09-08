@@ -1,71 +1,44 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { APIError } from "better-auth/api";
 
 const mocks = vi.hoisted(() => ({
-  requireAdmin: vi.fn(),
-  createUser: vi.fn(),
-  revalidatePath: vi.fn(),
+  requireAdmin: vi.fn(), issueInvitation: vi.fn(), acceptInvitation: vi.fn(), revalidatePath: vi.fn(),
 }));
-vi.mock("@/lib/auth", () => ({
-  requireAdmin: mocks.requireAdmin,
-  auth: { api: { createUser: mocks.createUser } },
-}));
+vi.mock("@/lib/auth", () => ({ requireAdmin: mocks.requireAdmin }));
+vi.mock("./invitations", () => ({ issueInvitation: mocks.issueInvitation, acceptInvitation: mocks.acceptInvitation }));
 vi.mock("next/cache", () => ({ revalidatePath: mocks.revalidatePath }));
+vi.mock("next-intl/server", () => ({ getLocale: async () => "en" }));
 
-import { createPlatformUser } from "./user-actions";
-
-const input = {
-  name: "New Colleague",
-  username: "new.colleague",
-  email: "colleague@example.com",
-  password: "test-password-123",
-  role: "member" as const,
-};
+import { invitePlatformUser } from "./user-actions";
+const input = { email: "colleague@example.com", role: "member" as const };
 
 beforeEach(() => {
   vi.resetAllMocks();
-  mocks.requireAdmin.mockResolvedValue({ role: "admin" });
-  mocks.createUser.mockResolvedValue({ user: { id: "new-user" } });
+  mocks.requireAdmin.mockResolvedValue({ id: "admin", role: "admin" });
+  mocks.issueInvitation.mockResolvedValue({ error: null });
 });
 
-describe("createPlatformUser", () => {
-  it("rejects unauthorized callers before creating an account", async () => {
-    mocks.requireAdmin.mockRejectedValue(new Error("Forbidden"));
-    await expect(createPlatformUser(input)).rejects.toThrow("Forbidden");
-    expect(mocks.createUser).not.toHaveBeenCalled();
+describe("invitePlatformUser", () => {
+  it.each(["Unauthorized", "Forbidden"])("rejects %s callers before sending an invitation", async (message) => {
+    mocks.requireAdmin.mockRejectedValue(new Error(message));
+    await expect(invitePlatformUser(input)).rejects.toThrow(message);
+    expect(mocks.issueInvitation).not.toHaveBeenCalled();
     expect(mocks.revalidatePath).not.toHaveBeenCalled();
   });
 
-  it.each([
-    { name: "   " },
-    { username: "ab" },
-    { username: "invalid user" },
-    { email: "invalid" },
-    { password: "short" },
-    { password: "a".repeat(129) },
-    { role: "superadmin" },
-  ])("rejects invalid account data: %j", async (invalid) => {
-    const result = await createPlatformUser({ ...input, ...invalid } as typeof input);
-    expect(result.error).toBe("invalidInput");
-    expect(mocks.createUser).not.toHaveBeenCalled();
-    expect(mocks.revalidatePath).not.toHaveBeenCalled();
+  it.each([{ email: "invalid" }, { email: "a@example.com\r\nBcc: b@example.com" }, { role: "superadmin" }])("rejects invalid invitation data: %j", async (invalid) => {
+    expect(await invitePlatformUser({ ...input, ...invalid } as typeof input)).toEqual({ error: "invalidInput" });
+    expect(mocks.issueInvitation).not.toHaveBeenCalled();
   });
 
-  it.each(["member", "personnel", "admin"] as const)("passes the selected %s role and refreshes users", async (role) => {
-    expect(await createPlatformUser({ ...input, role, name: " New Colleague ", email: " Colleague@Example.com " })).toEqual({ error: null });
-    expect(mocks.createUser).toHaveBeenCalledWith({ body: {
-      name: input.name, email: input.email, password: input.password, role,
-      data: { username: input.username, displayUsername: input.username },
-    } });
+  it.each(["member", "personnel", "admin"] as const)("stores the selected %s role and normalizes email", async (role) => {
+    expect(await invitePlatformUser({ ...input, role, email: " Colleague@Example.com " })).toEqual({ error: null });
+    expect(mocks.issueInvitation).toHaveBeenCalledWith({ email: input.email, role }, "admin", "en");
     expect(mocks.revalidatePath).toHaveBeenCalledWith("/settings/users");
   });
 
-  it.each([
-    ["USERNAME_IS_ALREADY_TAKEN", "usernameTaken"],
-    ["USER_ALREADY_EXISTS_USE_ANOTHER_EMAIL", "emailTaken"],
-  ])("returns a translatable duplicate error for %s", async (code, expected) => {
-    mocks.createUser.mockRejectedValue(new APIError("BAD_REQUEST", { code, message: "Already exists" }));
-    expect(await createPlatformUser(input)).toEqual({ error: expected });
+  it.each(["emailTaken", "mailNotConfigured", "mailFailed"])("returns the %s delivery error without reporting success", async (error) => {
+    mocks.issueInvitation.mockResolvedValue({ error });
+    expect(await invitePlatformUser(input)).toEqual({ error });
     expect(mocks.revalidatePath).not.toHaveBeenCalled();
   });
 });

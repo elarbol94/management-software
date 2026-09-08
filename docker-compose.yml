@@ -12,6 +12,14 @@ services:
       BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET}
       # Public URL of the app (behind your reverse proxy).
       BETTER_AUTH_URL: ${BETTER_AUTH_URL:-https://startup.elarbol.me}
+      # Invitation email delivery. Use port 465 with SMTP_SECURE=true, or 587 with STARTTLS.
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_SECURE: ${SMTP_SECURE:-false}
+      SMTP_REQUIRE_TLS: ${SMTP_REQUIRE_TLS:-true}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM: ${SMTP_FROM:-}
       # Extra trusted browser origins, for example a local development proxy.
       BETTER_AUTH_TRUSTED_ORIGINS: ${BETTER_AUTH_TRUSTED_ORIGINS:-}
       # Internal-only endpoint; never expose LanguageTool on a host port.

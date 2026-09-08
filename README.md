@@ -36,13 +36,16 @@ Docker image already includes both tools and the German/English OCR packs.
 - The sign-in page accepts only a username and password. The first account
   created through the guarded `/api/auth/sign-up/email` bootstrap endpoint
   becomes the administrator.
-  Afterwards public signup is disabled — admins create accounts and assign
-  usernames under *Einstellungen → Benutzer*. The settings landing page also
-  offers **Benutzer anlegen**. Enter the name, username, email, initial password
-  (8–128 characters), and role (member, personnel/accounting, or administrator).
-  The account can sign in immediately; share the username and password securely.
-  No invitation email is sent. Existing accounts receive their email address as
-  their initial username during migration.
+  Afterwards public signup is disabled — admins invite people under
+  *Einstellungen → Benutzer* or from **Benutzer einladen** on the profile page.
+  Enter the recipient's email and role (member, personnel/accounting, or admin).
+  They receive an email and choose their own nickname and password. The nickname
+  is also their login username. No account exists until they finish setup.
+  Invitation links expire after seven days and can create exactly one account.
+  Opening or previewing a link does not consume it. Sending another invitation
+  to the same address replaces the earlier link after successful email delivery.
+  Pending invitations appear below the users list. Existing accounts stay intact.
+  See [docs/user-invitations.md](docs/user-invitations.md) for email configuration.
 - Migrations and default categories are applied automatically on server boot
   (`src/instrumentation.ts`). Manual commands: `npm run db:migrate`,
   `npm run db:seed`, `npx drizzle-kit studio`.

@@ -37,6 +37,14 @@ export default defineConfig({
             BETTER_AUTH_SECRET:
               "e2e-only-secret-not-for-production-32-bytes-minimum",
             E2E_TEST: "true",
+            LOCAL_AUTH_BYPASS: "false",
+            SMTP_HOST: "127.0.0.1",
+            SMTP_PORT: process.env.PLAYWRIGHT_SMTP_PORT ?? "3126",
+            SMTP_SECURE: "false",
+            SMTP_REQUIRE_TLS: "false",
+            SMTP_USER: "",
+            SMTP_PASSWORD: "",
+            SMTP_FROM: "invites@example.com",
           },
         },
 });

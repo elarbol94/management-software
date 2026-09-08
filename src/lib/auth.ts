@@ -40,7 +40,7 @@ export const auth = betterAuth({
   },
   hooks: {
     // Public signup only bootstraps the very first account (the admin).
-    // Afterwards accounts are created by admins via the admin plugin.
+    // Afterwards accounts are created through single-use email invitations.
     before: createAuthMiddleware(async (ctx) => {
       if (ctx.path === "/sign-up/email" && userCount() > 0) {
         throw new APIError("FORBIDDEN", {

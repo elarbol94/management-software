@@ -13,7 +13,7 @@ import {
   CardContent,
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { CreateUserDialog } from "../users/create-user-dialog";
+import { InviteUserDialog } from "../users/invite-user-dialog";
 import { MarkColorForm } from "./mark-color-form";
 
 export default async function ProfileSettingsPage() {
@@ -31,7 +31,7 @@ export default async function ProfileSettingsPage() {
             <CardDescription>{t("accessDescription")}</CardDescription>
           </CardHeader>
           <CardContent className="flex flex-wrap gap-2">
-            <CreateUserDialog />
+            <InviteUserDialog />
             <Button
               nativeButton={false}
               variant="outline"
