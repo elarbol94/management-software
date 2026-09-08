@@ -1,6 +1,7 @@
 "use client";
 
 import "@xyflow/react/dist/style.css";
+import styles from "./presentation-editor.module.css";
 
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { flushSync } from "react-dom";
@@ -1524,7 +1525,7 @@ function Editor({
             onSelectionDragStart={startGesture}
             onSelectionDragStop={endGesture}
             elevateNodesOnSelect={false}
-            className="[&_.react-flow__nodesselection-rect]:!pointer-events-none"
+            className={styles.canvas}
             colorMode={resolvedTheme === "dark" ? "dark" : "light"}
             fitView={!resumeToken && !requestedElement}
             fitViewOptions={{ padding: 0.2 }}

@@ -55,7 +55,7 @@ function TextNode({ data, selected }: NodeProps<PresentationNode>) {
       inert={data.hidden || undefined}
       className={cn(
         "h-full w-full",
-        data.editable && "cursor-grab rounded-sm active:cursor-grabbing",
+        data.editable && "cursor-move rounded-sm active:cursor-grabbing",
         data.editable && selected && "ring-2 ring-indigo-500/60",
       )}
     >
@@ -64,7 +64,7 @@ function TextNode({ data, selected }: NodeProps<PresentationNode>) {
         <textarea
           autoFocus
           // nodrag keeps the pointer inside the field instead of panning the canvas.
-          className="nodrag nowheel h-full w-full resize-none rounded-sm border border-indigo-400 bg-background/95 p-1 leading-tight outline-none"
+          className="nodrag nowheel h-full w-full cursor-text resize-none rounded-sm border border-indigo-400 bg-background/95 p-1 leading-tight outline-none"
           style={{ fontSize, fontWeight: bold ? 700 : 400, textAlign: align, color: color || undefined }}
           defaultValue={text}
           maxLength={5_000}
@@ -99,7 +99,7 @@ function ImageNode({ data, selected }: NodeProps<PresentationNode>) {
       inert={data.hidden || undefined}
       className={cn(
         "h-full w-full overflow-hidden",
-        data.editable && "cursor-grab active:cursor-grabbing",
+        data.editable && "cursor-move active:cursor-grabbing",
         data.editable && selected && "ring-2 ring-indigo-500/60",
       )}
     >
@@ -118,7 +118,7 @@ function FrameNode({ data, selected }: NodeProps<PresentationNode>) {
       inert={data.hidden || undefined}
       className={cn(
         "h-full w-full",
-        data.editable && "cursor-grab active:cursor-grabbing",
+        data.editable && "cursor-move active:cursor-grabbing",
         data.editable && selected && "ring-2 ring-indigo-500/60",
         shape !== "none" && "border-2",
         shape === "circle" && "rounded-full",
@@ -176,7 +176,7 @@ function ShapeNode({ data, selected }: NodeProps<PresentationNode>) {
       inert={data.hidden || undefined}
       className={cn(
         "h-full w-full text-foreground",
-        data.editable && "cursor-grab active:cursor-grabbing",
+        data.editable && "cursor-move active:cursor-grabbing",
         data.editable && selected && "ring-2 ring-indigo-500/60",
       )}
     >
@@ -234,7 +234,7 @@ function ContentNode({ data, selected }: NodeProps<PresentationNode>) {
   useEffect(() => {
     if (data.hidden) ref.current?.querySelectorAll("video,audio").forEach((media) => (media as HTMLMediaElement).pause());
   }, [data.hidden]);
-  return <div ref={ref} inert={data.hidden || undefined} className={cn("h-full w-full", data.editable && selected && "ring-2 ring-indigo-500/60")}>
+  return <div ref={ref} inert={data.hidden || undefined} className={cn("h-full w-full", data.editable && "cursor-move active:cursor-grabbing", data.editable && selected && "ring-2 ring-indigo-500/60")}>
     <Resizer selected={Boolean(selected)} data={data} />
     <div className={data.editable ? "pointer-events-none h-full w-full" : "nodrag nopan nowheel h-full w-full"}>
       <PresentationContent element={data.element} mediaUrl={data.mediaUrl} interactive={!data.editable} />
@@ -268,6 +268,11 @@ export function elementsToNodes(
 ): PresentationNode[] {
   return elements.map((element, index) => {
     const style: CSSProperties = element.type === "frame" ? { pointerEvents: "none" } : {};
+    // Empty space and section interiors use the pane cursor; only selectable
+    // object surfaces advertise selection/movement, including locked objects.
+    if (options.selectedIds !== undefined) {
+      style.cursor = options.editable && !isPresentationElementLocked(elements, element.id) ? "move" : "pointer";
+    }
     // Node styles override React Flow's positioning transform. Keep the translation or
     // rotating an element teleports it back to the canvas origin.
     if (element.rotation) {

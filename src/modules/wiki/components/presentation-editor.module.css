@@ -1,0 +1,17 @@
+/* Override the canvas library without changing cursors in presentation playback. */
+.canvas :global(.react-flow__pane) {
+  cursor: default !important;
+}
+
+.canvas :global(.react-flow__pane.dragging) {
+  cursor: grabbing !important;
+}
+
+.canvas :global(.react-flow__pane.selection) {
+  cursor: crosshair !important;
+}
+
+/* The selection overlay must leave nested objects reachable. */
+.canvas :global(.react-flow__nodesselection-rect) {
+  pointer-events: none !important;
+}
