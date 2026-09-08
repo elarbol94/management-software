@@ -464,6 +464,26 @@ describe("player element clicks", () => {
 });
 
 describe("alignment snapping", () => {
+  it("does not snap the untouched axis during a resize", () => {
+    const result = snapBounds(
+      { x: 100, y: 103, width: 100, height: 100 },
+      { x: 100, y: 103, width: 197, height: 100 },
+      [{ x: 300, y: 100, width: 100, height: 100 }], 6,
+    );
+    expect(result.bounds).toEqual({ x: 100, y: 103, width: 200, height: 100 });
+    expect(result.guides.map((guide) => guide.axis)).toEqual(["x"]);
+  });
+
+  it("does not draw a guide for a snap that would violate resize limits", () => {
+    const result = snapBounds(
+      { x: 0, y: 0, width: 100, height: 100 },
+      { x: 0, y: 0, width: 42, height: 100 },
+      [{ x: 38, y: 200, width: 100, height: 100 }], 6,
+    );
+    expect(result.bounds.width).toBe(42);
+    expect(result.guides).toEqual([]);
+  });
+
   const box = (x: number, y: number, width = 100, height = 100) => ({ x, y, width, height });
 
   it("pulls a dragged element flush to another element's edge", () => {
@@ -506,7 +526,8 @@ describe("alignment snapping", () => {
 
   it("never resizes below the minimum element size", () => {
     const result = snapBounds(box(0, 0, 100, 100), box(0, 0, 42, 100), [box(0, 0, 20, 100)], 30);
-    expect(result.bounds.width).toBe(PRESENTATION_MIN_ELEMENT_SIZE);
+    expect(result.bounds.width).toBeGreaterThanOrEqual(PRESENTATION_MIN_ELEMENT_SIZE);
+    expect(result.guides).toEqual([]);
   });
 });
 
@@ -580,6 +601,38 @@ describe("canvas history", () => {
     expect(presentationCanvasReducer(undone, { type: "redo" }).elements[0].x).toBe(400);
   });
 
+  it("clears guides on release without a final geometry change", () => {
+    let state = presentationCanvasReducer(initialPresentationCanvasState(
+      [frame("a", 0, 0, 100, 100), frame("b", 400, 0, 100, 100)], [],
+    ), { type: "gesture-start" });
+    state = move(state, 396, 1_000);
+    expect(state.guides.length).toBeGreaterThan(0);
+    const released = presentationCanvasReducer(state, { type: "gesture-end" });
+    expect(released.guides).toEqual([]);
+    expect(released.elements).toBe(state.elements);
+    expect(released.past).toBe(state.past);
+    expect(released.dirty).toBe(state.dirty);
+    expect(released.gestureActive).toBe(false);
+    expect(presentationCanvasReducer(released, { type: "gesture-end" })).toBe(released);
+    // Native drag/autopan callbacks may still arrive after pointer cancellation.
+    expect(move(released, 402, 1_100).guides).toEqual([]);
+    const restarted = presentationCanvasReducer(released, { type: "gesture-start" });
+    expect(move(restarted, 402, 1_200).guides.length).toBeGreaterThan(0);
+  });
+
+  it("keeps a paused gesture in one undo step and separates consecutive drags", () => {
+    let state = presentationCanvasReducer(start(), { type: "gesture-start" });
+    state = move(state, 100, 1_000);
+    state = move(state, 200, 5_000);
+    expect(state.past).toHaveLength(1);
+    expect(presentationCanvasReducer(state, { type: "undo" }).elements[0].x).toBe(0);
+    state = presentationCanvasReducer(state, { type: "gesture-end" });
+    state = presentationCanvasReducer(state, { type: "gesture-start" });
+    state = move(state, 300, 5_050);
+    expect(state.past).toHaveLength(2);
+    expect(presentationCanvasReducer(state, { type: "undo" }).elements[0].x).toBe(200);
+  });
+
   it("folds one drag into a single undo step", () => {
     let state = start();
     for (let frameIndex = 1; frameIndex <= 10; frameIndex += 1) state = move(state, frameIndex * 40, 1_000 + frameIndex * 16);
@@ -635,7 +688,7 @@ describe("canvas history", () => {
       [frame("a", 0, 0, 100, 100), frame("b", 400, 0, 100, 100)],
       [],
     );
-    const dragged = move(state, 396, 1_000);
+    const dragged = move(presentationCanvasReducer(state, { type: "gesture-start" }), 396, 1_000);
     expect(dragged.elements[0].x).toBe(400);
     // Both boxes sit at y = 0, so the horizontal edges line up as well.
     expect(dragged.guides).toContainEqual(expect.objectContaining({ axis: "x", position: 400 }));

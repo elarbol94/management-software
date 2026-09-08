@@ -13,9 +13,29 @@ describe("nested presentation objects", () => {
     const result = applyGeometryChanges([frame, text], [{ id: "frame", x: 100, y: 200 }, { id: "text", x: 150, y: 260 }], 0);
     expect(result.elements[1]).toMatchObject({ x: 150, y: 260 });
   });
-  it("scales children and refuses gestures that would invalidate child dimensions", () => {
-    expect(applyGeometryChanges([frame, text], [{ id: "frame", width: 1000, height: 800 }], 0).elements[1]).toMatchObject({ x: 100, y: 120, width: 200, height: 100 });
-    expect(applyGeometryChanges([frame, text], [{ id: "frame", width: 20 }], 0).elements).toEqual([frame, text]);
+  it.each([
+    { width: 1000, height: 800 },
+    { x: -100, y: -100, width: 600, height: 500 },
+    { width: 40, height: 40 },
+  ])("resizes section borders without moving or scaling descendants: %j", (geometry) => {
+    const section = { ...frame, id: "section", parentId: "frame", x: 30, y: 40, width: 200, height: 150 };
+    const child = { ...text, parentId: "section" };
+    const elements = [frame, section, child];
+    const result = applyGeometryChanges(elements, [{ id: "frame", ...geometry }], 0).elements;
+    expect(result[0]).toMatchObject(geometry);
+    expect(result[1]).toBe(section);
+    expect(result[2]).toBe(child);
+    expect(presentationElementsSchema.safeParse(result).success).toBe(true);
+  });
+  it("keeps contents fixed when snapping holds a resize at its original size", () => {
+    const result = applyGeometryChanges([frame, text], [{ id: "frame", x: 10, resizing: true }], 0);
+    expect(result.elements[0].x).toBe(10);
+    expect(result.elements[1]).toBe(text);
+  });
+  it("still scales explicit groups and rejects invalid child sizes", () => {
+    const group = { ...frame, content: { ...frame.content, isGroup: true } };
+    expect(applyGeometryChanges([group, text], [{ id: "frame", width: 1000, height: 800 }], 0).elements[1]).toMatchObject({ x: 100, y: 120, width: 200, height: 100 });
+    expect(applyGeometryChanges([group, text], [{ id: "frame", width: 20 }], 0).elements).toEqual([group, text]);
   });
   it("locks a subtree and preserves it through rejected geometry updates", () => {
     const elements = [{ ...frame, locked: true }, text];

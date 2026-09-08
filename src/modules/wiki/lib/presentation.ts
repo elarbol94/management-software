@@ -484,9 +484,9 @@ function snapAxis(
   next: { start: number; size: number },
   targets: { start: number; size: number }[],
   threshold: number,
+  resizing: boolean,
 ): { start: number; size: number; line: number | null } {
-  const resized = Math.abs(next.size - prev.size) > 0.01;
-  const sources = resized
+  const sources = resizing
     ? [
       ...(Math.abs(next.start - prev.start) > 0.01 ? [next.start] : []),
       ...(Math.abs(next.start + next.size - (prev.start + prev.size)) > 0.01 ? [next.start + next.size] : []),
@@ -498,6 +498,8 @@ function snapAxis(
     for (const target of targets) {
       for (const line of linesOf(target.start, target.size)) {
         const delta = line - source;
+        const size = source === next.start ? next.size - delta : next.size + delta;
+        if (resizing && (size < PRESENTATION_MIN_ELEMENT_SIZE || size > 20_000)) continue;
         if (Math.abs(delta) <= threshold && (!best || Math.abs(delta) < Math.abs(best.delta))) {
           best = { delta, line, source };
         }
@@ -505,7 +507,7 @@ function snapAxis(
     }
   }
   if (!best) return { start: next.start, size: next.size, line: null };
-  if (!resized) return { start: next.start + best.delta, size: next.size, line: best.line };
+  if (!resizing) return { start: next.start + best.delta, size: next.size, line: best.line };
   if (best.source === next.start) {
     const far = next.start + next.size;
     const size = Math.max(far - (next.start + best.delta), PRESENTATION_MIN_ELEMENT_SIZE);
@@ -525,18 +527,21 @@ export function snapBounds(
   next: PresentationBounds,
   targets: PresentationBounds[],
   threshold: number,
+  resizing = Math.abs(next.width - prev.width) > 0.01 || Math.abs(next.height - prev.height) > 0.01,
 ): { bounds: PresentationBounds; guides: SnapGuide[] } {
   const horizontal = snapAxis(
     { start: prev.x, size: prev.width },
     { start: next.x, size: next.width },
     targets.map((target) => ({ start: target.x, size: target.width })),
     threshold,
+    resizing,
   );
   const vertical = snapAxis(
     { start: prev.y, size: prev.height },
     { start: next.y, size: next.height },
     targets.map((target) => ({ start: target.y, size: target.height })),
     threshold,
+    resizing,
   );
   const bounds = { x: horizontal.start, y: vertical.start, width: horizontal.size, height: vertical.size };
 
@@ -572,6 +577,8 @@ export type PresentationGeometryChange = {
   y?: number;
   width?: number;
   height?: number;
+  /** Handle gesture, including updates where snapping keeps the current size. */
+  resizing?: boolean;
 };
 
 /**
@@ -604,11 +611,11 @@ export function applyGeometryChanges(
 
   const affected = presentationDescendants(elements, new Set(moving.keys()));
   const targets = elements.filter((element) => !affected.has(element.id)).map(elementBounds);
-  const snapped = snapBounds(before, after, targets, tolerance);
+  const resizing = moving.size === 1 && ([...byId.values()].some((change) => change.resizing)
+    || Math.abs(after.width - before.width) > 0.01 || Math.abs(after.height - before.height) > 0.01);
+  const snapped = snapBounds(before, after, targets, tolerance, resizing);
   // Only a resize changes the box's size, and a canvas resizes one element at a time, so
   // the snapped union *is* that element's box. A move shifts every mover by the same amount.
-  const resizing = moving.size === 1
-    && (Math.abs(snapped.bounds.width - before.width) > 0.01 || Math.abs(snapped.bounds.height - before.height) > 0.01);
   const dx = snapped.bounds.x - after.x;
   const dy = snapped.bounds.y - after.y;
 
@@ -629,6 +636,9 @@ export function applyGeometryChanges(
   if (!touched) return { elements, guides: snapped.guides };
   let nested = next;
   for (const parent of elements.filter((element) => byId.has(element.id) && element.type === "frame")) {
+    // Section borders resize independently; explicit groups scale their contents.
+    // Moving either kind of frame still carries its descendants.
+    if (resizing && parent.type === "frame" && !parent.content.isGroup) continue;
     const updated = next.find((element) => element.id === parent.id)!;
     const children = presentationDescendants(elements, new Set([parent.id]));
     const sx = updated.width / parent.width;
@@ -645,9 +655,9 @@ export function applyGeometryChanges(
 }
 
 /**
- * Undo/redo for one editing session. A drag reports an edit per frame, so edits closer
- * together than the coalescing window fold into a single undo step; the stack is capped
- * because a canvas snapshot is the whole element array.
+ * Undo/redo for one editing session. Pointer gestures have explicit boundaries and
+ * form one undo step even when paused; other rapid edits use a coalescing window.
+ * The stack is capped because a canvas snapshot is the whole element array.
  */
 export const PRESENTATION_HISTORY_COALESCE_MS = 350;
 export const PRESENTATION_HISTORY_LIMIT = 50;
@@ -674,6 +684,7 @@ export type PresentationCanvasState = PresentationSnapshot & {
    * here instead of retrying the same doomed save every debounce. */
   failed: boolean;
   editedAt: number;
+  gestureActive: boolean;
 };
 
 export type PresentationCanvasAction =
@@ -685,6 +696,8 @@ export type PresentationCanvasAction =
     steps?: (current: PresentationStep[]) => PresentationStep[];
   }
   | { type: "geometry"; at: number; changes: PresentationGeometryChange[]; tolerance: number; gesture: boolean }
+  | { type: "gesture-start" }
+  | { type: "gesture-end" }
   | { type: "source-headings"; elements: (current: PresentationElement[]) => PresentationElement[] }
   | { type: "undo" }
   | { type: "redo" }
@@ -711,7 +724,7 @@ export function initialPresentationCanvasState(
   settings: PresentationSettings = defaultPresentationSettings,
   title = "",
 ): PresentationCanvasState {
-  return { elements, steps, background, settings, title, guides: [], past: [], future: [], dirty: false, failed: false, editedAt: 0 };
+  return { elements, steps, background, settings, title, guides: [], past: [], future: [], dirty: false, failed: false, editedAt: 0, gestureActive: false };
 }
 
 function commitCanvas(
@@ -722,7 +735,8 @@ function commitCanvas(
   separate = false,
 ): PresentationCanvasState {
   if (elements === state.elements && steps === state.steps) return state;
-  const coalesce = !separate && state.past.length > 0 && at - state.editedAt <= PRESENTATION_HISTORY_COALESCE_MS;
+  const coalesce = !separate && state.past.length > 0 && state.editedAt > 0
+    && (state.gestureActive || at - state.editedAt <= PRESENTATION_HISTORY_COALESCE_MS);
   return {
     ...state,
     elements,
@@ -750,6 +764,7 @@ function travelCanvas(state: PresentationCanvasState, direction: "undo" | "redo"
     ...snapshot,
     elements: retainObservedPresentationSections(snapshot.elements, state.elements),
     guides: [],
+    gestureActive: false,
     past: direction === "undo" ? source.slice(0, -1) : [...state.past, current],
     future: direction === "undo" ? [...state.future, current] : source.slice(0, -1),
     dirty: true,
@@ -764,10 +779,14 @@ export function presentationCanvasReducer(
   action: PresentationCanvasAction,
 ): PresentationCanvasState {
   switch (action.type) {
+    case "gesture-start":
+      return state.gestureActive ? state : { ...state, gestureActive: true, editedAt: 0, guides: [] };
+    case "gesture-end":
+      return !state.gestureActive && !state.guides.length ? state : { ...state, gestureActive: false, editedAt: 0, guides: [] };
     case "remote": {
       const merged = mergePresentation(action.base, state, action.snapshot);
       if (merged.conflicts.length) return { ...state, failed: true };
-      return { ...state, ...merged.snapshot, past: [], future: [], guides: [], editedAt: 0,
+      return { ...state, ...merged.snapshot, past: [], future: [], guides: [], editedAt: 0, gestureActive: false,
         dirty: !presentationValuesEqual(merged.snapshot, { elements: action.snapshot.elements, steps: action.snapshot.steps, title: action.snapshot.title, background: action.snapshot.background, settings: action.snapshot.settings }), failed: false };
     }
     case "reset":
@@ -791,7 +810,8 @@ export function presentationCanvasReducer(
     case "geometry": {
       const result = applyGeometryChanges(state.elements, action.changes, action.tolerance);
       const next = commitCanvas(state, result.elements, state.steps, action.at);
-      const guides = action.gesture ? result.guides : [];
+      // The canvas library can deliver late drag updates after cancellation.
+      const guides = action.gesture && state.gestureActive ? result.guides : [];
       if (next === state && !guides.length && !state.guides.length) return state;
       return { ...next, guides };
     }

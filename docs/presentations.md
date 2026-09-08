@@ -187,8 +187,16 @@ On desktop, the path and the active utility panel dock beside the canvas.
 
 - Select a parent frame in **Structure**, or use **Attach contained objects** to
   connect existing objects inside a frame. Parent links are saved, acyclic and
-  independent of visual overlap. Moving, resizing or rotating a parent carries
-  its descendants. Existing decks keep their layout until explicitly connected.
+  independent of visual overlap. Moving or rotating a parent carries its descendants.
+  Resizing a section changes only its border, leaving descendant positions and sizes
+  unchanged, including when resizing from the top or left. Explicit groups still
+  scale their contents. Existing decks keep their layout until explicitly connected.
+- Select or drag sections by their outline; empty interiors let clicks and canvas
+  panning through. Subsections and other objects remain selectable when their parent
+  is selected. Resize using the handles; dragging the selected outline moves it.
+- Alignment guides follow the gesture and clear on release, cancellation or leaving
+  the window. Resizing snaps only the edges being moved. Each drag, resize or rotation
+  is one undo step, even when paused, and consecutive gestures remain separate.
 - Shift-click objects, then **Group selection** for a persistent group. Clicking
   a member selects the outer group. Use the object selector to edit an individual
   member's content. Ungroup retains child positions and the surrounding frame.

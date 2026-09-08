@@ -304,6 +304,7 @@ function SnapGuides({ guides }: { guides: SnapGuide[] }) {
       {guides.map((guide) => (
         <div
           key={`${guide.axis}-${guide.position}`}
+          data-testid="presentation-snap-guide"
           className="pointer-events-none absolute bg-indigo-500"
           style={
             guide.axis === "x"
@@ -334,7 +335,11 @@ function SelectionOverlay({
   scaleLabel,
   onRotate,
   onScale,
+  onGestureStart,
+  onGestureEnd,
 }: {
+  onGestureStart: () => void;
+  onGestureEnd: () => void;
   bounds: PresentationBounds;
   scalable: boolean;
   rotateLabel: string;
@@ -345,10 +350,14 @@ function SelectionOverlay({
   const { zoom } = useViewport();
   const reactFlow = useReactFlow();
   const screen = (value: number) => value / zoom;
+  const cleanupGesture = useRef<(() => void) | null>(null);
+  useEffect(() => () => cleanupGesture.current?.(), []);
 
   const beginGesture = (event: React.PointerEvent<HTMLButtonElement>, kind: "rotate" | "scale") => {
     event.preventDefault();
     event.stopPropagation();
+    cleanupGesture.current?.();
+    onGestureStart();
     const handle = event.currentTarget;
     handle.setPointerCapture(event.pointerId);
     // The anchor is frozen at gesture start: the union bounds shift as the selection turns,
@@ -362,6 +371,7 @@ function SelectionOverlay({
     let lastScaleY = 1;
 
     const move = (moveEvent: PointerEvent) => {
+      if (moveEvent.pointerId !== event.pointerId) return;
       const point = reactFlow.screenToFlowPosition({ x: moveEvent.clientX, y: moveEvent.clientY });
       if (kind === "rotate") {
         const angle = Math.atan2(point.y - center.y, point.x - center.x);
@@ -380,10 +390,18 @@ function SelectionOverlay({
       handle.removeEventListener("pointermove", move);
       handle.removeEventListener("pointerup", end);
       handle.removeEventListener("pointercancel", end);
+      handle.removeEventListener("lostpointercapture", end);
+      window.removeEventListener("blur", end);
+      cleanupGesture.current = null;
+      if (handle.hasPointerCapture(event.pointerId)) handle.releasePointerCapture(event.pointerId);
+      onGestureEnd();
     };
+    cleanupGesture.current = end;
     handle.addEventListener("pointermove", move);
     handle.addEventListener("pointerup", end);
     handle.addEventListener("pointercancel", end);
+    handle.addEventListener("lostpointercapture", end);
+    window.addEventListener("blur", end);
   };
 
   const handleStyle = { width: screen(HANDLE_SIZE), height: screen(HANDLE_SIZE), borderWidth: screen(1) };
@@ -778,9 +796,35 @@ function Editor({
     [updateElement],
   );
 
+  const startGesture = useCallback(() => dispatch({ type: "gesture-start" }), []);
+  const endGesture = useCallback(() => dispatch({ type: "gesture-end" }), []);
+  useEffect(() => {
+    // A release/cancellation need not include geometry. Run after the canvas
+    // library's final pointer/mouse update, including releases outside the canvas.
+    let frame = 0;
+    const finish = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(endGesture);
+    };
+    const hide = () => { if (document.hidden) endGesture(); };
+    window.addEventListener("pointerup", finish, true);
+    window.addEventListener("mouseup", finish, true);
+    window.addEventListener("pointercancel", finish, true);
+    window.addEventListener("blur", endGesture);
+    document.addEventListener("visibilitychange", hide);
+    return () => {
+      cancelAnimationFrame(frame);
+      window.removeEventListener("pointerup", finish, true);
+      window.removeEventListener("mouseup", finish, true);
+      window.removeEventListener("pointercancel", finish, true);
+      window.removeEventListener("blur", endGesture);
+      document.removeEventListener("visibilitychange", hide);
+    };
+  }, [endGesture]);
+
   const nodes = useMemo(
-    () => elementsToNodes(elements, { editable: !disabled, selectedIds: selectedSet, onTextChange }),
-    [elements, selectedSet, onTextChange, disabled],
+    () => elementsToNodes(elements, { editable: !disabled, selectedIds: selectedSet, onTextChange, onGestureStart: startGesture, onGestureEnd: endGesture }),
+    [elements, selectedSet, onTextChange, disabled, startGesture, endGesture],
   );
 
   /**
@@ -816,11 +860,16 @@ function Editor({
         } else if (change.type === "dimensions" && change.dimensions && (change.resizing || change.setAttributes)) {
           // React Flow also reports the dimensions it measured on mount; the reducer drops
           // those, so opening a presentation never looks unsaved.
-          geometry.set(change.id, { ...geometry.get(change.id), id: change.id, ...change.dimensions });
+          geometry.set(change.id, { ...geometry.get(change.id), id: change.id, ...change.dimensions, resizing: true });
           if (change.resizing) gesture = true;
         }
       }
-      if (disabled || !geometry.size) return;
+      const ended = changes.some((change) => (change.type === "position" && change.dragging === false)
+        || (change.type === "dimensions" && change.resizing === false));
+      if (disabled || !geometry.size) {
+        if (ended) endGesture();
+        return;
+      }
       dispatch({
         type: "geometry",
         at: Date.now(),
@@ -829,8 +878,9 @@ function Editor({
         tolerance: PRESENTATION_SNAP_TOLERANCE / reactFlow.getZoom(),
         gesture,
       });
+      if (ended) endGesture();
     },
-    [reactFlow, disabled, elements],
+    [reactFlow, disabled, elements, endGesture],
   );
 
   const rotateSelection = useCallback(
@@ -1469,6 +1519,12 @@ function Editor({
             edges={[]}
             nodeTypes={presentationNodeTypes}
             onNodesChange={onNodesChange}
+            onNodeDragStart={startGesture}
+            onNodeDragStop={endGesture}
+            onSelectionDragStart={startGesture}
+            onSelectionDragStop={endGesture}
+            elevateNodesOnSelect={false}
+            className="[&_.react-flow__nodesselection-rect]:!pointer-events-none"
             colorMode={resolvedTheme === "dark" ? "dark" : "light"}
             fitView={!resumeToken && !requestedElement}
             fitViewOptions={{ padding: 0.2 }}
@@ -1485,7 +1541,7 @@ function Editor({
             selectionOnDrag={false}
             style={background ? { backgroundColor: background } : undefined}
             panOnDrag
-            onPaneClick={() => setSelectedIds([])}
+            onPaneClick={() => { endGesture(); setSelectedIds([]); }}
             proOptions={{ hideAttribution: false }}
           >
             <Background gap={24} size={1} />
@@ -1501,6 +1557,8 @@ function Editor({
                 scaleLabel={t("presentations.scaleHandle")}
                 onRotate={rotateSelection}
                 onScale={scaleSelection}
+                onGestureStart={startGesture}
+                onGestureEnd={endGesture}
               />
             )}
           </ReactFlow>

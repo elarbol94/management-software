@@ -85,10 +85,10 @@ test("nested groups persist, transform descendants, lock and ungroup", async ({ 
 test("rich text, charts, icons and reveal/hide playback survive saving", async ({ page }, info) => {
   await login(page); const id = await seed(page); await open(page, id);
   await page.getByRole("combobox", { name: "Objekt auswählen" }).selectOption("a");
+  await page.locator("summary").filter({ hasText: /^Inhalte$/ }).click();
   const rich = page.getByRole("textbox", { name: "Formatierter Text" });
   await rich.fill("Formatted idea");
   await rich.press("Control+a");
-  await page.locator("summary").filter({ hasText: /^Inhalt$/ }).click();
   await page.getByRole("button", { name: "Kursiv", exact: true }).click();
   await page.getByRole("combobox", { name: "Schriftart", exact: true }).selectOption("georgia");
   await page.getByRole("button", { name: "Einfügen", exact: true }).click();

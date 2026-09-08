@@ -16,6 +16,8 @@ export type PresentationNodeData = {
   editable: boolean;
   /** False while several elements are selected: the group is resized as a whole instead. */
   resizable?: boolean;
+  onGestureStart?: () => void;
+  onGestureEnd?: () => void;
   onTextChange?: (id: string, text: string) => void;
   mediaUrl?: (id: string) => string;
   hidden?: boolean;
@@ -24,8 +26,8 @@ export type PresentationNodeData = {
 
 export type PresentationNode = Node<PresentationNodeData, PresentationElement["type"]>;
 
-function Resizer({ selected, editable }: { selected: boolean; editable: boolean }) {
-  if (!editable) return null;
+function Resizer({ selected, data }: { selected: boolean; data: PresentationNodeData }) {
+  if (!data.editable || data.resizable === false) return null;
   return (
     <NodeResizer
       isVisible={selected}
@@ -34,6 +36,10 @@ function Resizer({ selected, editable }: { selected: boolean; editable: boolean 
       maxWidth={20_000}
       maxHeight={20_000}
       color="var(--color-indigo-500)"
+      handleStyle={{ pointerEvents: "auto", zIndex: 2 }}
+      lineStyle={{ pointerEvents: "none" }}
+      onResizeStart={data.onGestureStart}
+      onResizeEnd={data.onGestureEnd}
     />
   );
 }
@@ -53,7 +59,7 @@ function TextNode({ data, selected }: NodeProps<PresentationNode>) {
         data.editable && selected && "ring-2 ring-indigo-500/60",
       )}
     >
-      <Resizer selected={Boolean(selected)} editable={data.editable && data.resizable !== false} />
+      <Resizer selected={Boolean(selected)} data={data} />
       {editing && data.editable ? (
         <textarea
           autoFocus
@@ -97,7 +103,7 @@ function ImageNode({ data, selected }: NodeProps<PresentationNode>) {
         data.editable && selected && "ring-2 ring-indigo-500/60",
       )}
     >
-      <Resizer selected={Boolean(selected)} editable={data.editable && data.resizable !== false} />
+      <Resizer selected={Boolean(selected)} data={data} />
       <PresentationContent element={element} mediaUrl={data.mediaUrl} />
     </div>
   );
@@ -124,7 +130,18 @@ function FrameNode({ data, selected }: NodeProps<PresentationNode>) {
       )}
       style={shape !== "none" && color ? { borderColor: color } : undefined}
     >
-      <Resizer selected={Boolean(selected)} editable={data.editable && data.resizable !== false} />
+      {/* Only the outline receives clicks. Its screen-sized hit area also works
+          for circular/rotated frames and does not cover nested objects. */}
+      {!data.hidden && (
+        <svg className="pointer-events-none absolute inset-0 h-full w-full overflow-visible" aria-hidden>
+          {shape === "circle" ? (
+            <ellipse cx="50%" cy="50%" rx="50%" ry="50%" fill="none" stroke="transparent" strokeWidth={10} vectorEffect="non-scaling-stroke" pointerEvents="stroke" />
+          ) : (
+            <rect width="100%" height="100%" rx={12} fill="none" stroke="transparent" strokeWidth={10} vectorEffect="non-scaling-stroke" pointerEvents="stroke" />
+          )}
+        </svg>
+      )}
+      <Resizer selected={Boolean(selected)} data={data} />
       {label && (
         <span
           className="pointer-events-none absolute -top-6 left-0 truncate text-sm font-medium"
@@ -163,7 +180,7 @@ function ShapeNode({ data, selected }: NodeProps<PresentationNode>) {
         data.editable && selected && "ring-2 ring-indigo-500/60",
       )}
     >
-      <Resizer selected={Boolean(selected)} editable={data.editable && data.resizable !== false} />
+      <Resizer selected={Boolean(selected)} data={data} />
       <svg
         width="100%"
         height="100%"
@@ -218,7 +235,7 @@ function ContentNode({ data, selected }: NodeProps<PresentationNode>) {
     if (data.hidden) ref.current?.querySelectorAll("video,audio").forEach((media) => (media as HTMLMediaElement).pause());
   }, [data.hidden]);
   return <div ref={ref} inert={data.hidden || undefined} className={cn("h-full w-full", data.editable && selected && "ring-2 ring-indigo-500/60")}>
-    <Resizer selected={Boolean(selected)} editable={data.editable && data.resizable !== false} />
+    <Resizer selected={Boolean(selected)} data={data} />
     <div className={data.editable ? "pointer-events-none h-full w-full" : "nodrag nopan nowheel h-full w-full"}>
       <PresentationContent element={data.element} mediaUrl={data.mediaUrl} interactive={!data.editable} />
     </div>
@@ -239,6 +256,8 @@ export function elementsToNodes(
   options: {
     editable: boolean;
     selectedIds?: Set<string>;
+    onGestureStart?: () => void;
+    onGestureEnd?: () => void;
     onTextChange?: (id: string, text: string) => void;
     /** Ids currently hidden so they can fade in — the player's step-arrival entrance. */
     enteringIds?: Set<string>;
@@ -248,7 +267,7 @@ export function elementsToNodes(
   },
 ): PresentationNode[] {
   return elements.map((element, index) => {
-    const style: CSSProperties = {};
+    const style: CSSProperties = element.type === "frame" ? { pointerEvents: "none" } : {};
     // Node styles override React Flow's positioning transform. Keep the translation or
     // rotating an element teleports it back to the canvas origin.
     if (element.rotation) {
@@ -258,7 +277,7 @@ export function elementsToNodes(
     if (element.background) style.backgroundColor = element.background;
     if (options.hiddenIds) {
       style.opacity = options.hiddenIds.has(element.id) ? 0 : 1;
-      style.pointerEvents = options.hiddenIds.has(element.id) ? "none" : undefined;
+      style.pointerEvents = options.hiddenIds.has(element.id) ? "none" : style.pointerEvents;
       style.transition = `opacity ${options.animationMs ?? 300}ms ease`;
     }
     if (options.enteringIds?.has(element.id) && !options.hiddenIds?.has(element.id)) {
@@ -284,6 +303,8 @@ export function elementsToNodes(
         element,
         editable: options.editable && !isPresentationElementLocked(elements, element.id),
         resizable: options.selectedIds?.size === 1,
+        onGestureStart: options.onGestureStart,
+        onGestureEnd: options.onGestureEnd,
         onTextChange: options.onTextChange,
         mediaUrl: options.mediaUrl,
         hidden: options.hiddenIds?.has(element.id),
